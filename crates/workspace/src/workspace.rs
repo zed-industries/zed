@@ -1173,6 +1173,10 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn titlebar_item(&self) -> Option<AnyViewHandle> {
+        self.titlebar_item.clone()
+    }
+
     /// Call the given callback with a workspace whose project is local.
     ///
     /// If the given workspace has a local project, then it will be passed

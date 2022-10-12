@@ -17,10 +17,7 @@ use std::ops::Range;
 use theme::Theme;
 use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
-actions!(
-    contacts_titlebar_item,
-    [ToggleContactsPopover, ShareProject]
-);
+actions!(collab, [ToggleCollaborationMenu, ShareProject]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
@@ -143,7 +140,11 @@ impl CollabTitlebarItem {
         }
     }
 
-    fn toggle_contacts_popover(&mut self, _: &ToggleContactsPopover, cx: &mut ViewContext<Self>) {
+    pub fn toggle_contacts_popover(
+        &mut self,
+        _: &ToggleCollaborationMenu,
+        cx: &mut ViewContext<Self>,
+    ) {
         match self.contacts_popover.take() {
             Some(_) => {}
             None => {
@@ -197,7 +198,7 @@ impl CollabTitlebarItem {
         };
         Stack::new()
             .with_child(
-                MouseEventHandler::<ToggleContactsPopover>::new(0, cx, |state, _| {
+                MouseEventHandler::<ToggleCollaborationMenu>::new(0, cx, |state, _| {
                     let style = titlebar
                         .toggle_contacts_button
                         .style_for(state, self.contacts_popover.is_some());
@@ -214,8 +215,8 @@ impl CollabTitlebarItem {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(ToggleContactsPopover);
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(ToggleCollaborationMenu);
                 })
                 .aligned()
                 .boxed(),

@@ -8,7 +8,7 @@ mod notifications;
 mod project_shared_notification;
 
 use call::ActiveCall;
-pub use collab_titlebar_item::CollabTitlebarItem;
+pub use collab_titlebar_item::{CollabTitlebarItem, ToggleCollaborationMenu};
 use gpui::MutableAppContext;
 use project::Project;
 use std::sync::Arc;
