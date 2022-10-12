@@ -17,6 +17,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
+use fs::{self, Fs};
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use gpui::{
     actions,
@@ -32,7 +33,6 @@ use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use fs::{self, Fs};
 use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
@@ -931,7 +931,7 @@ impl AppState {
         let settings = Settings::test(cx);
         cx.set_global(settings);
 
-        let fs = project::FakeFs::new(cx.background().clone());
+        let fs = fs::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
@@ -2806,8 +2806,9 @@ mod tests {
     use crate::sidebar::SidebarItem;
 
     use super::*;
+    use fs::FakeFs;
     use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
-    use project::{FakeFs, Project, ProjectEntryId};
+    use project::{Project, ProjectEntryId};
     use serde_json::json;
 
     pub fn default_item_factory(
