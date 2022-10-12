@@ -1271,7 +1271,7 @@ impl Editor {
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             (display_map.max_point().row() as f32 - visible_lines + 1.).max(0.)
         } else {
-            display_map.max_point().row().saturating_sub(1) as f32
+            display_map.max_point().row() as f32
         };
         if scroll_position.y() > max_scroll_top {
             scroll_position.set_y(max_scroll_top);
