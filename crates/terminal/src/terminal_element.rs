@@ -330,13 +330,10 @@ impl TerminalElement {
         }
 
         let mut properties = Properties::new();
-        if indexed
-            .flags
-            .intersects(Flags::BOLD | Flags::BOLD_ITALIC | Flags::DIM_BOLD)
-        {
+        if indexed.flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
             properties = *properties.weight(Weight::BOLD);
         }
-        if indexed.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC) {
+        if indexed.flags.intersects(Flags::ITALIC) {
             properties = *properties.style(Italic);
         }
 
