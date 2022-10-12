@@ -866,6 +866,8 @@ impl Buffer {
                     }));
                 }
             }
+        } else {
+            self.autoindent_requests.clear();
         }
     }
 
