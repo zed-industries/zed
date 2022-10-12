@@ -1205,7 +1205,7 @@ impl Store {
                 let guest_connection = self.connections.get(guest_connection_id).unwrap();
                 assert!(guest_connection.projects.contains(project_id));
             }
-            assert_eq!(project.active_replica_ids.len(), project.guests.len(),);
+            assert_eq!(project.active_replica_ids.len(), project.guests.len());
             assert_eq!(
                 project.active_replica_ids,
                 project
