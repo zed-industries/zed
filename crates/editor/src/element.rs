@@ -1582,11 +1582,14 @@ impl Element for EditorElement {
         // The scroll position is a fractional point, the whole number of which represents
         // the top of the window in terms of display rows.
         let start_row = scroll_position.y() as u32;
-        let visible_row_count = (size.y() / line_height).ceil() as u32;
+        let height_in_lines = size.y() / line_height;
         let max_row = snapshot.max_point().row();
 
         // Add 1 to ensure selections bleed off screen
-        let end_row = 1 + cmp::min(start_row + visible_row_count, max_row);
+        let end_row = 1 + cmp::min(
+            (scroll_position.y() + height_in_lines).ceil() as u32,
+            max_row,
+        );
 
         let start_anchor = if start_row == 0 {
             Anchor::min()
@@ -1680,8 +1683,7 @@ impl Element for EditorElement {
             .git_diff_hunks_in_range(start_row..end_row)
             .collect();
 
-        let scrollbar_row_range =
-            scroll_position.y()..(scroll_position.y() + visible_row_count as f32);
+        let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
