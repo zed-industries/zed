@@ -2260,6 +2260,49 @@ async fn test_rescan_and_remote_updates(
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
+    let dir = temp_tree(json!({
+        "a": {
+            "file1": "",
+        }
+    }));
+
+    let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+
+    let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
+        project.read_with(cx, |project, cx| {
+            let tree = project.worktrees(cx).next().unwrap();
+            tree.read(cx)
+                .entry_for_path(path)
+                .unwrap_or_else(|| panic!("no entry for path {}", path))
+                .id
+        })
+    };
+
+    let dir_id = id_for_path("a", cx);
+    let file_id = id_for_path("a/file1", cx);
+    let buffer = project
+        .update(cx, |p, cx| p.open_buffer((tree_id, "a/file1"), cx))
+        .await
+        .unwrap();
+    buffer.read_with(cx, |buffer, _| assert!(!buffer.is_dirty()));
+
+    project
+        .update(cx, |project, cx| {
+            project.rename_entry(dir_id, Path::new("b"), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    tree.flush_fs_events(cx).await;
+    assert_eq!(id_for_path("b", cx), dir_id);
+    assert_eq!(id_for_path("b/file1", cx), file_id);
+    buffer.read_with(cx, |buffer, _| assert!(!buffer.is_dirty()));
+}
+
 #[gpui::test]
 async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.background());
