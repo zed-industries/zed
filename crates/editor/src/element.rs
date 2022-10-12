@@ -997,14 +997,16 @@ impl EditorElement {
 
     fn layout_diff_hunk(
         hunk: &DiffHunk<u32>,
-        buffer_rows: &mut std::iter::Peekable<impl Iterator<Item = Option<u32>>>,
+        start_row: u32,
+        buffer_rows: &mut std::iter::Peekable<impl Iterator<Item = (usize, Option<u32>)>>,
     ) -> DiffHunkLayout {
-        //This should start with a row which is contained in the hunk's buffer range
-        let visual_start = buffer_rows.peek().unwrap().unwrap();
+        //`buffer_rows` should start with a row which is contained in the hunk's buffer range
+        //The `usize` field is 1-index so we have to sub to move it into 0-offset to match actual rows
+        let visual_start = start_row + buffer_rows.peek().unwrap().0 as u32 - 1;
 
         let mut visual_count = 0;
         while let Some(&buffer_row) = buffer_rows.peek() {
-            if let Some(buffer_row) = buffer_row {
+            if let (_, Some(buffer_row)) = buffer_row {
                 if buffer_row == hunk.buffer_range.end {
                     visual_count += 1;
                     break;
@@ -1039,16 +1041,17 @@ impl EditorElement {
         let mut buffer_rows = snapshot
             .buffer_rows(rows.start)
             .take((rows.end - rows.start) as usize)
+            .enumerate()
             .peekable();
 
         let mut layouts = Vec::new();
 
-        while let Some(buffer_row) = buffer_rows.next() {
+        while let Some((_, buffer_row)) = buffer_rows.next() {
             let buffer_row = buffer_row.unwrap();
 
             if let Some(hunk) = diff_hunks.peek() {
                 if hunk.buffer_range.contains(&buffer_row) {
-                    layouts.push(Self::layout_diff_hunk(hunk, &mut buffer_rows));
+                    layouts.push(Self::layout_diff_hunk(hunk, rows.start, &mut buffer_rows));
                     diff_hunks.next();
                 } else if hunk.buffer_range.end < buffer_row {
                     //A hunk that was missed due to being entirely contained in a fold
@@ -1060,7 +1063,7 @@ impl EditorElement {
                         status: DiffHunkStatus::Modified,
                     });
                     diff_hunks.next();
-                } 
+                }
             }
         }
 
