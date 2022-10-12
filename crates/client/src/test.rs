@@ -82,7 +82,7 @@ impl FakeServer {
 
                         let (client_conn, server_conn, _) = Connection::in_memory(cx.background());
                         let (connection_id, io, incoming) =
-                            peer.add_test_connection(server_conn, cx.background()).await;
+                            peer.add_test_connection(server_conn, cx.background());
                         cx.background().spawn(io).detach();
                         let mut state = state.lock();
                         state.connection_id = Some(connection_id);
@@ -101,10 +101,12 @@ impl FakeServer {
     }
 
     pub fn disconnect(&self) {
-        self.peer.disconnect(self.connection_id());
-        let mut state = self.state.lock();
-        state.connection_id.take();
-        state.incoming.take();
+        if self.state.lock().connection_id.is_some() {
+            self.peer.disconnect(self.connection_id());
+            let mut state = self.state.lock();
+            state.connection_id.take();
+            state.incoming.take();
+        }
     }
 
     pub fn auth_count(&self) -> usize {

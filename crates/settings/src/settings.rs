@@ -1,4 +1,5 @@
 mod keymap_file;
+pub mod settings_file;
 
 use anyhow::Result;
 use gpui::{
@@ -12,8 +13,9 @@ use schemars::{
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
-use std::{collections::HashMap, num::NonZeroU32, str, sync::Arc};
+use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
+use tree_sitter::Query;
 use util::ResultExt as _;
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
@@ -501,6 +503,101 @@ pub fn settings_file_json_schema(
     serde_json::to_value(root_schema).unwrap()
 }
 
+pub fn write_top_level_setting(
+    mut settings_content: String,
+    top_level_key: &str,
+    new_val: &str,
+) -> String {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(tree_sitter_json::language()).unwrap();
+    let tree = parser.parse(&settings_content, None).unwrap();
+
+    let mut cursor = tree_sitter::QueryCursor::new();
+
+    let query = Query::new(
+        tree_sitter_json::language(),
+        "
+        (document
+            (object
+                (pair
+                    key: (string) @key
+                    value: (_) @value)))
+    ",
+    )
+    .unwrap();
+
+    let mut first_key_start = None;
+    let mut existing_value_range = None;
+    let matches = cursor.matches(&query, tree.root_node(), settings_content.as_bytes());
+    for mat in matches {
+        if mat.captures.len() != 2 {
+            continue;
+        }
+
+        let key = mat.captures[0];
+        let value = mat.captures[1];
+
+        first_key_start.get_or_insert_with(|| key.node.start_byte());
+
+        if let Some(key_text) = settings_content.get(key.node.byte_range()) {
+            if key_text == format!("\"{top_level_key}\"") {
+                existing_value_range = Some(value.node.byte_range());
+                break;
+            }
+        }
+    }
+
+    match (first_key_start, existing_value_range) {
+        (None, None) => {
+            // No document, create a new object and overwrite
+            settings_content.clear();
+            write!(
+                settings_content,
+                "{{\n    \"{}\": \"{new_val}\"\n}}\n",
+                top_level_key
+            )
+            .unwrap();
+        }
+
+        (_, Some(existing_value_range)) => {
+            // Existing theme key, overwrite
+            settings_content.replace_range(existing_value_range, &format!("\"{new_val}\""));
+        }
+
+        (Some(first_key_start), None) => {
+            // No existing theme key, but other settings. Prepend new theme settings and
+            // match style of first key
+            let mut row = 0;
+            let mut column = 0;
+            for (ix, char) in settings_content.char_indices() {
+                if ix == first_key_start {
+                    break;
+                }
+                if char == '\n' {
+                    row += 1;
+                    column = 0;
+                } else {
+                    column += char.len_utf8();
+                }
+            }
+
+            let content = format!(r#""{top_level_key}": "{new_val}","#);
+            settings_content.insert_str(first_key_start, &content);
+
+            if row > 0 {
+                settings_content.insert_str(
+                    first_key_start + content.len(),
+                    &format!("\n{:width$}", ' ', width = column),
+                )
+            } else {
+                settings_content.insert_str(first_key_start + content.len(), " ")
+            }
+        }
+    }
+
+    settings_content
+}
+
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
@@ -511,4 +608,109 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
     Ok(serde_json::from_reader(
         json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::write_top_level_setting;
+    use unindent::Unindent;
+
+    #[test]
+    fn test_write_theme_into_settings_with_theme() {
+        let settings = r#"
+            {
+                "theme": "one-dark"
+            }
+        "#
+        .unindent();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_empty_settings() {
+        let settings = r#"
+            {
+            }
+        "#
+        .unindent();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_no_settings() {
+        let settings = "".to_string();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_single_line_settings_without_theme() {
+        let settings = r#"{ "a": "", "ok": true }"#.to_string();
+        let new_settings = r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#;
+
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_pre_object_whitespace() {
+        let settings = r#"          { "a": "", "ok": true }"#.to_string();
+        let new_settings = r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#;
+
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_multi_line_settings_without_theme() {
+        let settings = r#"
+            {
+                "a": "b"
+            }
+        "#
+        .unindent();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light",
+                "a": "b"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
 }

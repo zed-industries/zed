@@ -12,6 +12,7 @@ use language::{
     DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, Outline, OutlineItem,
     Selection, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
+use rope::{offset_utf16::OffsetUtf16, point::Point, point_utf16::PointUtf16, TextDimension};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -27,9 +28,8 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     locator::Locator,
-    rope::TextDimension,
     subscription::{Subscription, Topic},
-    Edit, OffsetUtf16, Point, PointUtf16, TextSummary,
+    Edit, TextSummary,
 };
 use theme::SyntaxTheme;
 use util::post_inc;
@@ -168,7 +168,7 @@ struct ExcerptChunks<'a> {
 }
 
 struct ExcerptBytes<'a> {
-    content_bytes: language::rope::Bytes<'a>,
+    content_bytes: rope::Bytes<'a>,
     footer_height: usize,
 }
 
@@ -1412,7 +1412,7 @@ impl MultiBuffer {
         edit_count: usize,
         cx: &mut ModelContext<Self>,
     ) {
-        use text::RandomCharIter;
+        use util::RandomCharIter;
 
         let snapshot = self.read(cx);
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
@@ -1451,7 +1451,7 @@ impl MultiBuffer {
     ) {
         use rand::prelude::*;
         use std::env;
-        use text::RandomCharIter;
+        use util::RandomCharIter;
 
         let max_excerpts = env::var("MAX_EXCERPTS")
             .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
@@ -3337,7 +3337,7 @@ mod tests {
     use rand::prelude::*;
     use settings::Settings;
     use std::{env, rc::Rc};
-    use text::{Point, RandomCharIter};
+
     use util::test::sample_text;
 
     #[gpui::test]
@@ -3955,7 +3955,9 @@ mod tests {
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
-                        let base_text = RandomCharIter::new(&mut rng).take(10).collect::<String>();
+                        let base_text = util::RandomCharIter::new(&mut rng)
+                            .take(10)
+                            .collect::<String>();
                         buffers.push(cx.add_model(|cx| Buffer::new(0, base_text, cx)));
                         buffers.last().unwrap()
                     } else {

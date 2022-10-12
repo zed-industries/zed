@@ -16,7 +16,8 @@ required-features = ["seed-support"]
 collections = { path = "../collections" }
 rpc = { path = "../rpc" }
 util = { path = "../util" }
-
+fs = { path = "../fs" }
+rope = { path = "../rope" }
 anyhow = "1.0.40"
 async-trait = "0.1.50"
 async-tungstenite = "0.16"

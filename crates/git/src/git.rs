@@ -4,7 +4,6 @@ pub use git2 as libgit;
 pub use lazy_static::lazy_static;
 
 pub mod diff;
-pub mod repository;
 
 lazy_static! {
     pub static ref DOT_GIT: &'static OsStr = OsStr::new(".git");

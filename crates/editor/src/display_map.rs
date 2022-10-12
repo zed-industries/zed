@@ -11,7 +11,8 @@ use gpui::{
     fonts::{FontId, HighlightStyle},
     Entity, ModelContext, ModelHandle,
 };
-use language::{OffsetUtf16, Point, Subscription as BufferSubscription};
+use language::Subscription as BufferSubscription;
+use rope::{offset_utf16::OffsetUtf16, point::Point};
 use settings::Settings;
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
@@ -622,7 +623,7 @@ pub mod tests {
     use super::*;
     use crate::{movement, test::marked_display_snapshot};
     use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
-    use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
+    use language::{Buffer, Language, LanguageConfig, SelectionGoal};
     use rand::{prelude::*, Rng};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
@@ -666,7 +667,9 @@ pub mod tests {
         let buffer = cx.update(|cx| {
             if rng.gen() {
                 let len = rng.gen_range(0..10);
-                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                let text = util::RandomCharIter::new(&mut rng)
+                    .take(len)
+                    .collect::<String>();
                 MultiBuffer::build_simple(&text, cx)
             } else {
                 MultiBuffer::build_random(&mut rng, cx)

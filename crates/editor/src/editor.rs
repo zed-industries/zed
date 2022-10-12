@@ -43,8 +43,8 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
-    DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
-    Selection, SelectionGoal, TransactionId,
+    DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, Selection, SelectionGoal,
+    TransactionId,
 };
 use link_go_to_definition::{hide_link_definition, LinkGoToDefinitionState};
 pub use multi_buffer::{
@@ -54,6 +54,7 @@ pub use multi_buffer::{
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, LocationLink, Project, ProjectPath, ProjectTransaction};
+use rope::{offset_utf16::OffsetUtf16, point::Point};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -1271,7 +1272,7 @@ impl Editor {
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             (display_map.max_point().row() as f32 - visible_lines + 1.).max(0.)
         } else {
-            display_map.max_point().row().saturating_sub(1) as f32
+            display_map.max_point().row() as f32
         };
         if scroll_position.y() > max_scroll_top {
             scroll_position.set_y(max_scroll_top);

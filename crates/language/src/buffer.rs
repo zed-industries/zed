@@ -13,9 +13,11 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
+use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use parking_lot::Mutex;
+use rope::point::Point;
 use settings::Settings;
 use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
@@ -38,6 +40,8 @@ use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Operation as _, *};
 use theme::SyntaxTheme;
+#[cfg(any(test, feature = "test-support"))]
+use util::RandomCharIter;
 use util::TryFutureExt as _;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -368,7 +372,7 @@ impl Buffer {
             file,
         );
         this.text.set_line_ending(proto::deserialize_line_ending(
-            proto::LineEnding::from_i32(message.line_ending)
+            rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         Ok(this)
@@ -862,6 +866,8 @@ impl Buffer {
                     }));
                 }
             }
+        } else {
+            self.autoindent_requests.clear();
         }
     }
 
@@ -1633,9 +1639,7 @@ impl Buffer {
             last_end = Some(range.end);
 
             let new_text_len = rng.gen_range(0..10);
-            let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
-                .take(new_text_len)
-                .collect();
+            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
             edits.push((range, new_text));
         }

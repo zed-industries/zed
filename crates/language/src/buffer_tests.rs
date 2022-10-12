@@ -1,9 +1,11 @@
 use super::*;
 use clock::ReplicaId;
 use collections::BTreeMap;
+use fs::LineEnding;
 use gpui::{ModelHandle, MutableAppContext};
 use proto::deserialize_operation;
 use rand::prelude::*;
+use rope::point::Point;
 use settings::Settings;
 use std::{
     cell::RefCell,
@@ -14,7 +16,7 @@ use std::{
 };
 use text::network::Network;
 use unindent::Unindent as _;
-use util::{post_inc, test::marked_text_ranges};
+use util::{post_inc, test::marked_text_ranges, RandomCharIter};
 
 #[cfg(test)]
 #[ctor::ctor]

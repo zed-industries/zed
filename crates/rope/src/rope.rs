@@ -1,7 +1,12 @@
-use super::Point;
-use crate::{OffsetUtf16, PointUtf16};
+pub mod offset_utf16;
+pub mod point;
+pub mod point_utf16;
+
 use arrayvec::ArrayString;
 use bromberg_sl2::{DigestString, HashMatrix};
+use offset_utf16::OffsetUtf16;
+use point::Point;
+use point_utf16::PointUtf16;
 use smallvec::SmallVec;
 use std::{cmp, fmt, io, mem, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
@@ -1073,9 +1078,9 @@ fn find_split_ix(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::random_char_iter::RandomCharIter;
     use rand::prelude::*;
     use std::{cmp::Ordering, env, io::Read};
+    use util::RandomCharIter;
     use Bias::{Left, Right};
 
     #[test]

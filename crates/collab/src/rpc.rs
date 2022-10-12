@@ -365,8 +365,7 @@ impl Server {
                             timer.await;
                         }
                     }
-                })
-                .await;
+                });
 
             tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
 
@@ -1011,6 +1010,21 @@ impl Server {
                     },
                 )?;
             }
+        }
+
+        for language_server in &project.language_servers {
+            self.peer.send(
+                request.sender_id,
+                proto::UpdateLanguageServer {
+                    project_id: project_id.to_proto(),
+                    language_server_id: language_server.id,
+                    variant: Some(
+                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                            proto::LspDiskBasedDiagnosticsUpdated {},
+                        ),
+                    ),
+                },
+            )?;
         }
 
         Ok(())

@@ -14,12 +14,23 @@ test-support = []
 assets = { path = "../assets" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
+fs = { path = "../fs" }
+anyhow = "1.0.38"
+futures = "0.3"
 theme = { path = "../theme" }
 util = { path = "../util" }
-anyhow = "1.0.38"
+rope = { path = "../rope" }
 json_comments = "0.2"
+postage = { version = "0.4.1", features = ["futures-traits"] }
 schemars = "0.8"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 serde_path_to_error = "0.1.4"
 toml = "0.5"
+tree-sitter = "*"
+tree-sitter-json = "*"
+
+[dev-dependencies]
+unindent = "0.1"
+gpui = { path = "../gpui", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }

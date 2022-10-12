@@ -16,6 +16,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
+use fs::{self, Fs};
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use gpui::{
     actions,
@@ -31,7 +32,7 @@ use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
+use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
 use settings::{Autosave, DockAnchor, Settings};
@@ -929,7 +930,7 @@ impl AppState {
         let settings = Settings::test(cx);
         cx.set_global(settings);
 
-        let fs = project::FakeFs::new(cx.background().clone());
+        let fs = fs::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
@@ -1169,6 +1170,10 @@ impl Workspace {
     ) {
         self.titlebar_item = Some(item.into());
         cx.notify();
+    }
+
+    pub fn titlebar_item(&self) -> Option<AnyViewHandle> {
+        self.titlebar_item.clone()
     }
 
     /// Call the given callback with a workspace whose project is local.
@@ -2811,8 +2816,9 @@ mod tests {
     use crate::sidebar::SidebarItem;
 
     use super::*;
+    use fs::FakeFs;
     use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
-    use project::{FakeFs, Project, ProjectEntryId};
+    use project::{Project, ProjectEntryId};
     use serde_json::json;
 
     pub fn default_item_factory(

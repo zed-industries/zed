@@ -1068,6 +1068,7 @@ dependencies = [
  "editor",
  "env_logger",
  "envy",
+ "fs",
  "futures 0.3.24",
  "git",
  "gpui",
@@ -1083,6 +1084,7 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "reqwest",
+ "rope",
  "rpc",
  "scrypt",
  "serde",
@@ -1574,6 +1576,7 @@ dependencies = [
  "language",
  "postage",
  "project",
+ "rope",
  "serde_json",
  "settings",
  "smallvec",
@@ -1727,6 +1730,7 @@ dependencies = [
  "postage",
  "project",
  "rand 0.8.5",
+ "rope",
  "rpc",
  "serde",
  "settings",
@@ -2008,6 +2012,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fsevent",
+ "futures 0.3.24",
+ "git2",
+ "gpui",
+ "lazy_static",
+ "libc",
+ "log",
+ "lsp",
+ "parking_lot 0.11.2",
+ "regex",
+ "rope",
+ "serde",
+ "serde_json",
+ "smol",
+ "tempfile",
+ "util",
+]
+
+[[package]]
 name = "fs-set-times"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2062,6 +2091,13 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "futures"
 version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a471a38ef8ed83cd6e40aa59c1ffe17db6855c18e3604d9c4ed8c08ebc28678"
+
+[[package]]
+name = "futures"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a471a38ef8ed83cd6e40aa59c1ffe17db6855c18e3604d9c4ed8c08ebc28678"
 
@@ -2265,6 +2301,7 @@ dependencies = [
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
+ "rope",
  "smol",
  "sum_tree",
  "text",
@@ -2312,6 +2349,7 @@ dependencies = [
  "gpui",
  "menu",
  "postage",
+ "rope",
  "settings",
  "text",
  "workspace",
@@ -2900,6 +2938,7 @@ dependencies = [
  "collections",
  "ctor",
  "env_logger",
+ "fs",
  "futures 0.3.24",
  "fuzzy",
  "git",
@@ -2911,6 +2950,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "regex",
+ "rope",
  "rpc",
  "serde",
  "serde_json",
@@ -4073,6 +4113,7 @@ dependencies = [
  "clock",
  "collections",
  "db",
+ "fs",
  "fsevent",
  "futures 0.3.24",
  "fuzzy",
@@ -4081,7 +4122,6 @@ dependencies = [
  "ignore",
  "language",
  "lazy_static",
- "libc",
  "log",
  "lsp",
  "parking_lot 0.11.2",
@@ -4090,6 +4130,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rocksdb",
+ "rope",
  "rpc",
  "serde",
  "serde_json",
@@ -4598,6 +4639,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rope"
+version = "0.1.0"
+dependencies = [
+ "arrayvec 0.7.2",
+ "bromberg_sl2",
+ "gpui",
+ "log",
+ "rand 0.8.5",
+ "smallvec",
+ "sum_tree",
+ "util",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5095,14 +5150,21 @@ dependencies = [
  "anyhow",
  "assets",
  "collections",
+ "fs",
+ "futures 0.3.24",
  "gpui",
  "json_comments",
+ "postage",
+ "rope",
  "schemars",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "theme",
  "toml",
+ "tree-sitter",
+ "tree-sitter-json 0.19.0",
+ "unindent",
  "util",
 ]
 
@@ -5651,13 +5713,12 @@ name = "text"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrayvec 0.7.2",
- "bromberg_sl2",
  "clock",
  "collections",
  "ctor",
  "digest 0.9.0",
  "env_logger",
+ "fs",
  "gpui",
  "lazy_static",
  "log",
@@ -5665,6 +5726,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "regex",
+ "rope",
  "smallvec",
  "sum_tree",
  "util",
@@ -6584,6 +6646,7 @@ dependencies = [
  "nvim-rs",
  "parking_lot 0.11.2",
  "project",
+ "rope",
  "search",
  "serde",
  "serde_json",
@@ -7274,6 +7337,7 @@ dependencies = [
  "collections",
  "context_menu",
  "drag_and_drop",
+ "fs",
  "futures 0.3.24",
  "gpui",
  "language",
@@ -7329,7 +7393,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.59.0"
+version = "0.60.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -7357,6 +7421,7 @@ dependencies = [
  "editor",
  "env_logger",
  "file_finder",
+ "fs",
  "fsevent",
  "futures 0.3.24",
  "fuzzy",

@@ -1,4 +1,3 @@
-pub mod fs;
 mod ignore;
 mod lsp_command;
 pub mod search;
@@ -25,9 +24,8 @@ use language::{
     },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LineEnding, LocalFile,
-    OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Transaction,
+    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
+    Operation, Patch, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -37,6 +35,7 @@ use lsp_command::*;
 use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
+use rope::point_utf16::PointUtf16;
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{FormatOnSave, Formatter, Settings};
@@ -1085,13 +1084,6 @@ impl Project {
                 }
             }
 
-            for worktree in self.worktrees(cx).collect::<Vec<_>>() {
-                worktree.update(cx, |worktree, cx| {
-                    let worktree = worktree.as_local_mut().unwrap();
-                    worktree_share_tasks.push(worktree.share(project_id, cx));
-                });
-            }
-
             for (server_id, status) in &self.language_server_statuses {
                 self.client
                     .send(proto::StartLanguageServer {
@@ -1102,6 +1094,13 @@ impl Project {
                         }),
                     })
                     .log_err();
+            }
+
+            for worktree in self.worktrees(cx).collect::<Vec<_>>() {
+                worktree.update(cx, |worktree, cx| {
+                    let worktree = worktree.as_local_mut().unwrap();
+                    worktree_share_tasks.push(worktree.share(project_id, cx));
+                });
             }
 
             self.client_subscriptions
@@ -4562,6 +4561,7 @@ impl Project {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             }
+            this.shared_buffers.remove(&peer_id);
 
             cx.emit(Event::CollaboratorLeft(peer_id));
             cx.notify();
@@ -6015,33 +6015,6 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
         Self {
             worktree_id,
             path: path.as_ref().into(),
-        }
-    }
-}
-
-impl From<lsp::CreateFileOptions> for fs::CreateOptions {
-    fn from(options: lsp::CreateFileOptions) -> Self {
-        Self {
-            overwrite: options.overwrite.unwrap_or(false),
-            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-        }
-    }
-}
-
-impl From<lsp::RenameFileOptions> for fs::RenameOptions {
-    fn from(options: lsp::RenameFileOptions) -> Self {
-        Self {
-            overwrite: options.overwrite.unwrap_or(false),
-            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-        }
-    }
-}
-
-impl From<lsp::DeleteFileOptions> for fs::RemoveOptions {
-    fn from(options: lsp::DeleteFileOptions) -> Self {
-        Self {
-            recursive: options.recursive.unwrap_or(false),
-            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
         }
     }
 }

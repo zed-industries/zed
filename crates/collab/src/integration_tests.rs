@@ -15,6 +15,7 @@ use editor::{
     self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToOffset,
     ToggleCodeActions, Undo,
 };
+use fs::{FakeFs, Fs as _, LineEnding};
 use futures::{channel::mpsc, Future, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
@@ -24,17 +25,16 @@ use gpui::{
 };
 use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, LanguageRegistry, LineEnding, OffsetRangeExt, Point, Rope,
+    LanguageConfig, LanguageRegistry, OffsetRangeExt, Rope,
 };
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
 use project::{
-    fs::{FakeFs, Fs as _},
-    search::SearchQuery,
-    worktree::WorktreeHandle,
-    DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
+    search::SearchQuery, worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath,
+    ProjectStore, WorktreeId,
 };
 use rand::prelude::*;
+use rope::point::Point;
 use rpc::PeerId;
 use serde_json::json;
 use settings::{Formatter, Settings};
@@ -2017,7 +2017,7 @@ async fn test_leaving_project(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b1 = client_b.build_remote_project(project_id, cx_b).await;
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
 
     // Client A sees that a guest has joined.
@@ -2025,20 +2025,62 @@ async fn test_leaving_project(
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
-    project_b.read_with(cx_b, |project, _| {
+    project_b1.read_with(cx_b, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
     project_c.read_with(cx_c, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
 
-    // Drop client B's connection and ensure client A and client C observe client B leaving the project.
+    // Client B opens a buffer.
+    let buffer_b1 = project_b1
+        .update(cx_b, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            project.open_buffer((worktree_id, "a.txt"), cx)
+        })
+        .await
+        .unwrap();
+    buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
+
+    // Drop client B's project and ensure client A and client C observe client B leaving.
+    cx_b.update(|_| drop(project_b1));
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+    project_c.read_with(cx_c, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+
+    // Client B re-joins the project and can open buffers as before.
+    let project_b2 = client_b.build_remote_project(project_id, cx_b).await;
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+    project_b2.read_with(cx_b, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+    project_c.read_with(cx_c, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+
+    let buffer_b2 = project_b2
+        .update(cx_b, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            project.open_buffer((worktree_id, "a.txt"), cx)
+        })
+        .await
+        .unwrap();
+    buffer_b2.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
+
+    // Drop client B's connection and ensure client A and client C observe client B leaving.
     client_b.disconnect(&cx_b.to_async()).unwrap();
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
     });
-    project_b.read_with(cx_b, |project, _| {
+    project_b2.read_with(cx_b, |project, _| {
         assert!(project.is_read_only());
     });
     project_c.read_with(cx_c, |project, _| {
@@ -2068,7 +2110,7 @@ async fn test_leaving_project(
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 0);
     });
-    project_b.read_with(cx_b, |project, _| {
+    project_b2.read_with(cx_b, |project, _| {
         assert!(project.is_read_only());
     });
     project_c.read_with(cx_c, |project, _| {
@@ -2117,15 +2159,10 @@ async fn test_collaborating_with_diagnostics(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
 
     // Cause the language server to start.
-    let _buffer = cx_a
-        .background()
-        .spawn(project_a.update(cx_a, |project, cx| {
+    let _buffer = project_a
+        .update(cx_a, |project, cx| {
             project.open_buffer(
                 ProjectPath {
                     worktree_id,
@@ -2133,18 +2170,35 @@ async fn test_collaborating_with_diagnostics(
                 },
                 cx,
             )
-        }))
+        })
         .await
         .unwrap();
-
-    // Join the worktree as client B.
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Simulate a language server reporting errors for a file.
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+        lsp::PublishDiagnosticsParams {
+            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            version: None,
+            diagnostics: vec![lsp::Diagnostic {
+                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
+                message: "message 0".to_string(),
+                ..Default::default()
+            }],
+        },
+    );
+
+    // Client A shares the project and, simultaneously, the language server
+    // publishes a diagnostic. This is done to ensure that the server always
+    // observes the latest diagnostics for a worktree.
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
@@ -2157,6 +2211,9 @@ async fn test_collaborating_with_diagnostics(
             }],
         },
     );
+
+    // Join the worktree as client B.
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Wait for server to see the diagnostics update.
     deterministic.run_until_parked();
@@ -2187,23 +2244,34 @@ async fn test_collaborating_with_diagnostics(
 
     // Join project as client C and observe the diagnostics.
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
-    deterministic.run_until_parked();
-    project_c.read_with(cx_c, |project, cx| {
-        assert_eq!(
-            project.diagnostic_summaries(cx).collect::<Vec<_>>(),
-            &[(
-                ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("a.rs")),
-                },
-                DiagnosticSummary {
-                    error_count: 1,
-                    warning_count: 0,
-                    ..Default::default()
-                },
-            )]
-        )
+    let project_c_diagnostic_summaries = Rc::new(RefCell::new(Vec::new()));
+    project_c.update(cx_c, |_, cx| {
+        let summaries = project_c_diagnostic_summaries.clone();
+        cx.subscribe(&project_c, {
+            move |p, _, event, cx| {
+                if let project::Event::DiskBasedDiagnosticsFinished { .. } = event {
+                    *summaries.borrow_mut() = p.diagnostic_summaries(cx).collect();
+                }
+            }
+        })
+        .detach();
     });
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        project_c_diagnostic_summaries.borrow().as_slice(),
+        &[(
+            ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("a.rs")),
+            },
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+                ..Default::default()
+            },
+        )]
+    );
 
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
@@ -2279,7 +2347,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticEntry {
                     range: Point::new(0, 4)..Point::new(0, 7),
                     diagnostic: Diagnostic {
-                        group_id: 1,
+                        group_id: 2,
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
@@ -2289,7 +2357,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticEntry {
                     range: Point::new(0, 10)..Point::new(0, 13),
                     diagnostic: Diagnostic {
-                        group_id: 2,
+                        group_id: 3,
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
                         is_primary: true,

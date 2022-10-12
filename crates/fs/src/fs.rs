@@ -1,10 +1,18 @@
+pub mod repository;
+
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use git::repository::{GitRepository, LibGitRepository};
-use language::LineEnding;
+use git2::Repository as LibGitRepository;
+use lazy_static::lazy_static;
 use parking_lot::Mutex as SyncMutex;
+use regex::Regex;
+use repository::GitRepository;
+use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
+use std::borrow::Cow;
+use std::cmp;
+use std::io::Write;
 use std::sync::Arc;
 use std::{
     io,
@@ -13,7 +21,7 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
-use text::Rope;
+use tempfile::NamedTempFile;
 use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -21,10 +29,69 @@ use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
 use futures::lock::Mutex;
 #[cfg(any(test, feature = "test-support"))]
-use git::repository::FakeGitRepositoryState;
+use repository::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Weak;
 
+lazy_static! {
+    static ref CARRIAGE_RETURNS_REGEX: Regex = Regex::new("\r\n|\r").unwrap();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineEnding {
+    Unix,
+    Windows,
+}
+
+impl Default for LineEnding {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::CRLF;
+    }
+}
+
+impl LineEnding {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
+        }
+    }
+
+    pub fn detect(text: &str) -> Self {
+        let mut max_ix = cmp::min(text.len(), 1000);
+        while !text.is_char_boundary(max_ix) {
+            max_ix -= 1;
+        }
+
+        if let Some(ix) = text[..max_ix].find(&['\n']) {
+            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
+                Self::Windows
+            } else {
+                Self::Unix
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn normalize(text: &mut String) {
+        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(text, "\n") {
+            *text = replaced;
+        }
+    }
+
+    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
+        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
+    }
+}
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
@@ -35,6 +102,7 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
+    async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -84,6 +152,33 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+}
+
+impl From<lsp::CreateFileOptions> for CreateOptions {
+    fn from(options: lsp::CreateFileOptions) -> Self {
+        Self {
+            overwrite: options.overwrite.unwrap_or(false),
+            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+        }
+    }
+}
+
+impl From<lsp::RenameFileOptions> for RenameOptions {
+    fn from(options: lsp::RenameFileOptions) -> Self {
+        Self {
+            overwrite: options.overwrite.unwrap_or(false),
+            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+        }
+    }
+}
+
+impl From<lsp::DeleteFileOptions> for RemoveOptions {
+    fn from(options: lsp::DeleteFileOptions) -> Self {
+        Self {
+            recursive: options.recursive.unwrap_or(false),
+            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
+        }
+    }
 }
 
 pub struct RealFs;
@@ -166,6 +261,18 @@ impl Fs for RealFs {
         let mut text = String::new();
         file.read_to_string(&mut text).await?;
         Ok(text)
+    }
+
+    async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+        smol::unblock(move || {
+            let mut tmp_file = NamedTempFile::new()?;
+            tmp_file.write_all(data.as_bytes())?;
+            tmp_file.persist(path)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await?;
+
+        Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
@@ -285,7 +392,7 @@ enum FakeFsEntry {
         inode: u64,
         mtime: SystemTime,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
-        git_repo_state: Option<Arc<SyncMutex<git::repository::FakeGitRepositoryState>>>,
+        git_repo_state: Option<Arc<SyncMutex<repository::FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -788,6 +895,14 @@ impl Fs for FakeFs {
         entry.file_content(&path).cloned()
     }
 
+    async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path.as_path());
+        self.insert_file(path, data.to_string()).await;
+
+        Ok(())
+    }
+
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
@@ -897,7 +1012,7 @@ impl Fs for FakeFs {
                         Arc::new(SyncMutex::new(FakeGitRepositoryState::default()))
                     })
                     .clone();
-                Some(git::repository::FakeGitRepository::open(state))
+                Some(repository::FakeGitRepository::open(state))
             } else {
                 None
             }

@@ -35,8 +35,9 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
+use language::{Bias, DiagnosticSeverity, Selection};
 use project::ProjectPath;
+use rope::offset_utf16::OffsetUtf16;
 use settings::{GitGutter, Settings};
 use smallvec::SmallVec;
 use std::{
@@ -916,36 +917,30 @@ impl EditorElement {
 
         let view = self.view.clone();
         let style = &self.style.theme.scrollbar;
-        let min_thumb_height =
-            style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
 
         let top = bounds.min_y();
         let bottom = bounds.max_y();
         let right = bounds.max_x();
         let left = right - style.width;
-        let height = bounds.height();
         let row_range = &layout.scrollbar_row_range;
-        let max_row = layout.max_row + ((row_range.end - row_range.start) as u32);
-        let scrollbar_start = row_range.start as f32 / max_row as f32;
-        let scrollbar_end = row_range.end as f32 / max_row as f32;
+        let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
-        let mut thumb_top = top + scrollbar_start * height;
-        let mut thumb_bottom = top + scrollbar_end * height;
-        let thumb_center = (thumb_top + thumb_bottom) / 2.0;
+        let mut height = bounds.height();
+        let mut first_row_y_offset = 0.0;
 
-        if thumb_bottom - thumb_top < min_thumb_height {
-            thumb_top = thumb_center - min_thumb_height / 2.0;
-            thumb_bottom = thumb_center + min_thumb_height / 2.0;
-            if thumb_top < top {
-                thumb_top = top;
-                thumb_bottom = top + min_thumb_height;
-            }
-            if thumb_bottom > bottom {
-                thumb_bottom = bottom;
-                thumb_top = bottom - min_thumb_height;
-            }
+        // Impose a minimum height on the scrollbar thumb
+        let min_thumb_height =
+            style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
+        let thumb_height = (row_range.end - row_range.start) * height / max_row;
+        if thumb_height < min_thumb_height {
+            first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
+            height -= min_thumb_height - thumb_height;
         }
 
+        let y_for_row = |row: f32| -> f32 { top + first_row_y_offset + row * height / max_row };
+
+        let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
+        let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
         let track_bounds = RectF::from_points(vec2f(left, top), vec2f(right, bottom));
         let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
 
@@ -1587,11 +1582,14 @@ impl Element for EditorElement {
         // The scroll position is a fractional point, the whole number of which represents
         // the top of the window in terms of display rows.
         let start_row = scroll_position.y() as u32;
-        let visible_row_count = (size.y() / line_height).ceil() as u32;
+        let height_in_lines = size.y() / line_height;
         let max_row = snapshot.max_point().row();
 
         // Add 1 to ensure selections bleed off screen
-        let end_row = 1 + cmp::min(start_row + visible_row_count, max_row);
+        let end_row = 1 + cmp::min(
+            (scroll_position.y() + height_in_lines).ceil() as u32,
+            max_row,
+        );
 
         let start_anchor = if start_row == 0 {
             Anchor::min()
@@ -1685,8 +1683,7 @@ impl Element for EditorElement {
             .git_diff_hunks_in_range(start_row..end_row)
             .collect();
 
-        let scrollbar_row_range =
-            scroll_position.y()..(scroll_position.y() + visible_row_count as f32);
+        let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
@@ -1723,7 +1720,7 @@ impl Element for EditorElement {
 
         let scroll_max = vec2f(
             ((scroll_width - text_size.x()) / em_width).max(0.0),
-            max_row.saturating_sub(1) as f32,
+            max_row as f32,
         );
 
         self.update_view(cx.app, |view, cx| {

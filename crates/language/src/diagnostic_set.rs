@@ -1,12 +1,13 @@
 use crate::Diagnostic;
 use collections::HashMap;
+use rope::point_utf16::PointUtf16;
 use std::{
     cmp::{Ordering, Reverse},
     iter,
     ops::Range,
 };
 use sum_tree::{self, Bias, SumTree};
-use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
+use text::{Anchor, FromAnchor, ToOffset};
 
 #[derive(Clone, Debug, Default)]
 pub struct DiagnosticSet {

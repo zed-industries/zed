@@ -2,7 +2,6 @@ mod feedback;
 pub mod languages;
 pub mod menus;
 pub mod paths;
-pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -10,10 +9,11 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
-use collab_ui::CollabTitlebarItem;
+use collab_ui::{CollabTitlebarItem, ToggleCollaborationMenu};
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
+
 use gpui::{
     actions,
     geometry::vector::vec2f,
@@ -23,7 +23,7 @@ use gpui::{
 };
 use language::Rope;
 pub use lsp;
-pub use project::{self, fs};
+pub use project;
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
@@ -92,6 +92,22 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(
         |_: &mut Workspace, _: &ToggleFullScreen, cx: &mut ViewContext<Workspace>| {
             cx.toggle_full_screen();
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace,
+         _: &ToggleCollaborationMenu,
+         cx: &mut ViewContext<Workspace>| {
+            if let Some(item) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<CollabTitlebarItem>())
+            {
+                cx.as_mut().defer(move |cx| {
+                    item.update(cx, |item, cx| {
+                        item.toggle_contacts_popover(&Default::default(), cx);
+                    });
+                });
+            }
         },
     );
     cx.add_global_action(quit);

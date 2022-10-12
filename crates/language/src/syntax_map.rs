@@ -1,6 +1,7 @@
 use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use rope::point::Point;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -10,7 +11,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, SeekTarget, SumTree};
-use text::{rope, Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Rope, ToOffset, ToPoint};
 use tree_sitter::{
     Node, Parser, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree,
 };
@@ -1242,7 +1243,7 @@ mod tests {
     use crate::LanguageConfig;
     use rand::rngs::StdRng;
     use std::env;
-    use text::{Buffer, Point};
+    use text::Buffer;
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
 
