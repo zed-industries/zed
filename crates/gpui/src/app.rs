@@ -6376,18 +6376,29 @@ mod tests {
         assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
 
         view_1.update(cx, |_, cx| {
-            // Ensure only the latest focus is honored.
+            // Ensure focus events are sent for all intermediate focuses
             cx.focus(&view_2);
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
-            ["view 1 blurred", "view 2 focused"],
+            [
+                "view 1 blurred",
+                "view 2 focused",
+                "view 2 blurred",
+                "view 1 focused",
+                "view 1 blurred",
+                "view 2 focused"
+            ],
         );
         assert_eq!(
             mem::take(&mut *observed_events.lock()),
             [
+                "view 2 observed view 1's blur",
+                "view 1 observed view 2's focus",
+                "view 1 observed view 2's blur",
+                "view 2 observed view 1's focus",
                 "view 2 observed view 1's blur",
                 "view 1 observed view 2's focus"
             ]
