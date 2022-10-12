@@ -2017,7 +2017,7 @@ async fn test_leaving_project(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b1 = client_b.build_remote_project(project_id, cx_b).await;
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
 
     // Client A sees that a guest has joined.
@@ -2025,20 +2025,62 @@ async fn test_leaving_project(
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
-    project_b.read_with(cx_b, |project, _| {
+    project_b1.read_with(cx_b, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
     project_c.read_with(cx_c, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
 
-    // Drop client B's connection and ensure client A and client C observe client B leaving the project.
+    // Client B opens a buffer.
+    let buffer_b1 = project_b1
+        .update(cx_b, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            project.open_buffer((worktree_id, "a.txt"), cx)
+        })
+        .await
+        .unwrap();
+    buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
+
+    // Drop client B's project and ensure client A and client C observe client B leaving.
+    cx_b.update(|_| drop(project_b1));
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+    project_c.read_with(cx_c, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+
+    // Client B re-joins the project and can open buffers as before.
+    let project_b2 = client_b.build_remote_project(project_id, cx_b).await;
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+    project_b2.read_with(cx_b, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+    project_c.read_with(cx_c, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+
+    let buffer_b2 = project_b2
+        .update(cx_b, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            project.open_buffer((worktree_id, "a.txt"), cx)
+        })
+        .await
+        .unwrap();
+    buffer_b2.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
+
+    // Drop client B's connection and ensure client A and client C observe client B leaving.
     client_b.disconnect(&cx_b.to_async()).unwrap();
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
     });
-    project_b.read_with(cx_b, |project, _| {
+    project_b2.read_with(cx_b, |project, _| {
         assert!(project.is_read_only());
     });
     project_c.read_with(cx_c, |project, _| {
@@ -2068,7 +2110,7 @@ async fn test_leaving_project(
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 0);
     });
-    project_b.read_with(cx_b, |project, _| {
+    project_b2.read_with(cx_b, |project, _| {
         assert!(project.is_read_only());
     });
     project_c.read_with(cx_c, |project, _| {
