@@ -9,7 +9,8 @@ gpui::actions!(
         SelectPrev,
         SelectNext,
         SelectFirst,
-        SelectLast
+        SelectLast,
+        Autocomplete
     ]
 );
 

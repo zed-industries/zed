@@ -10,7 +10,9 @@ use gpui::{
     AnyViewHandle, AppContext, Axis, Element, ElementBox, Entity, MouseButton, MouseState,
     MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
+use menu::{
+    Autocomplete, Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev,
+};
 use settings::Settings;
 use std::cmp;
 
@@ -37,6 +39,9 @@ pub trait PickerDelegate: View {
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox;
+    fn get_selected_text(&self, _cx: &mut ViewContext<Self>) -> Option<String> {
+        None
+    }
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }
@@ -130,6 +135,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx.add_action(Self::select_next);
         cx.add_action(Self::select_prev);
         cx.add_action(Self::select_index);
+        cx.add_action(Self::autocomplete);
         cx.add_action(Self::confirm);
         cx.add_action(Self::cancel);
     }
@@ -213,6 +219,16 @@ impl<D: PickerDelegate> Picker<D> {
                 });
             })
             .detach()
+        }
+    }
+
+    pub fn autocomplete(&mut self, _: &Autocomplete, cx: &mut ViewContext<Self>) {
+        if let Some(delegate) = self.delegate.upgrade(cx) {
+            let text = delegate.update(cx, |delegate, cx| delegate.get_selected_text(cx));
+            if let Some(text) = text {
+                self.query_editor
+                    .update(cx, |editor, cx| editor.set_text(text, cx))
+            }
         }
     }
 

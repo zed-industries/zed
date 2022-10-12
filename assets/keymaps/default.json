@@ -11,6 +11,7 @@
             "enter": "menu::Confirm",
             "escape": "menu::Cancel",
             "ctrl-c": "menu::Cancel",
+            "tab": "menu::Autocomplete",
             "cmd-{": "pane::ActivatePrevItem",
             "cmd-}": "pane::ActivateNextItem",
             "alt-cmd-left": "pane::ActivatePrevItem",
@@ -446,6 +447,10 @@
             ],
             // There are conflicting bindings for these keys in the global context.
             // these bindings override them, remove at your own risk:
+            "tab": [
+                "terminal::SendKeystroke",
+                "tab"
+            ],
             "up": [
                 "terminal::SendKeystroke",
                 "up"

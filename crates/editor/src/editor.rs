@@ -3010,6 +3010,11 @@ impl Editor {
             return;
         }
 
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
         let mut selections = self.selections.all_adjusted(cx);
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);

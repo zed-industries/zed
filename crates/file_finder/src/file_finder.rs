@@ -276,6 +276,12 @@ impl PickerDelegate for FileFinder {
             .with_style(style.container)
             .named("match")
     }
+
+    fn get_selected_text(&self, _cx: &mut ViewContext<Self>) -> Option<String> {
+        self.matches
+            .get(self.selected_index())
+            .map(|path_match| path_match.path.to_string_lossy().to_string())
+    }
 }
 
 #[cfg(test)]
