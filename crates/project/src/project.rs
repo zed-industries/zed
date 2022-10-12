@@ -1084,13 +1084,6 @@ impl Project {
                 }
             }
 
-            for worktree in self.worktrees(cx).collect::<Vec<_>>() {
-                worktree.update(cx, |worktree, cx| {
-                    let worktree = worktree.as_local_mut().unwrap();
-                    worktree_share_tasks.push(worktree.share(project_id, cx));
-                });
-            }
-
             for (server_id, status) in &self.language_server_statuses {
                 self.client
                     .send(proto::StartLanguageServer {
@@ -1101,6 +1094,13 @@ impl Project {
                         }),
                     })
                     .log_err();
+            }
+
+            for worktree in self.worktrees(cx).collect::<Vec<_>>() {
+                worktree.update(cx, |worktree, cx| {
+                    let worktree = worktree.as_local_mut().unwrap();
+                    worktree_share_tasks.push(worktree.share(project_id, cx));
+                });
             }
 
             self.client_subscriptions

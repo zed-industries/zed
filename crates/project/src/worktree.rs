@@ -959,9 +959,20 @@ impl LocalWorktree {
             let (snapshots_tx, mut snapshots_rx) = watch::channel_with(self.snapshot());
             let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
+
+            for (path, summary) in self.diagnostic_summaries.iter() {
+                if let Err(e) = rpc.send(proto::UpdateDiagnosticSummary {
+                    project_id,
+                    worktree_id,
+                    summary: Some(summary.to_proto(&path.0)),
+                }) {
+                    return Task::ready(Err(e));
+                }
+            }
+
             let maintain_remote_snapshot = cx.background().spawn({
                 let rpc = rpc;
-                let diagnostic_summaries = self.diagnostic_summaries.clone();
+
                 async move {
                     let mut prev_snapshot = match snapshots_rx.recv().await {
                         Some(snapshot) => {
@@ -993,14 +1004,6 @@ impl LocalWorktree {
                             return Err(anyhow!("failed to send initial update worktree"));
                         }
                     };
-
-                    for (path, summary) in diagnostic_summaries.iter() {
-                        rpc.send(proto::UpdateDiagnosticSummary {
-                            project_id,
-                            worktree_id,
-                            summary: Some(summary.to_proto(&path.0)),
-                        })?;
-                    }
 
                     while let Some(snapshot) = snapshots_rx.recv().await {
                         send_worktree_update(
