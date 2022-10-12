@@ -25,7 +25,7 @@ use gpui::{
 };
 use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, LanguageRegistry, OffsetRangeExt, Rope,
+    LanguageConfig, LanguageRegistry, OffsetRangeExt, Rope, Point,
 };
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
@@ -34,7 +34,6 @@ use project::{
     ProjectStore, WorktreeId,
 };
 use rand::prelude::*;
-use rope::point::Point;
 use rpc::PeerId;
 use serde_json::json;
 use settings::{Formatter, Settings};

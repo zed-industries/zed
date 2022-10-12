@@ -25,7 +25,7 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -35,7 +35,6 @@ use lsp_command::*;
 use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
-use rope::point_utf16::PointUtf16;
 use search::SearchQuery;
 use serde::Serialize;
 use settings::{FormatOnSave, Formatter, Settings};

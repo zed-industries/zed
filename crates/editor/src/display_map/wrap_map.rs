@@ -8,9 +8,8 @@ use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::Chunk;
+use language::{Chunk, Point};
 use lazy_static::lazy_static;
-use rope::point::Point;
 use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};

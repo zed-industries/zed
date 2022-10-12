@@ -9,10 +9,10 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk,
-    DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, Outline, OutlineItem,
-    Selection, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
+    DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _,
+    ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
-use rope::{offset_utf16::OffsetUtf16, point::Point, point_utf16::PointUtf16, TextDimension};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -168,7 +168,7 @@ struct ExcerptChunks<'a> {
 }
 
 struct ExcerptBytes<'a> {
-    content_bytes: rope::Bytes<'a>,
+    content_bytes: text::Bytes<'a>,
     footer_height: usize,
 }
 

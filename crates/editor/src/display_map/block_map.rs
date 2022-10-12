@@ -5,9 +5,8 @@ use super::{
 use crate::{Anchor, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{ElementBox, RenderContext};
-use language::{BufferSnapshot, Chunk, Patch};
+use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
-use rope::point::Point;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},

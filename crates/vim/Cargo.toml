@@ -27,7 +27,6 @@ command_palette = { path = "../command_palette" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
-rope = { path = "../rope" }
 search = { path = "../search" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }

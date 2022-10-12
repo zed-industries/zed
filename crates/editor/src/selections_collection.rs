@@ -8,8 +8,7 @@ use std::{
 use collections::HashMap;
 use gpui::{AppContext, ModelHandle, MutableAppContext};
 use itertools::Itertools;
-use language::{Bias, Selection, SelectionGoal, ToPoint};
-use rope::{point::Point, TextDimension};
+use language::{Bias, Point, Selection, SelectionGoal, TextDimension, ToPoint};
 use util::post_inc;
 
 use crate::{

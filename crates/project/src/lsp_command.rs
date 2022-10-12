@@ -8,11 +8,10 @@ use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Anchor, Bias, Buffer, CachedLspAdapter, ToPointUtf16,
+    range_from_lsp, Anchor, Bias, Buffer, CachedLspAdapter, PointUtf16, ToPointUtf16,
 };
 use lsp::{DocumentHighlightKind, LanguageServer, ServerCapabilities};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
-use rope::point_utf16::PointUtf16;
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 
 #[async_trait(?Send)]

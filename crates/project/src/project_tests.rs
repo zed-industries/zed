@@ -5,10 +5,9 @@ use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe};
 use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    OffsetRangeExt, ToPoint,
+    OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
-use rope::point::Point;
 use serde_json::json;
 use std::{cell::RefCell, os::unix, rc::Rc, task::Poll};
 use unindent::Unindent as _;

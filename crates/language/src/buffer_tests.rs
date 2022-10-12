@@ -5,7 +5,6 @@ use fs::LineEnding;
 use gpui::{ModelHandle, MutableAppContext};
 use proto::deserialize_operation;
 use rand::prelude::*;
-use rope::point::Point;
 use settings::Settings;
 use std::{
     cell::RefCell,

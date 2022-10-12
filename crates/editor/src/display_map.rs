@@ -11,8 +11,7 @@ use gpui::{
     fonts::{FontId, HighlightStyle},
     Entity, ModelContext, ModelHandle,
 };
-use language::Subscription as BufferSubscription;
-use rope::{offset_utf16::OffsetUtf16, point::Point};
+use language::{OffsetUtf16, Point, Subscription as BufferSubscription};
 use settings::Settings;
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};

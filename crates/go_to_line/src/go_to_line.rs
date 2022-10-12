@@ -4,9 +4,8 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use menu::{Cancel, Confirm};
-use rope::point::Point;
 use settings::Settings;
-use text::Bias;
+use text::{Bias, Point};
 use workspace::Workspace;
 
 actions!(go_to_line, [Toggle]);

@@ -22,14 +22,13 @@ use gpui::{
 };
 use language::{
     proto::{deserialize_version, serialize_line_ending, serialize_version},
-    Buffer, DiagnosticEntry, Rope,
+    Buffer, DiagnosticEntry, PointUtf16, Rope,
 };
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rope::point_utf16::PointUtf16;
 
 use smol::channel::{self, Sender};
 use std::{
