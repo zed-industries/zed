@@ -17,7 +17,6 @@ use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use parking_lot::Mutex;
-use rope::point::Point;
 use settings::Settings;
 use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
@@ -283,7 +282,7 @@ struct BufferChunkHighlights<'a> {
 
 pub struct BufferChunks<'a> {
     range: Range<usize>,
-    chunks: rope::Chunks<'a>,
+    chunks: text::Chunks<'a>,
     diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
     error_depth: usize,
     warning_depth: usize,

@@ -15,7 +15,6 @@ editor = { path = "../editor" }
 language = { path = "../language" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
-rope = { path = "../rope" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }

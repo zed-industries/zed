@@ -1,15 +1,16 @@
-pub mod offset_utf16;
-pub mod point;
-pub mod point_utf16;
+mod offset_utf16;
+mod point;
+mod point_utf16;
 
 use arrayvec::ArrayString;
 use bromberg_sl2::{DigestString, HashMatrix};
-use offset_utf16::OffsetUtf16;
-use point::Point;
-use point_utf16::PointUtf16;
 use smallvec::SmallVec;
 use std::{cmp, fmt, io, mem, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
+
+pub use offset_utf16::OffsetUtf16;
+pub use point::Point;
+pub use point_utf16::PointUtf16;
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;

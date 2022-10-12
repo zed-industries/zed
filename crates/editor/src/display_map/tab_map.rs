@@ -3,10 +3,8 @@ use super::{
     TextHighlights,
 };
 use crate::MultiBufferSnapshot;
-use language::Chunk;
+use language::{Chunk, Point};
 use parking_lot::Mutex;
-use rope;
-use rope::point::Point;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
@@ -372,7 +370,7 @@ pub struct TextSummary {
 
 impl<'a> From<&'a str> for TextSummary {
     fn from(text: &'a str) -> Self {
-        let sum = rope::TextSummary::from(text);
+        let sum = text::TextSummary::from(text);
 
         TextSummary {
             lines: sum.lines,
@@ -524,7 +522,7 @@ mod tests {
         log::info!("FoldMap text: {:?}", folds_snapshot.text());
 
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
-        let text = rope::Rope::from(tabs_snapshot.text().as_str());
+        let text = text::Rope::from(tabs_snapshot.text().as_str());
         log::info!(
             "TabMap text (tab size: {}): {:?}",
             tab_size,

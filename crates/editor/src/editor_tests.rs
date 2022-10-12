@@ -13,9 +13,8 @@ use gpui::{
     geometry::rect::RectF,
     platform::{WindowBounds, WindowOptions},
 };
-use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry};
+use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
 use project::FakeFs;
-use rope::point::Point;
 use settings::EditorSettings;
 use util::{
     assert_set_eq,

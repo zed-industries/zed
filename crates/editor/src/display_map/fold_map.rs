@@ -5,9 +5,8 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::fonts::HighlightStyle;
-use language::{Chunk, Edit, TextSummary};
+use language::{Chunk, Edit, Point, TextSummary};
 use parking_lot::Mutex;
-use rope::point::Point;
 use std::{
     any::TypeId,
     cmp::{self, Ordering},

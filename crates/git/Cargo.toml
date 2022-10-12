@@ -9,7 +9,6 @@ path = "src/git.rs"
 [dependencies]
 anyhow = "1.0.38"
 clock = { path = "../clock" }
-rope = { path = "../rope" }
 lazy_static = "1.4.0"
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }

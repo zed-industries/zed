@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use collections::{HashMap, HashSet};
 use gpui::ContextHandle;
-use language::OffsetRangeExt;
+use language::{OffsetRangeExt, Point};
 use util::test::marked_text_offsets;
 
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
@@ -51,7 +51,7 @@ impl<'a> NeovimBackedTestContext<'a> {
     pub async fn set_shared_state(&mut self, marked_text: &str) -> ContextHandle {
         let context_handle = self.set_state(marked_text, Mode::Normal);
 
-        let selection = self.editor(|editor, cx| editor.selections.newest::<rope::point::Point>(cx));
+        let selection = self.editor(|editor, cx| editor.selections.newest::<Point>(cx));
         let text = self.buffer_text();
         self.neovim.set_state(selection, &text).await;
 

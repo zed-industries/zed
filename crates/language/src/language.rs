@@ -22,7 +22,6 @@ use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use regex::Regex;
-use rope::point_utf16::PointUtf16;
 use serde::{de, Deserialize, Deserializer};
 use serde_json::Value;
 use std::{

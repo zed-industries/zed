@@ -19,9 +19,10 @@ use locator::Locator;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
 use postage::{barrier, oneshot, prelude::*};
-use rope::{offset_utf16::OffsetUtf16, point::Point, point_utf16::PointUtf16, TextDimension};
-pub use rope::{Chunks, Rope, TextSummary};
+
+pub use rope::*;
 pub use selection::*;
+
 use std::{
     cmp::{self, Ordering, Reverse},
     future::Future,

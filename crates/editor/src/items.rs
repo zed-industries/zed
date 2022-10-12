@@ -9,9 +9,8 @@ use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, File as _, OffsetRangeExt, SelectionGoal};
+use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
 use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
-use rope::point::Point;
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;

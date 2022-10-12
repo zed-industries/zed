@@ -1,7 +1,6 @@
 use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
-use rope::point::Point;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -11,7 +10,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, SeekTarget, SumTree};
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Rope, ToOffset, ToPoint};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{
     Node, Parser, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree,
 };
@@ -135,7 +134,7 @@ struct ChangeRegionSet(Vec<ChangedRegion>);
 
 struct TextProvider<'a>(&'a Rope);
 
-struct ByteChunks<'a>(rope::Chunks<'a>);
+struct ByteChunks<'a>(text::Chunks<'a>);
 
 struct QueryCursorHandle(Option<QueryCursor>);
 
