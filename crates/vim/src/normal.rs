@@ -15,7 +15,8 @@ use editor::{
     display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, ClipboardSelection, DisplayPoint,
 };
 use gpui::{actions, MutableAppContext, ViewContext};
-use language::{AutoindentMode, Point, SelectionGoal};
+use language::{AutoindentMode, SelectionGoal};
+use rope::point::Point;
 use workspace::Workspace;
 
 use self::{

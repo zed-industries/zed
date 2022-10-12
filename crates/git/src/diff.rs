@@ -1,7 +1,8 @@
 use std::ops::Range;
 
+use rope::point::Point;
 use sum_tree::SumTree;
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};

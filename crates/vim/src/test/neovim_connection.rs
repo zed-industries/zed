@@ -8,7 +8,10 @@ use async_compat::Compat;
 use async_trait::async_trait;
 #[cfg(feature = "neovim")]
 use gpui::keymap::Keystroke;
-use language::{Point, Selection};
+
+use language::Selection;
+use rope::point::Point;
+
 #[cfg(feature = "neovim")]
 use lazy_static::lazy_static;
 #[cfg(feature = "neovim")]

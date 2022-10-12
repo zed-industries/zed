@@ -1,14 +1,12 @@
-use super::{
-    fs::{self, Fs},
-    ignore::IgnoreStack,
-    DiagnosticSummary,
-};
+use super::{ignore::IgnoreStack, DiagnosticSummary};
 use crate::{copy_recursive, ProjectEntryId, RemoveOptions};
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
+use fs::LineEnding;
+use fs::{repository::GitRepository, Fs};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -17,7 +15,6 @@ use futures::{
     Stream, StreamExt,
 };
 use fuzzy::CharBag;
-use git::repository::GitRepository;
 use git::{DOT_GIT, GITIGNORE};
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -25,13 +22,14 @@ use gpui::{
 };
 use language::{
     proto::{deserialize_version, serialize_line_ending, serialize_version},
-    Buffer, DiagnosticEntry, LineEnding, PointUtf16, Rope,
+    Buffer, DiagnosticEntry, Rope,
 };
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use rope::point_utf16::PointUtf16;
 
 use smol::channel::{self, Sender};
 use std::{
@@ -2970,11 +2968,10 @@ async fn send_worktree_update(client: &Arc<Client>, update: proto::UpdateWorktre
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::FakeFs;
     use anyhow::Result;
     use client::test::FakeHttpClient;
-    use fs::RealFs;
-    use git::repository::FakeGitRepository;
+    use fs::repository::FakeGitRepository;
+    use fs::{FakeFs, RealFs};
     use gpui::{executor::Deterministic, TestAppContext};
     use rand::prelude::*;
     use serde_json::json;

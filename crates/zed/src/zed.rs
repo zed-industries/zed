@@ -2,7 +2,6 @@ mod feedback;
 pub mod languages;
 pub mod menus;
 pub mod paths;
-pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -14,6 +13,7 @@ use collab_ui::CollabTitlebarItem;
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
+
 use gpui::{
     actions,
     geometry::vector::vec2f,
@@ -23,7 +23,7 @@ use gpui::{
 };
 use language::Rope;
 pub use lsp;
-pub use project::{self, fs};
+pub use project;
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;

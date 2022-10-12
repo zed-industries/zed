@@ -15,8 +15,8 @@ use gpui::{
 };
 use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry};
 use project::FakeFs;
+use rope::point::Point;
 use settings::EditorSettings;
-use text::Point;
 use util::{
     assert_set_eq,
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},

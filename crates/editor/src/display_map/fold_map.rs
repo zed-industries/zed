@@ -5,8 +5,9 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::fonts::HighlightStyle;
-use language::{Chunk, Edit, Point, TextSummary};
+use language::{Chunk, Edit, TextSummary};
 use parking_lot::Mutex;
+use rope::point::Point;
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
@@ -18,11 +19,11 @@ use std::{
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct FoldPoint(pub super::Point);
+pub struct FoldPoint(pub Point);
 
 impl FoldPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(super::Point::new(row, column))
+        Self(Point::new(row, column))
     }
 
     pub fn row(self) -> u32 {
@@ -1196,8 +1197,8 @@ mod tests {
     use settings::Settings;
     use std::{cmp::Reverse, env, mem, sync::Arc};
     use sum_tree::TreeMap;
-    use text::RandomCharIter;
     use util::test::sample_text;
+    use util::RandomCharIter;
     use Bias::{Left, Right};
 
     #[gpui::test]

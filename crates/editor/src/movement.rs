@@ -1,6 +1,7 @@
+use rope::point::Point;
+
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, ToPoint};
-use language::Point;
 use std::ops::Range;
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
@@ -336,7 +337,7 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
 mod tests {
     use super::*;
     use crate::{test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange, MultiBuffer};
-    use language::Point;
+    use rope::point::Point;
     use settings::Settings;
 
     #[gpui::test]

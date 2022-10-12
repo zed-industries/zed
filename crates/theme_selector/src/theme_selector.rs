@@ -107,7 +107,9 @@ impl ThemeSelector {
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             match self.registry.get(&mat.string) {
-                Ok(theme) => Self::set_theme(theme, cx),
+                Ok(theme) => {
+                    Self::set_theme(theme, cx);
+                }
                 Err(error) => {
                     log::error!("error loading theme {}: {}", mat.string, error)
                 }
@@ -151,6 +153,10 @@ impl PickerDelegate for ThemeSelector {
 
     fn confirm(&mut self, cx: &mut ViewContext<Self>) {
         self.selection_completed = true;
+
+        let theme_name = cx.global::<Settings>().theme.meta.name.clone();
+        settings::settings_file::write_setting("theme", theme_name, cx);
+
         cx.emit(Event::Dismissed);
     }
 

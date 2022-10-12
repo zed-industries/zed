@@ -35,8 +35,9 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
+use language::{Bias, DiagnosticSeverity, Selection};
 use project::ProjectPath;
+use rope::offset_utf16::OffsetUtf16;
 use settings::{GitGutter, Settings};
 use smallvec::SmallVec;
 use std::{
