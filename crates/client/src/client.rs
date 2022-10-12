@@ -672,7 +672,7 @@ impl Client {
                         if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
                             write_credentials_to_keychain(&credentials, cx).log_err();
                         }
-                        self.set_connection(conn, cx).await;
+                        self.set_connection(conn, cx);
                         Ok(())
                     }
                     Err(EstablishConnectionError::Unauthorized) => {
@@ -703,13 +703,12 @@ impl Client {
         }
     }
 
-    async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
+    fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
         let executor = cx.background();
         log::info!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self
             .peer
-            .add_connection(conn, move |duration| executor.timer(duration))
-            .await;
+            .add_connection(conn, move |duration| executor.timer(duration));
         log::info!("set status to connected {}", connection_id);
         self.set_status(Status::Connected { connection_id }, cx);
         cx.foreground()

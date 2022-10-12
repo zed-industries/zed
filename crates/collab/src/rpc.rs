@@ -365,8 +365,7 @@ impl Server {
                             timer.await;
                         }
                     }
-                })
-                .await;
+                });
 
             tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
 
