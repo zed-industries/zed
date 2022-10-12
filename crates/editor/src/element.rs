@@ -44,7 +44,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::Range,
+    ops::{DerefMut, Range},
     sync::Arc,
 };
 use theme::DiffStyle;
@@ -455,7 +455,6 @@ impl EditorElement {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
-        let editor = self.view(cx.app);
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
@@ -469,7 +468,7 @@ impl EditorElement {
             corner_radius: 0.,
         });
 
-        if let EditorMode::Full = editor.mode {
+        if let EditorMode::Full = layout.mode {
             let mut active_rows = layout.active_rows.iter().peekable();
             while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
                 let mut end_row = *start_row;
@@ -753,7 +752,7 @@ impl EditorElement {
                                 .snapshot
                                 .chars_at(cursor_position)
                                 .next()
-                                .and_then(|character| {
+                                .and_then(|(character, _)| {
                                     let font_id =
                                         cursor_row_layout.font_for_index(cursor_column)?;
                                     let text = character.to_string();
@@ -908,6 +907,119 @@ impl EditorElement {
         }
 
         cx.scene.pop_layer();
+    }
+
+    fn paint_scrollbar(&mut self, bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
+        enum ScrollbarMouseHandlers {}
+        if layout.mode != EditorMode::Full {
+            return;
+        }
+
+        let view = self.view.clone();
+        let style = &self.style.theme.scrollbar;
+
+        let top = bounds.min_y();
+        let bottom = bounds.max_y();
+        let right = bounds.max_x();
+        let left = right - style.width;
+        let row_range = &layout.scrollbar_row_range;
+        let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
+
+        let mut height = bounds.height();
+        let mut first_row_y_offset = 0.0;
+
+        // Impose a minimum height on the scrollbar thumb
+        let min_thumb_height =
+            style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
+        let thumb_height = (row_range.end - row_range.start) * height / max_row;
+        if thumb_height < min_thumb_height {
+            first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
+            height -= min_thumb_height - thumb_height;
+        }
+
+        let y_for_row = |row: f32| -> f32 { top + first_row_y_offset + row * height / max_row };
+
+        let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
+        let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
+        let track_bounds = RectF::from_points(vec2f(left, top), vec2f(right, bottom));
+        let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
+
+        if layout.show_scrollbars {
+            cx.scene.push_quad(Quad {
+                bounds: track_bounds,
+                border: style.track.border,
+                background: style.track.background_color,
+                ..Default::default()
+            });
+            cx.scene.push_quad(Quad {
+                bounds: thumb_bounds,
+                border: style.thumb.border,
+                background: style.thumb.background_color,
+                corner_radius: style.thumb.corner_radius,
+            });
+        }
+
+        cx.scene.push_cursor_region(CursorRegion {
+            bounds: track_bounds,
+            style: CursorStyle::Arrow,
+        });
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<ScrollbarMouseHandlers>(view.id(), view.id(), track_bounds)
+                .on_move({
+                    let view = view.clone();
+                    move |_, cx| {
+                        if let Some(view) = view.upgrade(cx.deref_mut()) {
+                            view.update(cx.deref_mut(), |view, cx| {
+                                view.make_scrollbar_visible(cx);
+                            });
+                        }
+                    }
+                })
+                .on_down(MouseButton::Left, {
+                    let view = view.clone();
+                    let row_range = row_range.clone();
+                    move |e, cx| {
+                        let y = e.position.y();
+                        if let Some(view) = view.upgrade(cx.deref_mut()) {
+                            view.update(cx.deref_mut(), |view, cx| {
+                                if y < thumb_top || thumb_bottom < y {
+                                    let center_row =
+                                        ((y - top) * max_row as f32 / height).round() as u32;
+                                    let top_row = center_row.saturating_sub(
+                                        (row_range.end - row_range.start) as u32 / 2,
+                                    );
+                                    let mut position = view.scroll_position(cx);
+                                    position.set_y(top_row as f32);
+                                    view.set_scroll_position(position, cx);
+                                } else {
+                                    view.make_scrollbar_visible(cx);
+                                }
+                            });
+                        }
+                    }
+                })
+                .on_drag(MouseButton::Left, {
+                    let view = view.clone();
+                    move |e, cx| {
+                        let y = e.prev_mouse_position.y();
+                        let new_y = e.position.y();
+                        if thumb_top < y && y < thumb_bottom {
+                            if let Some(view) = view.upgrade(cx.deref_mut()) {
+                                view.update(cx.deref_mut(), |view, cx| {
+                                    let mut position = view.scroll_position(cx);
+                                    position.set_y(
+                                        position.y() + (new_y - y) * (max_row as f32) / height,
+                                    );
+                                    if position.y() < 0.0 {
+                                        position.set_y(0.);
+                                    }
+                                    view.set_scroll_position(position, cx);
+                                });
+                            }
+                        }
+                    }
+                }),
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1470,13 +1582,11 @@ impl Element for EditorElement {
         // The scroll position is a fractional point, the whole number of which represents
         // the top of the window in terms of display rows.
         let start_row = scroll_position.y() as u32;
-        let scroll_top = scroll_position.y() * line_height;
+        let visible_row_count = (size.y() / line_height).ceil() as u32;
+        let max_row = snapshot.max_point().row();
 
         // Add 1 to ensure selections bleed off screen
-        let end_row = 1 + cmp::min(
-            ((scroll_top + size.y()) / line_height).ceil() as u32,
-            snapshot.max_point().row(),
-        );
+        let end_row = 1 + cmp::min(start_row + visible_row_count, max_row);
 
         let start_anchor = if start_row == 0 {
             Anchor::min()
@@ -1485,7 +1595,7 @@ impl Element for EditorElement {
                 .buffer_snapshot
                 .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
         };
-        let end_anchor = if end_row > snapshot.max_point().row() {
+        let end_anchor = if end_row > max_row {
             Anchor::max()
         } else {
             snapshot
@@ -1497,6 +1607,7 @@ impl Element for EditorElement {
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
+        let mut show_scrollbars = false;
         self.update_view(cx.app, |view, cx| {
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
@@ -1557,6 +1668,8 @@ impl Element for EditorElement {
                         .collect(),
                 ));
             }
+
+            show_scrollbars = view.show_scrollbars();
         });
 
         let line_number_layouts =
@@ -1566,6 +1679,9 @@ impl Element for EditorElement {
             .buffer_snapshot
             .git_diff_hunks_in_range(start_row..end_row)
             .collect();
+
+        let scrollbar_row_range =
+            scroll_position.y()..(scroll_position.y() + visible_row_count as f32);
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
@@ -1600,10 +1716,9 @@ impl Element for EditorElement {
             cx,
         );
 
-        let max_row = snapshot.max_point().row();
         let scroll_max = vec2f(
             ((scroll_width - text_size.x()) / em_width).max(0.0),
-            max_row.saturating_sub(1) as f32,
+            max_row as f32,
         );
 
         self.update_view(cx.app, |view, cx| {
@@ -1630,6 +1745,7 @@ impl Element for EditorElement {
         let mut context_menu = None;
         let mut code_actions_indicator = None;
         let mut hover = None;
+        let mut mode = EditorMode::Full;
         cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
@@ -1651,6 +1767,7 @@ impl Element for EditorElement {
 
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
+            mode = view.mode;
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1698,6 +1815,7 @@ impl Element for EditorElement {
         (
             size,
             LayoutState {
+                mode,
                 position_map: Arc::new(PositionMap {
                     size,
                     scroll_max,
@@ -1710,6 +1828,9 @@ impl Element for EditorElement {
                 gutter_size,
                 gutter_padding,
                 text_size,
+                scrollbar_row_range,
+                show_scrollbars,
+                max_row,
                 gutter_margin,
                 active_rows,
                 highlighted_rows,
@@ -1757,11 +1878,12 @@ impl Element for EditorElement {
         }
         self.paint_text(text_bounds, visible_bounds, layout, cx);
 
+        cx.scene.push_layer(Some(bounds));
         if !layout.blocks.is_empty() {
-            cx.scene.push_layer(Some(bounds));
             self.paint_blocks(bounds, visible_bounds, layout, cx);
-            cx.scene.pop_layer();
         }
+        self.paint_scrollbar(bounds, layout, cx);
+        cx.scene.pop_layer();
 
         cx.scene.pop_layer();
     }
@@ -1847,12 +1969,16 @@ pub struct LayoutState {
     gutter_padding: f32,
     gutter_margin: f32,
     text_size: Vector2F,
+    mode: EditorMode,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
+    scrollbar_row_range: Range<f32>,
+    show_scrollbars: bool,
+    max_row: u32,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     diff_hunks: Vec<DiffHunk<u32>>,
     code_actions_indicator: Option<(u32, ElementBox)>,

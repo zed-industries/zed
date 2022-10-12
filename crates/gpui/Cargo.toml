@@ -25,6 +25,7 @@ env_logger = { version = "0.9", optional = true }
 etagere = "0.2"
 futures = "0.3"
 image = "0.23"
+itertools = "0.10"
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 num_cpus = "1.13"

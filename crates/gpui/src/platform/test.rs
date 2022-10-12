@@ -181,6 +181,10 @@ impl super::Platform for Platform {
         *self.cursor.lock() = style;
     }
 
+    fn should_auto_hide_scrollbars(&self) -> bool {
+        false
+    }
+
     fn local_timezone(&self) -> UtcOffset {
         UtcOffset::UTC
     }

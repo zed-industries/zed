@@ -7,7 +7,20 @@ edition = "2021"
 path = "src/vim.rs"
 doctest = false
 
+[features]
+neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
+
 [dependencies]
+serde = { version = "1.0", features = ["derive", "rc"] }
+itertools = "0.10"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+
+async-compat = { version = "0.2.1", "optional" = true }
+async-trait = { version = "0.1", "optional" = true }
+nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
+tokio = { version = "1.15", "optional" = true }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+
 assets = { path = "../assets" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
@@ -16,14 +29,14 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 rope = { path = "../rope" }
 search = { path = "../search" }
-serde = { version = "1.0", features = ["derive", "rc"] }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
-itertools = "0.10"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 
 [dev-dependencies]
 indoc = "1.0.4"
+parking_lot = "0.11.1"
+lazy_static = "1.4"
+
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }

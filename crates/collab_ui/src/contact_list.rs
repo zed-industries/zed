@@ -65,7 +65,6 @@ enum ContactEntry {
         project_id: u64,
         worktree_root_names: Vec<String>,
         host_user_id: u64,
-        is_host: bool,
         is_last: bool,
     },
     IncomingRequest(Arc<User>),
@@ -181,6 +180,7 @@ impl ContactList {
         let list_state = ListState::new(0, Orientation::Top, 1000., cx, move |this, ix, cx| {
             let theme = cx.global::<Settings>().theme.clone();
             let is_selected = this.selection == Some(ix);
+            let current_project_id = this.project.read(cx).remote_id();
 
             match &this.entries[ix] {
                 ContactEntry::Header(section) => {
@@ -205,13 +205,12 @@ impl ContactList {
                     project_id,
                     worktree_root_names,
                     host_user_id,
-                    is_host,
                     is_last,
                 } => Self::render_participant_project(
                     *project_id,
                     worktree_root_names,
                     *host_user_id,
-                    *is_host,
+                    Some(*project_id) == current_project_id,
                     *is_last,
                     is_selected,
                     &theme.contact_list,
@@ -341,15 +340,12 @@ impl ContactList {
                     ContactEntry::ParticipantProject {
                         project_id,
                         host_user_id,
-                        is_host,
                         ..
                     } => {
-                        if !is_host {
-                            cx.dispatch_global_action(JoinProject {
-                                project_id: *project_id,
-                                follow_user_id: *host_user_id,
-                            });
-                        }
+                        cx.dispatch_global_action(JoinProject {
+                            project_id: *project_id,
+                            follow_user_id: *host_user_id,
+                        });
                     }
                     _ => {}
                 }
@@ -407,7 +403,6 @@ impl ContactList {
                             project_id: project.id,
                             worktree_root_names: project.worktree_root_names.clone(),
                             host_user_id: user_id,
-                            is_host: true,
                             is_last: projects.peek().is_none(),
                         });
                     }
@@ -448,7 +443,6 @@ impl ContactList {
                         project_id: project.id,
                         worktree_root_names: project.worktree_root_names.clone(),
                         host_user_id: participant.user.id,
-                        is_host: false,
                         is_last: projects.peek().is_none(),
                     });
                 }
@@ -667,7 +661,7 @@ impl ContactList {
         project_id: u64,
         worktree_root_names: &[String],
         host_user_id: u64,
-        is_host: bool,
+        is_current: bool,
         is_last: bool,
         is_selected: bool,
         theme: &theme::ContactList,
@@ -749,13 +743,13 @@ impl ContactList {
                 .with_style(row.container)
                 .boxed()
         })
-        .with_cursor_style(if !is_host {
+        .with_cursor_style(if !is_current {
             CursorStyle::PointingHand
         } else {
             CursorStyle::Arrow
         })
         .on_click(MouseButton::Left, move |_, cx| {
-            if !is_host {
+            if !is_current {
                 cx.dispatch_global_action(JoinProject {
                     project_id,
                     follow_user_id: host_user_id,

@@ -37,6 +37,7 @@ pub fn run_test(
         u64,
         bool,
     )),
+    fn_name: String,
 ) {
     // let _profiler = dhat::Profiler::new_heap();
 
@@ -78,6 +79,7 @@ pub fn run_test(
                     font_cache.clone(),
                     leak_detector.clone(),
                     0,
+                    fn_name.clone(),
                 );
                 cx.update(|cx| {
                     test_fn(
