@@ -688,11 +688,12 @@ impl LocalWorktree {
 
             Ok((
                 File {
-                    entry_id: Some(entry.id),
+                    entry_id: entry.id,
                     worktree: handle,
                     path: entry.path,
                     mtime: entry.mtime,
                     is_local: true,
+                    is_deleted: false,
                 },
                 text,
                 diff_base,
@@ -715,11 +716,12 @@ impl LocalWorktree {
         cx.as_mut().spawn(|mut cx| async move {
             let entry = save.await?;
             let file = File {
-                entry_id: Some(entry.id),
+                entry_id: entry.id,
                 worktree: handle,
                 path: entry.path,
                 mtime: entry.mtime,
                 is_local: true,
+                is_deleted: false,
             };
 
             buffer_handle.update(&mut cx, |buffer, cx| {
@@ -1813,8 +1815,9 @@ pub struct File {
     pub worktree: ModelHandle<Worktree>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-    pub(crate) entry_id: Option<ProjectEntryId>,
+    pub(crate) entry_id: ProjectEntryId,
     pub(crate) is_local: bool,
+    pub(crate) is_deleted: bool,
 }
 
 impl language::File for File {
@@ -1852,7 +1855,7 @@ impl language::File for File {
     }
 
     fn is_deleted(&self) -> bool {
-        self.entry_id.is_none()
+        self.is_deleted
     }
 
     fn save(
@@ -1912,9 +1915,10 @@ impl language::File for File {
     fn to_proto(&self) -> rpc::proto::File {
         rpc::proto::File {
             worktree_id: self.worktree.id() as u64,
-            entry_id: self.entry_id.map(|entry_id| entry_id.to_proto()),
+            entry_id: self.entry_id.to_proto(),
             path: self.path.to_string_lossy().into(),
             mtime: Some(self.mtime.into()),
+            is_deleted: self.is_deleted,
         }
     }
 }
@@ -1983,8 +1987,9 @@ impl File {
             worktree,
             path: Path::new(&proto.path).into(),
             mtime: proto.mtime.ok_or_else(|| anyhow!("no timestamp"))?.into(),
-            entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
+            entry_id: ProjectEntryId::from_proto(proto.entry_id),
             is_local: false,
+            is_deleted: proto.is_deleted,
         })
     }
 
@@ -1997,7 +2002,11 @@ impl File {
     }
 
     pub fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-        self.entry_id
+        if self.is_deleted {
+            None
+        } else {
+            Some(self.entry_id)
+        }
     }
 }
 
