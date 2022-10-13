@@ -189,7 +189,9 @@ impl View for ProjectSearchView {
             })
             .boxed()
         } else {
-            ChildView::new(&self.results_editor).flex(1., true).boxed()
+            ChildView::new(&self.results_editor, cx)
+                .flex(1., true)
+                .boxed()
         }
     }
 
@@ -824,7 +826,7 @@ impl View for ProjectSearchBar {
                 .with_child(
                     Flex::row()
                         .with_child(
-                            ChildView::new(&search.query_editor)
+                            ChildView::new(&search.query_editor, cx)
                                 .aligned()
                                 .left()
                                 .flex(1., true)

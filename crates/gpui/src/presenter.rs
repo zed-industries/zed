@@ -12,10 +12,10 @@ use crate::{
         UpOutRegionEvent, UpRegionEvent,
     },
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, Appearance, AssetCache, ElementBox,
-    Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent, MouseRegion, MouseRegionId,
-    ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle,
-    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, Appearance,
+    AssetCache, ElementBox, Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent,
+    MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene,
+    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -972,17 +972,23 @@ impl ToJson for SizeConstraint {
 }
 
 pub struct ChildView {
-    view: AnyViewHandle,
+    view: AnyWeakViewHandle,
+    view_name: &'static str,
 }
 
 impl ChildView {
-    pub fn new(view: impl Into<AnyViewHandle>) -> Self {
-        Self { view: view.into() }
+    pub fn new(view: impl Into<AnyViewHandle>, cx: &AppContext) -> Self {
+        let view = view.into();
+        let view_name = cx.view_ui_name(view.window_id(), view.id()).unwrap();
+        Self {
+            view: view.downgrade(),
+            view_name,
+        }
     }
 }
 
 impl Element for ChildView {
-    type LayoutState = ();
+    type LayoutState = bool;
     type PaintState = ();
 
     fn layout(
@@ -990,18 +996,35 @@ impl Element for ChildView {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = cx.layout(self.view.id(), constraint);
-        (size, ())
+        if cx.rendered_views.contains_key(&self.view.id()) {
+            let size = cx.layout(self.view.id(), constraint);
+            (size, true)
+        } else {
+            log::error!(
+                "layout called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+                self.view.id(),
+                self.view_name
+            );
+            (Vector2F::zero(), false)
+        }
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        _: &mut Self::LayoutState,
+        view_is_valid: &mut Self::LayoutState,
         cx: &mut PaintContext,
-    ) -> Self::PaintState {
-        cx.paint(self.view.id(), bounds.origin(), visible_bounds);
+    ) {
+        if *view_is_valid {
+            cx.paint(self.view.id(), bounds.origin(), visible_bounds);
+        } else {
+            log::error!(
+                "paint called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+                self.view.id(),
+                self.view_name
+            );
+        }
     }
 
     fn dispatch_event(
@@ -1009,11 +1032,20 @@ impl Element for ChildView {
         event: &Event,
         _: RectF,
         _: RectF,
-        _: &mut Self::LayoutState,
+        view_is_valid: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        cx.dispatch_event(self.view.id(), event)
+        if *view_is_valid {
+            cx.dispatch_event(self.view.id(), event)
+        } else {
+            log::error!(
+                "dispatch_event called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+                self.view.id(),
+                self.view_name
+            );
+            false
+        }
     }
 
     fn rect_for_text_range(
@@ -1021,11 +1053,20 @@ impl Element for ChildView {
         range_utf16: Range<usize>,
         _: RectF,
         _: RectF,
-        _: &Self::LayoutState,
+        view_is_valid: &Self::LayoutState,
         _: &Self::PaintState,
         cx: &MeasurementContext,
     ) -> Option<RectF> {
-        cx.rect_for_text_range(self.view.id(), range_utf16)
+        if *view_is_valid {
+            cx.rect_for_text_range(self.view.id(), range_utf16)
+        } else {
+            log::error!(
+                "rect_for_text_range called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+                self.view.id(),
+                self.view_name
+            );
+            None
+        }
     }
 
     fn debug(
@@ -1039,7 +1080,11 @@ impl Element for ChildView {
             "type": "ChildView",
             "view_id": self.view.id(),
             "bounds": bounds.to_json(),
-            "view": self.view.debug_json(cx.app),
+            "view": if let Some(view) = self.view.upgrade(cx.app) {
+                view.debug_json(cx.app)
+            } else {
+                json!(null)
+            },
             "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
                 view.debug(cx)
             } else {

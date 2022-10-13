@@ -5206,7 +5206,7 @@ impl Editor {
                             render: Arc::new({
                                 let editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
-                                    ChildView::new(editor.clone())
+                                    ChildView::new(editor.clone(), cx)
                                         .contained()
                                         .with_padding_left(cx.anchor_x)
                                         .boxed()
@@ -6270,7 +6270,7 @@ impl View for Editor {
             .with_child(
                 EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed(),
             )
-            .with_child(ChildView::new(&self.mouse_context_menu).boxed())
+            .with_child(ChildView::new(&self.mouse_context_menu, cx).boxed())
             .boxed()
     }
 

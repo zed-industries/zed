@@ -165,7 +165,7 @@ impl View for GoToLine {
             Container::new(
                 Flex::new(Axis::Vertical)
                     .with_child(
-                        Container::new(ChildView::new(&self.line_editor).boxed())
+                        Container::new(ChildView::new(&self.line_editor, cx).boxed())
                             .with_style(theme.input_editor.container)
                             .boxed(),
                     )

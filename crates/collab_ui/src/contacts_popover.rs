@@ -88,8 +88,8 @@ impl View for ContactsPopover {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
         let child = match &self.child {
-            Child::ContactList(child) => ChildView::new(child),
-            Child::ContactFinder(child) => ChildView::new(child),
+            Child::ContactList(child) => ChildView::new(child, cx),
+            Child::ContactFinder(child) => ChildView::new(child, cx),
         };
 
         MouseEventHandler::<ContactsPopover>::new(0, cx, |_, cx| {

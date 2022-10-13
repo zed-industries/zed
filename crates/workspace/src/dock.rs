@@ -255,7 +255,7 @@ impl Dock {
 
                     enum DockResizeHandle {}
 
-                    let resizable = Container::new(ChildView::new(self.pane.clone()).boxed())
+                    let resizable = Container::new(ChildView::new(self.pane.clone(), cx).boxed())
                         .with_style(panel_style)
                         .with_resize_handle::<DockResizeHandle, _>(
                             resize_side as usize,
@@ -285,8 +285,8 @@ impl Dock {
                     enum ExpandedDockPane {}
                     Container::new(
                         MouseEventHandler::<ExpandedDockWash>::new(0, cx, |_state, cx| {
-                            MouseEventHandler::<ExpandedDockPane>::new(0, cx, |_state, _cx| {
-                                ChildView::new(self.pane.clone()).boxed()
+                            MouseEventHandler::<ExpandedDockPane>::new(0, cx, |_state, cx| {
+                                ChildView::new(&self.pane, cx).boxed()
                             })
                             .capture_all()
                             .contained()

@@ -223,7 +223,7 @@ impl CollabTitlebarItem {
             .with_children(badge)
             .with_children(self.contacts_popover.as_ref().map(|popover| {
                 Overlay::new(
-                    ChildView::new(popover)
+                    ChildView::new(popover, cx)
                         .contained()
                         .with_margin_top(titlebar.height)
                         .with_margin_left(titlebar.toggle_contacts_button.default.button_width)

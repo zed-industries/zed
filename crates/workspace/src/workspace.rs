@@ -2126,7 +2126,7 @@ impl Workspace {
 
         enum TitleBar {}
         ConstrainedBox::new(
-            MouseEventHandler::<TitleBar>::new(0, cx, |_, _| {
+            MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
                 Container::new(
                     Stack::new()
                         .with_child(
@@ -2138,7 +2138,7 @@ impl Workspace {
                         .with_children(
                             self.titlebar_item
                                 .as_ref()
-                                .map(|item| ChildView::new(item).aligned().right().boxed()),
+                                .map(|item| ChildView::new(item, cx).aligned().right().boxed()),
                         )
                         .boxed(),
                 )
@@ -2231,14 +2231,18 @@ impl Workspace {
         }
     }
 
-    fn render_notifications(&self, theme: &theme::Workspace) -> Option<ElementBox> {
+    fn render_notifications(
+        &self,
+        theme: &theme::Workspace,
+        cx: &AppContext,
+    ) -> Option<ElementBox> {
         if self.notifications.is_empty() {
             None
         } else {
             Some(
                 Flex::column()
                     .with_children(self.notifications.iter().map(|(_, _, notification)| {
-                        ChildView::new(notification.as_ref())
+                        ChildView::new(notification.as_ref(), cx)
                             .contained()
                             .with_style(theme.notification)
                             .boxed()
@@ -2570,7 +2574,7 @@ impl View for Workspace {
                                     .with_children(
                                         if self.left_sidebar.read(cx).active_item().is_some() {
                                             Some(
-                                                ChildView::new(&self.left_sidebar)
+                                                ChildView::new(&self.left_sidebar, cx)
                                                     .flex(0.8, false)
                                                     .boxed(),
                                             )
@@ -2606,7 +2610,7 @@ impl View for Workspace {
                                     .with_children(
                                         if self.right_sidebar.read(cx).active_item().is_some() {
                                             Some(
-                                                ChildView::new(&self.right_sidebar)
+                                                ChildView::new(&self.right_sidebar, cx)
                                                     .flex(0.8, false)
                                                     .boxed(),
                                             )
@@ -2624,15 +2628,17 @@ impl View for Workspace {
                                             DockAnchor::Expanded,
                                             cx,
                                         ))
-                                        .with_children(self.modal.as_ref().map(|m| {
-                                            ChildView::new(m)
+                                        .with_children(self.modal.as_ref().map(|modal| {
+                                            ChildView::new(modal, cx)
                                                 .contained()
                                                 .with_style(theme.workspace.modal)
                                                 .aligned()
                                                 .top()
                                                 .boxed()
                                         }))
-                                        .with_children(self.render_notifications(&theme.workspace))
+                                        .with_children(
+                                            self.render_notifications(&theme.workspace, cx),
+                                        )
                                         .boxed(),
                                 )
                                 .boxed(),
@@ -2640,7 +2646,7 @@ impl View for Workspace {
                             .flex(1.0, true)
                             .boxed(),
                     )
-                    .with_child(ChildView::new(&self.status_bar).boxed())
+                    .with_child(ChildView::new(&self.status_bar, cx).boxed())
                     .contained()
                     .with_background_color(theme.workspace.background)
                     .boxed(),

@@ -2571,6 +2571,10 @@ impl AppContext {
             .and_then(|window| window.focused_view_id)
     }
 
+    pub fn view_ui_name(&self, window_id: usize, view_id: usize) -> Option<&'static str> {
+        Some(self.views.get(&(window_id, view_id))?.ui_name())
+    }
+
     pub fn background(&self) -> &Arc<executor::Background> {
         &self.background
     }
@@ -4416,6 +4420,10 @@ impl AnyViewHandle {
         }
     }
 
+    pub fn window_id(&self) -> usize {
+        self.window_id
+    }
+
     pub fn id(&self) -> usize {
         self.view_id
     }
@@ -4732,6 +4740,10 @@ pub struct AnyWeakViewHandle {
 }
 
 impl AnyWeakViewHandle {
+    pub fn id(&self) -> usize {
+        self.view_id
+    }
+
     pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<AnyViewHandle> {
         cx.upgrade_any_view_handle(self)
     }
@@ -7031,5 +7043,74 @@ mod tests {
 
         cx.simulate_window_activation(Some(window_3));
         assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+    }
+
+    #[crate::test(self)]
+    fn test_child_view(cx: &mut MutableAppContext) {
+        struct Child {
+            rendered: Rc<Cell<bool>>,
+            dropped: Rc<Cell<bool>>,
+        }
+
+        impl super::Entity for Child {
+            type Event = ();
+        }
+
+        impl super::View for Child {
+            fn ui_name() -> &'static str {
+                "child view"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                self.rendered.set(true);
+                Empty::new().boxed()
+            }
+        }
+
+        impl Drop for Child {
+            fn drop(&mut self) {
+                self.dropped.set(true);
+            }
+        }
+
+        struct Parent {
+            child: Option<ViewHandle<Child>>,
+        }
+
+        impl super::Entity for Parent {
+            type Event = ();
+        }
+
+        impl super::View for Parent {
+            fn ui_name() -> &'static str {
+                "parent view"
+            }
+
+            fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+                if let Some(child) = self.child.as_ref() {
+                    ChildView::new(child, cx).boxed()
+                } else {
+                    Empty::new().boxed()
+                }
+            }
+        }
+
+        let child_rendered = Rc::new(Cell::new(false));
+        let child_dropped = Rc::new(Cell::new(false));
+        let (_, root_view) = cx.add_window(Default::default(), |cx| Parent {
+            child: Some(cx.add_view(|_| Child {
+                rendered: child_rendered.clone(),
+                dropped: child_dropped.clone(),
+            })),
+        });
+        assert!(child_rendered.take());
+        assert!(!child_dropped.take());
+
+        root_view.update(cx, |view, cx| {
+            view.child.take();
+            cx.notify();
+        });
+        assert!(!child_rendered.take());
+        assert!(child_dropped.take());
     }
 }

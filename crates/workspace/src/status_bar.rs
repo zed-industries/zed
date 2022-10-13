@@ -42,14 +42,14 @@ impl View for StatusBar {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
         Flex::row()
             .with_children(self.left_items.iter().map(|i| {
-                ChildView::new(i.as_ref())
+                ChildView::new(i.as_ref(), cx)
                     .aligned()
                     .contained()
                     .with_margin_right(theme.item_spacing)
                     .boxed()
             }))
             .with_children(self.right_items.iter().rev().map(|i| {
-                ChildView::new(i.as_ref())
+                ChildView::new(i.as_ref(), cx)
                     .aligned()
                     .contained()
                     .with_margin_left(theme.item_spacing)

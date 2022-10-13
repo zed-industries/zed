@@ -339,7 +339,7 @@ impl View for TerminalView {
                 .contained()
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.context_menu).boxed())
+            .with_child(ChildView::new(&self.context_menu, cx).boxed())
             .boxed()
     }
 
