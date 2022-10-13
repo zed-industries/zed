@@ -35,7 +35,7 @@ use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Durati
 use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
 
 use fs::RealFs;
-use settings::settings_file::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
+use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
@@ -65,7 +65,6 @@ fn main() {
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
 
-    let settings_file = SettingsFile::new(&*zed::paths::SETTINGS, fs.clone());
     let config_files = load_config_files(&app, fs.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
@@ -101,7 +100,11 @@ fn main() {
         let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
 
         //Setup settings global before binding actions
-        cx.set_global(settings_file);
+        cx.set_global(SettingsFile::new(
+            &*zed::paths::SETTINGS,
+            settings_file_content.clone(),
+            fs.clone(),
+        ));
         watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 

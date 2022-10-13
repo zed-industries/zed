@@ -4,7 +4,7 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
+use settings::{settings_file::SettingsFile, Settings};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
 use workspace::{AppState, Workspace};
@@ -155,7 +155,9 @@ impl PickerDelegate for ThemeSelector {
         self.selection_completed = true;
 
         let theme_name = cx.global::<Settings>().theme.meta.name.clone();
-        settings::settings_file::write_setting("theme", theme_name, cx);
+        SettingsFile::update(cx, |settings_content| {
+            settings_content.theme = Some(theme_name);
+        });
 
         cx.emit(Event::Dismissed);
     }

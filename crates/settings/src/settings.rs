@@ -1,5 +1,6 @@
 mod keymap_file;
 pub mod settings_file;
+pub mod watched_json;
 
 use anyhow::Result;
 use gpui::{
@@ -11,7 +12,7 @@ use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
@@ -45,7 +46,7 @@ pub struct Settings {
     pub staff_mode: bool,
 }
 
-#[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FeatureFlags {
     pub experimental_themes: bool,
 }
@@ -56,13 +57,13 @@ impl FeatureFlags {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
     pub git_gutter: Option<GitGutter>,
     pub gutter_debounce: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GitGutter {
     #[default]
@@ -72,7 +73,7 @@ pub enum GitGutter {
 
 pub struct GitGutterConfig {}
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettings {
     pub tab_size: Option<NonZeroU32>,
     pub hard_tabs: Option<bool>,
@@ -83,14 +84,14 @@ pub struct EditorSettings {
     pub enable_language_server: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     None,
     EditorWidth,
     PreferredLineLength,
 }
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
     On,
@@ -102,7 +103,7 @@ pub enum FormatOnSave {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
     LanguageServer,
@@ -112,7 +113,7 @@ pub enum Formatter {
     },
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Autosave {
     Off,
@@ -121,7 +122,7 @@ pub enum Autosave {
     OnWindowChange,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettings {
     pub shell: Option<Shell>,
     pub working_directory: Option<WorkingDirectory>,
@@ -134,7 +135,7 @@ pub struct TerminalSettings {
     pub copy_on_select: Option<bool>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     Off,
@@ -148,7 +149,7 @@ impl Default for TerminalBlink {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     System,
@@ -162,7 +163,7 @@ impl Default for Shell {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
     On,
@@ -175,7 +176,7 @@ impl Default for AlternateScroll {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
     CurrentProjectDirectory,
@@ -184,7 +185,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Deserialize, JsonSchema)]
+#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DockAnchor {
     #[default]
@@ -193,7 +194,7 @@ pub enum DockAnchor {
     Expanded,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     pub experiments: Option<FeatureFlags>,
     #[serde(default)]
@@ -229,7 +230,7 @@ pub struct SettingsFileContent {
     pub staff_mode: Option<bool>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub initialization_options: Option<Value>,
@@ -503,6 +504,8 @@ pub fn settings_file_json_schema(
     serde_json::to_value(root_schema).unwrap()
 }
 
+/// Expects the key to be unquoted, and the value to be valid JSON
+/// (e.g. values should be unquoted for numbers and bools, quoted for strings)
 pub fn write_top_level_setting(
     mut settings_content: String,
     top_level_key: &str,
@@ -553,7 +556,7 @@ pub fn write_top_level_setting(
             settings_content.clear();
             write!(
                 settings_content,
-                "{{\n    \"{}\": \"{new_val}\"\n}}\n",
+                "{{\n    \"{}\": {new_val}\n}}\n",
                 top_level_key
             )
             .unwrap();
@@ -561,7 +564,7 @@ pub fn write_top_level_setting(
 
         (_, Some(existing_value_range)) => {
             // Existing theme key, overwrite
-            settings_content.replace_range(existing_value_range, &format!("\"{new_val}\""));
+            settings_content.replace_range(existing_value_range, &new_val);
         }
 
         (Some(first_key_start), None) => {
@@ -581,7 +584,7 @@ pub fn write_top_level_setting(
                 }
             }
 
-            let content = format!(r#""{top_level_key}": "{new_val}","#);
+            let content = format!(r#""{top_level_key}": {new_val},"#);
             settings_content.insert_str(first_key_start, &content);
 
             if row > 0 {
