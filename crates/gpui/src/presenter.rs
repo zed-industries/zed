@@ -1001,7 +1001,7 @@ impl Element for ChildView {
             (size, true)
         } else {
             log::error!(
-                "layout called on a view (id: {}, name: {:?}) that was not rendered",
+                "layout called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
                 self.view.id(),
                 self.view_name
             );
@@ -1020,7 +1020,7 @@ impl Element for ChildView {
             cx.paint(self.view.id(), bounds.origin(), visible_bounds);
         } else {
             log::error!(
-                "paint called on a view (id: {}, name: {:?}) that was not rendered",
+                "paint called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
                 self.view.id(),
                 self.view_name
             );
@@ -1040,7 +1040,7 @@ impl Element for ChildView {
             cx.dispatch_event(self.view.id(), event)
         } else {
             log::error!(
-                "dispatch_event called on a view (id: {}, name: {:?}) that was not rendered",
+                "dispatch_event called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
                 self.view.id(),
                 self.view_name
             );
@@ -1061,7 +1061,7 @@ impl Element for ChildView {
             cx.rect_for_text_range(self.view.id(), range_utf16)
         } else {
             log::error!(
-                "rect_for_text_range called on a view (id: {}, name: {:?}) that was not rendered",
+                "rect_for_text_range called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
                 self.view.id(),
                 self.view_name
             );
