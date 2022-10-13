@@ -532,17 +532,20 @@ async fn test_share_project(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
     let (_, window_b) = cx_b.add_window(|_| EmptyView);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
 
     client_a
         .fs
@@ -631,6 +634,27 @@ async fn test_share_project(
     editor_b.update(cx_b, |editor, cx| editor.handle_input("ok, ", cx));
     buffer_a
         .condition(cx_a, |buffer, _| buffer.text() == "ok, b-contents")
+        .await;
+
+    // Client B can invite client C on a project shared by client A.
+    active_call_b
+        .update(cx_b, |call, cx| {
+            call.invite(client_c.user_id().unwrap(), Some(project_b.clone()), cx)
+        })
+        .await
+        .unwrap();
+
+    let incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
+    deterministic.run_until_parked();
+    let call = incoming_call_c.borrow().clone().unwrap();
+    assert_eq!(call.caller.github_login, "user_b");
+    let initial_project = call.initial_project.unwrap();
+    active_call_c
+        .update(cx_c, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let _project_c = client_c
+        .build_remote_project(initial_project.id, cx_c)
         .await;
 
     // TODO
