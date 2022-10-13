@@ -48,6 +48,7 @@ use std::{
 };
 use theme::DiffStyle;
 
+#[derive(Debug)]
 struct DiffHunkLayout {
     visual_range: Range<u32>,
     status: DiffHunkStatus,
@@ -995,18 +996,26 @@ impl EditorElement {
             .width()
     }
 
+    //-> (layout, buffer row advancement)
     fn layout_diff_hunk(
         hunk: &DiffHunk<u32>,
         start_row: u32,
         buffer_rows: &mut std::iter::Peekable<impl Iterator<Item = (usize, Option<u32>)>>,
-    ) -> DiffHunkLayout {
+    ) -> (Option<DiffHunkLayout>, u32) {
         //`buffer_rows` should start with a row which is contained in the hunk's buffer range
+        let first_buffer_rows = match buffer_rows.peek() {
+            Some(first_buffer_rows) => first_buffer_rows,
+            None => return (None, 0),
+        };
+
         //The `usize` field is 1-index so we have to sub to move it into 0-offset to match actual rows
-        let visual_start = start_row + buffer_rows.peek().unwrap().0 as u32 - 1;
+        let visual_start = start_row + first_buffer_rows.0 as u32 - 1;
 
         let mut visual_count = 0;
+        let mut buffer_row_advancement = 0;
         while let Some(&buffer_row) = buffer_rows.peek() {
             if let (_, Some(buffer_row)) = buffer_row {
+                buffer_row_advancement += 1;
                 if buffer_row == hunk.buffer_range.end {
                     visual_count += 1;
                     break;
@@ -1014,14 +1023,16 @@ impl EditorElement {
                     break;
                 }
                 visual_count += 1;
-                buffer_rows.next();
             }
+
+            buffer_rows.next();
         }
 
-        DiffHunkLayout {
+        let layout = DiffHunkLayout {
             visual_range: visual_start..visual_start + visual_count,
             status: hunk.status(),
-        }
+        };
+        (Some(layout), buffer_row_advancement)
     }
 
     //Folds contained in a hunk are ignored apart from shrinking visual size
@@ -1048,10 +1059,15 @@ impl EditorElement {
         let mut previous_buffer_row = None;
 
         while let Some((idx, buffer_row)) = buffer_rows.next() {
-            let buffer_row = buffer_row.unwrap();
+            let buffer_row = match buffer_row {
+                Some(buffer_row) => buffer_row,
+                None => continue,
+            };
+
             let is_start_of_fold = previous_buffer_row
                 .map(|prev| buffer_row > prev + 1)
                 .unwrap_or(false);
+            previous_buffer_row = Some(buffer_row);
 
             if is_start_of_fold {
                 //Consume all hunks within fold
@@ -1077,19 +1093,21 @@ impl EditorElement {
                         status: DiffHunkStatus::Modified,
                     });
                 }
-            } else {
-                //Not the start of a fold
-                if let Some(hunk) = diff_hunks.peek() {
-                    if hunk.buffer_range.contains(&buffer_row)
-                        || hunk.buffer_range.start == buffer_row
-                    {
-                        layouts.push(Self::layout_diff_hunk(hunk, rows.start, &mut buffer_rows));
-                        diff_hunks.next();
+            } else if let Some(hunk) = diff_hunks.peek() {
+                let row_inside_hunk = hunk.buffer_range.contains(&buffer_row);
+                let starts_on_row = hunk.buffer_range.start == buffer_row;
+                if row_inside_hunk || starts_on_row {
+                    let (layout, buffer_row_advancement) =
+                        Self::layout_diff_hunk(hunk, rows.start, &mut buffer_rows);
+                    previous_buffer_row = Some(buffer_row + buffer_row_advancement);
+
+                    if let Some(layout) = layout {
+                        layouts.push(layout);
                     }
+
+                    diff_hunks.next();
                 }
             }
-
-            previous_buffer_row = Some(buffer_row);
         }
 
         layouts
