@@ -539,11 +539,6 @@ impl EditorElement {
             bounds: RectF,
         }
 
-        struct DiffLayout<'a> {
-            buffer_row: u32,
-            last_diff: Option<&'a DiffHunk<u32>>,
-        }
-
         fn diff_quad(
             hunk: &DiffHunkLayout,
             gutter_layout: &GutterLayout,
@@ -603,11 +598,6 @@ impl EditorElement {
                 line_height,
                 bounds,
             }
-        };
-
-        let mut diff_layout = DiffLayout {
-            buffer_row: scroll_position.y() as u32,
-            last_diff: None,
         };
 
         let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
