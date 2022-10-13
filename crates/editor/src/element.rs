@@ -558,7 +558,7 @@ impl EditorElement {
 
                     let offset = gutter_layout.line_height / 2.;
                     let start_y =
-                        row as f32 * gutter_layout.line_height + offset - gutter_layout.scroll_top;
+                        row as f32 * gutter_layout.line_height - offset - gutter_layout.scroll_top;
                     let end_y = start_y + gutter_layout.line_height;
 
                     let width = diff_style.removed_width_em * gutter_layout.line_height;
@@ -1045,26 +1045,51 @@ impl EditorElement {
             .peekable();
 
         let mut layouts = Vec::new();
+        let mut previous_buffer_row = None;
 
-        while let Some((_, buffer_row)) = buffer_rows.next() {
+        while let Some((idx, buffer_row)) = buffer_rows.next() {
             let buffer_row = buffer_row.unwrap();
+            let is_start_of_fold = previous_buffer_row
+                .map(|prev| buffer_row > prev + 1)
+                .unwrap_or(false);
 
-            if let Some(hunk) = diff_hunks.peek() {
-                if hunk.buffer_range.contains(&buffer_row) {
-                    layouts.push(Self::layout_diff_hunk(hunk, rows.start, &mut buffer_rows));
+            if is_start_of_fold {
+                //Consume all hunks within fold
+                let mut consumed_hunks = false;
+                while let Some(hunk) = diff_hunks.peek() {
+                    let is_past = hunk.buffer_range.start > buffer_row;
+                    let is_removal = hunk.status() == DiffHunkStatus::Removed;
+                    let is_on_next_line = hunk.buffer_range.start == buffer_row + 1;
+                    let is_removal_inside = is_removal && is_on_next_line;
+
+                    if is_past && !is_removal_inside {
+                        break;
+                    }
                     diff_hunks.next();
-                } else if hunk.buffer_range.end < buffer_row {
-                    //A hunk that was missed due to being entirely contained in a fold
-                    //We can safely assume that the previous visual row is the fold
-                    //TODO: If there is another hunk that ends inside the fold then
-                    //this will overlay over, but right now that seems fine
+                    consumed_hunks = true;
+                }
+
+                //And mark fold as modified if there were any
+                if consumed_hunks {
+                    let current_visual_row = rows.start + idx as u32 - 1;
                     layouts.push(DiffHunkLayout {
-                        visual_range: buffer_row - 1..buffer_row,
+                        visual_range: current_visual_row..current_visual_row + 1,
                         status: DiffHunkStatus::Modified,
                     });
-                    diff_hunks.next();
+                }
+            } else {
+                //Not the start of a fold
+                if let Some(hunk) = diff_hunks.peek() {
+                    if hunk.buffer_range.contains(&buffer_row)
+                        || hunk.buffer_range.start == buffer_row
+                    {
+                        layouts.push(Self::layout_diff_hunk(hunk, rows.start, &mut buffer_rows));
+                        diff_hunks.next();
+                    }
                 }
             }
+
+            previous_buffer_row = Some(buffer_row);
         }
 
         layouts
