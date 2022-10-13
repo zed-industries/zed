@@ -4732,6 +4732,10 @@ pub struct AnyWeakViewHandle {
 }
 
 impl AnyWeakViewHandle {
+    pub fn id(&self) -> usize {
+        self.view_id
+    }
+
     pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<AnyViewHandle> {
         cx.upgrade_any_view_handle(self)
     }

@@ -12,10 +12,10 @@ use crate::{
         UpOutRegionEvent, UpRegionEvent,
     },
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, Appearance, AssetCache, ElementBox,
-    Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent, MouseRegion, MouseRegionId,
-    ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle,
-    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, Appearance,
+    AssetCache, ElementBox, Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent,
+    MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene,
+    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -972,12 +972,14 @@ impl ToJson for SizeConstraint {
 }
 
 pub struct ChildView {
-    view: AnyViewHandle,
+    view: AnyWeakViewHandle,
 }
 
 impl ChildView {
     pub fn new(view: impl Into<AnyViewHandle>) -> Self {
-        Self { view: view.into() }
+        Self {
+            view: view.into().downgrade(),
+        }
     }
 }
 
@@ -1039,7 +1041,11 @@ impl Element for ChildView {
             "type": "ChildView",
             "view_id": self.view.id(),
             "bounds": bounds.to_json(),
-            "view": self.view.debug_json(cx.app),
+            "view": if let Some(view) = self.view.upgrade(cx.app) {
+                view.debug_json(cx.app)
+            } else {
+                json!(null)
+            },
             "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
                 view.debug(cx)
             } else {
