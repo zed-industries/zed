@@ -1,111 +1,55 @@
+mod kvp;
+
 use anyhow::Result;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{Pool, Sqlite, SqlitePool};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Pool, Sqlite};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
-pub struct Db(DbStore);
+pub use kvp::*;
 
-enum DbStore {
-    Null,
-    Live(Pool<Sqlite>),
+pub struct Db {
+    pool: Pool<Sqlite>,
+    in_memory: bool,
 }
-
-// Things we need to think about:
-// Concurrency? - Needs some research
-// We need to configure or setup our database, create the tables and such
-
-// Write our first migration
-//
 
 // To make a migration:
 // Add to the migrations directory, a file with the name:
 //  <NUMBER>_<DESCRIPTION>.sql. Migrations are executed in order of number
 
 impl Db {
-    /// Open or create a database at the given file path.
-    pub fn open(path: &Path) -> Result<Arc<Self>> {
-        let options = SqliteConnectOptions::from_str(path)?.create_if_missing(true);
+    /// Open or create a database at the given file path. Falls back to in memory database if the
+    /// database at the given path is corrupted
+    pub async fn open(path: &Path) -> Arc<Self> {
+        let options = SqliteConnectOptions::from_str(&format!(
+            "sqlite://{}",
+            path.to_string_lossy().to_string()
+        ))
+        .expect("database path should always be well formed")
+        .create_if_missing(true);
 
-        Self::initialize(options)
+        Self::initialize(options, false)
+            .await
+            .unwrap_or(Self::open_in_memory().await)
     }
 
-    /// Open a fake database for testing.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn open_fake() -> Arc<Self> {
-        let options = SqliteConnectOptions::from_str(":memory:")?;
+    /// Open a in memory database for testing and as a fallback.
+    pub async fn open_in_memory() -> Arc<Self> {
+        let options = SqliteConnectOptions::from_str(":memory:")
+            .expect("Should always be able to create in memory database options");
 
-        Self::initialize(options)
+        Self::initialize(options, true)
+            .await
+            .expect("Should always be able to create an in memory database")
     }
 
-    fn initialize(options: SqliteConnectOptions) -> Result<Arc<Self>> {
-        let pool = Pool::<Sqlite>::connect_with(options)?;
+    async fn initialize(options: SqliteConnectOptions, in_memory: bool) -> Result<Arc<Self>> {
+        let pool = Pool::<Sqlite>::connect_with(options).await?;
 
         sqlx::migrate!().run(&pool).await?;
 
-        Ok(Arc::new(Self(DbStore::Live(pool))))
-    }
-
-    /// Open a null database that stores no data, for use as a fallback
-    /// when there is an error opening the real database.
-    pub fn null() -> Arc<Self> {
-        Arc::new(Self(DbStore::Null))
-    }
-
-    pub fn read<K, I>(&self, keys: I) -> Result<Vec<Option<Vec<u8>>>>
-    where
-        K: AsRef<[u8]>,
-        I: IntoIterator<Item = K>,
-    {
-        match &self.0 {
-            DbStore::Real(db) => db
-                .multi_get(keys)
-                .into_iter()
-                .map(|e| e.map_err(Into::into))
-                .collect(),
-
-            DbStore::Null => Ok(keys.into_iter().map(|_| None).collect()),
-        }
-    }
-
-    pub fn delete<K, I>(&self, keys: I) -> Result<()>
-    where
-        K: AsRef<[u8]>,
-        I: IntoIterator<Item = K>,
-    {
-        match &self.0 {
-            DbStore::Real(db) => {
-                let mut batch = rocksdb::WriteBatch::default();
-                for key in keys {
-                    batch.delete(key);
-                }
-                db.write(batch)?;
-            }
-
-            DbStore::Null => {}
-        }
-        Ok(())
-    }
-
-    pub fn write<K, V, I>(&self, entries: I) -> Result<()>
-    where
-        K: AsRef<[u8]>,
-        V: AsRef<[u8]>,
-        I: IntoIterator<Item = (K, V)>,
-    {
-        match &self.0 {
-            DbStore::Real(db) => {
-                let mut batch = rocksdb::WriteBatch::default();
-                for (key, value) in entries {
-                    batch.put(key, value);
-                }
-                db.write(batch)?;
-            }
-
-            DbStore::Null => {}
-        }
-        Ok(())
+        Ok(Arc::new(Self { pool, in_memory }))
     }
 }
 

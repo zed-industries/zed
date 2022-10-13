@@ -7,8 +7,9 @@ set -e
 
 cd crates/db
 
-mkdir /tmp/zed-client-db
+mkdir -p /tmp/zed-client-db
 DATABASE_URL=sqlite:///tmp/zed-client-db/test.db
 
+cargo sqlx -D $DATABASE_URL database drop
 cargo sqlx -D $DATABASE_URL database setup
 cargo sqlx -D $DATABASE_URL prepare
