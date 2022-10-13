@@ -634,7 +634,8 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -654,7 +655,8 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -670,7 +672,8 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -680,7 +683,8 @@ mod tests {
         let settings = r#"{ "a": "", "ok": true }"#.to_string();
         let new_settings = r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#;
 
-        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -690,7 +694,8 @@ mod tests {
         let settings = r#"          { "a": "", "ok": true }"#.to_string();
         let new_settings = r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#;
 
-        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -712,7 +717,8 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
