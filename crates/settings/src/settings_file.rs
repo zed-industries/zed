@@ -1,153 +1,96 @@
+use crate::{watched_json::WatchedJsonFile, write_top_level_setting, SettingsFileContent};
+use anyhow::Result;
 use fs::Fs;
-use futures::StreamExt;
-use gpui::{executor, MutableAppContext};
-use postage::sink::Sink as _;
-use postage::{prelude::Stream, watch};
-use serde::Deserialize;
-
-use std::{path::Path, sync::Arc, time::Duration};
-use theme::ThemeRegistry;
-use util::ResultExt;
-
-use crate::{
-    parse_json_with_comments, write_top_level_setting, KeymapFileContent, Settings,
-    SettingsFileContent,
-};
+use gpui::MutableAppContext;
+use serde_json::Value;
+use std::{path::Path, sync::Arc};
 
 // TODO: Switch SettingsFile to open a worktree and buffer for synchronization
 //       And instant updates in the Zed editor
 #[derive(Clone)]
 pub struct SettingsFile {
     path: &'static Path,
+    settings_file_content: WatchedJsonFile<SettingsFileContent>,
     fs: Arc<dyn Fs>,
 }
 
 impl SettingsFile {
-    pub fn new(path: &'static Path, fs: Arc<dyn Fs>) -> Self {
-        SettingsFile { path, fs }
-    }
-
-    pub async fn rewrite_settings_file<F>(&self, f: F) -> anyhow::Result<()>
-    where
-        F: Fn(String) -> String,
-    {
-        let content = self.fs.load(self.path).await?;
-
-        let new_settings = f(content);
-
-        self.fs
-            .atomic_write(self.path.to_path_buf(), new_settings)
-            .await?;
-
-        Ok(())
-    }
-}
-
-pub fn write_setting(key: &'static str, val: String, cx: &mut MutableAppContext) {
-    let settings_file = cx.global::<SettingsFile>().clone();
-    cx.background()
-        .spawn(async move {
-            settings_file
-                .rewrite_settings_file(|settings| write_top_level_setting(settings, key, &val))
-                .await
-        })
-        .detach_and_log_err(cx);
-}
-
-#[derive(Clone)]
-pub struct WatchedJsonFile<T>(pub watch::Receiver<T>);
-
-impl<T> WatchedJsonFile<T>
-where
-    T: 'static + for<'de> Deserialize<'de> + Clone + Default + Send + Sync,
-{
-    pub async fn new(
+    pub fn new(
+        path: &'static Path,
+        settings_file_content: WatchedJsonFile<SettingsFileContent>,
         fs: Arc<dyn Fs>,
-        executor: &executor::Background,
-        path: impl Into<Arc<Path>>,
     ) -> Self {
-        let path = path.into();
-        let settings = Self::load(fs.clone(), &path).await.unwrap_or_default();
-        let mut events = fs.watch(&path, Duration::from_millis(500)).await;
-        let (mut tx, rx) = watch::channel_with(settings);
-        executor
+        SettingsFile {
+            path,
+            settings_file_content,
+            fs,
+        }
+    }
+
+    pub fn update(cx: &mut MutableAppContext, update: impl FnOnce(&mut SettingsFileContent)) {
+        let this = cx.global::<SettingsFile>();
+
+        let current_file_content = this.settings_file_content.current();
+        let mut new_file_content = current_file_content.clone();
+
+        update(&mut new_file_content);
+
+        let fs = this.fs.clone();
+        let path = this.path.clone();
+
+        cx.background()
             .spawn(async move {
-                while events.next().await.is_some() {
-                    if let Some(settings) = Self::load(fs.clone(), &path).await {
-                        if tx.send(settings).await.is_err() {
-                            break;
+                // Unwrap safety: These values are all guarnteed to be well formed, and we know
+                // that they will deserialize to our settings object. All of the following unwraps
+                // are therefore safe.
+                let tmp = serde_json::to_value(current_file_content).unwrap();
+                let old_json = tmp.as_object().unwrap();
+
+                let new_tmp = serde_json::to_value(new_file_content).unwrap();
+                let new_json = new_tmp.as_object().unwrap();
+
+                // Find changed fields
+                let mut diffs = vec![];
+                for (key, old_value) in old_json.iter() {
+                    let new_value = new_json.get(key).unwrap();
+                    if old_value != new_value {
+                        if matches!(
+                            new_value,
+                            &Value::Null | &Value::Object(_) | &Value::Array(_)
+                        ) {
+                            unimplemented!(
+                                "We only support updating basic values at the top level"
+                            );
                         }
+
+                        let new_json = serde_json::to_string_pretty(new_value)
+                            .expect("Could not serialize new json field to string");
+
+                        diffs.push((key, new_json));
                     }
                 }
+
+                // Have diffs, rewrite the settings file now.
+                let mut content = fs.load(path).await?;
+
+                for (key, new_value) in diffs {
+                    content = write_top_level_setting(content, key, &new_value)
+                }
+
+                fs.atomic_write(path.to_path_buf(), content).await?;
+
+                Ok(()) as Result<()>
             })
-            .detach();
-        Self(rx)
+            .detach_and_log_err(cx);
     }
-
-    ///Loads the given watched JSON file. In the special case that the file is
-    ///empty (ignoring whitespace) or is not a file, this will return T::default()
-    async fn load(fs: Arc<dyn Fs>, path: &Path) -> Option<T> {
-        if !fs.is_file(path).await {
-            return Some(T::default());
-        }
-
-        fs.load(path).await.log_err().and_then(|data| {
-            if data.trim().is_empty() {
-                Some(T::default())
-            } else {
-                parse_json_with_comments(&data).log_err()
-            }
-        })
-    }
-}
-
-pub fn watch_settings_file(
-    defaults: Settings,
-    mut file: WatchedJsonFile<SettingsFileContent>,
-    theme_registry: Arc<ThemeRegistry>,
-    cx: &mut MutableAppContext,
-) {
-    settings_updated(&defaults, file.0.borrow().clone(), &theme_registry, cx);
-    cx.spawn(|mut cx| async move {
-        while let Some(content) = file.0.recv().await {
-            cx.update(|cx| settings_updated(&defaults, content, &theme_registry, cx));
-        }
-    })
-    .detach();
-}
-
-pub fn keymap_updated(content: KeymapFileContent, cx: &mut MutableAppContext) {
-    cx.clear_bindings();
-    KeymapFileContent::load_defaults(cx);
-    content.add_to_cx(cx).log_err();
-}
-
-pub fn settings_updated(
-    defaults: &Settings,
-    content: SettingsFileContent,
-    theme_registry: &Arc<ThemeRegistry>,
-    cx: &mut MutableAppContext,
-) {
-    let mut settings = defaults.clone();
-    settings.set_user_settings(content, theme_registry, cx.font_cache());
-    cx.set_global(settings);
-    cx.refresh_windows();
-}
-
-pub fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFileContent>, cx: &mut MutableAppContext) {
-    cx.spawn(|mut cx| async move {
-        while let Some(content) = file.0.recv().await {
-            cx.update(|cx| keymap_updated(content, cx));
-        }
-    })
-    .detach();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EditorSettings, SoftWrap};
+    use crate::{watched_json::watch_settings_file, EditorSettings, Settings, SoftWrap};
     use fs::FakeFs;
+    use theme::ThemeRegistry;
 
     #[gpui::test]
     async fn test_watch_settings_files(cx: &mut gpui::TestAppContext) {
