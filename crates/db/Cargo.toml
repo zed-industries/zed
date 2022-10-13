@@ -15,7 +15,7 @@ collections = { path = "../collections" }
 anyhow = "1.0.57"
 async-trait = "0.1"
 parking_lot = "0.11.1"
-rocksdb = "0.18"
+sqlx = { version = "0.6.2", features = ["sqlite", "macros", "offline", "json", "runtime-async-std-rustls"] }
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

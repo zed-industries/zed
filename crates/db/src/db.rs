@@ -1,38 +1,56 @@
 use anyhow::Result;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{Pool, Sqlite, SqlitePool};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub struct Db(DbStore);
 
 enum DbStore {
     Null,
-    Real(rocksdb::DB),
-
-    #[cfg(any(test, feature = "test-support"))]
-    Fake {
-        data: parking_lot::Mutex<collections::HashMap<Vec<u8>, Vec<u8>>>,
-    },
+    Live(Pool<Sqlite>),
 }
+
+// Things we need to think about:
+// Concurrency? - Needs some research
+// We need to configure or setup our database, create the tables and such
+
+// Write our first migration
+//
+
+// To make a migration:
+// Add to the migrations directory, a file with the name:
+//  <NUMBER>_<DESCRIPTION>.sql. Migrations are executed in order of number
 
 impl Db {
     /// Open or create a database at the given file path.
     pub fn open(path: &Path) -> Result<Arc<Self>> {
-        let db = rocksdb::DB::open_default(path)?;
-        Ok(Arc::new(Self(DbStore::Real(db))))
+        let options = SqliteConnectOptions::from_str(path)?.create_if_missing(true);
+
+        Self::initialize(options)
+    }
+
+    /// Open a fake database for testing.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_fake() -> Arc<Self> {
+        let options = SqliteConnectOptions::from_str(":memory:")?;
+
+        Self::initialize(options)
+    }
+
+    fn initialize(options: SqliteConnectOptions) -> Result<Arc<Self>> {
+        let pool = Pool::<Sqlite>::connect_with(options)?;
+
+        sqlx::migrate!().run(&pool).await?;
+
+        Ok(Arc::new(Self(DbStore::Live(pool))))
     }
 
     /// Open a null database that stores no data, for use as a fallback
     /// when there is an error opening the real database.
     pub fn null() -> Arc<Self> {
         Arc::new(Self(DbStore::Null))
-    }
-
-    /// Open a fake database for testing.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn open_fake() -> Arc<Self> {
-        Arc::new(Self(DbStore::Fake {
-            data: Default::default(),
-        }))
     }
 
     pub fn read<K, I>(&self, keys: I) -> Result<Vec<Option<Vec<u8>>>>
@@ -48,15 +66,6 @@ impl Db {
                 .collect(),
 
             DbStore::Null => Ok(keys.into_iter().map(|_| None).collect()),
-
-            #[cfg(any(test, feature = "test-support"))]
-            DbStore::Fake { data: db } => {
-                let db = db.lock();
-                Ok(keys
-                    .into_iter()
-                    .map(|key| db.get(key.as_ref()).cloned())
-                    .collect())
-            }
         }
     }
 
@@ -75,14 +84,6 @@ impl Db {
             }
 
             DbStore::Null => {}
-
-            #[cfg(any(test, feature = "test-support"))]
-            DbStore::Fake { data: db } => {
-                let mut db = db.lock();
-                for key in keys {
-                    db.remove(key.as_ref());
-                }
-            }
         }
         Ok(())
     }
@@ -103,14 +104,6 @@ impl Db {
             }
 
             DbStore::Null => {}
-
-            #[cfg(any(test, feature = "test-support"))]
-            DbStore::Fake { data: db } => {
-                let mut db = db.lock();
-                for (key, value) in entries {
-                    db.insert(key.as_ref().into(), value.as_ref().into());
-                }
-            }
         }
         Ok(())
     }
