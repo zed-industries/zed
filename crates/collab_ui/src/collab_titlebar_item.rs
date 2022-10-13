@@ -152,7 +152,6 @@ impl CollabTitlebarItem {
                     let project = workspace.read(cx).project().clone();
                     let user_store = workspace.read(cx).user_store().clone();
                     let view = cx.add_view(|cx| ContactsPopover::new(project, user_store, cx));
-                    cx.focus(&view);
                     cx.subscribe(&view, |this, _, event, cx| {
                         match event {
                             contacts_popover::Event::Dismissed => {
