@@ -1023,6 +1023,8 @@ impl EditorElement {
                     break;
                 }
                 visual_count += 1;
+            } else {
+                visual_count += 1;
             }
 
             buffer_rows.next();
