@@ -1042,15 +1042,27 @@ impl EditorElement {
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
     ) -> Vec<DiffHunkLayout> {
+        let buffer_rows = snapshot.buffer_rows(rows.start);
+        let start_actual_row = match buffer_rows
+            .clone()
+            .take((rows.end - rows.start) as usize)
+            .find_map(|b| b)
+        {
+            Some(start_actual_row) => start_actual_row,
+            None => return Vec::new(),
+        };
+
+        //Get all hunks after our starting actual buffer row
+        //The loop is in terms of visual buffer rows so we simply
+        //return before touching any hunks past the end of the view
         let mut diff_hunks = snapshot
             .buffer_snapshot
-            .git_diff_hunks_in_range(rows.clone())
+            .git_diff_hunks_in_range(start_actual_row..u32::MAX)
             .peekable();
 
         //Some number followed by Nones for wrapped lines
         //Jump in number for folded lines
-        let mut buffer_rows = snapshot
-            .buffer_rows(rows.start)
+        let mut buffer_rows = buffer_rows
             .take((rows.end - rows.start) as usize)
             .enumerate()
             .peekable();
