@@ -1439,8 +1439,8 @@ impl View for Pane {
                                     .flex(1., false)
                                     .named("tab bar")
                             })
-                            .with_child(ChildView::new(&self.toolbar).expanded().boxed())
-                            .with_child(ChildView::new(active_item).flex(1., true).boxed())
+                            .with_child(ChildView::new(&self.toolbar, cx).expanded().boxed())
+                            .with_child(ChildView::new(active_item, cx).flex(1., true).boxed())
                             .boxed()
                     } else {
                         enum EmptyPane {}
@@ -1480,7 +1480,7 @@ impl View for Pane {
                 })
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.tab_bar_context_menu).boxed())
+            .with_child(ChildView::new(&self.tab_bar_context_menu, cx).boxed())
             .named("pane")
     }
 

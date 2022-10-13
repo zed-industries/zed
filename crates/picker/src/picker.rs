@@ -63,7 +63,7 @@ impl<D: PickerDelegate> View for Picker<D> {
 
         Flex::new(Axis::Vertical)
             .with_child(
-                ChildView::new(&self.query_editor)
+                ChildView::new(&self.query_editor, cx)
                     .contained()
                     .with_style(theme.input_editor.container)
                     .boxed(),

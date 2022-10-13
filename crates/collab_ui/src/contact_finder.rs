@@ -32,8 +32,8 @@ impl View for ContactFinder {
         "ContactFinder"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(self.picker.clone()).boxed()
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        ChildView::new(self.picker.clone(), cx).boxed()
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

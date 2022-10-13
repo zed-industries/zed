@@ -162,8 +162,8 @@ impl View for TerminalContainer {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let child_view = match &self.content {
-            TerminalContainerContent::Connected(connected) => ChildView::new(connected),
-            TerminalContainerContent::Error(error) => ChildView::new(error),
+            TerminalContainerContent::Connected(connected) => ChildView::new(connected, cx),
+            TerminalContainerContent::Error(error) => ChildView::new(error, cx),
         };
         if self.modal {
             let settings = cx.global::<Settings>();

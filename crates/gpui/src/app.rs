@@ -2571,6 +2571,10 @@ impl AppContext {
             .and_then(|window| window.focused_view_id)
     }
 
+    pub fn view_ui_name(&self, window_id: usize, view_id: usize) -> Option<&'static str> {
+        Some(self.views.get(&(window_id, view_id))?.ui_name())
+    }
+
     pub fn background(&self) -> &Arc<executor::Background> {
         &self.background
     }
@@ -4414,6 +4418,10 @@ impl AnyViewHandle {
             #[cfg(any(test, feature = "test-support"))]
             handle_id,
         }
+    }
+
+    pub fn window_id(&self) -> usize {
+        self.window_id
     }
 
     pub fn id(&self) -> usize {

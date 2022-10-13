@@ -973,12 +973,16 @@ impl ToJson for SizeConstraint {
 
 pub struct ChildView {
     view: AnyWeakViewHandle,
+    view_name: &'static str,
 }
 
 impl ChildView {
-    pub fn new(view: impl Into<AnyViewHandle>) -> Self {
+    pub fn new(view: impl Into<AnyViewHandle>, cx: &AppContext) -> Self {
+        let view = view.into();
+        let view_name = cx.view_ui_name(view.window_id(), view.id()).unwrap();
         Self {
-            view: view.into().downgrade(),
+            view: view.downgrade(),
+            view_name,
         }
     }
 }
@@ -996,7 +1000,11 @@ impl Element for ChildView {
             let size = cx.layout(self.view.id(), constraint);
             (size, true)
         } else {
-            log::error!("layout called on a view that was not rendered");
+            log::error!(
+                "layout called on a view (id: {}, name: {:?}) that was not rendered",
+                self.view.id(),
+                self.view_name
+            );
             (Vector2F::zero(), false)
         }
     }
@@ -1011,7 +1019,11 @@ impl Element for ChildView {
         if *view_is_valid {
             cx.paint(self.view.id(), bounds.origin(), visible_bounds);
         } else {
-            log::error!("paint called on a view that was not rendered");
+            log::error!(
+                "paint called on a view (id: {}, name: {:?}) that was not rendered",
+                self.view.id(),
+                self.view_name
+            );
         }
     }
 
@@ -1027,7 +1039,11 @@ impl Element for ChildView {
         if *view_is_valid {
             cx.dispatch_event(self.view.id(), event)
         } else {
-            log::error!("dispatch_event called on a view that was not rendered");
+            log::error!(
+                "dispatch_event called on a view (id: {}, name: {:?}) that was not rendered",
+                self.view.id(),
+                self.view_name
+            );
             false
         }
     }
@@ -1044,6 +1060,11 @@ impl Element for ChildView {
         if *view_is_valid {
             cx.rect_for_text_range(self.view.id(), range_utf16)
         } else {
+            log::error!(
+                "rect_for_text_range called on a view (id: {}, name: {:?}) that was not rendered",
+                self.view.id(),
+                self.view_name
+            );
             None
         }
     }

@@ -25,7 +25,7 @@ use gpui::{
 };
 use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, LanguageRegistry, OffsetRangeExt, Rope, Point,
+    LanguageConfig, LanguageRegistry, OffsetRangeExt, Point, Rope,
 };
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;

@@ -1072,7 +1072,7 @@ impl View for ContactList {
             .with_child(
                 Flex::row()
                     .with_child(
-                        ChildView::new(self.filter_editor.clone())
+                        ChildView::new(self.filter_editor.clone(), cx)
                             .contained()
                             .with_style(theme.contact_list.user_query_editor.container)
                             .flex(1., true)

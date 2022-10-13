@@ -105,7 +105,7 @@ impl View for BufferSearchBar {
             .with_child(
                 Flex::row()
                     .with_child(
-                        ChildView::new(&self.query_editor)
+                        ChildView::new(&self.query_editor, cx)
                             .aligned()
                             .left()
                             .flex(1., true)

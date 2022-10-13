@@ -222,7 +222,12 @@ impl Member {
                 };
 
                 Stack::new()
-                    .with_child(ChildView::new(pane).contained().with_border(border).boxed())
+                    .with_child(
+                        ChildView::new(pane, cx)
+                            .contained()
+                            .with_border(border)
+                            .boxed(),
+                    )
                     .with_children(prompt)
                     .boxed()
             }
