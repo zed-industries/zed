@@ -984,7 +984,7 @@ impl ChildView {
 }
 
 impl Element for ChildView {
-    type LayoutState = ();
+    type LayoutState = bool;
     type PaintState = ();
 
     fn layout(
@@ -992,18 +992,27 @@ impl Element for ChildView {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = cx.layout(self.view.id(), constraint);
-        (size, ())
+        if cx.rendered_views.contains_key(&self.view.id()) {
+            let size = cx.layout(self.view.id(), constraint);
+            (size, true)
+        } else {
+            log::error!("layout called on a view that was not rendered");
+            (Vector2F::zero(), false)
+        }
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        _: &mut Self::LayoutState,
+        view_is_valid: &mut Self::LayoutState,
         cx: &mut PaintContext,
-    ) -> Self::PaintState {
-        cx.paint(self.view.id(), bounds.origin(), visible_bounds);
+    ) {
+        if *view_is_valid {
+            cx.paint(self.view.id(), bounds.origin(), visible_bounds);
+        } else {
+            log::error!("paint called on a view that was not rendered");
+        }
     }
 
     fn dispatch_event(
@@ -1011,11 +1020,16 @@ impl Element for ChildView {
         event: &Event,
         _: RectF,
         _: RectF,
-        _: &mut Self::LayoutState,
+        view_is_valid: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        cx.dispatch_event(self.view.id(), event)
+        if *view_is_valid {
+            cx.dispatch_event(self.view.id(), event)
+        } else {
+            log::error!("dispatch_event called on a view that was not rendered");
+            false
+        }
     }
 
     fn rect_for_text_range(
@@ -1023,11 +1037,15 @@ impl Element for ChildView {
         range_utf16: Range<usize>,
         _: RectF,
         _: RectF,
-        _: &Self::LayoutState,
+        view_is_valid: &Self::LayoutState,
         _: &Self::PaintState,
         cx: &MeasurementContext,
     ) -> Option<RectF> {
-        cx.rect_for_text_range(self.view.id(), range_utf16)
+        if *view_is_valid {
+            cx.rect_for_text_range(self.view.id(), range_utf16)
+        } else {
+            None
+        }
     }
 
     fn debug(
