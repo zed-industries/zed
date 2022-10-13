@@ -4298,34 +4298,35 @@ impl Project {
                             return;
                         }
 
-                        let new_file = if let Some(entry) = old_file
-                            .entry_id
-                            .and_then(|entry_id| snapshot.entry_for_id(entry_id))
+                        let new_file = if let Some(entry) = snapshot.entry_for_id(old_file.entry_id)
                         {
                             File {
                                 is_local: true,
-                                entry_id: Some(entry.id),
+                                entry_id: entry.id,
                                 mtime: entry.mtime,
                                 path: entry.path.clone(),
                                 worktree: worktree_handle.clone(),
+                                is_deleted: false,
                             }
                         } else if let Some(entry) =
                             snapshot.entry_for_path(old_file.path().as_ref())
                         {
                             File {
                                 is_local: true,
-                                entry_id: Some(entry.id),
+                                entry_id: entry.id,
                                 mtime: entry.mtime,
                                 path: entry.path.clone(),
                                 worktree: worktree_handle.clone(),
+                                is_deleted: false,
                             }
                         } else {
                             File {
                                 is_local: true,
-                                entry_id: None,
+                                entry_id: old_file.entry_id,
                                 path: old_file.path().clone(),
                                 mtime: old_file.mtime(),
                                 worktree: worktree_handle.clone(),
+                                is_deleted: true,
                             }
                         };
 

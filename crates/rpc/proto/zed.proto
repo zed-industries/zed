@@ -868,9 +868,10 @@ message User {
 
 message File {
     uint64 worktree_id = 1;
-    optional uint64 entry_id = 2;
+    uint64 entry_id = 2;
     string path = 3;
     Timestamp mtime = 4;
+    bool is_deleted = 5;
 }
 
 message Entry {

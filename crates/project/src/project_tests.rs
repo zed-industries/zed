@@ -2457,6 +2457,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     cx.foreground().run_until_parked();
+    buffer2.read_with(cx, |buffer, _| assert!(buffer.is_dirty()));
     assert_eq!(
         *events.borrow(),
         &[
