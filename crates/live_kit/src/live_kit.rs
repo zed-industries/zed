@@ -1,14 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
-    base::{TCFType, TCFTypeRef},
-    dictionary::CFDictionary,
-    number::CFNumber,
+    base::TCFType,
     string::{CFString, CFStringRef},
-};
-use core_graphics::window::{
-    kCGNullWindowID, kCGWindowListOptionExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
-    kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID, CGWindowListCopyWindowInfo,
 };
 use futures::{
     channel::{mpsc, oneshot},
@@ -63,7 +57,6 @@ extern "C" {
             error: CFStringRef,
         ),
     );
-    fn LKCreateScreenShareTrackForWindow(windowId: u32) -> *const c_void;
     fn LKCreateScreenShareTrackForDisplay(display: *const c_void) -> *const c_void;
 }
 
@@ -194,10 +187,6 @@ impl Drop for RoomDelegate {
 pub struct LocalVideoTrack(*const c_void);
 
 impl LocalVideoTrack {
-    pub fn screen_share_for_window(window_id: u32) -> Self {
-        Self(unsafe { LKCreateScreenShareTrackForWindow(window_id) })
-    }
-
     pub fn screen_share_for_display(display: MacOSDisplay) -> Self {
         let ptr = display.0;
         let this = Self(unsafe { LKCreateScreenShareTrackForDisplay(ptr) });
@@ -248,46 +237,6 @@ impl RemoteVideoTrack {
 impl Drop for RemoteVideoTrack {
     fn drop(&mut self) {
         unsafe { LKRelease(self.0) }
-    }
-}
-
-#[derive(Debug)]
-pub struct WindowInfo {
-    pub id: u32,
-    pub owner_pid: i32,
-    pub owner_name: Option<String>,
-}
-
-pub fn list_windows() -> Vec<WindowInfo> {
-    unsafe {
-        let dicts = CFArray::<CFDictionary>::wrap_under_get_rule(CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly | kCGWindowListOptionExcludeDesktopElements,
-            kCGNullWindowID,
-        ));
-
-        dicts
-            .iter()
-            .map(|dict| {
-                let id =
-                    CFNumber::wrap_under_get_rule(*dict.get(kCGWindowNumber.as_void_ptr()) as _)
-                        .to_i64()
-                        .unwrap() as u32;
-
-                let owner_pid =
-                    CFNumber::wrap_under_get_rule(*dict.get(kCGWindowOwnerPID.as_void_ptr()) as _)
-                        .to_i32()
-                        .unwrap();
-
-                let owner_name = dict
-                    .find(kCGWindowOwnerName.as_void_ptr())
-                    .map(|name| CFString::wrap_under_get_rule(*name as _).to_string());
-                WindowInfo {
-                    id,
-                    owner_pid,
-                    owner_name,
-                }
-            })
-            .collect()
     }
 }
 

@@ -86,17 +86,10 @@ public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPoin
     }
 }
 
-@_cdecl("LKCreateScreenShareTrackForWindow")
-public func LKCreateScreenShareTrackForWindow(windowId: uint32) -> UnsafeMutableRawPointer {
-    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: .window(id: windowId))
-    return Unmanaged.passRetained(track).toOpaque()
-}
-
 @_cdecl("LKCreateScreenShareTrackForDisplay")
 public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
     let display = Unmanaged<MacOSDisplay>.fromOpaque(display).takeRetainedValue()
-    print("!!!!!!!!!! display id", display.displayID)
-    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display)
+    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display, preferredMethod: .legacy)
     return Unmanaged.passRetained(track).toOpaque()
 }
 
