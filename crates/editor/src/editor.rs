@@ -108,6 +108,18 @@ pub struct SelectToBeginningOfLine {
     stop_at_soft_wraps: bool,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct MovePageUp {
+    #[serde(default)]
+    center_cursor: bool,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct MovePageDown {
+    #[serde(default)]
+    center_cursor: bool,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
@@ -222,6 +234,8 @@ impl_actions!(
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         ToggleCodeActions,
+        MovePageUp,
+        MovePageDown,
         ConfirmCompletion,
         ConfirmCodeAction,
     ]
@@ -5534,6 +5548,49 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    // Vscode style + emacs style
+    pub fn move_page_down(&mut self, _: &MovePageDown, cx: &mut ViewContext<Self>) {
+        let row_count = match self.visible_line_count {
+            Some(row_count) => row_count as u32 - 1,
+            None => return,
+        };
+
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) =
+                    movement::down_by_rows(map, selection.end, row_count, selection.goal, false);
+                eprintln!(
+                    "{:?} down by rows {} = {:?}",
+                    selection.end, row_count, cursor
+                );
+                selection.collapse_to(cursor, goal);
+            });
+        });
+    }
+
+    pub fn move_page_up(&mut self, _: &MovePageUp, cx: &mut ViewContext<Self>) {
+        let row_count = match self.visible_line_count {
+            Some(row_count) => row_count as u32 - 1,
+            None => return,
+        };
+
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) =
+                    movement::up_by_rows(map, selection.end, row_count, selection.goal, false);
+                selection.collapse_to(cursor, goal);
+            });
+        });
     }
 
     pub fn page_up(&mut self, _: &PageUp, cx: &mut ViewContext<Self>) {

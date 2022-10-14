@@ -34,11 +34,11 @@ pub struct ForegroundPlatform {
 struct Dispatcher;
 
 pub struct Window {
-    size: Vector2F,
+    pub(crate) size: Vector2F,
     scale_factor: f32,
     current_scene: Option<crate::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
-    resize_handlers: Vec<Box<dyn FnMut()>>,
+    pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
     fullscreen_handlers: Vec<Box<dyn FnMut(bool)>>,
     pub(crate) active_status_change_handlers: Vec<Box<dyn FnMut(bool)>>,
