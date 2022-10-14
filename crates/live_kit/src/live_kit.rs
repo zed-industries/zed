@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use core_foundation::{
-    array::CFArray,
+    array::{CFArray, CFArrayRef},
     base::{TCFType, TCFTypeRef},
     dictionary::CFDictionary,
     number::CFNumber,
@@ -56,6 +56,14 @@ extern "C" {
     fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
 
     fn LKCreateScreenShareTrackForWindow(windowId: u32) -> *const c_void;
+    fn LKDisplaySources(
+        callback_data: *mut c_void,
+        callback: extern "C" fn(
+            callback_data: *mut c_void,
+            sources: CFArrayRef,
+            error: CFStringRef,
+        ),
+    );
 }
 
 pub struct Room {
@@ -273,4 +281,33 @@ pub fn list_windows() -> Vec<WindowInfo> {
             })
             .collect()
     }
+}
+
+pub struct MacOSDisplay(*const c_void);
+
+pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
+    extern "C" fn callback(tx: *mut c_void, sources: CFArrayRef, error: CFStringRef) {
+        unsafe {
+            let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<Vec<MacOSDisplay>>>);
+
+            if sources.is_null() {
+                let _ = tx.send(Err(anyhow!("{}", CFString::wrap_under_get_rule(error))));
+            } else {
+                let sources = CFArray::wrap_under_get_rule(sources);
+                let sources = sources
+                    .into_iter()
+                    .map(|source| MacOSDisplay(*source))
+                    .collect();
+                let _ = tx.send(Ok(sources));
+            }
+        }
+    }
+
+    let (tx, rx) = oneshot::channel();
+
+    unsafe {
+        LKDisplaySources(Box::into_raw(Box::new(tx)) as *mut _, callback);
+    }
+
+    async move { rx.await.unwrap() }
 }

@@ -6,7 +6,7 @@
         "repositoryURL": "https://github.com/livekit/client-sdk-swift.git",
         "state": {
           "branch": null,
-          "revision": "5cc3c001779ab147199ce3ea0dce465b846368b4",
+          "revision": "a90ecba800f65bebfc31f5c9c59f635c8587ec7e",
           "version": null
         }
       },
@@ -42,8 +42,8 @@
         "repositoryURL": "https://github.com/apple/swift-protobuf.git",
         "state": {
           "branch": null,
-          "revision": "b8230909dedc640294d7324d37f4c91ad3dcf177",
-          "version": "1.20.1"
+          "revision": "88c7d15e1242fdb6ecbafbc7926426a19be1e98a",
+          "version": "1.20.2"
         }
       }
     ]

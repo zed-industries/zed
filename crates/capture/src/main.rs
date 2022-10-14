@@ -38,6 +38,11 @@ fn main() {
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap();
 
         cx.spawn(|mut cx| async move {
+            match live_kit::display_sources().await {
+                Ok(sources) => println!("found {} sources", sources.len()),
+                Err(error) => println!("error finding display sources {}", error),
+            }
+
             let user1_token = live_kit_token::create_token(
                 &live_kit_key,
                 &live_kit_secret,
