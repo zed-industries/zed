@@ -135,13 +135,12 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>, db: Arc<Mutex<Db>>) {
+    pub fn start(self: &Arc<Self>, db: Arc<Db>) {
         let this = self.clone();
         self.executor
             .spawn(
                 async move {
-                    let db = db.lock();
-                    let device_id = if let Ok(device_id) = db.read_kvp("device_id") {
+                    let device_id = if let Ok(Some(device_id)) = db.read_kvp("device_id") {
                         device_id
                     } else {
                         let device_id = Uuid::new_v4().to_string();
@@ -149,7 +148,6 @@ impl Telemetry {
                         device_id
                     };
 
-                    drop(db);
                     let device_id = Some(Arc::from(device_id));
                     let mut state = this.state.lock();
                     state.device_id = device_id.clone();

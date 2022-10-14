@@ -14,6 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
+use db::{SerializedItem, SerializedItemKind};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -76,6 +77,9 @@ type FollowableItemBuilders = HashMap<
         fn(AnyViewHandle) -> Box<dyn FollowableItemHandle>,
     ),
 >;
+
+type ItemDeserializers =
+    HashMap<SerializedItemKind, fn(SerializedItem, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -230,6 +234,14 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
     });
 }
 
+pub fn register_deserializable_item<I: Item>(cx: &mut MutableAppContext) {
+    cx.update_default_global(|deserializers: &mut ItemDeserializers, _| {
+        deserializers.insert(I::serialized_item_kind(), |serialized_item, cx| {
+            Box::new(cx.add_view(|cx| I::deserialize(serialized_item, cx)))
+        })
+    });
+}
+
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub themes: Arc<ThemeRegistry>,
@@ -333,6 +345,9 @@ pub trait Item: View {
     fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox>> {
         None
     }
+    fn serialized_item_kind() -> SerializedItemKind;
+    fn deserialize(serialized_item: SerializedItem, cx: &mut ViewContext<Self>) -> Self;
+    fn serialize(&self) -> SerializedItem;
 }
 
 pub trait ProjectItem: Item {
@@ -3610,6 +3625,18 @@ mod tests {
 
         fn to_item_events(_: &Self::Event) -> Vec<ItemEvent> {
             vec![ItemEvent::UpdateTab, ItemEvent::Edit]
+        }
+
+        fn serialized_item_kind() -> SerializedItemKind {
+            unimplemented!()
+        }
+
+        fn deserialize(_serialized_item: SerializedItem, _cx: &mut ViewContext<Self>) -> Self {
+            unimplemented!()
+        }
+
+        fn serialize(&self) -> SerializedItem {
+            unimplemented!()
         }
     }
 

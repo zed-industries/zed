@@ -7524,6 +7524,7 @@ dependencies = [
  "client",
  "collections",
  "context_menu",
+ "db",
  "drag_and_drop",
  "fs",
  "futures 0.3.24",
