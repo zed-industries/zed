@@ -428,7 +428,8 @@ impl Db for PostgresDb {
                 COUNT(*) as count,
                 COALESCE(SUM(CASE WHEN platform_linux THEN 1 ELSE 0 END), 0) as linux_count,
                 COALESCE(SUM(CASE WHEN platform_mac THEN 1 ELSE 0 END), 0) as mac_count,
-                COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count
+                COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count,
+                COALESCE(SUM(CASE WHEN platform_unknown THEN 1 ELSE 0 END), 0) as unknown_count
             FROM (
                 SELECT *
                 FROM signups
@@ -449,7 +450,7 @@ impl Db for PostgresDb {
             FROM signups
             WHERE
                 NOT email_confirmation_sent AND
-                platform_mac
+                (platform_mac OR platform_unknown)
             LIMIT $1
             ",
         )
@@ -1720,6 +1721,8 @@ pub struct WaitlistSummary {
     pub mac_count: i64,
     #[sqlx(default)]
     pub windows_count: i64,
+    #[sqlx(default)]
+    pub unknown_count: i64,
 }
 
 #[derive(FromRow, PartialEq, Debug, Serialize, Deserialize)]

@@ -1022,6 +1022,7 @@ async fn test_signups() {
             mac_count: 8,
             linux_count: 4,
             windows_count: 2,
+            unknown_count: 0,
         }
     );
 
@@ -1074,6 +1075,7 @@ async fn test_signups() {
             mac_count: 5,
             linux_count: 2,
             windows_count: 1,
+            unknown_count: 0,
         }
     );
 
