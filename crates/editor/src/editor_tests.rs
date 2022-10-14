@@ -1229,7 +1229,7 @@ async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
         seven
         eight
         nine
-        tenx
+        ten
         "#
         .unindent(),
     );
