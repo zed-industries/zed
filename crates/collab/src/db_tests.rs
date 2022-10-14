@@ -1030,7 +1030,7 @@ async fn test_signups() {
     let signups_batch1 = db.get_unsent_invites(3).await.unwrap();
     let addresses = signups_batch1
         .iter()
-        .map(|s| &s.invite.email_address)
+        .map(|s| &s.email_address)
         .collect::<Vec<_>>();
     assert_eq!(
         addresses,
@@ -1041,8 +1041,8 @@ async fn test_signups() {
         ]
     );
     assert_ne!(
-        signups_batch1[0].invite.email_confirmation_code,
-        signups_batch1[1].invite.email_confirmation_code
+        signups_batch1[0].email_confirmation_code,
+        signups_batch1[1].email_confirmation_code
     );
 
     // the waitlist isn't updated until we record that the emails
@@ -1052,18 +1052,11 @@ async fn test_signups() {
 
     // once the emails go out, we can retrieve the next batch
     // of signups.
-    db.record_sent_invites(
-        &signups_batch1
-            .iter()
-            .map(|i| i.invite.clone())
-            .collect::<Vec<_>>(),
-    )
-    .await
-    .unwrap();
+    db.record_sent_invites(&signups_batch1).await.unwrap();
     let signups_batch2 = db.get_unsent_invites(3).await.unwrap();
     let addresses = signups_batch2
         .iter()
-        .map(|s| &s.invite.email_address)
+        .map(|s| &s.email_address)
         .collect::<Vec<_>>();
     assert_eq!(
         addresses,
@@ -1096,8 +1089,8 @@ async fn test_signups() {
     } = db
         .create_user_from_invite(
             &Invite {
-                email_address: signups_batch1[0].invite.email_address.clone(),
-                email_confirmation_code: signups_batch1[0].invite.email_confirmation_code.clone(),
+                email_address: signups_batch1[0].email_address.clone(),
+                email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
             },
             NewUserParams {
                 github_login: "person-0".into(),
@@ -1117,8 +1110,8 @@ async fn test_signups() {
     // cannot redeem the same signup again.
     db.create_user_from_invite(
         &Invite {
-            email_address: signups_batch1[0].invite.email_address.clone(),
-            email_confirmation_code: signups_batch1[0].invite.email_confirmation_code.clone(),
+            email_address: signups_batch1[0].email_address.clone(),
+            email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
         },
         NewUserParams {
             github_login: "some-other-github_account".into(),
@@ -1132,7 +1125,7 @@ async fn test_signups() {
     // cannot redeem a signup with the wrong confirmation code.
     db.create_user_from_invite(
         &Invite {
-            email_address: signups_batch1[1].invite.email_address.clone(),
+            email_address: signups_batch1[1].email_address.clone(),
             email_confirmation_code: "the-wrong-code".to_string(),
         },
         NewUserParams {

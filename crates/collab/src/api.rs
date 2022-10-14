@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{Invite, NewUserParams, ProjectId, Signup, UnsentInvite, User, UserId, WaitlistSummary},
+    db::{Invite, NewUserParams, ProjectId, Signup, User, UserId, WaitlistSummary},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -471,7 +471,7 @@ pub struct GetUnsentInvitesParams {
 async fn get_unsent_invites(
     Query(params): Query<GetUnsentInvitesParams>,
     Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<Vec<UnsentInvite>>> {
+) -> Result<Json<Vec<Invite>>> {
     Ok(Json(app.db.get_unsent_invites(params.count).await?))
 }
 

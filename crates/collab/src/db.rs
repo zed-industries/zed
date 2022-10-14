@@ -45,7 +45,7 @@ pub trait Db: Send + Sync {
 
     async fn create_signup(&self, signup: Signup) -> Result<()>;
     async fn get_waitlist_summary(&self) -> Result<WaitlistSummary>;
-    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<UnsentInvite>>;
+    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>>;
     async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()>;
     async fn create_user_from_invite(
         &self,
@@ -442,11 +442,11 @@ impl Db for PostgresDb {
         .await?)
     }
 
-    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<UnsentInvite>> {
-        let rows: Vec<(String, String, bool)> = sqlx::query_as(
+    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>> {
+        Ok(sqlx::query_as(
             "
             SELECT
-                email_address, email_confirmation_code, platform_unknown
+                email_address, email_confirmation_code
             FROM signups
             WHERE
                 NOT email_confirmation_sent AND
@@ -456,19 +456,7 @@ impl Db for PostgresDb {
         )
         .bind(count as i32)
         .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(email_address, email_confirmation_code, platform_unknown)| UnsentInvite {
-                    invite: Invite {
-                        email_address,
-                        email_confirmation_code,
-                    },
-                    platform_unknown,
-                },
-            )
-            .collect())
+        .await?)
     }
 
     async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()> {
@@ -1737,17 +1725,10 @@ pub struct WaitlistSummary {
     pub unknown_count: i64,
 }
 
-#[derive(Clone, FromRow, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(FromRow, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,
     pub email_confirmation_code: String,
-}
-
-#[derive(Serialize, Debug, PartialEq)]
-pub struct UnsentInvite {
-    #[serde(flatten)]
-    pub invite: Invite,
-    pub platform_unknown: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1965,7 +1946,7 @@ mod test {
             unimplemented!()
         }
 
-        async fn get_unsent_invites(&self, _count: usize) -> Result<Vec<UnsentInvite>> {
+        async fn get_unsent_invites(&self, _count: usize) -> Result<Vec<Invite>> {
             unimplemented!()
         }
 
