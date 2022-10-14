@@ -675,10 +675,8 @@ impl EditorElement {
         let style = &self.style;
         let local_replica_id = view.replica_id(cx);
         let scroll_position = layout.position_map.snapshot.scroll_position();
-        let start_row = scroll_position.y() as u32;
+        let start_row = layout.visible_display_row_range.start;
         let scroll_top = scroll_position.y() * layout.position_map.line_height;
-        let end_row =
-            ((scroll_top + bounds.height()) / layout.position_map.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
         let max_glyph_width = layout.position_map.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
@@ -697,8 +695,6 @@ impl EditorElement {
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
                 range.clone(),
-                start_row,
-                end_row,
                 *color,
                 0.,
                 0.15 * layout.position_map.line_height,
@@ -719,8 +715,6 @@ impl EditorElement {
             for selection in selections {
                 self.paint_highlighted_range(
                     selection.range.clone(),
-                    start_row,
-                    end_row,
                     selection_style.selection,
                     corner_radius,
                     corner_radius * 2.,
@@ -734,7 +728,10 @@ impl EditorElement {
 
                 if view.show_local_cursors() || *replica_id != local_replica_id {
                     let cursor_position = selection.head;
-                    if (start_row..end_row).contains(&cursor_position.row()) {
+                    if layout
+                        .visible_display_row_range
+                        .contains(&cursor_position.row())
+                    {
                         let cursor_row_layout = &layout.position_map.line_layouts
                             [(cursor_position.row() - start_row) as usize];
                         let cursor_column = cursor_position.column() as usize;
@@ -1025,8 +1022,6 @@ impl EditorElement {
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
-        start_row: u32,
-        end_row: u32,
         color: Color,
         corner_radius: f32,
         line_end_overshoot: f32,
@@ -1037,6 +1032,8 @@ impl EditorElement {
         bounds: RectF,
         cx: &mut PaintContext,
     ) {
+        let start_row = layout.visible_display_row_range.start;
+        let end_row = layout.visible_display_row_range.end;
         if range.start != range.end {
             let row_range = if range.end.column() == 0 {
                 cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
@@ -1826,6 +1823,7 @@ impl Element for EditorElement {
                     em_advance,
                     snapshot,
                 }),
+                visible_display_row_range: start_row..end_row,
                 gutter_size,
                 gutter_padding,
                 text_size,
@@ -1971,6 +1969,7 @@ pub struct LayoutState {
     gutter_margin: f32,
     text_size: Vector2F,
     mode: EditorMode,
+    visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
