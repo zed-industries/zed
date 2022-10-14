@@ -88,7 +88,7 @@ public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPoin
 
 @_cdecl("LKCreateScreenShareTrackForDisplay")
 public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-    let display = Unmanaged<MacOSDisplay>.fromOpaque(display).takeRetainedValue()
+    let display = Unmanaged<MacOSDisplay>.fromOpaque(display).takeUnretainedValue()
     let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display, preferredMethod: .legacy)
     return Unmanaged.passRetained(track).toOpaque()
 }

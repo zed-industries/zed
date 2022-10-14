@@ -59,14 +59,8 @@ fn main() {
             room2.connect(&live_kit_url, &user2_token).await.unwrap();
             cx.add_window(Default::default(), |cx| ScreenCaptureView::new(room2, cx));
 
-            let display = live_kit::display_sources()
-                .await
-                .unwrap()
-                .into_iter()
-                .next()
-                .unwrap();
-
-            let track = LocalVideoTrack::screen_share_for_display(display);
+            let display_sources = live_kit::display_sources().await.unwrap();
+            let track = LocalVideoTrack::screen_share_for_display(display_sources.first().unwrap());
             room1.publish_video_track(&track).await.unwrap();
         })
         .detach();

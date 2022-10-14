@@ -187,11 +187,8 @@ impl Drop for RoomDelegate {
 pub struct LocalVideoTrack(*const c_void);
 
 impl LocalVideoTrack {
-    pub fn screen_share_for_display(display: MacOSDisplay) -> Self {
-        let ptr = display.0;
-        let this = Self(unsafe { LKCreateScreenShareTrackForDisplay(ptr) });
-        std::mem::forget(display);
-        this
+    pub fn screen_share_for_display(display: &MacOSDisplay) -> Self {
+        Self(unsafe { LKCreateScreenShareTrackForDisplay(display.0) })
     }
 }
 
@@ -259,7 +256,6 @@ pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
                 let sources = CFArray::wrap_under_get_rule(sources);
                 let sources_vec = sources.iter().map(|source| MacOSDisplay(*source)).collect();
                 let _ = tx.send(Ok(sources_vec));
-                std::mem::forget(sources); // HACK: If I drop the CFArray, all the objects inside it get dropped and we get issues accessing the display later.
             }
         }
     }
