@@ -2024,7 +2024,7 @@ impl Editor {
             }
 
             drop(snapshot);
-            this.change_selections(None, cx, |s| s.select(new_selections));
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(new_selections));
             this.trigger_completion_on_input(&text, cx);
         });
     }
