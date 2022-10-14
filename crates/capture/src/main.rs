@@ -1,5 +1,3 @@
-mod live_kit_token;
-
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -8,7 +6,7 @@ use gpui::{
     platform::current::Surface,
     Menu, MenuItem, ViewContext,
 };
-use live_kit::{LocalVideoTrack, Room};
+use live_kit_client::{LocalVideoTrack, Room};
 use log::LevelFilter;
 use media::core_video::CVImageBuffer;
 use postage::watch;
@@ -38,7 +36,7 @@ fn main() {
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap();
 
         cx.spawn(|mut cx| async move {
-            let user1_token = live_kit_token::create_token(
+            let user1_token = live_kit_server::create_token(
                 &live_kit_key,
                 &live_kit_secret,
                 "test-room",
@@ -48,7 +46,7 @@ fn main() {
             let room1 = Room::new();
             room1.connect(&live_kit_url, &user1_token).await.unwrap();
 
-            let user2_token = live_kit_token::create_token(
+            let user2_token = live_kit_server::create_token(
                 &live_kit_key,
                 &live_kit_secret,
                 "test-room",
@@ -59,7 +57,7 @@ fn main() {
             room2.connect(&live_kit_url, &user2_token).await.unwrap();
             cx.add_window(Default::default(), |cx| ScreenCaptureView::new(room2, cx));
 
-            let display_sources = live_kit::display_sources().await.unwrap();
+            let display_sources = live_kit_client::display_sources().await.unwrap();
             let track = LocalVideoTrack::screen_share_for_display(display_sources.first().unwrap());
             room1.publish_video_track(&track).await.unwrap();
         })

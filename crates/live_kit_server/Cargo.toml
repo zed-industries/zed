@@ -1,0 +1,16 @@
+[package]
+name = "live_kit_server"
+version = "0.1.0"
+edition = "2021"
+description = "SDK for the LiveKit server API"
+
+[lib]
+path = "src/live_kit_server.rs"
+doctest = false
+
+[dependencies]
+anyhow = "1.0.38"
+hmac = "0.12"
+jwt = "0.16"
+serde = { version = "1.0", features = ["derive", "rc"] }
+sha2 = "0.10"

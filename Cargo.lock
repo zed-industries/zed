@@ -817,16 +817,13 @@ dependencies = [
  "foreign-types",
  "futures 0.3.24",
  "gpui",
- "hmac 0.12.1",
- "jwt",
- "live_kit",
+ "live_kit_client",
+ "live_kit_server",
  "log",
  "media",
  "objc",
  "parking_lot 0.11.2",
  "postage",
- "serde",
- "sha2 0.10.6",
  "simplelog",
 ]
 
@@ -3187,7 +3184,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "live_kit"
+name = "live_kit_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3198,6 +3195,17 @@ dependencies = [
  "parking_lot 0.11.2",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "live_kit_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hmac 0.12.1",
+ "jwt",
+ "serde",
+ "sha2 0.10.6",
 ]
 
 [[package]]
