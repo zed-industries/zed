@@ -38,11 +38,6 @@ fn main() {
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap();
 
         cx.spawn(|mut cx| async move {
-            match live_kit::display_sources().await {
-                Ok(sources) => println!("found {} sources", sources.len()),
-                Err(error) => println!("error finding display sources {}", error),
-            }
-
             let user1_token = live_kit_token::create_token(
                 &live_kit_key,
                 &live_kit_secret,
@@ -64,12 +59,14 @@ fn main() {
             room2.connect(&live_kit_url, &user2_token).await.unwrap();
             cx.add_window(Default::default(), |cx| ScreenCaptureView::new(room2, cx));
 
-            let windows = live_kit::list_windows();
-            let window = windows
-                .iter()
-                .find(|w| w.owner_name.as_deref() == Some("Safari"))
+            let display = live_kit::display_sources()
+                .await
+                .unwrap()
+                .into_iter()
+                .next()
                 .unwrap();
-            let track = LocalVideoTrack::screen_share_for_window(window.id);
+
+            let track = LocalVideoTrack::screen_share_for_display(display);
             room1.publish_video_track(&track).await.unwrap();
         })
         .detach();

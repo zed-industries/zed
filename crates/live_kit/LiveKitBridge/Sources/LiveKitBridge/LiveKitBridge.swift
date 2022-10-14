@@ -92,6 +92,14 @@ public func LKCreateScreenShareTrackForWindow(windowId: uint32) -> UnsafeMutable
     return Unmanaged.passRetained(track).toOpaque()
 }
 
+@_cdecl("LKCreateScreenShareTrackForDisplay")
+public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+    let display = Unmanaged<MacOSDisplay>.fromOpaque(display).takeRetainedValue()
+    print("!!!!!!!!!! display id", display.displayID)
+    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display)
+    return Unmanaged.passRetained(track).toOpaque()
+}
+
 @_cdecl("LKVideoRendererCreate")
 public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Void, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(LKVideoRenderer(data: data, onFrame: onFrame, onDrop: onDrop)).toOpaque()

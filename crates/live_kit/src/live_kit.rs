@@ -55,7 +55,6 @@ extern "C" {
 
     fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
 
-    fn LKCreateScreenShareTrackForWindow(windowId: u32) -> *const c_void;
     fn LKDisplaySources(
         callback_data: *mut c_void,
         callback: extern "C" fn(
@@ -64,6 +63,8 @@ extern "C" {
             error: CFStringRef,
         ),
     );
+    fn LKCreateScreenShareTrackForWindow(windowId: u32) -> *const c_void;
+    fn LKCreateScreenShareTrackForDisplay(display: *const c_void) -> *const c_void;
 }
 
 pub struct Room {
@@ -196,6 +197,13 @@ impl LocalVideoTrack {
     pub fn screen_share_for_window(window_id: u32) -> Self {
         Self(unsafe { LKCreateScreenShareTrackForWindow(window_id) })
     }
+
+    pub fn screen_share_for_display(display: MacOSDisplay) -> Self {
+        let ptr = display.0;
+        let this = Self(unsafe { LKCreateScreenShareTrackForDisplay(ptr) });
+        std::mem::forget(display);
+        this
+    }
 }
 
 impl Drop for LocalVideoTrack {
@@ -285,6 +293,12 @@ pub fn list_windows() -> Vec<WindowInfo> {
 
 pub struct MacOSDisplay(*const c_void);
 
+impl Drop for MacOSDisplay {
+    fn drop(&mut self) {
+        unsafe { LKRelease(self.0) }
+    }
+}
+
 pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
     extern "C" fn callback(tx: *mut c_void, sources: CFArrayRef, error: CFStringRef) {
         unsafe {
@@ -294,11 +308,9 @@ pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
                 let _ = tx.send(Err(anyhow!("{}", CFString::wrap_under_get_rule(error))));
             } else {
                 let sources = CFArray::wrap_under_get_rule(sources);
-                let sources = sources
-                    .into_iter()
-                    .map(|source| MacOSDisplay(*source))
-                    .collect();
-                let _ = tx.send(Ok(sources));
+                let sources_vec = sources.iter().map(|source| MacOSDisplay(*source)).collect();
+                let _ = tx.send(Ok(sources_vec));
+                std::mem::forget(sources); // HACK: If I drop the CFArray, all the objects inside it get dropped and we get issues accessing the display later.
             }
         }
     }
