@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use serde::Serialize;
@@ -14,43 +14,49 @@ static DEFAULT_TTL: Duration = Duration::from_secs(6 * 60 * 60); // 6 hours
 #[serde(rename_all = "camelCase")]
 struct ClaimGrants<'a> {
     iss: &'a str,
-    sub: &'a str,
+    sub: Option<&'a str>,
     iat: u64,
     exp: u64,
     nbf: u64,
-    jwtid: &'a str,
+    jwtid: Option<&'a str>,
     video: VideoGrant<'a>,
 }
 
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct VideoGrant<'a> {
-    room_create: Option<bool>,
-    room_join: Option<bool>,
-    room_list: Option<bool>,
-    room_record: Option<bool>,
-    room_admin: Option<bool>,
-    room: Option<&'a str>,
-    can_publish: Option<bool>,
-    can_subscribe: Option<bool>,
-    can_publish_data: Option<bool>,
-    hidden: Option<bool>,
-    recorder: Option<bool>,
+pub struct VideoGrant<'a> {
+    pub room_create: Option<bool>,
+    pub room_join: Option<bool>,
+    pub room_list: Option<bool>,
+    pub room_record: Option<bool>,
+    pub room_admin: Option<bool>,
+    pub room: Option<&'a str>,
+    pub can_publish: Option<bool>,
+    pub can_subscribe: Option<bool>,
+    pub can_publish_data: Option<bool>,
+    pub hidden: Option<bool>,
+    pub recorder: Option<bool>,
 }
 
 pub fn create(
     api_key: &str,
     secret_key: &str,
-    room_name: &str,
-    participant_name: &str,
+    identity: Option<&str>,
+    video_grant: VideoGrant,
 ) -> Result<String> {
+    if video_grant.room_join.is_some() && identity.is_none() {
+        Err(anyhow!(
+            "identity is required for room_join grant, but it is none"
+        ))?;
+    }
+
     let secret_key: Hmac<Sha256> = Hmac::new_from_slice(secret_key.as_bytes())?;
 
     let now = SystemTime::now();
 
     let claims = ClaimGrants {
         iss: api_key,
-        sub: participant_name,
+        sub: identity,
         iat: now.duration_since(UNIX_EPOCH).unwrap().as_secs(),
         exp: now
             .add(DEFAULT_TTL)
@@ -58,14 +64,8 @@ pub fn create(
             .unwrap()
             .as_secs(),
         nbf: 0,
-        jwtid: participant_name,
-        video: VideoGrant {
-            room: Some(room_name),
-            room_join: Some(true),
-            can_publish: Some(true),
-            can_subscribe: Some(true),
-            ..Default::default()
-        },
+        jwtid: identity,
+        video: video_grant,
     };
     Ok(claims.sign_with_key(&secret_key)?)
 }

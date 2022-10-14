@@ -39,8 +39,14 @@ fn main() {
             let user1_token = live_kit_server::token::create(
                 &live_kit_key,
                 &live_kit_secret,
-                "test-room",
-                "test-participant-1",
+                Some("test-participant-1"),
+                live_kit_server::token::VideoGrant {
+                    room: Some("test-room"),
+                    room_join: Some(true),
+                    can_publish: Some(true),
+                    can_subscribe: Some(true),
+                    ..Default::default()
+                },
             )
             .unwrap();
             let room1 = Room::new();
@@ -49,10 +55,17 @@ fn main() {
             let user2_token = live_kit_server::token::create(
                 &live_kit_key,
                 &live_kit_secret,
-                "test-room",
-                "test-participant-2",
+                Some("test-participant-2"),
+                live_kit_server::token::VideoGrant {
+                    room: Some("test-room"),
+                    room_join: Some(true),
+                    can_publish: Some(true),
+                    can_subscribe: Some(true),
+                    ..Default::default()
+                },
             )
             .unwrap();
+
             let room2 = Room::new();
             room2.connect(&live_kit_url, &user2_token).await.unwrap();
             cx.add_window(Default::default(), |cx| ScreenCaptureView::new(room2, cx));

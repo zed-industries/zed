@@ -31,6 +31,6 @@ impl Client {
             .build();
 
         // token::create(api_key, secret_key, room_name, participant_name)
-        self.http.request(req)
+        // self.http.request(req)
     }
 }
