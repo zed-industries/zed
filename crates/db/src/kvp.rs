@@ -3,31 +3,30 @@ use anyhow::Result;
 use super::Db;
 
 impl Db {
-    pub async fn read_kvp(&self, key: &str) -> Result<String> {
-        let value = sqlx::query!("SELECT value FROM kv_store WHERE key = ?", key)
-            .fetch_one(&self.pool)
-            .await
-            .map(|res| res.value)?;
+    pub fn read_kvp(&self, key: &str) -> Result<String> {
+        let mut stmt = self
+            .connecion
+            .prepare_cached("SELECT value FROM kv_store WHERE key = (?)")?;
 
-        Ok(value)
+        Ok(stmt.query_row([key], |row| row.get(0))?)
     }
 
-    pub async fn delete_kvp(&self, key: &str) -> Result<()> {
-        sqlx::query!("DELETE FROM kv_store WHERE key = ?", key)
-            .execute(&self.pool)
-            .await?;
+    pub fn delete_kvp(&self, key: &str) -> Result<()> {
+        let mut stmt = self
+            .connecion
+            .prepare_cached("SELECT value FROM kv_store WHERE key = (?)")?;
+
+        stmt.execute([key])?;
 
         Ok(())
     }
 
-    pub async fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
-        sqlx::query!(
-            "INSERT OR REPLACE INTO kv_store(key, value) VALUES (?, ?)",
-            key,
-            value
-        )
-        .execute(&self.pool)
-        .await?;
+    pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
+        let mut stmt = self
+            .connecion
+            .prepare_cached("INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))")?;
+
+        stmt.execute([key, value])?;
 
         Ok(())
     }
