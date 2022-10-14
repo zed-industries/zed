@@ -45,7 +45,7 @@ pub trait Db: Send + Sync {
 
     async fn create_signup(&self, signup: Signup) -> Result<()>;
     async fn get_waitlist_summary(&self) -> Result<WaitlistSummary>;
-    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>>;
+    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<UnsentInvite>>;
     async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()>;
     async fn create_user_from_invite(
         &self,
@@ -428,7 +428,8 @@ impl Db for PostgresDb {
                 COUNT(*) as count,
                 COALESCE(SUM(CASE WHEN platform_linux THEN 1 ELSE 0 END), 0) as linux_count,
                 COALESCE(SUM(CASE WHEN platform_mac THEN 1 ELSE 0 END), 0) as mac_count,
-                COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count
+                COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count,
+                COALESCE(SUM(CASE WHEN platform_unknown THEN 1 ELSE 0 END), 0) as unknown_count
             FROM (
                 SELECT *
                 FROM signups
@@ -441,21 +442,33 @@ impl Db for PostgresDb {
         .await?)
     }
 
-    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>> {
-        Ok(sqlx::query_as(
+    async fn get_unsent_invites(&self, count: usize) -> Result<Vec<UnsentInvite>> {
+        let rows: Vec<(String, String, bool)> = sqlx::query_as(
             "
             SELECT
-                email_address, email_confirmation_code
+                email_address, email_confirmation_code, platform_unknown
             FROM signups
             WHERE
                 NOT email_confirmation_sent AND
-                platform_mac
+                (platform_mac OR platform_unknown)
             LIMIT $1
             ",
         )
         .bind(count as i32)
         .fetch_all(&self.pool)
-        .await?)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(email_address, email_confirmation_code, platform_unknown)| UnsentInvite {
+                    invite: Invite {
+                        email_address,
+                        email_confirmation_code,
+                    },
+                    platform_unknown,
+                },
+            )
+            .collect())
     }
 
     async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()> {
@@ -1720,12 +1733,21 @@ pub struct WaitlistSummary {
     pub mac_count: i64,
     #[sqlx(default)]
     pub windows_count: i64,
+    #[sqlx(default)]
+    pub unknown_count: i64,
 }
 
-#[derive(FromRow, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, FromRow, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,
     pub email_confirmation_code: String,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct UnsentInvite {
+    #[serde(flatten)]
+    pub invite: Invite,
+    pub platform_unknown: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1943,7 +1965,7 @@ mod test {
             unimplemented!()
         }
 
-        async fn get_unsent_invites(&self, _count: usize) -> Result<Vec<Invite>> {
+        async fn get_unsent_invites(&self, _count: usize) -> Result<Vec<UnsentInvite>> {
             unimplemented!()
         }
 
