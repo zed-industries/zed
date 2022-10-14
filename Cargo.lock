@@ -3203,7 +3203,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hmac 0.12.1",
+ "hyper",
  "jwt",
+ "prost 0.8.0",
+ "prost-build",
+ "prost-types 0.8.0",
  "serde",
  "sha2 0.10.6",
 ]
@@ -4363,7 +4367,7 @@ dependencies = [
  "multimap",
  "petgraph",
  "prost 0.9.0",
- "prost-types",
+ "prost-types 0.9.0",
  "regex",
  "tempfile",
  "which",
@@ -4393,6 +4397,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "603bbd6394701d13f3f25aada59c7de9d35a6a5887cfc156181234a44002771b"
+dependencies = [
+ "bytes 1.2.1",
+ "prost 0.8.0",
 ]
 
 [[package]]

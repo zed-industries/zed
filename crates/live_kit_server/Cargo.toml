@@ -12,5 +12,11 @@ doctest = false
 anyhow = "1.0.38"
 hmac = "0.12"
 jwt = "0.16"
+hyper = "0.14"
+prost = "0.8"
+prost-types = "0.8"
 serde = { version = "1.0", features = ["derive", "rc"] }
 sha2 = "0.10"
+
+[build-dependencies]
+prost-build = "0.9"

@@ -36,7 +36,7 @@ fn main() {
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap();
 
         cx.spawn(|mut cx| async move {
-            let user1_token = live_kit_server::create_token(
+            let user1_token = live_kit_server::token::create(
                 &live_kit_key,
                 &live_kit_secret,
                 "test-room",
@@ -46,7 +46,7 @@ fn main() {
             let room1 = Room::new();
             room1.connect(&live_kit_url, &user1_token).await.unwrap();
 
-            let user2_token = live_kit_server::create_token(
+            let user2_token = live_kit_server::token::create(
                 &live_kit_key,
                 &live_kit_secret,
                 "test-room",
