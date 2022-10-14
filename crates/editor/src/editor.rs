@@ -1938,9 +1938,10 @@ impl Editor {
                             }
                         } else if let Some(region) = autoclose_region {
                             // If the selection is followed by an auto-inserted closing bracket,
-                            // then don't insert anything else; just move the selection past the
-                            // closing bracket.
-                            let should_skip = selection.end == region.range.end.to_point(&snapshot);
+                            // then don't insert that closing bracket again; just move the selection
+                            // past the closing bracket.
+                            let should_skip = selection.end == region.range.end.to_point(&snapshot)
+                                && text.as_ref() == region.pair.end.as_str();
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
                                 new_selections.push((

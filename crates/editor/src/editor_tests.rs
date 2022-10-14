@@ -2908,6 +2908,12 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
                     newline: true,
                 },
                 BracketPair {
+                    start: "(".to_string(),
+                    end: ")".to_string(),
+                    close: true,
+                    newline: true,
+                },
+                BracketPair {
                     start: "/*".to_string(),
                     end: " */".to_string(),
                     close: true,
@@ -2957,6 +2963,19 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
         .unindent(),
     );
 
+    // insert a different closing bracket
+    cx.update_editor(|view, cx| {
+        view.handle_input(")", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            🏀{{{)ˇ}}}
+            ε{{{)ˇ}}}
+            ❤️{{{)ˇ}}}
+        "
+        .unindent(),
+    );
+
     // skip over the auto-closed brackets when typing a closing bracket
     cx.update_editor(|view, cx| {
         view.move_right(&MoveRight, cx);
@@ -2966,9 +2985,9 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &"
-            🏀{{{}}}}ˇ
-            ε{{{}}}}ˇ
-            ❤️{{{}}}}ˇ
+            🏀{{{)}}}}ˇ
+            ε{{{)}}}}ˇ
+            ❤️{{{)}}}}ˇ
         "
         .unindent(),
     );
