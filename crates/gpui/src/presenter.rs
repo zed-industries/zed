@@ -482,9 +482,6 @@ impl Presenter {
 
                     if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
                         event_cx.handled = true;
-                        event_cx
-                            .invalidated_views
-                            .insert(valid_region.id().view_id());
                         event_cx.with_current_view(valid_region.id().view_id(), {
                             let region_event = region_event.clone();
                             |cx| {
