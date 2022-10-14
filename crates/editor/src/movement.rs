@@ -30,13 +30,32 @@ pub fn up(
     goal: SelectionGoal,
     preserve_column_at_start: bool,
 ) -> (DisplayPoint, SelectionGoal) {
+    up_by_rows(map, start, 1, goal, preserve_column_at_start)
+}
+
+pub fn down(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    goal: SelectionGoal,
+    preserve_column_at_end: bool,
+) -> (DisplayPoint, SelectionGoal) {
+    down_by_rows(map, start, 1, goal, preserve_column_at_end)
+}
+
+pub fn up_by_rows(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    row_count: u32,
+    goal: SelectionGoal,
+    preserve_column_at_start: bool,
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
         map.column_to_chars(start.row(), start.column())
     };
 
-    let prev_row = start.row().saturating_sub(1);
+    let prev_row = start.row().saturating_sub(row_count);
     let mut point = map.clip_point(
         DisplayPoint::new(prev_row, map.line_len(prev_row)),
         Bias::Left,
@@ -62,9 +81,10 @@ pub fn up(
     )
 }
 
-pub fn down(
+pub fn down_by_rows(
     map: &DisplaySnapshot,
     start: DisplayPoint,
+    row_count: u32,
     goal: SelectionGoal,
     preserve_column_at_end: bool,
 ) -> (DisplayPoint, SelectionGoal) {
@@ -74,8 +94,8 @@ pub fn down(
         map.column_to_chars(start.row(), start.column())
     };
 
-    let next_row = start.row() + 1;
-    let mut point = map.clip_point(DisplayPoint::new(next_row, 0), Bias::Right);
+    let new_row = start.row() + row_count;
+    let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
         *point.column_mut() = map.column_from_chars(point.row(), goal_column);
     } else if preserve_column_at_end {

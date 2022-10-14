@@ -17,10 +17,11 @@ use parking_lot::{Mutex, RwLock};
 use smol::stream::StreamExt;
 
 use crate::{
-    executor, keymap::Keystroke, platform, Action, AnyViewHandle, AppContext, Appearance, Entity,
-    Event, FontCache, InputHandler, KeyDownEvent, LeakDetector, ModelContext, ModelHandle,
-    MutableAppContext, Platform, ReadModelWith, ReadViewWith, RenderContext, Task, UpdateModel,
-    UpdateView, View, ViewContext, ViewHandle, WeakHandle, WindowInputHandler,
+    executor, geometry::vector::Vector2F, keymap::Keystroke, platform, Action, AnyViewHandle,
+    AppContext, Appearance, Entity, Event, FontCache, InputHandler, KeyDownEvent, LeakDetector,
+    ModelContext, ModelHandle, MutableAppContext, Platform, ReadModelWith, ReadViewWith,
+    RenderContext, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle, WeakHandle,
+    WindowInputHandler,
 };
 use collections::BTreeMap;
 
@@ -273,6 +274,17 @@ impl TestAppContext {
         } else {
             false
         }
+    }
+
+    pub fn simulate_window_resize(&self, window_id: usize, size: Vector2F) {
+        let mut window = self.window_mut(window_id);
+        window.size = size;
+        let mut handlers = mem::take(&mut window.resize_handlers);
+        drop(window);
+        for handler in &mut handlers {
+            handler();
+        }
+        self.window_mut(window_id).resize_handlers = handlers;
     }
 
     pub fn simulate_window_activation(&self, to_activate: Option<usize>) {

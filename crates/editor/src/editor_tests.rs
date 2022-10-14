@@ -1195,6 +1195,120 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
+async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+    cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
+
+    cx.set_state(
+        &r#"
+        ˇone
+        two
+        threeˇ
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        ˇfour
+        five
+        sixˇ
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        ˇseven
+        eight
+        nineˇ
+        ten
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        ˇfour
+        five
+        sixˇ
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        ˇone
+        two
+        threeˇ
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
+
+    // Test select collapsing
+    cx.update_editor(|editor, cx| {
+        editor.move_page_down(&MovePageDown::default(), cx);
+        editor.move_page_down(&MovePageDown::default(), cx);
+        editor.move_page_down(&MovePageDown::default(), cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ˇten
+        ˇ"#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx);
     cx.set_state("one «two threeˇ» four");

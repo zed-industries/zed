@@ -108,6 +108,18 @@ pub struct SelectToBeginningOfLine {
     stop_at_soft_wraps: bool,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct MovePageUp {
+    #[serde(default)]
+    center_cursor: bool,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct MovePageDown {
+    #[serde(default)]
+    center_cursor: bool,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
@@ -161,8 +173,11 @@ actions!(
         Paste,
         Undo,
         Redo,
+        CenterScreen,
         MoveUp,
+        PageUp,
         MoveDown,
+        PageDown,
         MoveLeft,
         MoveRight,
         MoveToPreviousWordStart,
@@ -202,8 +217,6 @@ actions!(
         FindAllReferences,
         Rename,
         ConfirmRename,
-        PageUp,
-        PageDown,
         Fold,
         UnfoldLines,
         FoldSelectedRanges,
@@ -222,6 +235,8 @@ impl_actions!(
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         ToggleCodeActions,
+        MovePageUp,
+        MovePageDown,
         ConfirmCompletion,
         ConfirmCodeAction,
     ]
@@ -273,7 +288,12 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::undo);
     cx.add_action(Editor::redo);
     cx.add_action(Editor::move_up);
+    cx.add_action(Editor::move_page_up);
+    cx.add_action(Editor::page_up);
     cx.add_action(Editor::move_down);
+    cx.add_action(Editor::move_page_down);
+    cx.add_action(Editor::page_down);
+    cx.add_action(Editor::center_screen);
     cx.add_action(Editor::move_left);
     cx.add_action(Editor::move_right);
     cx.add_action(Editor::move_to_previous_word_start);
@@ -312,8 +332,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::go_to_prev_diagnostic);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::go_to_type_definition);
-    cx.add_action(Editor::page_up);
-    cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
     cx.add_action(Editor::unfold_lines);
     cx.add_action(Editor::fold_selected_ranges);
@@ -606,6 +624,18 @@ enum ContextMenu {
 }
 
 impl ContextMenu {
+    fn select_first(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+        if self.visible() {
+            match self {
+                ContextMenu::Completions(menu) => menu.select_first(cx),
+                ContextMenu::CodeActions(menu) => menu.select_first(cx),
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) -> bool {
         if self.visible() {
             match self {
@@ -623,6 +653,18 @@ impl ContextMenu {
             match self {
                 ContextMenu::Completions(menu) => menu.select_next(cx),
                 ContextMenu::CodeActions(menu) => menu.select_next(cx),
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+        if self.visible() {
+            match self {
+                ContextMenu::Completions(menu) => menu.select_last(cx),
+                ContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
         } else {
@@ -662,6 +704,12 @@ struct CompletionsMenu {
 }
 
 impl CompletionsMenu {
+    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = 0;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        cx.notify();
+    }
+
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
@@ -675,6 +723,12 @@ impl CompletionsMenu {
             self.selected_item += 1;
             self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
+        cx.notify();
+    }
+
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = self.matches.len() - 1;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify();
     }
 
@@ -809,6 +863,11 @@ struct CodeActionsMenu {
 }
 
 impl CodeActionsMenu {
+    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = 0;
+        cx.notify()
+    }
+
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
@@ -821,6 +880,11 @@ impl CodeActionsMenu {
             self.selected_item += 1;
             cx.notify()
         }
+    }
+
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = self.actions.len() - 1;
+        cx.notify()
     }
 
     fn visible(&self) -> bool {
@@ -3849,6 +3913,23 @@ impl Editor {
         })
     }
 
+    pub fn center_screen(&mut self, _: &CenterScreen, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if let Some(_) = self.context_menu.as_mut() {
+            return;
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.request_autoscroll(Autoscroll::Center, cx);
+    }
+
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -3875,6 +3956,72 @@ impl Editor {
                 selection.collapse_to(cursor, goal);
             });
         })
+    }
+
+    pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            if context_menu.select_first(cx) {
+                return;
+            }
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        let row_count = match self.visible_line_count {
+            Some(row_count) => row_count as u32 - 1,
+            None => return,
+        };
+
+        let autoscroll = if action.center_cursor {
+            Autoscroll::Center
+        } else {
+            Autoscroll::Fit
+        };
+
+        self.change_selections(Some(autoscroll), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) =
+                    movement::up_by_rows(map, selection.end, row_count, selection.goal, false);
+                selection.collapse_to(cursor, goal);
+            });
+        });
+    }
+
+    pub fn page_up(&mut self, _: &PageUp, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            if context_menu.select_first(cx) {
+                return;
+            }
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        let lines = match self.visible_line_count {
+            Some(lines) => lines,
+            None => return,
+        };
+
+        let cur_position = self.scroll_position(cx);
+        let new_pos = cur_position - vec2f(0., lines + 1.);
+        self.set_scroll_position(new_pos, cx);
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
@@ -3907,6 +4054,72 @@ impl Editor {
                 selection.collapse_to(cursor, goal);
             });
         });
+    }
+
+    pub fn move_page_down(&mut self, action: &MovePageDown, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            if context_menu.select_last(cx) {
+                return;
+            }
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        let row_count = match self.visible_line_count {
+            Some(row_count) => row_count as u32 - 1,
+            None => return,
+        };
+
+        let autoscroll = if action.center_cursor {
+            Autoscroll::Center
+        } else {
+            Autoscroll::Fit
+        };
+
+        self.change_selections(Some(autoscroll), cx, |s| {
+            let line_mode = s.line_mode;
+            s.move_with(|map, selection| {
+                if !selection.is_empty() && !line_mode {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) =
+                    movement::down_by_rows(map, selection.end, row_count, selection.goal, false);
+                selection.collapse_to(cursor, goal);
+            });
+        });
+    }
+
+    pub fn page_down(&mut self, _: &PageDown, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            if context_menu.select_last(cx) {
+                return;
+            }
+        }
+
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        let lines = match self.visible_line_count {
+            Some(lines) => lines,
+            None => return,
+        };
+
+        let cur_position = self.scroll_position(cx);
+        let new_pos = cur_position + vec2f(0., lines - 1.);
+        self.set_scroll_position(new_pos, cx);
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
@@ -5534,28 +5747,6 @@ impl Editor {
         } else {
             None
         }
-    }
-
-    pub fn page_up(&mut self, _: &PageUp, cx: &mut ViewContext<Self>) {
-        let lines = match self.visible_line_count {
-            Some(lines) => lines,
-            None => return,
-        };
-
-        let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position - vec2f(0., lines + 1.);
-        self.set_scroll_position(new_pos, cx);
-    }
-
-    pub fn page_down(&mut self, _: &PageDown, cx: &mut ViewContext<Self>) {
-        let lines = match self.visible_line_count {
-            Some(lines) => lines,
-            None => return,
-        };
-
-        let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position + vec2f(0., lines - 1.);
-        self.set_scroll_position(new_pos, cx);
     }
 
     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
