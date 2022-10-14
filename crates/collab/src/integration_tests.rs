@@ -807,7 +807,7 @@ async fn test_host_disconnect(
 
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
     server.disconnect_client(client_a.current_user_id(cx_a));
-    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
     project_a
         .condition(cx_a, |project, _| project.collaborators().is_empty())
         .await;
@@ -829,6 +829,29 @@ async fn test_host_disconnect(
         .await
         .unwrap();
     assert!(can_close);
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+    active_call_b
+        .update(cx_b, |call, cx| {
+            call.invite(client_a.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    active_call_a
+        .update(cx_a, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+
+    active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Drop client A's connection again. We should still unshare it successfully.
+    server.disconnect_client(client_a.current_user_id(cx_a));
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 }
 
 #[gpui::test(iterations = 10)]
