@@ -12,7 +12,7 @@ use crate::{
         CmdShiftChanged, GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
     },
     mouse_context_menu::DeployMouseContextMenu,
-    EditorStyle,
+    AnchorRangeExt, EditorStyle, ToOffset,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -1020,86 +1020,37 @@ impl EditorElement {
             .buffer_snapshot
             .git_diff_hunks_in_range(start_row..end_row)
         {
-            let start = Point::new(hunk.buffer_range.start, 0).to_display_point(snapshot);
-            let end = Point::new(hunk.buffer_range.end, 0).to_display_point(snapshot);
-            let is_folded = start == end && snapshot.is_line_folded(start.row());
+            let start = Point::new(hunk.buffer_range.start, 0);
+            let hunk_content_end_row = hunk
+                .buffer_range
+                .end
+                .saturating_sub(1)
+                .max(hunk.buffer_range.start);
+            let hunk_content_end = Point::new(
+                hunk_content_end_row,
+                snapshot.buffer_snapshot.line_len(hunk_content_end_row),
+            );
+            let end = Point::new(hunk.buffer_range.end, 0);
 
-            if let Some(hunk) = layouts.last_mut() {
-                //
-            }
+            let is_folded = snapshot
+                .folds_in_range(start..end)
+                .any(|fold_range| {
+                    let fold_point_range = fold_range.to_point(&snapshot.buffer_snapshot);
+                    dbg!(&fold_point_range);
+                    fold_point_range.contains(dbg!(&start))
+                        && fold_point_range.contains(dbg!(&hunk_content_end))
+                        || fold_point_range.end == hunk_content_end
+                });
 
-            layouts.push(DiffHunkLayout {
-                visual_range: start.row()..end.row(),
+            layouts.push(dbg!(DiffHunkLayout {
+                visual_range: start.to_display_point(snapshot).row()
+                    ..end.to_display_point(snapshot).row(),
                 status: hunk.status(),
                 is_folded,
-            });
+            }));
         }
 
-        return layouts;
-
-        //Some number followed by Nones for wrapped lines
-        //Jump in number for folded lines
-        // let mut buffer_rows = buffer_rows
-        //     .take((rows.end - rows.start) as usize)
-        //     .enumerate()
-        //     .peekable();
-
-        // let mut layouts = Vec::new();
-        // let mut previous_buffer_row = None;
-
-        // while let Some((idx, buffer_row)) = buffer_rows.next() {
-        //     let buffer_row = match buffer_row {
-        //         Some(buffer_row) => buffer_row,
-        //         None => continue,
-        //     };
-
-        //     let is_start_of_fold = previous_buffer_row
-        //         .map(|prev| buffer_row > prev + 1)
-        //         .unwrap_or(false);
-        //     previous_buffer_row = Some(buffer_row);
-
-        //     if is_start_of_fold {
-        //         //Consume all hunks within fold
-        //         let mut consumed_hunks = false;
-        //         while let Some(hunk) = diff_hunks.peek() {
-        //             let is_past = hunk.buffer_range.start > buffer_row;
-        //             let is_removal = hunk.status() == DiffHunkStatus::Removed;
-        //             let is_on_next_line = hunk.buffer_range.start == buffer_row + 1;
-        //             let is_removal_inside = is_removal && is_on_next_line;
-
-        //             if is_past && !is_removal_inside {
-        //                 break;
-        //             }
-        //             diff_hunks.next();
-        //             consumed_hunks = true;
-        //         }
-
-        //         //And mark fold as modified if there were any
-        //         if consumed_hunks {
-        //             let current_visual_row = rows.start + idx as u32 - 1;
-        //             layouts.push(DiffHunkLayout {
-        //                 visual_range: current_visual_row..current_visual_row + 1,
-        //                 status: DiffHunkStatus::Modified,
-        //             });
-        //         }
-        //     } else if let Some(hunk) = diff_hunks.peek() {
-        //         let row_inside_hunk = hunk.buffer_range.contains(&buffer_row);
-        //         let starts_on_row = hunk.buffer_range.start == buffer_row;
-        //         if row_inside_hunk || starts_on_row {
-        //             let (layout, buffer_row_advancement) =
-        //                 Self::layout_diff_hunk(hunk, rows.start, &mut buffer_rows);
-        //             previous_buffer_row = Some(buffer_row + buffer_row_advancement);
-
-        //             if let Some(layout) = layout {
-        //                 layouts.push(layout);
-        //             }
-
-        //             diff_hunks.next();
-        //         }
-        //     }
-        // }
-
-        // layouts
+        layouts
     }
 
     fn layout_line_numbers(
