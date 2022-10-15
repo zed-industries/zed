@@ -42,9 +42,9 @@ use hover_popover::{hide_hover, HoverState};
 pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
-    AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
-    DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
-    Selection, SelectionGoal, TransactionId,
+    AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
+    Diagnostic, DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16,
+    Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{hide_link_definition, LinkGoToDefinitionState};
 pub use multi_buffer::{
@@ -1478,6 +1478,7 @@ impl Editor {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors(),
                     self.selections.line_mode,
+                    self.cursor_shape,
                     cx,
                 )
             });
@@ -6145,7 +6146,17 @@ impl Editor {
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
         if epoch == self.blink_epoch && self.focused && !self.blinking_paused {
-            self.show_local_cursors = !self.show_local_cursors;
+            let newest_head = self.selections.newest::<usize>(cx).head();
+            let language_name = self
+                .buffer
+                .read(cx)
+                .language_at(newest_head, cx)
+                .map(|l| l.name());
+
+            self.show_local_cursors = !self.show_local_cursors
+                || !cx
+                    .global::<Settings>()
+                    .cursor_blink(language_name.as_deref());
             cx.notify();
 
             let epoch = self.next_blink_epoch();
@@ -6466,9 +6477,7 @@ impl View for Editor {
         }
 
         Stack::new()
-            .with_child(
-                EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed(),
-            )
+            .with_child(EditorElement::new(self.handle.clone(), style.clone()).boxed())
             .with_child(ChildView::new(&self.mouse_context_menu, cx).boxed())
             .boxed()
     }
@@ -6491,6 +6500,7 @@ impl View for Editor {
                     buffer.set_active_selections(
                         &self.selections.disjoint_anchors(),
                         self.selections.line_mode,
+                        self.cursor_shape,
                         cx,
                     );
                 }

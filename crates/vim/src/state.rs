@@ -1,5 +1,5 @@
-use editor::CursorShape;
 use gpui::keymap::Context;
+use language::CursorShape;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]

@@ -79,6 +79,7 @@ pub struct GitGutterConfig {}
 pub struct EditorSettings {
     pub tab_size: Option<NonZeroU32>,
     pub hard_tabs: Option<bool>,
+    pub cursor_blink: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<FormatOnSave>,
@@ -301,6 +302,7 @@ impl Settings {
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
                 hard_tabs: required(defaults.editor.hard_tabs),
+                cursor_blink: required(defaults.editor.cursor_blink),
                 soft_wrap: required(defaults.editor.soft_wrap),
                 preferred_line_length: required(defaults.editor.preferred_line_length),
                 format_on_save: required(defaults.editor.format_on_save),
@@ -390,6 +392,10 @@ impl Settings {
         self.language_setting(language, |settings| settings.hard_tabs)
     }
 
+    pub fn cursor_blink(&self, language: Option<&str>) -> bool {
+        self.language_setting(language, |settings| settings.cursor_blink)
+    }
+
     pub fn soft_wrap(&self, language: Option<&str>) -> SoftWrap {
         self.language_setting(language, |settings| settings.soft_wrap)
     }
@@ -444,6 +450,7 @@ impl Settings {
             editor_defaults: EditorSettings {
                 tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(false),
+                cursor_blink: Some(true),
                 soft_wrap: Some(SoftWrap::None),
                 preferred_line_length: Some(80),
                 format_on_save: Some(FormatOnSave::On),
