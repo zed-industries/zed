@@ -260,6 +260,7 @@ pub enum ItemEvent {
     UpdateTab,
     UpdateBreadcrumbs,
     Edit,
+    Serialize(SerializedItem),
 }
 
 pub trait Item: View {

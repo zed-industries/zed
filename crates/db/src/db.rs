@@ -1,6 +1,6 @@
+mod items;
 mod kvp;
 mod migrations;
-mod serialized_item;
 
 use anyhow::Result;
 use migrations::MIGRATIONS;
@@ -9,8 +9,8 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Arc;
 
+pub use items::*;
 pub use kvp::*;
-pub use serialized_item::*;
 
 pub struct Db {
     connection: Mutex<Connection>,
@@ -44,41 +44,5 @@ impl Db {
             connection: Mutex::new(conn),
             in_memory,
         }))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempdir::TempDir;
-
-    #[gpui::test]
-    fn test_db() {
-        let dir = TempDir::new("db-test").unwrap();
-        let fake_db = Db::open_in_memory().unwrap();
-        let real_db = Db::open(&dir.path().join("test.db")).unwrap();
-
-        for db in [&real_db, &fake_db] {
-            assert_eq!(db.read_kvp("key-1").unwrap(), None);
-
-            db.write_kvp("key-1", "one").unwrap();
-            assert_eq!(db.read_kvp("key-1").unwrap(), Some("one".to_string()));
-
-            db.write_kvp("key-2", "two").unwrap();
-            assert_eq!(db.read_kvp("key-2").unwrap(), Some("two".to_string()));
-
-            db.delete_kvp("key-1").unwrap();
-            assert_eq!(db.read_kvp("key-1").unwrap(), None);
-        }
-
-        drop(real_db);
-
-        let real_db = Db::open(&dir.path().join("test.db")).unwrap();
-
-        real_db.write_kvp("key-1", "one").unwrap();
-        assert_eq!(real_db.read_kvp("key-1").unwrap(), None);
-
-        real_db.write_kvp("key-2", "two").unwrap();
-        assert_eq!(real_db.read_kvp("key-2").unwrap(), Some("two".to_string()));
     }
 }
