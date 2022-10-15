@@ -33,7 +33,7 @@ pub trait PickerDelegate: View {
     fn render_match(
         &self,
         ix: usize,
-        state: MouseState,
+        state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox;

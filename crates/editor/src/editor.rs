@@ -705,7 +705,7 @@ impl CompletionsMenu {
                             |state, _| {
                                 let item_style = if item_ix == selected_item {
                                     style.autocomplete.selected_item
-                                } else if state.hovered {
+                                } else if state.hovered() {
                                     style.autocomplete.hovered_item
                                 } else {
                                     style.autocomplete.item
@@ -850,7 +850,7 @@ impl CodeActionsMenu {
                         MouseEventHandler::<ActionTag>::new(item_ix, cx, |state, _| {
                             let item_style = if item_ix == selected_item {
                                 style.autocomplete.selected_item
-                            } else if state.hovered {
+                            } else if state.hovered() {
                                 style.autocomplete.hovered_item
                             } else {
                                 style.autocomplete.item

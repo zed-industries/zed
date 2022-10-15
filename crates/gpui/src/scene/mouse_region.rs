@@ -20,6 +20,8 @@ pub struct MouseRegion {
     pub bounds: RectF,
     pub handlers: HandlerSet,
     pub hoverable: bool,
+    pub notify_on_hover: bool,
+    pub notify_on_click: bool,
 }
 
 impl MouseRegion {
@@ -52,6 +54,8 @@ impl MouseRegion {
             bounds,
             handlers,
             hoverable: true,
+            notify_on_hover: false,
+            notify_on_click: false,
         }
     }
 
@@ -135,6 +139,16 @@ impl MouseRegion {
 
     pub fn with_hoverable(mut self, is_hoverable: bool) -> Self {
         self.hoverable = is_hoverable;
+        self
+    }
+
+    pub fn with_notify_on_hover(mut self, notify: bool) -> Self {
+        self.notify_on_hover = notify;
+        self
+    }
+
+    pub fn with_notify_on_click(mut self, notify: bool) -> Self {
+        self.notify_on_click = notify;
         self
     }
 }

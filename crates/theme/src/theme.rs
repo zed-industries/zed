@@ -645,12 +645,12 @@ pub struct Interactive<T> {
 }
 
 impl<T> Interactive<T> {
-    pub fn style_for(&self, state: MouseState, active: bool) -> &T {
+    pub fn style_for(&self, state: &mut MouseState, active: bool) -> &T {
         if active {
             self.active.as_ref().unwrap_or(&self.default)
-        } else if state.clicked == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
+        } else if state.clicked() == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
             self.clicked.as_ref().unwrap()
-        } else if state.hovered {
+        } else if state.hovered() {
             self.hover.as_ref().unwrap_or(&self.default)
         } else {
             &self.default

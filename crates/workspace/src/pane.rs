@@ -1088,7 +1088,7 @@ impl Pane {
                         move |mouse_state, cx| {
                             let tab_style =
                                 theme.workspace.tab_bar.tab_style(pane_active, tab_active);
-                            let hovered = mouse_state.hovered;
+                            let hovered = mouse_state.hovered();
                             Self::render_tab(
                                 &item,
                                 pane,
@@ -1161,7 +1161,8 @@ impl Pane {
                         .with_style(filler_style.container)
                         .with_border(filler_style.container.border);
 
-                    if let Some(overlay) = Self::tab_overlay_color(mouse_state.hovered, &theme, cx)
+                    if let Some(overlay) =
+                        Self::tab_overlay_color(mouse_state.hovered(), &theme, cx)
                     {
                         filler = filler.with_overlay_color(overlay);
                     }
@@ -1283,7 +1284,7 @@ impl Pane {
                         enum TabCloseButton {}
                         let icon = Svg::new("icons/x_mark_thin_8.svg");
                         MouseEventHandler::<TabCloseButton>::new(item_id, cx, |mouse_state, _| {
-                            if mouse_state.hovered {
+                            if mouse_state.hovered() {
                                 icon.with_color(tab_style.icon_close_active).boxed()
                             } else {
                                 icon.with_color(tab_style.icon_close).boxed()

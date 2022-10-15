@@ -285,7 +285,7 @@ impl View for ActivityIndicator {
                 .workspace
                 .status_bar
                 .lsp_status;
-            let style = if state.hovered && action.is_some() {
+            let style = if state.hovered() && action.is_some() {
                 theme.hover.as_ref().unwrap_or(&theme.default)
             } else {
                 &theme.default

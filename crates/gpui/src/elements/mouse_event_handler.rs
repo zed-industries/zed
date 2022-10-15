@@ -22,6 +22,8 @@ pub struct MouseEventHandler<Tag: 'static> {
     cursor_style: Option<CursorStyle>,
     handlers: HandlerSet,
     hoverable: bool,
+    notify_on_hover: bool,
+    notify_on_click: bool,
     padding: Padding,
     _tag: PhantomData<Tag>,
 }
@@ -30,13 +32,19 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn new<V, F>(region_id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
     where
         V: View,
-        F: FnOnce(MouseState, &mut RenderContext<V>) -> ElementBox,
+        F: FnOnce(&mut MouseState, &mut RenderContext<V>) -> ElementBox,
     {
+        let mut mouse_state = cx.mouse_state::<Tag>(region_id);
+        let child = render_child(&mut mouse_state, cx);
+        let notify_on_hover = mouse_state.accessed_hovered();
+        let notify_on_click = mouse_state.accessed_clicked();
         Self {
-            child: render_child(cx.mouse_state::<Tag>(region_id), cx),
+            child,
             region_id,
             cursor_style: None,
             handlers: Default::default(),
+            notify_on_hover,
+            notify_on_click,
             hoverable: true,
             padding: Default::default(),
             _tag: PhantomData,
@@ -185,7 +193,9 @@ impl<Tag> Element for MouseEventHandler<Tag> {
                 hit_bounds,
                 self.handlers.clone(),
             )
-            .with_hoverable(self.hoverable),
+            .with_hoverable(self.hoverable)
+            .with_notify_on_hover(self.notify_on_hover)
+            .with_notify_on_click(self.notify_on_click),
         );
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
