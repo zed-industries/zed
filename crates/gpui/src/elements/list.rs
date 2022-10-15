@@ -558,6 +558,8 @@ impl StateInner {
             let visible_range = self.visible_range(height, scroll_top);
             self.scroll_handler.as_mut().unwrap()(visible_range, cx);
         }
+
+        cx.notify();
     }
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> f32 {

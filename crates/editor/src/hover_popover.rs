@@ -354,7 +354,7 @@ impl InfoPopover {
                 .with_style(style.hover_popover.container)
                 .boxed()
         })
-        .on_move(|_, _| {})
+        .on_move(|_, _| {}) // Consume move events so they don't reach regions underneath.
         .with_cursor_style(CursorStyle::Arrow)
         .with_padding(Padding {
             bottom: HOVER_POPOVER_GAP,
@@ -400,7 +400,7 @@ impl DiagnosticPopover {
             bottom: HOVER_POPOVER_GAP,
             ..Default::default()
         })
-        .on_move(|_, _| {})
+        .on_move(|_, _| {}) // Consume move events so they don't reach regions underneath.
         .on_click(MouseButton::Left, |_, cx| {
             cx.dispatch_action(GoToDiagnostic)
         })
