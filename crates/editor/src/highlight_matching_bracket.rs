@@ -32,8 +32,9 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
 
 #[cfg(test)]
 mod tests {
+    use crate::test::editor_lsp_test_context::EditorLspTestContext;
+
     use super::*;
-    use crate::test::EditorLspTestContext;
     use indoc::indoc;
     use language::{BracketPair, Language, LanguageConfig};
 

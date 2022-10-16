@@ -1,14 +1,14 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
-use collections::{hash_map::Entry, BTreeSet, HashMap, HashSet};
+use collections::{hash_map::Entry, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
-use postage::{prelude::Stream, sink::Sink, watch};
+use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
 use util::TryFutureExt as _;
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct User {
     pub id: u64,
     pub github_login: String,
@@ -39,14 +39,7 @@ impl Eq for User {}
 pub struct Contact {
     pub user: Arc<User>,
     pub online: bool,
-    pub projects: Vec<ProjectMetadata>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectMetadata {
-    pub id: u64,
-    pub visible_worktree_root_names: Vec<String>,
-    pub guests: BTreeSet<Arc<User>>,
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,14 +131,25 @@ impl UserStore {
             }),
             _maintain_current_user: cx.spawn_weak(|this, mut cx| async move {
                 let mut status = client.status();
-                while let Some(status) = status.recv().await {
+                while let Some(status) = status.next().await {
                     match status {
                         Status::Connected { .. } => {
                             if let Some((this, user_id)) = this.upgrade(&cx).zip(client.user_id()) {
-                                let user = this
-                                    .update(&mut cx, |this, cx| this.fetch_user(user_id, cx))
-                                    .log_err()
-                                    .await;
+                                let fetch_user = this
+                                    .update(&mut cx, |this, cx| this.get_user(user_id, cx))
+                                    .log_err();
+                                let fetch_metrics_id =
+                                    client.request(proto::GetPrivateUserInfo {}).log_err();
+                                let (user, info) = futures::join!(fetch_user, fetch_metrics_id);
+                                if let Some(info) = info {
+                                    client.telemetry.set_authenticated_user_info(
+                                        Some(info.metrics_id),
+                                        info.staff,
+                                    );
+                                } else {
+                                    client.telemetry.set_authenticated_user_info(None, false);
+                                }
+                                client.telemetry.report_event("sign in", Default::default());
                                 current_user_tx.send(user).await.ok();
                             }
                         }
@@ -233,7 +237,6 @@ impl UserStore {
                 let mut user_ids = HashSet::default();
                 for contact in &message.contacts {
                     user_ids.insert(contact.user_id);
-                    user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
                 }
                 user_ids.extend(message.incoming_requests.iter().map(|req| req.requester_id));
                 user_ids.extend(message.outgoing_requests.iter());
@@ -257,9 +260,7 @@ impl UserStore {
                     for request in message.incoming_requests {
                         incoming_requests.push({
                             let user = this
-                                .update(&mut cx, |this, cx| {
-                                    this.fetch_user(request.requester_id, cx)
-                                })
+                                .update(&mut cx, |this, cx| this.get_user(request.requester_id, cx))
                                 .await?;
                             (user, request.should_notify)
                         });
@@ -268,7 +269,7 @@ impl UserStore {
                     let mut outgoing_requests = Vec::new();
                     for requested_user_id in message.outgoing_requests {
                         outgoing_requests.push(
-                            this.update(&mut cx, |this, cx| this.fetch_user(requested_user_id, cx))
+                            this.update(&mut cx, |this, cx| this.get_user(requested_user_id, cx))
                                 .await?,
                         );
                     }
@@ -493,7 +494,7 @@ impl UserStore {
             .unbounded_send(UpdateContacts::Clear(tx))
             .unwrap();
         async move {
-            rx.recv().await;
+            rx.next().await;
         }
     }
 
@@ -503,25 +504,43 @@ impl UserStore {
             .unbounded_send(UpdateContacts::Wait(tx))
             .unwrap();
         async move {
-            rx.recv().await;
+            rx.next().await;
         }
     }
 
     pub fn get_users(
         &mut self,
-        mut user_ids: Vec<u64>,
+        user_ids: Vec<u64>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        user_ids.retain(|id| !self.users.contains_key(id));
-        if user_ids.is_empty() {
-            Task::ready(Ok(()))
-        } else {
-            let load = self.load_users(proto::GetUsers { user_ids }, cx);
-            cx.foreground().spawn(async move {
-                load.await?;
-                Ok(())
+    ) -> Task<Result<Vec<Arc<User>>>> {
+        let mut user_ids_to_fetch = user_ids.clone();
+        user_ids_to_fetch.retain(|id| !self.users.contains_key(id));
+
+        cx.spawn(|this, mut cx| async move {
+            if !user_ids_to_fetch.is_empty() {
+                this.update(&mut cx, |this, cx| {
+                    this.load_users(
+                        proto::GetUsers {
+                            user_ids: user_ids_to_fetch,
+                        },
+                        cx,
+                    )
+                })
+                .await?;
+            }
+
+            this.read_with(&cx, |this, _| {
+                user_ids
+                    .iter()
+                    .map(|user_id| {
+                        this.users
+                            .get(user_id)
+                            .cloned()
+                            .ok_or_else(|| anyhow!("user {} not found", user_id))
+                    })
+                    .collect()
             })
-        }
+        })
     }
 
     pub fn fuzzy_search_users(
@@ -532,7 +551,7 @@ impl UserStore {
         self.load_users(proto::FuzzySearchUsers { query }, cx)
     }
 
-    pub fn fetch_user(
+    pub fn get_user(
         &mut self,
         user_id: u64,
         cx: &mut ModelContext<Self>,
@@ -612,38 +631,14 @@ impl Contact {
     ) -> Result<Self> {
         let user = user_store
             .update(cx, |user_store, cx| {
-                user_store.fetch_user(contact.user_id, cx)
+                user_store.get_user(contact.user_id, cx)
             })
             .await?;
-        let mut projects = Vec::new();
-        for project in contact.projects {
-            let mut guests = BTreeSet::new();
-            for participant_id in project.guests {
-                guests.insert(
-                    user_store
-                        .update(cx, |user_store, cx| {
-                            user_store.fetch_user(participant_id, cx)
-                        })
-                        .await?,
-                );
-            }
-            projects.push(ProjectMetadata {
-                id: project.id,
-                visible_worktree_root_names: project.visible_worktree_root_names.clone(),
-                guests,
-            });
-        }
         Ok(Self {
             user,
             online: contact.online,
-            projects,
+            busy: contact.busy,
         })
-    }
-
-    pub fn non_empty_projects(&self) -> impl Iterator<Item = &ProjectMetadata> {
-        self.projects
-            .iter()
-            .filter(|project| !project.visible_worktree_root_names.is_empty())
     }
 }
 

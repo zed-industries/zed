@@ -172,6 +172,7 @@ pub struct Image {
     pub bounds: RectF,
     pub border: Border,
     pub corner_radius: f32,
+    pub grayscale: bool,
     pub data: Arc<ImageData>,
 }
 

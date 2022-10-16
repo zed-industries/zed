@@ -33,7 +33,7 @@ impl fmt::Display for ConnectionId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PeerId(pub u32);
 
 impl fmt::Display for PeerId {
@@ -113,7 +113,7 @@ impl Peer {
     }
 
     #[instrument(skip_all)]
-    pub async fn add_connection<F, Fut, Out>(
+    pub fn add_connection<F, Fut, Out>(
         self: &Arc<Self>,
         connection: Connection,
         create_timer: F,
@@ -326,7 +326,7 @@ impl Peer {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn add_test_connection(
+    pub fn add_test_connection(
         self: &Arc<Self>,
         connection: Connection,
         executor: Arc<gpui::executor::Background>,
@@ -337,7 +337,6 @@ impl Peer {
     ) {
         let executor = executor.clone();
         self.add_connection(connection, move |duration| executor.timer(duration))
-            .await
     }
 
     pub fn disconnect(&self, connection_id: ConnectionId) {
@@ -394,7 +393,11 @@ impl Peer {
             send?;
             let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                Err(anyhow!("RPC request failed - {}", error.message))
+                Err(anyhow!(
+                    "RPC request {} failed - {}",
+                    T::NAME,
+                    error.message
+                ))
             } else {
                 T::Response::from_envelope(response)
                     .ok_or_else(|| anyhow!("received response of the wrong type"))
@@ -518,21 +521,17 @@ mod tests {
 
         let (client1_to_server_conn, server_to_client_1_conn, _kill) =
             Connection::in_memory(cx.background());
-        let (client1_conn_id, io_task1, client1_incoming) = client1
-            .add_test_connection(client1_to_server_conn, cx.background())
-            .await;
-        let (_, io_task2, server_incoming1) = server
-            .add_test_connection(server_to_client_1_conn, cx.background())
-            .await;
+        let (client1_conn_id, io_task1, client1_incoming) =
+            client1.add_test_connection(client1_to_server_conn, cx.background());
+        let (_, io_task2, server_incoming1) =
+            server.add_test_connection(server_to_client_1_conn, cx.background());
 
         let (client2_to_server_conn, server_to_client_2_conn, _kill) =
             Connection::in_memory(cx.background());
-        let (client2_conn_id, io_task3, client2_incoming) = client2
-            .add_test_connection(client2_to_server_conn, cx.background())
-            .await;
-        let (_, io_task4, server_incoming2) = server
-            .add_test_connection(server_to_client_2_conn, cx.background())
-            .await;
+        let (client2_conn_id, io_task3, client2_incoming) =
+            client2.add_test_connection(client2_to_server_conn, cx.background());
+        let (_, io_task4, server_incoming2) =
+            server.add_test_connection(server_to_client_2_conn, cx.background());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();
@@ -615,12 +614,10 @@ mod tests {
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
-        let (client_to_server_conn_id, io_task1, mut client_incoming) = client
-            .add_test_connection(client_to_server_conn, cx.background())
-            .await;
-        let (server_to_client_conn_id, io_task2, mut server_incoming) = server
-            .add_test_connection(server_to_client_conn, cx.background())
-            .await;
+        let (client_to_server_conn_id, io_task1, mut client_incoming) =
+            client.add_test_connection(client_to_server_conn, cx.background());
+        let (server_to_client_conn_id, io_task2, mut server_incoming) =
+            server.add_test_connection(server_to_client_conn, cx.background());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();
@@ -715,12 +712,10 @@ mod tests {
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
-        let (client_to_server_conn_id, io_task1, mut client_incoming) = client
-            .add_test_connection(client_to_server_conn, cx.background())
-            .await;
-        let (server_to_client_conn_id, io_task2, mut server_incoming) = server
-            .add_test_connection(server_to_client_conn, cx.background())
-            .await;
+        let (client_to_server_conn_id, io_task1, mut client_incoming) =
+            client.add_test_connection(client_to_server_conn, cx.background());
+        let (server_to_client_conn_id, io_task2, mut server_incoming) =
+            server.add_test_connection(server_to_client_conn, cx.background());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();
@@ -828,9 +823,8 @@ mod tests {
         let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
         let client = Peer::new();
-        let (connection_id, io_handler, mut incoming) = client
-            .add_test_connection(client_conn, cx.background())
-            .await;
+        let (connection_id, io_handler, mut incoming) =
+            client.add_test_connection(client_conn, cx.background());
 
         let (io_ended_tx, io_ended_rx) = oneshot::channel();
         executor
@@ -864,9 +858,8 @@ mod tests {
         let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
         let client = Peer::new();
-        let (connection_id, io_handler, mut incoming) = client
-            .add_test_connection(client_conn, cx.background())
-            .await;
+        let (connection_id, io_handler, mut incoming) =
+            client.add_test_connection(client_conn, cx.background());
         executor.spawn(io_handler).detach();
         executor
             .spawn(async move { incoming.next().await })

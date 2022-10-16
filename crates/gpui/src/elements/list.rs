@@ -261,10 +261,11 @@ impl Element for List {
         scroll_top: &mut ListOffset,
         cx: &mut PaintContext,
     ) {
-        cx.scene.push_layer(Some(bounds));
+        let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
+        cx.scene.push_layer(Some(visible_bounds));
 
-        cx.scene
-            .push_mouse_region(MouseRegion::new::<Self>(10, 0, bounds).on_scroll({
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<Self>(cx.current_view_id(), 0, bounds).on_scroll({
                 let state = self.state.clone();
                 let height = bounds.height();
                 let scroll_top = scroll_top.clone();
@@ -277,7 +278,8 @@ impl Element for List {
                         cx,
                     )
                 }
-            }));
+            }),
+        );
 
         let state = &mut *self.state.0.borrow_mut();
         for (mut element, origin) in state.visible_elements(bounds, scroll_top) {
@@ -556,6 +558,8 @@ impl StateInner {
             let visible_range = self.visible_range(height, scroll_top);
             self.scroll_handler.as_mut().unwrap()(visible_range, cx);
         }
+
+        cx.notify();
     }
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> f32 {

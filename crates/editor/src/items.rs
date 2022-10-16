@@ -9,7 +9,7 @@ use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, File as _, OffsetRangeExt, SelectionGoal};
+use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
 use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
@@ -21,7 +21,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
 };
-use text::{Point, Selection};
+use text::Selection;
 use util::TryFutureExt;
 use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -476,6 +476,17 @@ impl Item for Editor {
             });
             Ok(())
         })
+    }
+
+    fn git_diff_recalc(
+        &mut self,
+        _project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.buffer().update(cx, |multibuffer, cx| {
+            multibuffer.git_diff_recalc(cx);
+        });
+        Task::ready(Ok(()))
     }
 
     fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {

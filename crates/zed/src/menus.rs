@@ -245,10 +245,6 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(project_panel::ToggleFocus),
                 },
                 MenuItem::Action {
-                    name: "Contacts Panel",
-                    action: Box::new(contacts_panel::ToggleFocus),
-                },
-                MenuItem::Action {
                     name: "Command Palette",
                     action: Box::new(command_palette::Toggle),
                 },

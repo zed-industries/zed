@@ -618,8 +618,34 @@ impl Terminal {
                 term.resize(new_size);
             }
             InternalEvent::Clear => {
-                self.write_to_pty("\x0c".to_string());
+                // Clear back buffer
                 term.clear_screen(ClearMode::Saved);
+
+                let cursor = term.grid().cursor.point;
+
+                // Clear the lines above
+                term.grid_mut().reset_region(..cursor.line);
+
+                // Copy the current line up
+                let line = term.grid()[cursor.line][..cursor.column]
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .collect::<Vec<(usize, Cell)>>();
+
+                for (i, cell) in line {
+                    term.grid_mut()[Line(0)][Column(i)] = cell;
+                }
+
+                // Reset the cursor
+                term.grid_mut().cursor.point =
+                    Point::new(Line(0), term.grid_mut().cursor.point.column);
+                let new_cursor = term.grid().cursor.point;
+
+                // Clear the lines below the new cursor
+                if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {
+                    term.grid_mut().reset_region((new_cursor.line + 1)..);
+                }
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
@@ -1045,7 +1071,18 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F) {
+    pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F, cx: &mut ModelContext<Self>) {
+        let settings = cx.global::<Settings>();
+        let copy_on_select = settings
+            .terminal_overrides
+            .copy_on_select
+            .unwrap_or_else(|| {
+                settings
+                    .terminal_defaults
+                    .copy_on_select
+                    .expect("Should be set in defaults")
+            });
+
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {
             let point = grid_point(
@@ -1057,11 +1094,10 @@ impl Terminal {
             if let Some(bytes) = mouse_button_report(point, e, false, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
-        } else if e.button == MouseButton::Left {
-            // Seems pretty standard to automatically copy on mouse_up for terminals,
-            // so let's do that here
+        } else if e.button == MouseButton::Left && copy_on_select {
             self.copy();
         }
+
         self.selection_phase = SelectionPhase::Ended;
         self.last_mouse = None;
     }

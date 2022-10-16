@@ -3,12 +3,12 @@ use super::{
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     TextHighlights,
 };
-use crate::{MultiBufferSnapshot, Point};
+use crate::MultiBufferSnapshot;
 use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::Chunk;
+use language::{Chunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
@@ -52,7 +52,7 @@ struct TransformSummary {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct WrapPoint(pub super::Point);
+pub struct WrapPoint(pub Point);
 
 pub struct WrapChunks<'a> {
     input_chunks: tab_map::TabChunks<'a>,
@@ -959,7 +959,7 @@ impl SumTreeExt for SumTree<Transform> {
 
 impl WrapPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(super::Point::new(row, column))
+        Self(Point::new(row, column))
     }
 
     pub fn row(self) -> u32 {
@@ -1029,7 +1029,6 @@ mod tests {
         MultiBuffer,
     };
     use gpui::test::observe;
-    use language::RandomCharIter;
     use rand::prelude::*;
     use settings::Settings;
     use smol::stream::StreamExt;
@@ -1067,7 +1066,9 @@ mod tests {
                 MultiBuffer::build_random(&mut rng, cx)
             } else {
                 let len = rng.gen_range(0..10);
-                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                let text = util::RandomCharIter::new(&mut rng)
+                    .take(len)
+                    .collect::<String>();
                 MultiBuffer::build_simple(&text, cx)
             }
         });

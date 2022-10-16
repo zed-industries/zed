@@ -16,6 +16,7 @@ use crate::{
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
+use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{
     color::Color,
     elements::*,
@@ -36,15 +37,16 @@ use gpui::{
 use json::json;
 use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
-use settings::Settings;
+use settings::{GitGutter, Settings};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::Range,
+    ops::{DerefMut, Range},
     sync::Arc,
 };
+use theme::DiffStyle;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -452,7 +454,6 @@ impl EditorElement {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
-        let editor = self.view(cx.app);
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
@@ -466,7 +467,7 @@ impl EditorElement {
             corner_radius: 0.,
         });
 
-        if let EditorMode::Full = editor.mode {
+        if let EditorMode::Full = layout.mode {
             let mut active_rows = layout.active_rows.iter().peekable();
             while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
                 let mut end_row = *start_row;
@@ -524,30 +525,141 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        let scroll_top =
-            layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
+        struct GutterLayout {
+            line_height: f32,
+            // scroll_position: Vector2F,
+            scroll_top: f32,
+            bounds: RectF,
+        }
+
+        struct DiffLayout<'a> {
+            buffer_row: u32,
+            last_diff: Option<&'a DiffHunk<u32>>,
+        }
+
+        fn diff_quad(
+            hunk: &DiffHunk<u32>,
+            gutter_layout: &GutterLayout,
+            diff_style: &DiffStyle,
+        ) -> Quad {
+            let color = match hunk.status() {
+                DiffHunkStatus::Added => diff_style.inserted,
+                DiffHunkStatus::Modified => diff_style.modified,
+
+                //TODO: This rendering is entirely a horrible hack
+                DiffHunkStatus::Removed => {
+                    let row = hunk.buffer_range.start;
+
+                    let offset = gutter_layout.line_height / 2.;
+                    let start_y =
+                        row as f32 * gutter_layout.line_height + offset - gutter_layout.scroll_top;
+                    let end_y = start_y + gutter_layout.line_height;
+
+                    let width = diff_style.removed_width_em * gutter_layout.line_height;
+                    let highlight_origin = gutter_layout.bounds.origin() + vec2f(-width, start_y);
+                    let highlight_size = vec2f(width * 2., end_y - start_y);
+                    let highlight_bounds = RectF::new(highlight_origin, highlight_size);
+
+                    return Quad {
+                        bounds: highlight_bounds,
+                        background: Some(diff_style.deleted),
+                        border: Border::new(0., Color::transparent_black()),
+                        corner_radius: 1. * gutter_layout.line_height,
+                    };
+                }
+            };
+
+            let start_row = hunk.buffer_range.start;
+            let end_row = hunk.buffer_range.end;
+
+            let start_y = start_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
+            let end_y = end_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
+
+            let width = diff_style.width_em * gutter_layout.line_height;
+            let highlight_origin = gutter_layout.bounds.origin() + vec2f(-width, start_y);
+            let highlight_size = vec2f(width * 2., end_y - start_y);
+            let highlight_bounds = RectF::new(highlight_origin, highlight_size);
+
+            Quad {
+                bounds: highlight_bounds,
+                background: Some(color),
+                border: Border::new(0., Color::transparent_black()),
+                corner_radius: diff_style.corner_radius * gutter_layout.line_height,
+            }
+        }
+
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let gutter_layout = {
+            let line_height = layout.position_map.line_height;
+            GutterLayout {
+                scroll_top: scroll_position.y() * line_height,
+                line_height,
+                bounds,
+            }
+        };
+
+        let mut diff_layout = DiffLayout {
+            buffer_row: scroll_position.y() as u32,
+            last_diff: None,
+        };
+
+        let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
+        let show_gutter = matches!(
+            &cx.global::<Settings>()
+                .git_overrides
+                .git_gutter
+                .unwrap_or_default(),
+            GitGutter::TrackedFiles
+        );
+
+        // line is `None` when there's a line wrap
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin()
                     + vec2f(
                         bounds.width() - line.width() - layout.gutter_padding,
-                        ix as f32 * layout.position_map.line_height
-                            - (scroll_top % layout.position_map.line_height),
+                        ix as f32 * gutter_layout.line_height
+                            - (gutter_layout.scroll_top % gutter_layout.line_height),
                     );
-                line.paint(
-                    line_origin,
-                    visible_bounds,
-                    layout.position_map.line_height,
-                    cx,
-                );
+
+                line.paint(line_origin, visible_bounds, gutter_layout.line_height, cx);
+
+                if show_gutter {
+                    //This line starts a buffer line, so let's do the diff calculation
+                    let new_hunk = get_hunk(diff_layout.buffer_row, &layout.diff_hunks);
+
+                    let (is_ending, is_starting) = match (diff_layout.last_diff, new_hunk) {
+                        (Some(old_hunk), Some(new_hunk)) if new_hunk == old_hunk => (false, false),
+                        (a, b) => (a.is_some(), b.is_some()),
+                    };
+
+                    if is_ending {
+                        let last_hunk = diff_layout.last_diff.take().unwrap();
+                        cx.scene
+                            .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style));
+                    }
+
+                    if is_starting {
+                        let new_hunk = new_hunk.unwrap();
+                        diff_layout.last_diff = Some(new_hunk);
+                    };
+
+                    diff_layout.buffer_row += 1;
+                }
             }
+        }
+
+        // If we ran out with a diff hunk still being prepped, paint it now
+        if let Some(last_hunk) = diff_layout.last_diff {
+            cx.scene
+                .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style))
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
             let mut x = bounds.width() - layout.gutter_padding;
-            let mut y = *row as f32 * layout.position_map.line_height - scroll_top;
+            let mut y = *row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
-            y += (layout.position_map.line_height - indicator.size().y()) / 2.;
+            y += (gutter_layout.line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
     }
@@ -563,10 +675,8 @@ impl EditorElement {
         let style = &self.style;
         let local_replica_id = view.replica_id(cx);
         let scroll_position = layout.position_map.snapshot.scroll_position();
-        let start_row = scroll_position.y() as u32;
+        let start_row = layout.visible_display_row_range.start;
         let scroll_top = scroll_position.y() * layout.position_map.line_height;
-        let end_row =
-            ((scroll_top + bounds.height()) / layout.position_map.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
         let max_glyph_width = layout.position_map.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
@@ -585,8 +695,6 @@ impl EditorElement {
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
                 range.clone(),
-                start_row,
-                end_row,
                 *color,
                 0.,
                 0.15 * layout.position_map.line_height,
@@ -607,8 +715,6 @@ impl EditorElement {
             for selection in selections {
                 self.paint_highlighted_range(
                     selection.range.clone(),
-                    start_row,
-                    end_row,
                     selection_style.selection,
                     corner_radius,
                     corner_radius * 2.,
@@ -622,7 +728,10 @@ impl EditorElement {
 
                 if view.show_local_cursors() || *replica_id != local_replica_id {
                     let cursor_position = selection.head;
-                    if (start_row..end_row).contains(&cursor_position.row()) {
+                    if layout
+                        .visible_display_row_range
+                        .contains(&cursor_position.row())
+                    {
                         let cursor_row_layout = &layout.position_map.line_layouts
                             [(cursor_position.row() - start_row) as usize];
                         let cursor_column = cursor_position.column() as usize;
@@ -639,7 +748,7 @@ impl EditorElement {
                                 .snapshot
                                 .chars_at(cursor_position)
                                 .next()
-                                .and_then(|character| {
+                                .and_then(|(character, _)| {
                                     let font_id =
                                         cursor_row_layout.font_for_index(cursor_column)?;
                                     let text = character.to_string();
@@ -796,12 +905,123 @@ impl EditorElement {
         cx.scene.pop_layer();
     }
 
+    fn paint_scrollbar(&mut self, bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
+        enum ScrollbarMouseHandlers {}
+        if layout.mode != EditorMode::Full {
+            return;
+        }
+
+        let view = self.view.clone();
+        let style = &self.style.theme.scrollbar;
+
+        let top = bounds.min_y();
+        let bottom = bounds.max_y();
+        let right = bounds.max_x();
+        let left = right - style.width;
+        let row_range = &layout.scrollbar_row_range;
+        let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
+
+        let mut height = bounds.height();
+        let mut first_row_y_offset = 0.0;
+
+        // Impose a minimum height on the scrollbar thumb
+        let min_thumb_height =
+            style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
+        let thumb_height = (row_range.end - row_range.start) * height / max_row;
+        if thumb_height < min_thumb_height {
+            first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
+            height -= min_thumb_height - thumb_height;
+        }
+
+        let y_for_row = |row: f32| -> f32 { top + first_row_y_offset + row * height / max_row };
+
+        let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
+        let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
+        let track_bounds = RectF::from_points(vec2f(left, top), vec2f(right, bottom));
+        let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
+
+        if layout.show_scrollbars {
+            cx.scene.push_quad(Quad {
+                bounds: track_bounds,
+                border: style.track.border,
+                background: style.track.background_color,
+                ..Default::default()
+            });
+            cx.scene.push_quad(Quad {
+                bounds: thumb_bounds,
+                border: style.thumb.border,
+                background: style.thumb.background_color,
+                corner_radius: style.thumb.corner_radius,
+            });
+        }
+
+        cx.scene.push_cursor_region(CursorRegion {
+            bounds: track_bounds,
+            style: CursorStyle::Arrow,
+        });
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<ScrollbarMouseHandlers>(view.id(), view.id(), track_bounds)
+                .on_move({
+                    let view = view.clone();
+                    move |_, cx| {
+                        if let Some(view) = view.upgrade(cx.deref_mut()) {
+                            view.update(cx.deref_mut(), |view, cx| {
+                                view.make_scrollbar_visible(cx);
+                            });
+                        }
+                    }
+                })
+                .on_down(MouseButton::Left, {
+                    let view = view.clone();
+                    let row_range = row_range.clone();
+                    move |e, cx| {
+                        let y = e.position.y();
+                        if let Some(view) = view.upgrade(cx.deref_mut()) {
+                            view.update(cx.deref_mut(), |view, cx| {
+                                if y < thumb_top || thumb_bottom < y {
+                                    let center_row =
+                                        ((y - top) * max_row as f32 / height).round() as u32;
+                                    let top_row = center_row.saturating_sub(
+                                        (row_range.end - row_range.start) as u32 / 2,
+                                    );
+                                    let mut position = view.scroll_position(cx);
+                                    position.set_y(top_row as f32);
+                                    view.set_scroll_position(position, cx);
+                                } else {
+                                    view.make_scrollbar_visible(cx);
+                                }
+                            });
+                        }
+                    }
+                })
+                .on_drag(MouseButton::Left, {
+                    let view = view.clone();
+                    move |e, cx| {
+                        let y = e.prev_mouse_position.y();
+                        let new_y = e.position.y();
+                        if thumb_top < y && y < thumb_bottom {
+                            if let Some(view) = view.upgrade(cx.deref_mut()) {
+                                view.update(cx.deref_mut(), |view, cx| {
+                                    let mut position = view.scroll_position(cx);
+                                    position.set_y(
+                                        position.y() + (new_y - y) * (max_row as f32) / height,
+                                    );
+                                    if position.y() < 0.0 {
+                                        position.set_y(0.);
+                                    }
+                                    view.set_scroll_position(position, cx);
+                                });
+                            }
+                        }
+                    }
+                }),
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
-        start_row: u32,
-        end_row: u32,
         color: Color,
         corner_radius: f32,
         line_end_overshoot: f32,
@@ -812,6 +1032,8 @@ impl EditorElement {
         bounds: RectF,
         cx: &mut PaintContext,
     ) {
+        let start_row = layout.visible_display_row_range.start;
+        let end_row = layout.visible_display_row_range.end;
         if range.start != range.end {
             let row_range = if range.end.column() == 0 {
                 cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
@@ -1252,6 +1474,27 @@ impl EditorElement {
     }
 }
 
+/// Get the hunk that contains buffer_line, starting from start_idx
+/// Returns none if there is none found, and
+fn get_hunk(buffer_line: u32, hunks: &[DiffHunk<u32>]) -> Option<&DiffHunk<u32>> {
+    for i in 0..hunks.len() {
+        // Safety: Index out of bounds is handled by the check above
+        let hunk = hunks.get(i).unwrap();
+        if hunk.buffer_range.contains(&(buffer_line as u32)) {
+            return Some(hunk);
+        } else if hunk.status() == DiffHunkStatus::Removed && buffer_line == hunk.buffer_range.start
+        {
+            return Some(hunk);
+        } else if hunk.buffer_range.start > buffer_line as u32 {
+            // If we've passed the buffer_line, just stop
+            return None;
+        }
+    }
+
+    // We reached the end of the array without finding a hunk, just return none.
+    return None;
+}
+
 impl Element for EditorElement {
     type LayoutState = LayoutState;
     type PaintState = ();
@@ -1288,6 +1531,8 @@ impl Element for EditorElement {
         let em_advance = style.text.em_advance(cx.font_cache);
         let overscroll = vec2f(em_width, 0.);
         let snapshot = self.update_view(cx.app, |view, cx| {
+            view.set_visible_line_count(size.y() / line_height);
+
             let wrap_width = match view.soft_wrap_mode(cx) {
                 SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                 SoftWrap::EditorWidth => {
@@ -1333,12 +1578,13 @@ impl Element for EditorElement {
         // The scroll position is a fractional point, the whole number of which represents
         // the top of the window in terms of display rows.
         let start_row = scroll_position.y() as u32;
-        let scroll_top = scroll_position.y() * line_height;
+        let height_in_lines = size.y() / line_height;
+        let max_row = snapshot.max_point().row();
 
         // Add 1 to ensure selections bleed off screen
         let end_row = 1 + cmp::min(
-            ((scroll_top + size.y()) / line_height).ceil() as u32,
-            snapshot.max_point().row(),
+            (scroll_position.y() + height_in_lines).ceil() as u32,
+            max_row,
         );
 
         let start_anchor = if start_row == 0 {
@@ -1348,7 +1594,7 @@ impl Element for EditorElement {
                 .buffer_snapshot
                 .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
         };
-        let end_anchor = if end_row > snapshot.max_point().row() {
+        let end_anchor = if end_row > max_row {
             Anchor::max()
         } else {
             snapshot
@@ -1360,6 +1606,7 @@ impl Element for EditorElement {
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
+        let mut show_scrollbars = false;
         self.update_view(cx.app, |view, cx| {
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
@@ -1420,10 +1667,19 @@ impl Element for EditorElement {
                         .collect(),
                 ));
             }
+
+            show_scrollbars = view.show_scrollbars();
         });
 
         let line_number_layouts =
             self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
+
+        let diff_hunks = snapshot
+            .buffer_snapshot
+            .git_diff_hunks_in_range(start_row..end_row)
+            .collect();
+
+        let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
@@ -1458,10 +1714,9 @@ impl Element for EditorElement {
             cx,
         );
 
-        let max_row = snapshot.max_point().row();
         let scroll_max = vec2f(
             ((scroll_width - text_size.x()) / em_width).max(0.0),
-            max_row.saturating_sub(1) as f32,
+            max_row as f32,
         );
 
         self.update_view(cx.app, |view, cx| {
@@ -1488,6 +1743,7 @@ impl Element for EditorElement {
         let mut context_menu = None;
         let mut code_actions_indicator = None;
         let mut hover = None;
+        let mut mode = EditorMode::Full;
         cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
@@ -1509,6 +1765,7 @@ impl Element for EditorElement {
 
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
+            mode = view.mode;
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1556,6 +1813,7 @@ impl Element for EditorElement {
         (
             size,
             LayoutState {
+                mode,
                 position_map: Arc::new(PositionMap {
                     size,
                     scroll_max,
@@ -1565,14 +1823,19 @@ impl Element for EditorElement {
                     em_advance,
                     snapshot,
                 }),
+                visible_display_row_range: start_row..end_row,
                 gutter_size,
                 gutter_padding,
                 text_size,
+                scrollbar_row_range,
+                show_scrollbars,
+                max_row,
                 gutter_margin,
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
                 line_number_layouts,
+                diff_hunks,
                 blocks,
                 selections,
                 context_menu,
@@ -1589,7 +1852,8 @@ impl Element for EditorElement {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.scene.push_layer(Some(bounds));
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+        cx.scene.push_layer(Some(visible_bounds));
 
         let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
         let text_bounds = RectF::new(
@@ -1613,11 +1877,12 @@ impl Element for EditorElement {
         }
         self.paint_text(text_bounds, visible_bounds, layout, cx);
 
+        cx.scene.push_layer(Some(bounds));
         if !layout.blocks.is_empty() {
-            cx.scene.push_layer(Some(bounds));
             self.paint_blocks(bounds, visible_bounds, layout, cx);
-            cx.scene.pop_layer();
         }
+        self.paint_scrollbar(bounds, layout, cx);
+        cx.scene.pop_layer();
 
         cx.scene.pop_layer();
     }
@@ -1703,13 +1968,19 @@ pub struct LayoutState {
     gutter_padding: f32,
     gutter_margin: f32,
     text_size: Vector2F,
+    mode: EditorMode,
+    visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
+    scrollbar_row_range: Range<f32>,
+    show_scrollbars: bool,
+    max_row: u32,
     context_menu: Option<(DisplayPoint, ElementBox)>,
+    diff_hunks: Vec<DiffHunk<u32>>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
 }

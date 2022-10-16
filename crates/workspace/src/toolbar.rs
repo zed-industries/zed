@@ -67,7 +67,7 @@ impl View for Toolbar {
             match *position {
                 ToolbarItemLocation::Hidden => {}
                 ToolbarItemLocation::PrimaryLeft { flex } => {
-                    let left_item = ChildView::new(item.as_ref())
+                    let left_item = ChildView::new(item.as_ref(), cx)
                         .aligned()
                         .contained()
                         .with_margin_right(spacing);
@@ -78,7 +78,7 @@ impl View for Toolbar {
                     }
                 }
                 ToolbarItemLocation::PrimaryRight { flex } => {
-                    let right_item = ChildView::new(item.as_ref())
+                    let right_item = ChildView::new(item.as_ref(), cx)
                         .aligned()
                         .contained()
                         .with_margin_left(spacing)
@@ -91,7 +91,7 @@ impl View for Toolbar {
                 }
                 ToolbarItemLocation::Secondary => {
                     secondary_item = Some(
-                        ChildView::new(item.as_ref())
+                        ChildView::new(item.as_ref(), cx)
                             .constrained()
                             .with_height(theme.height)
                             .boxed(),

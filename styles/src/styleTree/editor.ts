@@ -1,4 +1,5 @@
 import Theme from "../themes/common/theme";
+import { withOpacity } from "../utils/color";
 import {
   backgroundColor,
   border,
@@ -7,6 +8,7 @@ import {
   player,
   popoverShadow,
   text,
+  textColor,
   TextColor,
 } from "./components";
 import hoverPopover from "./hoverPopover";
@@ -59,8 +61,14 @@ export default function editor(theme: Theme) {
       indicator: iconColor(theme, "secondary"),
       verticalScale: 0.618
     },
-    diffBackgroundDeleted: backgroundColor(theme, "error"),
-    diffBackgroundInserted: backgroundColor(theme, "ok"),
+    diff: {
+      deleted: theme.iconColor.error,
+      inserted: theme.iconColor.ok,
+      modified: theme.iconColor.warning,
+      removedWidthEm: 0.275,
+      widthEm: 0.16,
+      cornerRadius: 0.05,
+    },
     documentHighlightReadBackground: theme.editor.highlight.occurrence,
     documentHighlightWriteBackground: theme.editor.highlight.activeOccurrence,
     errorColor: theme.textColor.error,
@@ -162,6 +170,24 @@ export default function editor(theme: Theme) {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, "on500"),
       },
+    },
+    scrollbar: {
+      width: 12,
+      minHeightFactor: 1.0,
+      track: {
+        border: {
+          left: true,
+          width: 1,
+          color: borderColor(theme, "secondary"),
+        },
+      },
+      thumb: {
+        background: withOpacity(borderColor(theme, "secondary"), 0.5),
+        border: {
+          width: 1,
+          color: withOpacity(borderColor(theme, 'muted'), 0.5),
+        }
+      }
     },
     compositionMark: {
       underline: {

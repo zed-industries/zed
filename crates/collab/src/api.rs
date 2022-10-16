@@ -24,6 +24,7 @@ use tracing::instrument;
 
 pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
+        .route("/user", get(get_authenticated_user))
         .route("/users", get(get_users).post(create_user))
         .route("/users/:id", put(update_user).delete(destroy_user))
         .route("/users/:id/access_tokens", post(create_access_token))
@@ -86,9 +87,32 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 }
 
 #[derive(Debug, Deserialize)]
+struct AuthenticatedUserParams {
+    github_user_id: i32,
+    github_login: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthenticatedUserResponse {
+    user: User,
+    metrics_id: String,
+}
+
+async fn get_authenticated_user(
+    Query(params): Query<AuthenticatedUserParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<AuthenticatedUserResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_account(&params.github_login, Some(params.github_user_id))
+        .await?
+        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "user not found".into()))?;
+    let metrics_id = app.db.get_user_metrics_id(user.id).await?;
+    return Ok(Json(AuthenticatedUserResponse { user, metrics_id }));
+}
+
+#[derive(Debug, Deserialize)]
 struct GetUsersQueryParams {
-    github_user_id: Option<i32>,
-    github_login: Option<String>,
     query: Option<String>,
     page: Option<u32>,
     limit: Option<u32>,
@@ -98,14 +122,6 @@ async fn get_users(
     Query(params): Query<GetUsersQueryParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<Vec<User>>> {
-    if let Some(github_login) = &params.github_login {
-        let user = app
-            .db
-            .get_user_by_github_account(github_login, params.github_user_id)
-            .await?;
-        return Ok(Json(Vec::from_iter(user)));
-    }
-
     let limit = params.limit.unwrap_or(100);
     let users = if let Some(query) = params.query {
         app.db.fuzzy_search_users(&query, limit).await?
@@ -124,6 +140,8 @@ struct CreateUserParams {
     email_address: String,
     email_confirmation_code: Option<String>,
     #[serde(default)]
+    admin: bool,
+    #[serde(default)]
     invite_count: i32,
 }
 
@@ -131,6 +149,7 @@ struct CreateUserParams {
 struct CreateUserResponse {
     user: User,
     signup_device_id: Option<String>,
+    metrics_id: String,
 }
 
 async fn create_user(
@@ -143,12 +162,10 @@ async fn create_user(
         github_user_id: params.github_user_id,
         invite_count: params.invite_count,
     };
-    let user_id;
-    let signup_device_id;
+
     // Creating a user via the normal signup process
-    if let Some(email_confirmation_code) = params.email_confirmation_code {
-        let result = app
-            .db
+    let result = if let Some(email_confirmation_code) = params.email_confirmation_code {
+        app.db
             .create_user_from_invite(
                 &Invite {
                     email_address: params.email_address,
@@ -156,34 +173,37 @@ async fn create_user(
                 },
                 user,
             )
-            .await?;
-        user_id = result.user_id;
-        signup_device_id = result.signup_device_id;
-        if let Some(inviter_id) = result.inviting_user_id {
-            rpc_server
-                .invite_code_redeemed(inviter_id, user_id)
-                .await
-                .trace_err();
-        }
+            .await?
     }
     // Creating a user as an admin
-    else {
-        user_id = app
-            .db
+    else if params.admin {
+        app.db
             .create_user(&params.email_address, false, user)
-            .await?;
-        signup_device_id = None;
+            .await?
+    } else {
+        Err(Error::Http(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "email confirmation code is required".into(),
+        ))?
+    };
+
+    if let Some(inviter_id) = result.inviting_user_id {
+        rpc_server
+            .invite_code_redeemed(inviter_id, result.user_id)
+            .await
+            .trace_err();
     }
 
     let user = app
         .db
-        .get_user_by_id(user_id)
+        .get_user_by_id(result.user_id)
         .await?
         .ok_or_else(|| anyhow!("couldn't find the user we just created"))?;
 
     Ok(Json(CreateUserResponse {
         user,
-        signup_device_id,
+        metrics_id: result.metrics_id,
+        signup_device_id: result.signup_device_id,
     }))
 }
 

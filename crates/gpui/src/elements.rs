@@ -271,9 +271,6 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let visible_bounds = visible_bounds
-                    .intersection(bounds)
-                    .unwrap_or_else(|| RectF::new(bounds.origin(), Vector2F::default()));
                 let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
                 Lifecycle::PostPaint {
                     element,
@@ -292,9 +289,6 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let visible_bounds = visible_bounds
-                    .intersection(bounds)
-                    .unwrap_or_else(|| RectF::new(bounds.origin(), Vector2F::default()));
                 let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
                 Lifecycle::PostPaint {
                     element,

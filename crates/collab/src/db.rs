@@ -17,10 +17,11 @@ pub trait Db: Send + Sync {
         email_address: &str,
         admin: bool,
         params: NewUserParams,
-    ) -> Result<UserId>;
+    ) -> Result<NewUserResult>;
     async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>>;
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
+    async fn get_user_metrics_id(&self, id: UserId) -> Result<String>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
     async fn get_users_with_no_invites(&self, invited_by_another_user: bool) -> Result<Vec<User>>;
     async fn get_user_by_github_account(
@@ -208,21 +209,26 @@ impl Db for PostgresDb {
         email_address: &str,
         admin: bool,
         params: NewUserParams,
-    ) -> Result<UserId> {
+    ) -> Result<NewUserResult> {
         let query = "
             INSERT INTO users (email_address, github_login, github_user_id, admin)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
-            RETURNING id
+            RETURNING id, metrics_id::text
         ";
-        Ok(sqlx::query_scalar(query)
+        let (user_id, metrics_id): (UserId, String) = sqlx::query_as(query)
             .bind(email_address)
             .bind(params.github_login)
             .bind(params.github_user_id)
             .bind(admin)
             .fetch_one(&self.pool)
-            .await
-            .map(UserId)?)
+            .await?;
+        Ok(NewUserResult {
+            user_id,
+            metrics_id,
+            signup_device_id: None,
+            inviting_user_id: None,
+        })
     }
 
     async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
@@ -254,6 +260,18 @@ impl Db for PostgresDb {
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
         let users = self.get_users_by_ids(vec![id]).await?;
         Ok(users.into_iter().next())
+    }
+
+    async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
+        let query = "
+            SELECT metrics_id::text
+            FROM users
+            WHERE id = $1
+        ";
+        Ok(sqlx::query_scalar(query)
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?)
     }
 
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
@@ -410,7 +428,8 @@ impl Db for PostgresDb {
                 COUNT(*) as count,
                 COALESCE(SUM(CASE WHEN platform_linux THEN 1 ELSE 0 END), 0) as linux_count,
                 COALESCE(SUM(CASE WHEN platform_mac THEN 1 ELSE 0 END), 0) as mac_count,
-                COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count
+                COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count,
+                COALESCE(SUM(CASE WHEN platform_unknown THEN 1 ELSE 0 END), 0) as unknown_count
             FROM (
                 SELECT *
                 FROM signups
@@ -431,7 +450,7 @@ impl Db for PostgresDb {
             FROM signups
             WHERE
                 NOT email_confirmation_sent AND
-                platform_mac
+                (platform_mac OR platform_unknown)
             LIMIT $1
             ",
         )
@@ -493,13 +512,13 @@ impl Db for PostgresDb {
             ))?;
         }
 
-        let user_id: UserId = sqlx::query_scalar(
+        let (user_id, metrics_id): (UserId, String) = sqlx::query_as(
             "
             INSERT INTO users
             (email_address, github_login, github_user_id, admin, invite_count, invite_code)
             VALUES
             ($1, $2, $3, 'f', $4, $5)
-            RETURNING id
+            RETURNING id, metrics_id::text
             ",
         )
         .bind(&invite.email_address)
@@ -559,6 +578,7 @@ impl Db for PostgresDb {
         tx.commit().await?;
         Ok(NewUserResult {
             user_id,
+            metrics_id,
             inviting_user_id,
             signup_device_id,
         })
@@ -1079,10 +1099,7 @@ impl Db for PostgresDb {
             .bind(user_id)
             .fetch(&self.pool);
 
-        let mut contacts = vec![Contact::Accepted {
-            user_id,
-            should_notify: false,
-        }];
+        let mut contacts = Vec::new();
         while let Some(row) = rows.next().await {
             let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
 
@@ -1704,6 +1721,8 @@ pub struct WaitlistSummary {
     pub mac_count: i64,
     #[sqlx(default)]
     pub windows_count: i64,
+    #[sqlx(default)]
+    pub unknown_count: i64,
 }
 
 #[derive(FromRow, PartialEq, Debug, Serialize, Deserialize)]
@@ -1722,6 +1741,7 @@ pub struct NewUserParams {
 #[derive(Debug)]
 pub struct NewUserResult {
     pub user_id: UserId,
+    pub metrics_id: String,
     pub inviting_user_id: Option<UserId>,
     pub signup_device_id: Option<String>,
 }
@@ -1808,15 +1828,15 @@ mod test {
             email_address: &str,
             admin: bool,
             params: NewUserParams,
-        ) -> Result<UserId> {
+        ) -> Result<NewUserResult> {
             self.background.simulate_random_delay().await;
 
             let mut users = self.users.lock();
-            if let Some(user) = users
+            let user_id = if let Some(user) = users
                 .values()
                 .find(|user| user.github_login == params.github_login)
             {
-                Ok(user.id)
+                user.id
             } else {
                 let id = post_inc(&mut *self.next_user_id.lock());
                 let user_id = UserId(id);
@@ -1833,8 +1853,14 @@ mod test {
                         connected_once: false,
                     },
                 );
-                Ok(user_id)
-            }
+                user_id
+            };
+            Ok(NewUserResult {
+                user_id,
+                metrics_id: "the-metrics-id".to_string(),
+                inviting_user_id: None,
+                signup_device_id: None,
+            })
         }
 
         async fn get_all_users(&self, _page: u32, _limit: u32) -> Result<Vec<User>> {
@@ -1848,6 +1874,10 @@ mod test {
         async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
             self.background.simulate_random_delay().await;
             Ok(self.get_users_by_ids(vec![id]).await?.into_iter().next())
+        }
+
+        async fn get_user_metrics_id(&self, _id: UserId) -> Result<String> {
+            Ok("the-metrics-id".to_string())
         }
 
         async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
@@ -2050,10 +2080,7 @@ mod test {
 
         async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>> {
             self.background.simulate_random_delay().await;
-            let mut contacts = vec![Contact::Accepted {
-                user_id: id,
-                should_notify: false,
-            }];
+            let mut contacts = Vec::new();
 
             for contact in self.contacts.lock().iter() {
                 if contact.requester_id == id {

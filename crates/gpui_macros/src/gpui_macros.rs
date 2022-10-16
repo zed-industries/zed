@@ -117,12 +117,13 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                     cx.font_cache().clone(),
                                     cx.leak_detector(),
                                     #first_entity_id,
+                                    stringify!(#outer_fn_name).to_string(),
                                 );
                             ));
                             cx_teardowns.extend(quote!(
                                 #cx_varname.update(|cx| cx.remove_all_windows());
                                 deterministic.run_until_parked();
-                                #cx_varname.update(|_| {}); // flush effects
+                                #cx_varname.update(|cx| cx.clear_globals());
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname,));
                             continue;
@@ -149,7 +150,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         #cx_vars
                         cx.foreground().run(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
-                    }
+                    },
+                    stringify!(#outer_fn_name).to_string(),
                 );
             }
         }
@@ -187,7 +189,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, _, _, seed, is_last_iteration| #inner_fn_name(#inner_fn_args)
+                    &mut |cx, _, _, seed, is_last_iteration| #inner_fn_name(#inner_fn_args),
+                    stringify!(#outer_fn_name).to_string(),
                 );
             }
         }

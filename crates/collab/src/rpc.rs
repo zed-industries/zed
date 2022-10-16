@@ -22,7 +22,7 @@ use axum::{
     routing::get,
     Extension, Router, TypedHeader,
 };
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     channel::mpsc,
     future::{self, BoxFuture},
@@ -88,11 +88,6 @@ impl<R: RequestMessage> Response<R> {
         self.server.peer.respond(self.receipt, payload)?;
         Ok(())
     }
-
-    fn into_receipt(self) -> Receipt<R> {
-        self.responded.store(true, SeqCst);
-        self.receipt
-    }
 }
 
 pub struct Server {
@@ -151,11 +146,17 @@ impl Server {
 
         server
             .add_request_handler(Server::ping)
-            .add_request_handler(Server::register_project)
-            .add_request_handler(Server::unregister_project)
+            .add_request_handler(Server::create_room)
+            .add_request_handler(Server::join_room)
+            .add_message_handler(Server::leave_room)
+            .add_request_handler(Server::call)
+            .add_request_handler(Server::cancel_call)
+            .add_message_handler(Server::decline_call)
+            .add_request_handler(Server::update_participant_location)
+            .add_request_handler(Server::share_project)
+            .add_message_handler(Server::unshare_project)
             .add_request_handler(Server::join_project)
             .add_message_handler(Server::leave_project)
-            .add_message_handler(Server::respond_to_join_project_request)
             .add_message_handler(Server::update_project)
             .add_message_handler(Server::register_project_activity)
             .add_request_handler(Server::update_worktree)
@@ -205,7 +206,9 @@ impl Server {
             .add_request_handler(Server::follow)
             .add_message_handler(Server::unfollow)
             .add_message_handler(Server::update_followers)
-            .add_request_handler(Server::get_channel_messages);
+            .add_request_handler(Server::get_channel_messages)
+            .add_message_handler(Server::update_diff_base)
+            .add_request_handler(Server::get_private_user_info);
 
         Arc::new(server)
     }
@@ -362,8 +365,7 @@ impl Server {
                             timer.await;
                         }
                     }
-                })
-                .await;
+                });
 
             tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
 
@@ -383,7 +385,11 @@ impl Server {
 
             {
                 let mut store = this.store().await;
-                store.add_connection(connection_id, user_id, user.admin);
+                let incoming_call = store.add_connection(connection_id, user_id, user.admin);
+                if let Some(incoming_call) = incoming_call {
+                    this.peer.send(connection_id, incoming_call)?;
+                }
+
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
 
                 if let Some((code, count)) = invite_code {
@@ -466,69 +472,58 @@ impl Server {
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
         self.peer.disconnect(connection_id);
 
-        let mut projects_to_unregister = Vec::new();
-        let removed_user_id;
+        let mut projects_to_unshare = Vec::new();
+        let mut contacts_to_update = HashSet::default();
         {
             let mut store = self.store().await;
             let removed_connection = store.remove_connection(connection_id)?;
 
-            for (project_id, project) in removed_connection.hosted_projects {
-                projects_to_unregister.push(project_id);
+            for project in removed_connection.hosted_projects {
+                projects_to_unshare.push(project.id);
                 broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
                     self.peer.send(
                         conn_id,
-                        proto::UnregisterProject {
-                            project_id: project_id.to_proto(),
+                        proto::UnshareProject {
+                            project_id: project.id.to_proto(),
                         },
                     )
                 });
-
-                for (_, receipts) in project.join_requests {
-                    for receipt in receipts {
-                        self.peer.respond(
-                            receipt,
-                            proto::JoinProjectResponse {
-                                variant: Some(proto::join_project_response::Variant::Decline(
-                                    proto::join_project_response::Decline {
-                                        reason: proto::join_project_response::decline::Reason::WentOffline as i32
-                                    },
-                                )),
-                            },
-                        )?;
-                    }
-                }
             }
 
-            for project_id in removed_connection.guest_project_ids {
-                if let Some(project) = store.project(project_id).trace_err() {
-                    broadcast(connection_id, project.connection_ids(), |conn_id| {
-                        self.peer.send(
-                            conn_id,
-                            proto::RemoveProjectCollaborator {
-                                project_id: project_id.to_proto(),
-                                peer_id: connection_id.0,
-                            },
-                        )
-                    });
-                    if project.guests.is_empty() {
-                        self.peer
-                            .send(
-                                project.host_connection_id,
-                                proto::ProjectUnshared {
-                                    project_id: project_id.to_proto(),
-                                },
-                            )
-                            .trace_err();
-                    }
-                }
+            for project in removed_connection.guest_projects {
+                broadcast(connection_id, project.connection_ids, |conn_id| {
+                    self.peer.send(
+                        conn_id,
+                        proto::RemoveProjectCollaborator {
+                            project_id: project.id.to_proto(),
+                            peer_id: connection_id.0,
+                        },
+                    )
+                });
             }
 
-            removed_user_id = removed_connection.user_id;
+            for connection_id in removed_connection.canceled_call_connection_ids {
+                self.peer
+                    .send(connection_id, proto::CallCanceled {})
+                    .trace_err();
+                contacts_to_update.extend(store.user_id_for_connection(connection_id).ok());
+            }
+
+            if let Some(room) = removed_connection
+                .room_id
+                .and_then(|room_id| store.room(room_id))
+            {
+                self.room_updated(room);
+            }
+
+            contacts_to_update.insert(removed_connection.user_id);
         };
 
-        self.update_user_contacts(removed_user_id).await.trace_err();
+        for user_id in contacts_to_update {
+            self.update_user_contacts(user_id).await.trace_err();
+        }
 
-        for project_id in projects_to_unregister {
+        for project_id in projects_to_unshare {
             self.app_state
                 .db
                 .unregister_project(project_id)
@@ -596,76 +591,286 @@ impl Server {
         Ok(())
     }
 
-    async fn register_project(
+    async fn create_room(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::RegisterProject>,
-        response: Response<proto::RegisterProject>,
+        request: TypedEnvelope<proto::CreateRoom>,
+        response: Response<proto::CreateRoom>,
+    ) -> Result<()> {
+        let user_id;
+        let room_id;
+        {
+            let mut store = self.store().await;
+            user_id = store.user_id_for_connection(request.sender_id)?;
+            room_id = store.create_room(request.sender_id)?;
+        }
+        response.send(proto::CreateRoomResponse { id: room_id })?;
+        self.update_user_contacts(user_id).await?;
+        Ok(())
+    }
+
+    async fn join_room(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::JoinRoom>,
+        response: Response<proto::JoinRoom>,
+    ) -> Result<()> {
+        let user_id;
+        {
+            let mut store = self.store().await;
+            user_id = store.user_id_for_connection(request.sender_id)?;
+            let (room, recipient_connection_ids) =
+                store.join_room(request.payload.id, request.sender_id)?;
+            for recipient_id in recipient_connection_ids {
+                self.peer
+                    .send(recipient_id, proto::CallCanceled {})
+                    .trace_err();
+            }
+            response.send(proto::JoinRoomResponse {
+                room: Some(room.clone()),
+            })?;
+            self.room_updated(room);
+        }
+        self.update_user_contacts(user_id).await?;
+        Ok(())
+    }
+
+    async fn leave_room(self: Arc<Server>, message: TypedEnvelope<proto::LeaveRoom>) -> Result<()> {
+        let mut contacts_to_update = HashSet::default();
+        {
+            let mut store = self.store().await;
+            let user_id = store.user_id_for_connection(message.sender_id)?;
+            let left_room = store.leave_room(message.payload.id, message.sender_id)?;
+            contacts_to_update.insert(user_id);
+
+            for project in left_room.unshared_projects {
+                for connection_id in project.connection_ids() {
+                    self.peer.send(
+                        connection_id,
+                        proto::UnshareProject {
+                            project_id: project.id.to_proto(),
+                        },
+                    )?;
+                }
+            }
+
+            for project in left_room.left_projects {
+                if project.remove_collaborator {
+                    for connection_id in project.connection_ids {
+                        self.peer.send(
+                            connection_id,
+                            proto::RemoveProjectCollaborator {
+                                project_id: project.id.to_proto(),
+                                peer_id: message.sender_id.0,
+                            },
+                        )?;
+                    }
+
+                    self.peer.send(
+                        message.sender_id,
+                        proto::UnshareProject {
+                            project_id: project.id.to_proto(),
+                        },
+                    )?;
+                }
+            }
+
+            if let Some(room) = left_room.room {
+                self.room_updated(room);
+            }
+
+            for connection_id in left_room.canceled_call_connection_ids {
+                self.peer
+                    .send(connection_id, proto::CallCanceled {})
+                    .trace_err();
+                contacts_to_update.extend(store.user_id_for_connection(connection_id).ok());
+            }
+        }
+
+        for user_id in contacts_to_update {
+            self.update_user_contacts(user_id).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn call(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::Call>,
+        response: Response<proto::Call>,
+    ) -> Result<()> {
+        let caller_user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let recipient_user_id = UserId::from_proto(request.payload.recipient_user_id);
+        let initial_project_id = request
+            .payload
+            .initial_project_id
+            .map(ProjectId::from_proto);
+        if !self
+            .app_state
+            .db
+            .has_contact(caller_user_id, recipient_user_id)
+            .await?
+        {
+            return Err(anyhow!("cannot call a user who isn't a contact"))?;
+        }
+
+        let room_id = request.payload.room_id;
+        let mut calls = {
+            let mut store = self.store().await;
+            let (room, recipient_connection_ids, incoming_call) = store.call(
+                room_id,
+                recipient_user_id,
+                initial_project_id,
+                request.sender_id,
+            )?;
+            self.room_updated(room);
+            recipient_connection_ids
+                .into_iter()
+                .map(|recipient_connection_id| {
+                    self.peer
+                        .request(recipient_connection_id, incoming_call.clone())
+                })
+                .collect::<FuturesUnordered<_>>()
+        };
+        self.update_user_contacts(recipient_user_id).await?;
+
+        while let Some(call_response) = calls.next().await {
+            match call_response.as_ref() {
+                Ok(_) => {
+                    response.send(proto::Ack {})?;
+                    return Ok(());
+                }
+                Err(_) => {
+                    call_response.trace_err();
+                }
+            }
+        }
+
+        {
+            let mut store = self.store().await;
+            let room = store.call_failed(room_id, recipient_user_id)?;
+            self.room_updated(&room);
+        }
+        self.update_user_contacts(recipient_user_id).await?;
+
+        Err(anyhow!("failed to ring call recipient"))?
+    }
+
+    async fn cancel_call(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::CancelCall>,
+        response: Response<proto::CancelCall>,
+    ) -> Result<()> {
+        let recipient_user_id = UserId::from_proto(request.payload.recipient_user_id);
+        {
+            let mut store = self.store().await;
+            let (room, recipient_connection_ids) = store.cancel_call(
+                request.payload.room_id,
+                recipient_user_id,
+                request.sender_id,
+            )?;
+            for recipient_id in recipient_connection_ids {
+                self.peer
+                    .send(recipient_id, proto::CallCanceled {})
+                    .trace_err();
+            }
+            self.room_updated(room);
+            response.send(proto::Ack {})?;
+        }
+        self.update_user_contacts(recipient_user_id).await?;
+        Ok(())
+    }
+
+    async fn decline_call(
+        self: Arc<Server>,
+        message: TypedEnvelope<proto::DeclineCall>,
+    ) -> Result<()> {
+        let recipient_user_id;
+        {
+            let mut store = self.store().await;
+            recipient_user_id = store.user_id_for_connection(message.sender_id)?;
+            let (room, recipient_connection_ids) =
+                store.decline_call(message.payload.room_id, message.sender_id)?;
+            for recipient_id in recipient_connection_ids {
+                self.peer
+                    .send(recipient_id, proto::CallCanceled {})
+                    .trace_err();
+            }
+            self.room_updated(room);
+        }
+        self.update_user_contacts(recipient_user_id).await?;
+        Ok(())
+    }
+
+    async fn update_participant_location(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateParticipantLocation>,
+        response: Response<proto::UpdateParticipantLocation>,
+    ) -> Result<()> {
+        let room_id = request.payload.room_id;
+        let location = request
+            .payload
+            .location
+            .ok_or_else(|| anyhow!("invalid location"))?;
+        let mut store = self.store().await;
+        let room = store.update_participant_location(room_id, location, request.sender_id)?;
+        self.room_updated(room);
+        response.send(proto::Ack {})?;
+        Ok(())
+    }
+
+    fn room_updated(&self, room: &proto::Room) {
+        for participant in &room.participants {
+            self.peer
+                .send(
+                    ConnectionId(participant.peer_id),
+                    proto::RoomUpdated {
+                        room: Some(room.clone()),
+                    },
+                )
+                .trace_err();
+        }
+    }
+
+    async fn share_project(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::ShareProject>,
+        response: Response<proto::ShareProject>,
     ) -> Result<()> {
         let user_id = self
             .store()
             .await
             .user_id_for_connection(request.sender_id)?;
         let project_id = self.app_state.db.register_project(user_id).await?;
-        self.store().await.register_project(
-            request.sender_id,
+        let mut store = self.store().await;
+        let room = store.share_project(
+            request.payload.room_id,
             project_id,
-            request.payload.online,
+            request.payload.worktrees,
+            request.sender_id,
         )?;
-
-        response.send(proto::RegisterProjectResponse {
+        response.send(proto::ShareProjectResponse {
             project_id: project_id.to_proto(),
         })?;
+        self.room_updated(room);
 
         Ok(())
     }
 
-    async fn unregister_project(
+    async fn unshare_project(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::UnregisterProject>,
-        response: Response<proto::UnregisterProject>,
+        message: TypedEnvelope<proto::UnshareProject>,
     ) -> Result<()> {
-        let project_id = ProjectId::from_proto(request.payload.project_id);
-        let (user_id, project) = {
-            let mut state = self.store().await;
-            let project = state.unregister_project(project_id, request.sender_id)?;
-            (state.user_id_for_connection(request.sender_id)?, project)
-        };
-        self.app_state.db.unregister_project(project_id).await?;
-
+        let project_id = ProjectId::from_proto(message.payload.project_id);
+        let mut store = self.store().await;
+        let (room, project) = store.unshare_project(project_id, message.sender_id)?;
         broadcast(
-            request.sender_id,
-            project.guests.keys().copied(),
-            |conn_id| {
-                self.peer.send(
-                    conn_id,
-                    proto::UnregisterProject {
-                        project_id: project_id.to_proto(),
-                    },
-                )
-            },
+            message.sender_id,
+            project.guest_connection_ids(),
+            |conn_id| self.peer.send(conn_id, message.payload.clone()),
         );
-        for (_, receipts) in project.join_requests {
-            for receipt in receipts {
-                self.peer.respond(
-                    receipt,
-                    proto::JoinProjectResponse {
-                        variant: Some(proto::join_project_response::Variant::Decline(
-                            proto::join_project_response::Decline {
-                                reason: proto::join_project_response::decline::Reason::Closed
-                                    as i32,
-                            },
-                        )),
-                    },
-                )?;
-            }
-        }
-
-        // Send out the `UpdateContacts` message before responding to the unregister
-        // request. This way, when the project's host can keep track of the project's
-        // remote id until after they've received the `UpdateContacts` message for
-        // themself.
-        self.update_user_contacts(user_id).await?;
-        response.send(proto::Ack {})?;
+        self.room_updated(room);
 
         Ok(())
     }
@@ -719,176 +924,109 @@ impl Server {
         };
 
         tracing::info!(%project_id, %host_user_id, %host_connection_id, "join project");
-        let has_contact = self
-            .app_state
-            .db
-            .has_contact(guest_user_id, host_user_id)
-            .await?;
-        if !has_contact {
-            return Err(anyhow!("no such project"))?;
+
+        let mut store = self.store().await;
+        let (project, replica_id) = store.join_project(request.sender_id, project_id)?;
+        let peer_count = project.guests.len();
+        let mut collaborators = Vec::with_capacity(peer_count);
+        collaborators.push(proto::Collaborator {
+            peer_id: project.host_connection_id.0,
+            replica_id: 0,
+            user_id: project.host.user_id.to_proto(),
+        });
+        let worktrees = project
+            .worktrees
+            .iter()
+            .map(|(id, worktree)| proto::WorktreeMetadata {
+                id: *id,
+                root_name: worktree.root_name.clone(),
+                visible: worktree.visible,
+            })
+            .collect::<Vec<_>>();
+
+        // Add all guests other than the requesting user's own connections as collaborators
+        for (guest_conn_id, guest) in &project.guests {
+            if request.sender_id != *guest_conn_id {
+                collaborators.push(proto::Collaborator {
+                    peer_id: guest_conn_id.0,
+                    replica_id: guest.replica_id as u32,
+                    user_id: guest.user_id.to_proto(),
+                });
+            }
         }
 
-        self.store().await.request_join_project(
-            guest_user_id,
-            project_id,
-            response.into_receipt(),
-        )?;
-        self.peer.send(
-            host_connection_id,
-            proto::RequestJoinProject {
-                project_id: project_id.to_proto(),
-                requester_id: guest_user_id.to_proto(),
-            },
-        )?;
-        Ok(())
-    }
-
-    async fn respond_to_join_project_request(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::RespondToJoinProjectRequest>,
-    ) -> Result<()> {
-        let host_user_id;
-
-        {
-            let mut state = self.store().await;
-            let project_id = ProjectId::from_proto(request.payload.project_id);
-            let project = state.project(project_id)?;
-            if project.host_connection_id != request.sender_id {
-                Err(anyhow!("no such connection"))?;
-            }
-
-            host_user_id = project.host.user_id;
-            let guest_user_id = UserId::from_proto(request.payload.requester_id);
-
-            if !request.payload.allow {
-                let receipts = state
-                    .deny_join_project_request(request.sender_id, guest_user_id, project_id)
-                    .ok_or_else(|| anyhow!("no such request"))?;
-                for receipt in receipts {
-                    self.peer.respond(
-                        receipt,
-                        proto::JoinProjectResponse {
-                            variant: Some(proto::join_project_response::Variant::Decline(
-                                proto::join_project_response::Decline {
-                                    reason: proto::join_project_response::decline::Reason::Declined
-                                        as i32,
-                                },
-                            )),
-                        },
-                    )?;
-                }
-                return Ok(());
-            }
-
-            let (receipts_with_replica_ids, project) = state
-                .accept_join_project_request(request.sender_id, guest_user_id, project_id)
-                .ok_or_else(|| anyhow!("no such request"))?;
-
-            let peer_count = project.guests.len();
-            let mut collaborators = Vec::with_capacity(peer_count);
-            collaborators.push(proto::Collaborator {
-                peer_id: project.host_connection_id.0,
-                replica_id: 0,
-                user_id: project.host.user_id.to_proto(),
-            });
-            let worktrees = project
-                .worktrees
-                .iter()
-                .map(|(id, worktree)| proto::WorktreeMetadata {
-                    id: *id,
-                    root_name: worktree.root_name.clone(),
-                    visible: worktree.visible,
-                })
-                .collect::<Vec<_>>();
-
-            // Add all guests other than the requesting user's own connections as collaborators
-            for (guest_conn_id, guest) in &project.guests {
-                if receipts_with_replica_ids
-                    .iter()
-                    .all(|(receipt, _)| receipt.sender_id != *guest_conn_id)
-                {
-                    collaborators.push(proto::Collaborator {
-                        peer_id: guest_conn_id.0,
-                        replica_id: guest.replica_id as u32,
-                        user_id: guest.user_id.to_proto(),
-                    });
-                }
-            }
-
-            for conn_id in project.connection_ids() {
-                for (receipt, replica_id) in &receipts_with_replica_ids {
-                    if conn_id != receipt.sender_id {
-                        self.peer.send(
-                            conn_id,
-                            proto::AddProjectCollaborator {
-                                project_id: project_id.to_proto(),
-                                collaborator: Some(proto::Collaborator {
-                                    peer_id: receipt.sender_id.0,
-                                    replica_id: *replica_id as u32,
-                                    user_id: guest_user_id.to_proto(),
-                                }),
-                            },
-                        )?;
-                    }
-                }
-            }
-
-            // First, we send the metadata associated with each worktree.
-            for (receipt, replica_id) in &receipts_with_replica_ids {
-                self.peer.respond(
-                    *receipt,
-                    proto::JoinProjectResponse {
-                        variant: Some(proto::join_project_response::Variant::Accept(
-                            proto::join_project_response::Accept {
-                                worktrees: worktrees.clone(),
-                                replica_id: *replica_id as u32,
-                                collaborators: collaborators.clone(),
-                                language_servers: project.language_servers.clone(),
-                            },
-                        )),
+        for conn_id in project.connection_ids() {
+            if conn_id != request.sender_id {
+                self.peer.send(
+                    conn_id,
+                    proto::AddProjectCollaborator {
+                        project_id: project_id.to_proto(),
+                        collaborator: Some(proto::Collaborator {
+                            peer_id: request.sender_id.0,
+                            replica_id: replica_id as u32,
+                            user_id: guest_user_id.to_proto(),
+                        }),
                     },
                 )?;
             }
+        }
 
-            for (worktree_id, worktree) in &project.worktrees {
-                #[cfg(any(test, feature = "test-support"))]
-                const MAX_CHUNK_SIZE: usize = 2;
-                #[cfg(not(any(test, feature = "test-support")))]
-                const MAX_CHUNK_SIZE: usize = 256;
+        // First, we send the metadata associated with each worktree.
+        response.send(proto::JoinProjectResponse {
+            worktrees: worktrees.clone(),
+            replica_id: replica_id as u32,
+            collaborators: collaborators.clone(),
+            language_servers: project.language_servers.clone(),
+        })?;
 
-                // Stream this worktree's entries.
-                let message = proto::UpdateWorktree {
-                    project_id: project_id.to_proto(),
-                    worktree_id: *worktree_id,
-                    root_name: worktree.root_name.clone(),
-                    updated_entries: worktree.entries.values().cloned().collect(),
-                    removed_entries: Default::default(),
-                    scan_id: worktree.scan_id,
-                    is_last_update: worktree.is_complete,
-                };
-                for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
-                    for (receipt, _) in &receipts_with_replica_ids {
-                        self.peer.send(receipt.sender_id, update.clone())?;
-                    }
-                }
+        for (worktree_id, worktree) in &project.worktrees {
+            #[cfg(any(test, feature = "test-support"))]
+            const MAX_CHUNK_SIZE: usize = 2;
+            #[cfg(not(any(test, feature = "test-support")))]
+            const MAX_CHUNK_SIZE: usize = 256;
 
-                // Stream this worktree's diagnostics.
-                for summary in worktree.diagnostic_summaries.values() {
-                    for (receipt, _) in &receipts_with_replica_ids {
-                        self.peer.send(
-                            receipt.sender_id,
-                            proto::UpdateDiagnosticSummary {
-                                project_id: project_id.to_proto(),
-                                worktree_id: *worktree_id,
-                                summary: Some(summary.clone()),
-                            },
-                        )?;
-                    }
-                }
+            // Stream this worktree's entries.
+            let message = proto::UpdateWorktree {
+                project_id: project_id.to_proto(),
+                worktree_id: *worktree_id,
+                root_name: worktree.root_name.clone(),
+                updated_entries: worktree.entries.values().cloned().collect(),
+                removed_entries: Default::default(),
+                scan_id: worktree.scan_id,
+                is_last_update: worktree.is_complete,
+            };
+            for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+                self.peer.send(request.sender_id, update.clone())?;
+            }
+
+            // Stream this worktree's diagnostics.
+            for summary in worktree.diagnostic_summaries.values() {
+                self.peer.send(
+                    request.sender_id,
+                    proto::UpdateDiagnosticSummary {
+                        project_id: project_id.to_proto(),
+                        worktree_id: *worktree_id,
+                        summary: Some(summary.clone()),
+                    },
+                )?;
             }
         }
 
-        self.update_user_contacts(host_user_id).await?;
+        for language_server in &project.language_servers {
+            self.peer.send(
+                request.sender_id,
+                proto::UpdateLanguageServer {
+                    project_id: project_id.to_proto(),
+                    language_server_id: language_server.id,
+                    variant: Some(
+                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                            proto::LspDiskBasedDiagnosticsUpdated {},
+                        ),
+                    ),
+                },
+            )?;
+        }
+
         Ok(())
     }
 
@@ -901,7 +1039,7 @@ impl Server {
         let project;
         {
             let mut store = self.store().await;
-            project = store.leave_project(sender_id, project_id)?;
+            project = store.leave_project(project_id, sender_id)?;
             tracing::info!(
                 %project_id,
                 host_user_id = %project.host_user_id,
@@ -920,27 +1058,8 @@ impl Server {
                     )
                 });
             }
-
-            if let Some(requester_id) = project.cancel_request {
-                self.peer.send(
-                    project.host_connection_id,
-                    proto::JoinProjectRequestCancelled {
-                        project_id: project_id.to_proto(),
-                        requester_id: requester_id.to_proto(),
-                    },
-                )?;
-            }
-
-            if project.unshare {
-                self.peer.send(
-                    project.host_connection_id,
-                    proto::ProjectUnshared {
-                        project_id: project_id.to_proto(),
-                    },
-                )?;
-            }
         }
-        self.update_user_contacts(project.host_user_id).await?;
+
         Ok(())
     }
 
@@ -949,61 +1068,20 @@ impl Server {
         request: TypedEnvelope<proto::UpdateProject>,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
-        let user_id;
         {
             let mut state = self.store().await;
-            user_id = state.user_id_for_connection(request.sender_id)?;
             let guest_connection_ids = state
                 .read_project(project_id, request.sender_id)?
                 .guest_connection_ids();
-            let unshared_project = state.update_project(
-                project_id,
-                &request.payload.worktrees,
-                request.payload.online,
-                request.sender_id,
-            )?;
-
-            if let Some(unshared_project) = unshared_project {
-                broadcast(
-                    request.sender_id,
-                    unshared_project.guests.keys().copied(),
-                    |conn_id| {
-                        self.peer.send(
-                            conn_id,
-                            proto::UnregisterProject {
-                                project_id: project_id.to_proto(),
-                            },
-                        )
-                    },
-                );
-                for (_, receipts) in unshared_project.pending_join_requests {
-                    for receipt in receipts {
-                        self.peer.respond(
-                            receipt,
-                            proto::JoinProjectResponse {
-                                variant: Some(proto::join_project_response::Variant::Decline(
-                                    proto::join_project_response::Decline {
-                                        reason:
-                                            proto::join_project_response::decline::Reason::Closed
-                                                as i32,
-                                    },
-                                )),
-                            },
-                        )?;
-                    }
-                }
-            } else {
-                broadcast(request.sender_id, guest_connection_ids, |connection_id| {
-                    self.peer.forward_send(
-                        request.sender_id,
-                        connection_id,
-                        request.payload.clone(),
-                    )
-                });
-            }
+            let room =
+                state.update_project(project_id, &request.payload.worktrees, request.sender_id)?;
+            broadcast(request.sender_id, guest_connection_ids, |connection_id| {
+                self.peer
+                    .forward_send(request.sender_id, connection_id, request.payload.clone())
+            });
+            self.room_updated(room);
         };
 
-        self.update_user_contacts(user_id).await?;
         Ok(())
     }
 
@@ -1025,32 +1103,21 @@ impl Server {
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let worktree_id = request.payload.worktree_id;
-        let (connection_ids, metadata_changed) = {
-            let mut store = self.store().await;
-            let (connection_ids, metadata_changed) = store.update_worktree(
-                request.sender_id,
-                project_id,
-                worktree_id,
-                &request.payload.root_name,
-                &request.payload.removed_entries,
-                &request.payload.updated_entries,
-                request.payload.scan_id,
-                request.payload.is_last_update,
-            )?;
-            (connection_ids, metadata_changed)
-        };
+        let connection_ids = self.store().await.update_worktree(
+            request.sender_id,
+            project_id,
+            worktree_id,
+            &request.payload.root_name,
+            &request.payload.removed_entries,
+            &request.payload.updated_entries,
+            request.payload.scan_id,
+            request.payload.is_last_update,
+        )?;
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
         });
-        if metadata_changed {
-            let user_id = self
-                .store()
-                .await
-                .user_id_for_connection(request.sender_id)?;
-            self.update_user_contacts(user_id).await?;
-        }
         response.send(proto::Ack {})?;
         Ok(())
     }
@@ -1723,6 +1790,44 @@ impl Server {
         response.send(proto::GetChannelMessagesResponse {
             done: messages.len() < MESSAGE_COUNT_PER_PAGE,
             messages,
+        })?;
+        Ok(())
+    }
+
+    async fn update_diff_base(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateDiffBase>,
+    ) -> Result<()> {
+        let receiver_ids = self.store().await.project_connection_ids(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        });
+        Ok(())
+    }
+
+    async fn get_private_user_info(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::GetPrivateUserInfo>,
+        response: Response<proto::GetPrivateUserInfo>,
+    ) -> Result<()> {
+        let user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let metrics_id = self.app_state.db.get_user_metrics_id(user_id).await?;
+        let user = self
+            .app_state
+            .db
+            .get_user_by_id(user_id)
+            .await?
+            .ok_or_else(|| anyhow!("user not found"))?;
+        response.send(proto::GetPrivateUserInfoResponse {
+            metrics_id,
+            staff: user.admin,
         })?;
         Ok(())
     }

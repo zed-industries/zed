@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.55.0"
+version = "0.60.4"
 
 [lib]
 name = "zed"
@@ -19,19 +19,20 @@ activity_indicator = { path = "../activity_indicator" }
 assets = { path = "../assets" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
+call = { path = "../call" }
 chat_panel = { path = "../chat_panel" }
 cli = { path = "../cli" }
+collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
 context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
-contacts_panel = { path = "../contacts_panel" }
-contacts_status_item = { path = "../contacts_status_item" }
 diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
 search = { path = "../search" }
+fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 go_to_line = { path = "../go_to_line" }
@@ -92,6 +93,7 @@ toml = "0.5"
 tree-sitter = "0.20"
 tree-sitter-c = "0.20.1"
 tree-sitter-cpp = "0.20.0"
+tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "05e3631c6a0701c1fa518b0fee7be95a2ceef5e2" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "137e1ce6a02698fc246cdb9c6b886ed1de9a1ed8" }
@@ -100,20 +102,23 @@ tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown",
 tree-sitter-python = "0.20.2"
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = "0.20.1"
+tree-sitter-html = "0.19.0"
 url = "2.2"
 
 [dev-dependencies]
-text = { path = "../text", features = ["test-support"] }
+call = { path = "../call", features = ["test-support"] }
+client = { path = "../client", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
-client = { path = "../client", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
+text = { path = "../text", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+
 env_logger = "0.9"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 unindent = "0.1.7"

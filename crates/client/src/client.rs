@@ -15,11 +15,9 @@ use async_tungstenite::tungstenite::{
 use db::Db;
 use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
-    actions,
-    serde_json::{json, Value},
-    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
-    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext,
-    ViewHandle,
+    actions, serde_json::Value, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle,
+    AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use http::HttpClient;
 use lazy_static::lazy_static;
@@ -55,8 +53,10 @@ lazy_static! {
 }
 
 pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
+pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
+pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-actions!(client, [Authenticate, TestTelemetry]);
+actions!(client, [Authenticate]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_global_action({
@@ -67,17 +67,6 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
                 |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
             )
             .detach();
-        }
-    });
-    cx.add_global_action({
-        let client = client.clone();
-        move |_: &TestTelemetry, _| {
-            client.report_event(
-                "test_telemetry",
-                json!({
-                    "test_property": "test_value"
-                }),
-            )
         }
     });
 }
@@ -333,11 +322,9 @@ impl Client {
         log::info!("set status on client {}: {:?}", self.id, status);
         let mut state = self.state.write();
         *state.status.0.borrow_mut() = status;
-        let user_id = state.credentials.as_ref().map(|c| c.user_id);
 
         match status {
             Status::Connected { .. } => {
-                self.telemetry.set_user_id(user_id);
                 state._reconnect_task = None;
             }
             Status::ConnectionLost => {
@@ -345,7 +332,7 @@ impl Client {
                 let reconnect_interval = state.reconnect_interval;
                 state._reconnect_task = Some(cx.spawn(|cx| async move {
                     let mut rng = StdRng::from_entropy();
-                    let mut delay = Duration::from_millis(100);
+                    let mut delay = INITIAL_RECONNECTION_DELAY;
                     while let Err(error) = this.authenticate_and_connect(true, &cx).await {
                         log::error!("failed to connect {}", error);
                         if matches!(*this.status().borrow(), Status::ConnectionError) {
@@ -366,7 +353,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                self.telemetry.set_user_id(user_id);
+                self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
             }
             _ => {}
@@ -447,6 +434,29 @@ impl Client {
             client: Arc::downgrade(self),
             id: message_type_id,
         }
+    }
+
+    pub fn add_request_handler<M, E, H, F>(
+        self: &Arc<Self>,
+        model: ModelHandle<E>,
+        handler: H,
+    ) -> Subscription
+    where
+        M: RequestMessage,
+        E: Entity,
+        H: 'static
+            + Send
+            + Sync
+            + Fn(ModelHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = Result<M::Response>>,
+    {
+        self.add_message_handler(model, move |handle, envelope, this, cx| {
+            Self::respond_to_request(
+                envelope.receipt(),
+                handler(handle, envelope, this.clone(), cx),
+                this,
+            )
+        })
     }
 
     pub fn add_view_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
@@ -653,44 +663,51 @@ impl Client {
             self.set_status(Status::Reconnecting, cx);
         }
 
-        match self.establish_connection(&credentials, cx).await {
-            Ok(conn) => {
-                self.state.write().credentials = Some(credentials.clone());
-                if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
-                    write_credentials_to_keychain(&credentials, cx).log_err();
+        futures::select_biased! {
+            connection = self.establish_connection(&credentials, cx).fuse() => {
+                match connection {
+                    Ok(conn) => {
+                        self.state.write().credentials = Some(credentials.clone());
+                        if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
+                            write_credentials_to_keychain(&credentials, cx).log_err();
+                        }
+                        self.set_connection(conn, cx);
+                        Ok(())
+                    }
+                    Err(EstablishConnectionError::Unauthorized) => {
+                        self.state.write().credentials.take();
+                        if read_from_keychain {
+                            cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
+                            self.set_status(Status::SignedOut, cx);
+                            self.authenticate_and_connect(false, cx).await
+                        } else {
+                            self.set_status(Status::ConnectionError, cx);
+                            Err(EstablishConnectionError::Unauthorized)?
+                        }
+                    }
+                    Err(EstablishConnectionError::UpgradeRequired) => {
+                        self.set_status(Status::UpgradeRequired, cx);
+                        Err(EstablishConnectionError::UpgradeRequired)?
+                    }
+                    Err(error) => {
+                        self.set_status(Status::ConnectionError, cx);
+                        Err(error)?
+                    }
                 }
-                self.set_connection(conn, cx).await;
-                Ok(())
             }
-            Err(EstablishConnectionError::Unauthorized) => {
-                self.state.write().credentials.take();
-                if read_from_keychain {
-                    cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
-                    self.set_status(Status::SignedOut, cx);
-                    self.authenticate_and_connect(false, cx).await
-                } else {
-                    self.set_status(Status::ConnectionError, cx);
-                    Err(EstablishConnectionError::Unauthorized)?
-                }
-            }
-            Err(EstablishConnectionError::UpgradeRequired) => {
-                self.set_status(Status::UpgradeRequired, cx);
-                Err(EstablishConnectionError::UpgradeRequired)?
-            }
-            Err(error) => {
+            _ = cx.background().timer(CONNECTION_TIMEOUT).fuse() => {
                 self.set_status(Status::ConnectionError, cx);
-                Err(error)?
+                Err(anyhow!("timed out trying to establish connection"))
             }
         }
     }
 
-    async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
+    fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
         let executor = cx.background();
         log::info!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self
             .peer
-            .add_connection(conn, move |duration| executor.timer(duration))
-            .await;
+            .add_connection(conn, move |duration| executor.timer(duration));
         log::info!("set status to connected {}", connection_id);
         self.set_status(Status::Connected { connection_id }, cx);
         cx.foreground()
@@ -1159,6 +1176,76 @@ mod tests {
         cx.foreground().advance_clock(Duration::from_secs(10));
         while !matches!(status.next().await, Some(Status::Connected { .. })) {}
         assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_connection_timeout(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        deterministic.forbid_parking();
+
+        let user_id = 5;
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let mut status = client.status();
+
+        // Time out when client tries to connect.
+        client.override_authenticate(move |cx| {
+            cx.foreground().spawn(async move {
+                Ok(Credentials {
+                    user_id,
+                    access_token: "token".into(),
+                })
+            })
+        });
+        client.override_establish_connection(|_, cx| {
+            cx.foreground().spawn(async move {
+                future::pending::<()>().await;
+                unreachable!()
+            })
+        });
+        let auth_and_connect = cx.spawn({
+            let client = client.clone();
+            |cx| async move { client.authenticate_and_connect(false, &cx).await }
+        });
+        deterministic.run_until_parked();
+        assert!(matches!(status.next().await, Some(Status::Connecting)));
+
+        deterministic.advance_clock(CONNECTION_TIMEOUT);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::ConnectionError { .. })
+        ));
+        auth_and_connect.await.unwrap_err();
+
+        // Allow the connection to be established.
+        let server = FakeServer::for_client(user_id, &client, cx).await;
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Connected { .. })
+        ));
+
+        // Disconnect client.
+        server.forbid_connections();
+        server.disconnect();
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
+
+        // Time out when re-establishing the connection.
+        server.allow_connections();
+        client.override_establish_connection(|_, cx| {
+            cx.foreground().spawn(async move {
+                future::pending::<()>().await;
+                unreachable!()
+            })
+        });
+        deterministic.advance_clock(2 * INITIAL_RECONNECTION_DELAY);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Reconnecting { .. })
+        ));
+
+        deterministic.advance_clock(CONNECTION_TIMEOUT);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::ReconnectionError { .. })
+        ));
     }
 
     #[gpui::test(iterations = 10)]

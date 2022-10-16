@@ -18,11 +18,11 @@ use std::{
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct FoldPoint(pub super::Point);
+pub struct FoldPoint(pub Point);
 
 impl FoldPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(super::Point::new(row, column))
+        Self(Point::new(row, column))
     }
 
     pub fn row(self) -> u32 {
@@ -274,6 +274,7 @@ impl FoldMap {
             if buffer.edit_count() != new_buffer.edit_count()
                 || buffer.parse_count() != new_buffer.parse_count()
                 || buffer.diagnostics_update_count() != new_buffer.diagnostics_update_count()
+                || buffer.git_diff_update_count() != new_buffer.git_diff_update_count()
                 || buffer.trailing_excerpt_update_count()
                     != new_buffer.trailing_excerpt_update_count()
             {
@@ -1195,8 +1196,8 @@ mod tests {
     use settings::Settings;
     use std::{cmp::Reverse, env, mem, sync::Arc};
     use sum_tree::TreeMap;
-    use text::RandomCharIter;
     use util::test::sample_text;
+    use util::RandomCharIter;
     use Bias::{Left, Right};
 
     #[gpui::test]

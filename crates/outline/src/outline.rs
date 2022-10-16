@@ -48,8 +48,8 @@ impl View for OutlineView {
         "OutlineView"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(self.picker.clone()).boxed()
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        ChildView::new(self.picker.clone(), cx).boxed()
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -233,7 +233,7 @@ impl PickerDelegate for OutlineView {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: MouseState,
+        mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox {

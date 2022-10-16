@@ -192,7 +192,7 @@ impl View for Sidebar {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
             let style = &cx.global::<Settings>().theme.workspace.sidebar;
-            ChildView::new(active_item.to_any())
+            ChildView::new(active_item.to_any(), cx)
                 .contained()
                 .with_style(style.container)
                 .with_resize_handle::<ResizeHandleTag, _>(

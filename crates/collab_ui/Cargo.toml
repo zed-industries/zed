@@ -1,0 +1,53 @@
+[package]
+name = "collab_ui"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/collab_ui.rs"
+doctest = false
+
+[features]
+test-support = [
+    "call/test-support",
+    "client/test-support",
+    "collections/test-support",
+    "editor/test-support",
+    "gpui/test-support",
+    "project/test-support",
+    "settings/test-support",
+    "util/test-support",
+    "workspace/test-support",
+]
+
+[dependencies]
+call = { path = "../call" }
+client = { path = "../client" }
+clock = { path = "../clock" }
+collections = { path = "../collections" }
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+gpui = { path = "../gpui" }
+menu = { path = "../menu" }
+picker = { path = "../picker" }
+project = { path = "../project" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }
+anyhow = "1.0"
+futures = "0.3"
+log = "0.4"
+postage = { version = "0.4.1", features = ["futures-traits"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
+
+[dev-dependencies]
+call = { path = "../call", features = ["test-support"] }
+client = { path = "../client", features = ["test-support"] }
+collections = { path = "../collections", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }

@@ -4,7 +4,7 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
+use settings::{settings_file::SettingsFile, Settings};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
 use workspace::{AppState, Workspace};
@@ -107,7 +107,9 @@ impl ThemeSelector {
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             match self.registry.get(&mat.string) {
-                Ok(theme) => Self::set_theme(theme, cx),
+                Ok(theme) => {
+                    Self::set_theme(theme, cx);
+                }
                 Err(error) => {
                     log::error!("error loading theme {}: {}", mat.string, error)
                 }
@@ -151,6 +153,12 @@ impl PickerDelegate for ThemeSelector {
 
     fn confirm(&mut self, cx: &mut ViewContext<Self>) {
         self.selection_completed = true;
+
+        let theme_name = cx.global::<Settings>().theme.meta.name.clone();
+        SettingsFile::update(cx, |settings_content| {
+            settings_content.theme = Some(theme_name);
+        });
+
         cx.emit(Event::Dismissed);
     }
 
@@ -222,7 +230,7 @@ impl PickerDelegate for ThemeSelector {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: MouseState,
+        mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox {
@@ -254,8 +262,8 @@ impl View for ThemeSelector {
         "ThemeSelector"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(self.picker.clone()).boxed()
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        ChildView::new(self.picker.clone(), cx).boxed()
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

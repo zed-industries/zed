@@ -1,10 +1,11 @@
 use crate::{worktree::WorktreeHandle, Event, *};
-use fs::RealFs;
+use fs::LineEnding;
+use fs::{FakeFs, RealFs};
 use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe};
 use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    LineEnding, OffsetRangeExt, Point, ToPoint,
+    OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
 use serde_json::json;
@@ -2259,6 +2260,57 @@ async fn test_rescan_and_remote_updates(
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_buffer_identity_across_renames(
+    deterministic: Arc<Deterministic>,
+    cx: &mut gpui::TestAppContext,
+) {
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a": {
+                "file1": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [Path::new("/dir")], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+
+    let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
+        project.read_with(cx, |project, cx| {
+            let tree = project.worktrees(cx).next().unwrap();
+            tree.read(cx)
+                .entry_for_path(path)
+                .unwrap_or_else(|| panic!("no entry for path {}", path))
+                .id
+        })
+    };
+
+    let dir_id = id_for_path("a", cx);
+    let file_id = id_for_path("a/file1", cx);
+    let buffer = project
+        .update(cx, |p, cx| p.open_buffer((tree_id, "a/file1"), cx))
+        .await
+        .unwrap();
+    buffer.read_with(cx, |buffer, _| assert!(!buffer.is_dirty()));
+
+    project
+        .update(cx, |project, cx| {
+            project.rename_entry(dir_id, Path::new("b"), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(id_for_path("b", cx), dir_id);
+    assert_eq!(id_for_path("b/file1", cx), file_id);
+    buffer.read_with(cx, |buffer, _| assert!(!buffer.is_dirty()));
+}
+
 #[gpui::test]
 async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.background());
@@ -2413,6 +2465,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     cx.foreground().run_until_parked();
+    buffer2.read_with(cx, |buffer, _| assert!(buffer.is_dirty()));
     assert_eq!(
         *events.borrow(),
         &[

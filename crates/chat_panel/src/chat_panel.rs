@@ -200,7 +200,7 @@ impl ChatPanel {
         let theme = &cx.global::<Settings>().theme;
         Flex::column()
             .with_child(
-                Container::new(ChildView::new(&self.channel_select).boxed())
+                Container::new(ChildView::new(&self.channel_select, cx).boxed())
                     .with_style(theme.chat_panel.channel_select.container)
                     .boxed(),
             )
@@ -265,7 +265,7 @@ impl ChatPanel {
 
     fn render_input_box(&self, cx: &AppContext) -> ElementBox {
         let theme = &cx.global::<Settings>().theme;
-        Container::new(ChildView::new(&self.input_editor).boxed())
+        Container::new(ChildView::new(&self.input_editor, cx).boxed())
             .with_style(theme.chat_panel.input_editor.container)
             .boxed()
     }
@@ -311,7 +311,7 @@ impl ChatPanel {
             MouseEventHandler::<SignInPromptLabel>::new(0, cx, |mouse_state, _| {
                 Label::new(
                     "Sign in to use chat".to_string(),
-                    if mouse_state.hovered {
+                    if mouse_state.hovered() {
                         theme.chat_panel.hovered_sign_in_prompt.clone()
                     } else {
                         theme.chat_panel.sign_in_prompt.clone()

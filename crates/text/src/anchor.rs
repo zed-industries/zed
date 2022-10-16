@@ -1,10 +1,9 @@
-use super::{Point, ToOffset};
-use crate::{rope::TextDimension, BufferSnapshot, PointUtf16, ToPoint, ToPointUtf16};
+use crate::{BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset, ToPoint, ToPointUtf16};
 use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
 pub struct Anchor {
     pub timestamp: clock::Local,
     pub offset: usize,

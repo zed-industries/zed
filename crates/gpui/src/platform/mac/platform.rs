@@ -2,7 +2,9 @@ use super::{
     event::key_to_native, status_item::StatusItem, BoolExt as _, Dispatcher, FontSystem, Window,
 };
 use crate::{
-    executor, keymap,
+    executor,
+    geometry::vector::{vec2f, Vector2F},
+    keymap,
     platform::{self, CursorStyle},
     Action, AppVersion, ClipboardItem, Event, Menu, MenuItem,
 };
@@ -12,7 +14,7 @@ use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypeString, NSSavePanel, NSWindow,
+        NSPasteboardTypeString, NSSavePanel, NSScreen, NSWindow,
     },
     base::{id, nil, selector, YES},
     foundation::{
@@ -486,6 +488,14 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn screen_size(&self) -> Vector2F {
+        unsafe {
+            let screen = NSScreen::mainScreen(nil);
+            let frame = NSScreen::frame(screen);
+            vec2f(frame.size.width as f32, frame.size.height as f32)
+        }
+    }
+
     fn open_window(
         &self,
         id: usize,
@@ -696,6 +706,16 @@ impl platform::Platform for MacPlatform {
                 CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
             };
             let _: () = msg_send![cursor, set];
+        }
+    }
+
+    fn should_auto_hide_scrollbars(&self) -> bool {
+        #[allow(non_upper_case_globals)]
+        const NSScrollerStyleOverlay: NSInteger = 1;
+
+        unsafe {
+            let style: NSInteger = msg_send![class!(NSScroller), preferredScrollerStyle];
+            style == NSScrollerStyleOverlay
         }
     }
 

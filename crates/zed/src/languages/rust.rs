@@ -119,7 +119,7 @@ impl LspAdapter for RustLspAdapter {
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
@@ -196,7 +196,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
@@ -439,7 +439,7 @@ mod tests {
         cx.set_global(settings);
 
         cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
+            let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);

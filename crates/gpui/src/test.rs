@@ -37,6 +37,7 @@ pub fn run_test(
         u64,
         bool,
     )),
+    fn_name: String,
 ) {
     // let _profiler = dhat::Profiler::new_heap();
 
@@ -78,6 +79,7 @@ pub fn run_test(
                     font_cache.clone(),
                     leak_detector.clone(),
                     0,
+                    fn_name.clone(),
                 );
                 cx.update(|cx| {
                     test_fn(
@@ -91,7 +93,7 @@ pub fn run_test(
 
                 cx.update(|cx| cx.remove_all_windows());
                 deterministic.run_until_parked();
-                cx.update(|_| {}); // flush effects
+                cx.update(|cx| cx.clear_globals());
 
                 leak_detector.lock().detect();
                 if is_last_iteration {

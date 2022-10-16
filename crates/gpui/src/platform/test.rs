@@ -34,11 +34,11 @@ pub struct ForegroundPlatform {
 struct Dispatcher;
 
 pub struct Window {
-    size: Vector2F,
+    pub(crate) size: Vector2F,
     scale_factor: f32,
     current_scene: Option<crate::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
-    resize_handlers: Vec<Box<dyn FnMut()>>,
+    pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
     fullscreen_handlers: Vec<Box<dyn FnMut(bool)>>,
     pub(crate) active_status_change_handlers: Vec<Box<dyn FnMut(bool)>>,
@@ -131,6 +131,10 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
+    fn screen_size(&self) -> Vector2F {
+        vec2f(1024., 768.)
+    }
+
     fn open_window(
         &self,
         _: usize,
@@ -175,6 +179,10 @@ impl super::Platform for Platform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         *self.cursor.lock() = style;
+    }
+
+    fn should_auto_hide_scrollbars(&self) -> bool {
+        false
     }
 
     fn local_timezone(&self) -> UtcOffset {

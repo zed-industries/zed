@@ -284,7 +284,9 @@ impl Element for UniformList {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.scene.push_layer(Some(bounds));
+        let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
+
+        cx.scene.push_layer(Some(visible_bounds));
 
         cx.scene.push_mouse_region(
             MouseRegion::new::<Self>(self.view_id, 0, visible_bounds).on_scroll({

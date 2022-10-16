@@ -330,13 +330,10 @@ impl TerminalElement {
         }
 
         let mut properties = Properties::new();
-        if indexed
-            .flags
-            .intersects(Flags::BOLD | Flags::BOLD_ITALIC | Flags::DIM_BOLD)
-        {
+        if indexed.flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
             properties = *properties.weight(Weight::BOLD);
         }
-        if indexed.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC) {
+        if indexed.flags.intersects(Flags::ITALIC) {
             properties = *properties.style(Italic);
         }
 
@@ -424,8 +421,8 @@ impl TerminalElement {
                 TerminalElement::generic_button_handler(
                     connection,
                     origin,
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_up(&e, origin);
+                    move |terminal, origin, e, cx| {
+                        terminal.mouse_up(&e, origin, cx);
                     },
                 ),
             )
@@ -492,8 +489,8 @@ impl TerminalElement {
                     TerminalElement::generic_button_handler(
                         connection,
                         origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_up(&e, origin);
+                        move |terminal, origin, e, cx| {
+                            terminal.mouse_up(&e, origin, cx);
                         },
                     ),
                 )
@@ -502,8 +499,8 @@ impl TerminalElement {
                     TerminalElement::generic_button_handler(
                         connection,
                         origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_up(&e, origin);
+                        move |terminal, origin, e, cx| {
+                            terminal.mouse_up(&e, origin, cx);
                         },
                     ),
                 )
@@ -680,12 +677,12 @@ impl Element for TerminalElement {
             let focused = self.focused;
             TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                 move |(cursor_position, block_width)| {
-                    let shape = match cursor.shape {
-                        AlacCursorShape::Block if !focused => CursorShape::Hollow,
-                        AlacCursorShape::Block => CursorShape::Block,
-                        AlacCursorShape::Underline => CursorShape::Underscore,
-                        AlacCursorShape::Beam => CursorShape::Bar,
-                        AlacCursorShape::HollowBlock => CursorShape::Hollow,
+                    let (shape, text) = match cursor.shape {
+                        AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
+                        AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                        AlacCursorShape::Underline => (CursorShape::Underscore, None),
+                        AlacCursorShape::Beam => (CursorShape::Bar, None),
+                        AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                         //This case is handled in the if wrapping the whole cursor layout
                         AlacCursorShape::Hidden => unreachable!(),
                     };
@@ -696,7 +693,7 @@ impl Element for TerminalElement {
                         dimensions.line_height,
                         terminal_theme.colors.cursor,
                         shape,
-                        Some(cursor_text),
+                        text,
                     )
                 },
             )
@@ -726,6 +723,8 @@ impl Element for TerminalElement {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 
