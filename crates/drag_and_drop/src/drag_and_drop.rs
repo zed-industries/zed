@@ -4,7 +4,7 @@ use collections::HashSet;
 use gpui::{
     elements::{MouseEventHandler, Overlay},
     geometry::vector::Vector2F,
-    scene::DragRegionEvent,
+    scene::MouseDrag,
     CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
     View, WeakViewHandle,
 };
@@ -70,7 +70,7 @@ impl<V: View> DragAndDrop<V> {
     }
 
     pub fn dragging<T: Any>(
-        event: DragRegionEvent,
+        event: MouseDrag,
         payload: Rc<T>,
         cx: &mut EventContext,
         render: Rc<impl 'static + Fn(&T, &mut RenderContext<V>) -> ElementBox>,

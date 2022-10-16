@@ -6,7 +6,7 @@ use crate::{
     },
     json::{self, json},
     presenter::MeasurementContext,
-    scene::ScrollWheelRegionEvent,
+    scene::MouseScrollWheel,
     ElementBox, MouseRegion, RenderContext, ScrollWheelEvent, View,
 };
 use json::ToJson;
@@ -292,7 +292,7 @@ impl Element for UniformList {
             MouseRegion::new::<Self>(self.view_id, 0, visible_bounds).on_scroll({
                 let scroll_max = layout.scroll_max;
                 let state = self.state.clone();
-                move |ScrollWheelRegionEvent {
+                move |MouseScrollWheel {
                           platform_event:
                               ScrollWheelEvent {
                                   position,

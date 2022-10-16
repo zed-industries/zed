@@ -4,7 +4,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 
 use crate::{
-    geometry::rect::RectF, scene::DragRegionEvent, Axis, CursorStyle, Element, ElementBox,
+    geometry::rect::RectF, scene::MouseDrag, Axis, CursorStyle, Element, ElementBox,
     ElementStateHandle, MouseButton, MouseRegion, RenderContext, View,
 };
 
@@ -42,7 +42,7 @@ impl Side {
         }
     }
 
-    fn compute_delta(&self, e: DragRegionEvent) -> f32 {
+    fn compute_delta(&self, e: MouseDrag) -> f32 {
         if self.before_content() {
             self.relevant_component(e.prev_mouse_position) - self.relevant_component(e.position)
         } else {
