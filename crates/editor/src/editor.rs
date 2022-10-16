@@ -46,7 +46,9 @@ use language::{
     DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
     Selection, SelectionGoal, TransactionId,
 };
-use link_go_to_definition::{hide_link_definition, LinkGoToDefinitionState};
+use link_go_to_definition::{
+    hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
+};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -6508,6 +6510,44 @@ impl View for Editor {
         hide_hover(self, cx);
         cx.emit(Event::Blurred);
         cx.notify();
+    }
+
+    fn modifiers_changed(
+        &mut self,
+        event: &gpui::ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let pending_selection = self.has_pending_selection();
+
+        if let Some(point) = self.link_go_to_definition_state.last_mouse_location.clone() {
+            if event.cmd && !pending_selection {
+                let snapshot = self.snapshot(cx);
+                let kind = if event.shift {
+                    LinkDefinitionKind::Type
+                } else {
+                    LinkDefinitionKind::Symbol
+                };
+
+                show_link_definition(kind, self, point, snapshot, cx);
+                return false;
+            }
+        }
+
+        {
+            if self.link_go_to_definition_state.symbol_range.is_some()
+                || !self.link_go_to_definition_state.definitions.is_empty()
+            {
+                self.link_go_to_definition_state.symbol_range.take();
+                self.link_go_to_definition_state.definitions.clear();
+                cx.notify();
+            }
+
+            self.link_go_to_definition_state.task = None;
+
+            self.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+        }
+
+        false
     }
 
     fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {

@@ -11,7 +11,7 @@ pub struct KeyUpEvent {
     pub keystroke: Keystroke,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ModifiersChangedEvent {
     pub ctrl: bool,
     pub alt: bool,

@@ -9,7 +9,7 @@ use crate::{
         HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
-        CmdShiftChanged, GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
+        GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
     },
     mouse_context_menu::DeployMouseContextMenu,
     EditorStyle,
@@ -30,9 +30,8 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
-    LayoutContext, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent,
-    MouseRegion, MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext,
-    WeakViewHandle,
+    LayoutContext, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
+    PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
@@ -406,14 +405,6 @@ impl EditorElement {
 
         cx.dispatch_action(HoverAt { point });
         true
-    }
-
-    fn modifiers_changed(&self, event: ModifiersChangedEvent, cx: &mut EventContext) -> bool {
-        cx.dispatch_action(CmdShiftChanged {
-            cmd_down: event.cmd,
-            shift_down: event.shift,
-        });
-        false
     }
 
     fn scroll(
@@ -1889,17 +1880,13 @@ impl Element for EditorElement {
 
     fn dispatch_event(
         &mut self,
-        event: &Event,
+        _: &Event,
         _: RectF,
         _: RectF,
         _: &mut LayoutState,
         _: &mut (),
-        cx: &mut EventContext,
+        _: &mut EventContext,
     ) -> bool {
-        if let Event::ModifiersChanged(event) = event {
-            self.modifiers_changed(*event, cx);
-        }
-
         false
     }
 
