@@ -231,7 +231,7 @@ impl Presenter {
     ) -> bool {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut events_to_send = Vec::new();
-            let mut invalidated_views: HashSet<usize> = Default::default();
+            let mut notified_views: HashSet<usize> = Default::default();
 
             // 1. Allocate the correct set of GPUI events generated from the platform events
             //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
@@ -257,11 +257,6 @@ impl Presenter {
                             })
                             .collect();
 
-                        // Clicked status is used when rendering views via the RenderContext.
-                        // So when it changes, these views need to be rerendered
-                        for clicked_region_id in self.clicked_region_ids.iter() {
-                            invalidated_views.insert(clicked_region_id.view_id());
-                        }
                         self.clicked_button = Some(e.button);
                     }
 
@@ -392,14 +387,28 @@ impl Presenter {
                                 //Ensure that hover entrance events aren't sent twice
                                 if self.hovered_region_ids.insert(region.id()) {
                                     valid_regions.push(region.clone());
-                                    invalidated_views.insert(region.id().view_id());
+                                    if region.notify_on_hover {
+                                        notified_views.insert(region.id().view_id());
+                                    }
                                 }
                             } else {
                                 // Ensure that hover exit events aren't sent twice
                                 if self.hovered_region_ids.remove(&region.id()) {
                                     valid_regions.push(region.clone());
-                                    invalidated_views.insert(region.id().view_id());
+                                    if region.notify_on_hover {
+                                        notified_views.insert(region.id().view_id());
+                                    }
                                 }
+                            }
+                        }
+                    }
+                    MouseRegionEvent::Down(_) | MouseRegionEvent::Up(_) => {
+                        for (region, _) in self.mouse_regions.iter().rev() {
+                            if region.bounds.contains_point(self.mouse_position) {
+                                if region.notify_on_click {
+                                    notified_views.insert(region.id().view_id());
+                                }
+                                valid_regions.push(region.clone());
                             }
                         }
                     }
@@ -413,11 +422,6 @@ impl Presenter {
                             // Clear clicked regions and clicked button
                             let clicked_region_ids =
                                 std::mem::replace(&mut self.clicked_region_ids, Default::default());
-                            // Clicked status is used when rendering views via the RenderContext.
-                            // So when it changes, these views need to be rerendered
-                            for clicked_region_id in clicked_region_ids.iter() {
-                                invalidated_views.insert(clicked_region_id.view_id());
-                            }
                             self.clicked_button = None;
 
                             // Find regions which still overlap with the mouse since the last MouseDown happened
@@ -459,7 +463,7 @@ impl Presenter {
                 //3. Fire region events
                 let hovered_region_ids = self.hovered_region_ids.clone();
                 for valid_region in valid_regions.into_iter() {
-                    let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
+                    let mut event_cx = self.build_event_context(&mut notified_views, cx);
 
                     region_event.set_region(valid_region.bounds);
                     if let MouseRegionEvent::Hover(e) = &mut region_event {
@@ -500,11 +504,11 @@ impl Presenter {
             }
 
             if !any_event_handled && !event_reused {
-                let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
+                let mut event_cx = self.build_event_context(&mut notified_views, cx);
                 any_event_handled = event_cx.dispatch_event(root_view_id, &event);
             }
 
-            for view_id in invalidated_views {
+            for view_id in notified_views {
                 cx.notify_view(self.window_id, view_id);
             }
 
@@ -516,7 +520,7 @@ impl Presenter {
 
     pub fn build_event_context<'a>(
         &'a mut self,
-        invalidated_views: &'a mut HashSet<usize>,
+        notified_views: &'a mut HashSet<usize>,
         cx: &'a mut MutableAppContext,
     ) -> EventContext<'a> {
         EventContext {
@@ -524,7 +528,7 @@ impl Presenter {
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             view_stack: Default::default(),
-            invalidated_views,
+            notified_views,
             notify_count: 0,
             handled: false,
             window_id: self.window_id,
@@ -747,7 +751,7 @@ pub struct EventContext<'a> {
     pub notify_count: usize,
     view_stack: Vec<usize>,
     handled: bool,
-    invalidated_views: &'a mut HashSet<usize>,
+    notified_views: &'a mut HashSet<usize>,
 }
 
 impl<'a> EventContext<'a> {
@@ -806,7 +810,7 @@ impl<'a> EventContext<'a> {
     pub fn notify(&mut self) {
         self.notify_count += 1;
         if let Some(view_id) = self.view_stack.last() {
-            self.invalidated_views.insert(*view_id);
+            self.notified_views.insert(*view_id);
         }
     }
 

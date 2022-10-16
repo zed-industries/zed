@@ -653,7 +653,11 @@ impl ContactList {
             .constrained()
             .with_height(theme.row_height)
             .contained()
-            .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
+            .with_style(
+                *theme
+                    .contact_row
+                    .style_for(&mut Default::default(), is_selected),
+            )
             .boxed()
     }
 
@@ -768,7 +772,9 @@ impl ContactList {
     ) -> ElementBox {
         enum Header {}
 
-        let header_style = theme.header_row.style_for(Default::default(), is_selected);
+        let header_style = theme
+            .header_row
+            .style_for(&mut Default::default(), is_selected);
         let text = match section {
             Section::ActiveCall => "Collaborators",
             Section::Requests => "Contact Requests",
@@ -890,7 +896,11 @@ impl ContactList {
                     .constrained()
                     .with_height(theme.row_height)
                     .contained()
-                    .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
+                    .with_style(
+                        *theme
+                            .contact_row
+                            .style_for(&mut Default::default(), is_selected),
+                    )
                     .boxed()
             })
             .on_click(MouseButton::Left, move |_, cx| {
@@ -1014,7 +1024,11 @@ impl ContactList {
         row.constrained()
             .with_height(theme.row_height)
             .contained()
-            .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
+            .with_style(
+                *theme
+                    .contact_row
+                    .style_for(&mut Default::default(), is_selected),
+            )
             .boxed()
     }
 

@@ -311,7 +311,7 @@ impl ChatPanel {
             MouseEventHandler::<SignInPromptLabel>::new(0, cx, |mouse_state, _| {
                 Label::new(
                     "Sign in to use chat".to_string(),
-                    if mouse_state.hovered {
+                    if mouse_state.hovered() {
                         theme.chat_panel.hovered_sign_in_prompt.clone()
                     } else {
                         theme.chat_panel.sign_in_prompt.clone()

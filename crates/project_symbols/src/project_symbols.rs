@@ -234,7 +234,7 @@ impl PickerDelegate for ProjectSymbolsView {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: MouseState,
+        mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox {

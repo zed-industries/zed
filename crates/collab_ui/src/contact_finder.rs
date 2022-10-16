@@ -101,7 +101,7 @@ impl PickerDelegate for ContactFinder {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: MouseState,
+        mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
     ) -> ElementBox {

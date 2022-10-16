@@ -3774,10 +3774,32 @@ pub struct RenderContext<'a, T: View> {
     pub refreshing: bool,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct MouseState {
-    pub hovered: bool,
-    pub clicked: Option<MouseButton>,
+    hovered: bool,
+    clicked: Option<MouseButton>,
+    accessed_hovered: bool,
+    accessed_clicked: bool,
+}
+
+impl MouseState {
+    pub fn hovered(&mut self) -> bool {
+        self.accessed_hovered = true;
+        self.hovered
+    }
+
+    pub fn clicked(&mut self) -> Option<MouseButton> {
+        self.accessed_clicked = true;
+        self.clicked
+    }
+
+    pub fn accessed_hovered(&self) -> bool {
+        self.accessed_hovered
+    }
+
+    pub fn accessed_clicked(&self) -> bool {
+        self.accessed_clicked
+    }
 }
 
 impl<'a, V: View> RenderContext<'a, V> {
@@ -3818,6 +3840,8 @@ impl<'a, V: View> RenderContext<'a, V> {
                     None
                 }
             }),
+            accessed_hovered: false,
+            accessed_clicked: false,
         }
     }
 

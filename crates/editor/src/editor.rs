@@ -759,7 +759,7 @@ impl CompletionsMenu {
                             |state, _| {
                                 let item_style = if item_ix == selected_item {
                                     style.autocomplete.selected_item
-                                } else if state.hovered {
+                                } else if state.hovered() {
                                     style.autocomplete.hovered_item
                                 } else {
                                     style.autocomplete.item
@@ -914,7 +914,7 @@ impl CodeActionsMenu {
                         MouseEventHandler::<ActionTag>::new(item_ix, cx, |state, _| {
                             let item_style = if item_ix == selected_item {
                                 style.autocomplete.selected_item
-                            } else if state.hovered {
+                            } else if state.hovered() {
                                 style.autocomplete.hovered_item
                             } else {
                                 style.autocomplete.item
@@ -5983,8 +5983,11 @@ impl Editor {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<(fn(&Theme) -> Color, Vec<Range<Anchor>>)> {
-        cx.notify();
-        self.background_highlights.remove(&TypeId::of::<T>())
+        let highlights = self.background_highlights.remove(&TypeId::of::<T>());
+        if highlights.is_some() {
+            cx.notify();
+        }
+        highlights
     }
 
     #[cfg(feature = "test-support")]
@@ -6098,9 +6101,13 @@ impl Editor {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
-        cx.notify();
-        self.display_map
-            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()))
+        let highlights = self
+            .display_map
+            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
+        if highlights.is_some() {
+            cx.notify();
+        }
+        highlights
     }
 
     fn next_blink_epoch(&mut self) -> usize {
