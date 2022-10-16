@@ -15,9 +15,8 @@ use gpui::{
     },
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, ElementBox, Event, EventContext, FontCache, KeyDownEvent, ModelContext, MouseButton,
-    MouseRegion, PaintContext, Quad, SizeConstraint, TextLayoutCache, WeakModelHandle,
-    WeakViewHandle,
+    Element, ElementBox, EventContext, FontCache, ModelContext, MouseButton, MouseRegion,
+    PaintContext, Quad, SizeConstraint, TextLayoutCache, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -801,42 +800,14 @@ impl Element for TerminalElement {
 
     fn dispatch_event(
         &mut self,
-        event: &gpui::Event,
+        _: &gpui::Event,
         _bounds: gpui::geometry::rect::RectF,
         _visible_bounds: gpui::geometry::rect::RectF,
         _layout: &mut Self::LayoutState,
         _paint: &mut Self::PaintState,
-        cx: &mut gpui::EventContext,
+        _: &mut gpui::EventContext,
     ) -> bool {
-        if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = event {
-            if !cx.is_parent_view_focused() {
-                return false;
-            }
-
-            if let Some(view) = self.view.upgrade(cx.app) {
-                view.update(cx.app, |view, cx| {
-                    view.clear_bel(cx);
-                    view.pause_cursor_blinking(cx);
-                })
-            }
-
-            self.terminal
-                .upgrade(cx.app)
-                .map(|model_handle| {
-                    model_handle.update(cx.app, |term, cx| {
-                        term.try_keystroke(
-                            keystroke,
-                            cx.global::<Settings>()
-                                .terminal_overrides
-                                .option_as_meta
-                                .unwrap_or(false),
-                        )
-                    })
-                })
-                .unwrap_or(false)
-        } else {
-            false
-        }
+        false
     }
 
     fn metadata(&self) -> Option<&dyn std::any::Any> {

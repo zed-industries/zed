@@ -357,6 +357,21 @@ impl View for TerminalView {
         cx.notify();
     }
 
+    fn key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
+        self.clear_bel(cx);
+        self.pause_cursor_blinking(cx);
+
+        self.terminal.update(cx, |term, cx| {
+            term.try_keystroke(
+                &event.keystroke,
+                cx.global::<Settings>()
+                    .terminal_overrides
+                    .option_as_meta
+                    .unwrap_or(false),
+            )
+        })
+    }
+
     //IME stuff
     fn selected_text_range(&self, cx: &AppContext) -> Option<std::ops::Range<usize>> {
         if self
