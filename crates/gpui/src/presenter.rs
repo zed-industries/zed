@@ -232,10 +232,16 @@ impl Presenter {
             let mut mouse_events = SmallVec::<[_; 2]>::new();
             let mut notified_views: HashSet<usize> = Default::default();
 
-            // 1. Map the platform event into mouse events, which interact with mouse regions.
+            // 1. Handle platform event. Keyboard events get dispatched immediately, while mouse events
+            //    get mapped into the mouse-specific MouseEvent type.
             //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
             //  -> Also updates mouse-related state
             match &event {
+                Event::KeyDown(e) => return cx.dispatch_key_down(self.window_id, e),
+                Event::KeyUp(e) => return cx.dispatch_key_up(self.window_id, e),
+                Event::ModifiersChanged(e) => {
+                    return cx.dispatch_modifiers_changed(self.window_id, e)
+                }
                 Event::MouseDown(e) => {
                     // Click events are weird because they can be fired after a drag event.
                     // MDN says that browsers handle this by starting from 'the most
@@ -345,8 +351,6 @@ impl Presenter {
                         platform_event: e.clone(),
                     }))
                 }
-
-                _ => {}
             }
 
             if let Some(position) = event.position() {

@@ -343,14 +343,14 @@ impl View for TerminalView {
             .boxed()
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
         cx.notify();
     }
 
-    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
         });

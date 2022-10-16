@@ -1485,7 +1485,7 @@ impl View for Pane {
             .named("pane")
     }
 
-    fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
             if cx.is_self_focused() {
                 // Pane was focused directly. We need to either focus a view inside the active item,

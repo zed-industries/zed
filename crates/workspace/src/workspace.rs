@@ -2656,7 +2656,7 @@ impl View for Workspace {
             .named("workspace")
     }
 
-    fn on_focus_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
         } else {

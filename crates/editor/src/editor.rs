@@ -6477,7 +6477,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let focused_event = EditorFocused(cx.handle());
         cx.emit_global(focused_event);
         if let Some(rename) = self.pending_rename.as_ref() {
@@ -6498,7 +6498,7 @@ impl View for Editor {
         }
     }
 
-    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let blurred_event = EditorBlurred(cx.handle());
         cx.emit_global(blurred_event);
         self.focused = false;
