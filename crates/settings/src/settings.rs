@@ -124,7 +124,7 @@ pub enum Autosave {
     OnWindowChange,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JournalSettings {
     pub path: Option<String>,
     pub hour_format: Option<HourFormat>,
