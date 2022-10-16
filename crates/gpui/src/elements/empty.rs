@@ -9,7 +9,7 @@ use crate::{
     presenter::MeasurementContext,
     DebugContext,
 };
-use crate::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
+use crate::{Element, LayoutContext, PaintContext, SizeConstraint};
 
 #[derive(Default)]
 pub struct Empty {
@@ -57,18 +57,6 @@ impl Element for Empty {
         _: &mut Self::LayoutState,
         _: &mut PaintContext,
     ) -> Self::PaintState {
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut EventContext,
-    ) -> bool {
-        false
     }
 
     fn rect_for_text_range(

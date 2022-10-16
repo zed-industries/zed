@@ -2,8 +2,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json,
     presenter::MeasurementContext,
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 use json::ToJson;
 
@@ -82,18 +81,6 @@ impl Element for Align {
             visible_bounds,
             cx,
         );
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

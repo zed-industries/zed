@@ -29,9 +29,9 @@ use gpui::{
     json::{self, ToJson},
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
-    LayoutContext, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
-    PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
+    MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext, PaintContext,
+    Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
@@ -1876,18 +1876,6 @@ impl Element for EditorElement {
         cx.scene.pop_layer();
 
         cx.scene.pop_layer();
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut LayoutState,
-        _: &mut (),
-        _: &mut EventContext,
-    ) -> bool {
-        false
     }
 
     fn rect_for_text_range(

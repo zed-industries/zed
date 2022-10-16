@@ -33,8 +33,8 @@ use crate::{
     },
     json,
     presenter::MeasurementContext,
-    Action, DebugContext, Event, EventContext, LayoutContext, PaintContext, RenderContext,
-    SizeConstraint, View,
+    Action, DebugContext, EventContext, LayoutContext, PaintContext, RenderContext, SizeConstraint,
+    View,
 };
 use core::panic;
 use json::ToJson;
@@ -50,7 +50,6 @@ use std::{
 trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
     fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext);
-    fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool;
     fn rect_for_text_range(
         &self,
         range_utf16: Range<usize>,
@@ -79,16 +78,6 @@ pub trait Element {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState;
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
-        paint: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool;
 
     fn rect_for_text_range(
         &self,
@@ -303,22 +292,6 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         }
     }
 
-    fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
-        if let Lifecycle::PostPaint {
-            element,
-            bounds,
-            visible_bounds,
-            layout,
-            paint,
-            ..
-        } = self
-        {
-            element.dispatch_event(event, *bounds, *visible_bounds, layout, paint, cx)
-        } else {
-            panic!("invalid element lifecycle state");
-        }
-    }
-
     fn rect_for_text_range(
         &self,
         range_utf16: Range<usize>,
@@ -431,10 +404,6 @@ impl ElementRc {
 
     pub fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
         self.element.borrow_mut().paint(origin, visible_bounds, cx);
-    }
-
-    pub fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
-        self.element.borrow_mut().dispatch_event(event, cx)
     }
 
     pub fn rect_for_text_range(

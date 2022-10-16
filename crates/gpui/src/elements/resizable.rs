@@ -187,18 +187,6 @@ impl Element for Resizable {
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
-    fn dispatch_event(
-        &mut self,
-        event: &crate::Event,
-        _bounds: pathfinder_geometry::rect::RectF,
-        _visible_bounds: pathfinder_geometry::rect::RectF,
-        _layout: &mut Self::LayoutState,
-        _paint: &mut Self::PaintState,
-        cx: &mut crate::EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
-    }
-
     fn rect_for_text_range(
         &self,
         range_utf16: std::ops::Range<usize>,

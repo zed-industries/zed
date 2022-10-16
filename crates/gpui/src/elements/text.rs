@@ -8,8 +8,7 @@ use crate::{
     json::{ToJson, Value},
     presenter::MeasurementContext,
     text_layout::{Line, RunStyle, ShapedBoundary},
-    DebugContext, Element, Event, EventContext, FontCache, LayoutContext, PaintContext,
-    SizeConstraint, TextLayoutCache,
+    DebugContext, Element, FontCache, LayoutContext, PaintContext, SizeConstraint, TextLayoutCache,
 };
 use log::warn;
 use serde_json::json;
@@ -176,18 +175,6 @@ impl Element for Text {
             }
             origin.set_y(boundaries.max_y());
         }
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut EventContext,
-    ) -> bool {
-        false
     }
 
     fn rect_for_text_range(

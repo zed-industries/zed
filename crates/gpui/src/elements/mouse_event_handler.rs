@@ -9,7 +9,7 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
         MouseMove, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MeasurementContext,
+    DebugContext, Element, ElementBox, EventContext, LayoutContext, MeasurementContext,
     MouseButton, MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
@@ -192,18 +192,6 @@ impl<Tag> Element for MouseEventHandler<Tag> {
         );
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

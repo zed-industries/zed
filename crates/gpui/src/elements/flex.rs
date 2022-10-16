@@ -3,8 +3,8 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 use crate::{
     json::{self, ToJson, Value},
     presenter::MeasurementContext,
-    Axis, DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext,
-    LayoutContext, PaintContext, RenderContext, SizeConstraint, Vector2FExt, View,
+    Axis, DebugContext, Element, ElementBox, ElementStateHandle, LayoutContext, PaintContext,
+    RenderContext, SizeConstraint, Vector2FExt, View,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -318,23 +318,6 @@ impl Element for Flex {
         }
     }
 
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        let mut handled = false;
-        for child in &mut self.children {
-            handled = child.dispatch_event(event, cx) || handled;
-        }
-
-        handled
-    }
-
     fn rect_for_text_range(
         &self,
         range_utf16: Range<usize>,
@@ -418,18 +401,6 @@ impl Element for FlexItem {
         cx: &mut PaintContext,
     ) -> Self::PaintState {
         self.child.paint(bounds.origin(), visible_bounds, cx)
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

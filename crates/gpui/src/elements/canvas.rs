@@ -56,18 +56,6 @@ where
         self.0(bounds, visible_bounds, cx)
     }
 
-    fn dispatch_event(
-        &mut self,
-        _: &crate::Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut crate::EventContext,
-    ) -> bool {
-        false
-    }
-
     fn rect_for_text_range(
         &self,
         _: std::ops::Range<usize>,

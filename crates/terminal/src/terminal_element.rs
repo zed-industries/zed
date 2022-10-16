@@ -798,18 +798,6 @@ impl Element for TerminalElement {
         });
     }
 
-    fn dispatch_event(
-        &mut self,
-        _: &gpui::Event,
-        _bounds: gpui::geometry::rect::RectF,
-        _visible_bounds: gpui::geometry::rect::RectF,
-        _layout: &mut Self::LayoutState,
-        _paint: &mut Self::PaintState,
-        _: &mut gpui::EventContext,
-    ) -> bool {
-        false
-    }
-
     fn metadata(&self) -> Option<&dyn std::any::Any> {
         None
     }

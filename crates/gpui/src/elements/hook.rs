@@ -4,8 +4,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
     presenter::MeasurementContext,
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 
 pub struct Hook {
@@ -54,18 +53,6 @@ impl Element for Hook {
         cx: &mut PaintContext,
     ) {
         self.child.paint(bounds.origin(), visible_bounds, cx);
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

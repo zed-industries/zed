@@ -1,4 +1,4 @@
-use super::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
+use super::{Element, EventContext, LayoutContext, PaintContext, SizeConstraint};
 use crate::{
     geometry::{
         rect::RectF,
@@ -322,23 +322,6 @@ impl Element for UniformList {
         }
 
         cx.scene.pop_layer();
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        layout: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        let mut handled = false;
-        for item in &mut layout.items {
-            handled = item.dispatch_event(event, cx) || handled;
-        }
-
-        handled
     }
 
     fn rect_for_text_range(
