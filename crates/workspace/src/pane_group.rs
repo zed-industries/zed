@@ -201,21 +201,23 @@ impl Member {
                             .right()
                             .boxed(),
                         ),
-                        call::ParticipantLocation::External => Some(
-                            Label::new(
-                                format!(
-                                    "{} is viewing a window outside of Zed",
-                                    leader.user.github_login
-                                ),
-                                theme.workspace.external_location_message.text.clone(),
-                            )
-                            .contained()
-                            .with_style(theme.workspace.external_location_message.container)
-                            .aligned()
-                            .bottom()
-                            .right()
-                            .boxed(),
-                        ),
+                        call::ParticipantLocation::External => {
+                            let frame = leader
+                                .tracks
+                                .values()
+                                .next()
+                                .and_then(|track| track.frame())
+                                .cloned();
+                            return Canvas::new(move |bounds, _, cx| {
+                                if let Some(frame) = frame.clone() {
+                                    cx.scene.push_surface(gpui::mac::Surface {
+                                        bounds,
+                                        image_buffer: frame,
+                                    });
+                                }
+                            })
+                            .boxed();
+                        }
                     }
                 } else {
                     None

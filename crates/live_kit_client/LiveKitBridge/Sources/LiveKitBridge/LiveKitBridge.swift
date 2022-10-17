@@ -4,16 +4,24 @@ import WebRTC
 
 class LKRoomDelegate: RoomDelegate {
     var data: UnsafeRawPointer
-    var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void
+    var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
+    var onDidUnsubscribeFromRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
     
-    init(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void) {
+    init(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void, onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void) {
         self.data = data
         self.onDidSubscribeToRemoteVideoTrack = onDidSubscribeToRemoteVideoTrack
+        self.onDidUnsubscribeFromRemoteVideoTrack = onDidUnsubscribeFromRemoteVideoTrack
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didSubscribe publication: RemoteTrackPublication, track: Track) {
         if track.kind == .video {
-            self.onDidSubscribeToRemoteVideoTrack(self.data, Unmanaged.passRetained(track).toOpaque())
+            self.onDidSubscribeToRemoteVideoTrack(self.data, participant.sid as CFString, track.id as CFString, Unmanaged.passRetained(track).toOpaque())
+        }
+    }
+    
+    func room(_ room: Room, participant: RemoteParticipant, didUnsubscribe publication: RemoteTrackPublication, track: Track) {
+        if track.kind == .video {
+            self.onDidUnsubscribeFromRemoteVideoTrack(self.data, participant.sid as CFString, track.id as CFString)
         }
     }
 }
@@ -53,8 +61,8 @@ public func LKRelease(ptr: UnsafeRawPointer)  {
 }
 
 @_cdecl("LKRoomDelegateCreate")
-public func LKRoomDelegateCreate(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
-    let delegate = LKRoomDelegate(data: data, onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack)
+public func LKRoomDelegateCreate(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void, onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void) -> UnsafeMutableRawPointer {
+    let delegate = LKRoomDelegate(data: data, onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack, onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack)
     return Unmanaged.passRetained(delegate).toOpaque()
 }
 
@@ -84,6 +92,13 @@ public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPoin
     }.catch { error in
         callback(callback_data, error.localizedDescription as CFString)
     }
+}
+
+@_cdecl("LKRoomVideoTracksForRemoteParticipant")
+public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
+    let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
+    let tracks = room.remoteParticipants[participantId as Sid]?.videoTracks.compactMap { $0.track as? RemoteVideoTrack }
+    return tracks as CFArray?
 }
 
 @_cdecl("LKCreateScreenShareTrackForDisplay")

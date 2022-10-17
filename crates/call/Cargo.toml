@@ -19,8 +19,9 @@ test-support = [
 [dependencies]
 client = { path = "../client" }
 collections = { path = "../collections" }
-live_kit_client = { path = "../live_kit_client" }
 gpui = { path = "../gpui" }
+live_kit_client = { path = "../live_kit_client" }
+media = { path = "../media" }
 project = { path = "../project" }
 util = { path = "../util" }
 

@@ -504,7 +504,7 @@ impl Server {
 
             if let Some(room) = removed_connection.room {
                 self.room_updated(&room);
-                room_left = Some(self.room_left(&room, removed_connection.user_id));
+                room_left = Some(self.room_left(&room, connection_id));
             }
 
             contacts_to_update.insert(removed_connection.user_id);
@@ -613,7 +613,7 @@ impl Server {
                     .trace_err()
                 {
                     if let Some(token) = live_kit
-                        .room_token_for_user(&room.live_kit_room, &user_id.to_string())
+                        .room_token(&room.live_kit_room, &request.sender_id.to_string())
                         .trace_err()
                     {
                         Some(proto::LiveKitConnectionInfo {
@@ -658,7 +658,7 @@ impl Server {
             let live_kit_connection_info =
                 if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
                     if let Some(token) = live_kit
-                        .room_token_for_user(&room.live_kit_room, &user_id.to_string())
+                        .room_token(&room.live_kit_room, &request.sender_id.to_string())
                         .trace_err()
                     {
                         Some(proto::LiveKitConnectionInfo {
@@ -724,7 +724,7 @@ impl Server {
             }
 
             self.room_updated(&left_room.room);
-            room_left = self.room_left(&left_room.room, user_id);
+            room_left = self.room_left(&left_room.room, message.sender_id);
 
             for connection_id in left_room.canceled_call_connection_ids {
                 self.peer
@@ -883,13 +883,17 @@ impl Server {
         }
     }
 
-    fn room_left(&self, room: &proto::Room, user_id: UserId) -> impl Future<Output = Result<()>> {
+    fn room_left(
+        &self,
+        room: &proto::Room,
+        connection_id: ConnectionId,
+    ) -> impl Future<Output = Result<()>> {
         let client = self.app_state.live_kit_client.clone();
         let room_name = room.live_kit_room.clone();
         async move {
             if let Some(client) = client {
                 client
-                    .remove_participant(room_name, user_id.to_string())
+                    .remove_participant(room_name, connection_id.to_string())
                     .await?;
             }
 

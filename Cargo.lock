@@ -732,6 +732,7 @@ dependencies = [
  "futures 0.3.24",
  "gpui",
  "live_kit_client",
+ "media",
  "postage",
  "project",
  "util",
@@ -801,31 +802,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "winx",
-]
-
-[[package]]
-name = "capture"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bindgen",
- "block",
- "byteorder",
- "bytes 1.2.1",
- "cocoa",
- "core-foundation",
- "core-graphics",
- "foreign-types",
- "futures 0.3.24",
- "gpui",
- "live_kit_client",
- "live_kit_server",
- "log",
- "media",
- "objc",
- "parking_lot 0.11.2",
- "postage",
- "simplelog",
 ]
 
 [[package]]

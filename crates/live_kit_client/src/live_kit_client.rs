@@ -22,7 +22,14 @@ extern "C" {
         callback_data: *mut c_void,
         on_did_subscribe_to_remote_video_track: extern "C" fn(
             callback_data: *mut c_void,
+            publisher_id: CFStringRef,
+            track_id: CFStringRef,
             remote_track: *const c_void,
+        ),
+        on_did_unsubscribe_from_remote_video_track: extern "C" fn(
+            callback_data: *mut c_void,
+            publisher_id: CFStringRef,
+            track_id: CFStringRef,
         ),
     ) -> *const c_void;
 
@@ -62,7 +69,7 @@ extern "C" {
 
 pub struct Room {
     native_room: *const c_void,
-    remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<Arc<RemoteVideoTrack>>>>,
+    remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteVideoTrackChange>>>,
     _delegate: RoomDelegate,
 }
 
@@ -103,7 +110,7 @@ impl Room {
         async { rx.await.unwrap().context("error publishing video track") }
     }
 
-    pub fn remote_video_tracks(&self) -> mpsc::UnboundedReceiver<Arc<RemoteVideoTrack>> {
+    pub fn remote_video_tracks(&self) -> mpsc::UnboundedReceiver<RemoteVideoTrackChange> {
         let (tx, rx) = mpsc::unbounded();
         self.remote_video_track_subscribers.lock().push(tx);
         rx
@@ -111,9 +118,20 @@ impl Room {
 
     fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
         let track = Arc::new(track);
-        self.remote_video_track_subscribers
-            .lock()
-            .retain(|tx| tx.unbounded_send(track.clone()).is_ok());
+        self.remote_video_track_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RemoteVideoTrackChange::Subscribed(track.clone()))
+                .is_ok()
+        });
+    }
+
+    fn did_unsubscribe_from_remote_video_track(&self, publisher_id: String, track_id: String) {
+        self.remote_video_track_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RemoteVideoTrackChange::Unsubscribed {
+                publisher_id: publisher_id.clone(),
+                track_id: track_id.clone(),
+            })
+            .is_ok()
+        });
     }
 
     fn build_done_callback() -> (
@@ -157,6 +175,7 @@ impl RoomDelegate {
             LKRoomDelegateCreate(
                 weak_room as *mut c_void,
                 Self::on_did_subscribe_to_remote_video_track,
+                Self::on_did_unsubscribe_from_remote_video_track,
             )
         };
         Self {
@@ -165,11 +184,36 @@ impl RoomDelegate {
         }
     }
 
-    extern "C" fn on_did_subscribe_to_remote_video_track(room: *mut c_void, track: *const c_void) {
+    extern "C" fn on_did_subscribe_to_remote_video_track(
+        room: *mut c_void,
+        publisher_id: CFStringRef,
+        track_id: CFStringRef,
+        track: *const c_void,
+    ) {
         let room = unsafe { Weak::from_raw(room as *mut Room) };
-        let track = RemoteVideoTrack(track);
+        let publisher_id = unsafe { CFString::wrap_under_get_rule(publisher_id).to_string() };
+        let track_id = unsafe { CFString::wrap_under_get_rule(track_id).to_string() };
+        let track = RemoteVideoTrack {
+            id: track_id,
+            native_track: track,
+            publisher_id,
+        };
         if let Some(room) = room.upgrade() {
             room.did_subscribe_to_remote_video_track(track);
+        }
+        let _ = Weak::into_raw(room);
+    }
+
+    extern "C" fn on_did_unsubscribe_from_remote_video_track(
+        room: *mut c_void,
+        publisher_id: CFStringRef,
+        track_id: CFStringRef,
+    ) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        let publisher_id = unsafe { CFString::wrap_under_get_rule(publisher_id).to_string() };
+        let track_id = unsafe { CFString::wrap_under_get_rule(track_id).to_string() };
+        if let Some(room) = room.upgrade() {
+            room.did_unsubscribe_from_remote_video_track(publisher_id, track_id);
         }
         let _ = Weak::into_raw(room);
     }
@@ -198,9 +242,22 @@ impl Drop for LocalVideoTrack {
     }
 }
 
-pub struct RemoteVideoTrack(*const c_void);
+#[derive(Debug)]
+pub struct RemoteVideoTrack {
+    id: String,
+    native_track: *const c_void,
+    publisher_id: String,
+}
 
 impl RemoteVideoTrack {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn publisher_id(&self) -> &str {
+        &self.publisher_id
+    }
+
     pub fn add_renderer<F>(&self, callback: F)
     where
         F: 'static + FnMut(CVImageBuffer),
@@ -226,15 +283,23 @@ impl RemoteVideoTrack {
         unsafe {
             let renderer =
                 LKVideoRendererCreate(callback_data as *mut c_void, on_frame::<F>, on_drop::<F>);
-            LKVideoTrackAddRenderer(self.0, renderer);
+            LKVideoTrackAddRenderer(self.native_track, renderer);
         }
     }
 }
 
 impl Drop for RemoteVideoTrack {
     fn drop(&mut self) {
-        unsafe { LKRelease(self.0) }
+        unsafe { LKRelease(self.native_track) }
     }
+}
+
+pub enum RemoteVideoTrackChange {
+    Subscribed(Arc<RemoteVideoTrack>),
+    Unsubscribed {
+        publisher_id: String,
+        track_id: String,
+    },
 }
 
 pub struct MacOSDisplay(*const c_void);

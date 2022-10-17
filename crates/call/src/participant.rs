@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use client::{proto, User};
-use gpui::WeakModelHandle;
+use collections::HashMap;
+use gpui::{Task, WeakModelHandle};
+use media::core_video::CVImageBuffer;
 use project::Project;
 use std::sync::Arc;
 
@@ -34,9 +36,23 @@ pub struct LocalParticipant {
     pub active_project: Option<WeakModelHandle<Project>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
+    pub tracks: HashMap<String, RemoteVideoTrack>,
+}
+
+#[derive(Clone)]
+pub struct RemoteVideoTrack {
+    pub(crate) frame: Option<CVImageBuffer>,
+    pub(crate) _live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
+    pub(crate) _maintain_frame: Arc<Task<()>>,
+}
+
+impl RemoteVideoTrack {
+    pub fn frame(&self) -> Option<&CVImageBuffer> {
+        self.frame.as_ref()
+    }
 }

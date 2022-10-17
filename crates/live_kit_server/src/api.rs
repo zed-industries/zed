@@ -78,7 +78,7 @@ impl Client {
         }
     }
 
-    pub fn room_token_for_user(&self, room: &str, identity: &str) -> Result<String> {
+    pub fn room_token(&self, room: &str, identity: &str) -> Result<String> {
         token::create(
             &self.key,
             &self.secret,
