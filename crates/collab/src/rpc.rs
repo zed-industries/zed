@@ -473,6 +473,7 @@ impl Server {
 
         let mut projects_to_unshare = Vec::new();
         let mut contacts_to_update = HashSet::default();
+        let mut room_left = None;
         {
             let mut store = self.store().await;
             let removed_connection = store.remove_connection(connection_id)?;
@@ -501,22 +502,23 @@ impl Server {
                 });
             }
 
+            if let Some(room) = removed_connection.room {
+                self.room_updated(&room);
+                room_left = Some(self.room_left(&room, removed_connection.user_id));
+            }
+
+            contacts_to_update.insert(removed_connection.user_id);
             for connection_id in removed_connection.canceled_call_connection_ids {
                 self.peer
                     .send(connection_id, proto::CallCanceled {})
                     .trace_err();
                 contacts_to_update.extend(store.user_id_for_connection(connection_id).ok());
             }
-
-            if let Some(room) = removed_connection
-                .room_id
-                .and_then(|room_id| store.room(room_id))
-            {
-                self.room_updated(room);
-            }
-
-            contacts_to_update.insert(removed_connection.user_id);
         };
+
+        if let Some(room_left) = room_left {
+            room_left.await.trace_err();
+        }
 
         for user_id in contacts_to_update {
             self.update_user_contacts(user_id).await.trace_err();
@@ -682,6 +684,7 @@ impl Server {
 
     async fn leave_room(self: Arc<Server>, message: TypedEnvelope<proto::LeaveRoom>) -> Result<()> {
         let mut contacts_to_update = HashSet::default();
+        let room_left;
         {
             let mut store = self.store().await;
             let user_id = store.user_id_for_connection(message.sender_id)?;
@@ -720,9 +723,8 @@ impl Server {
                 }
             }
 
-            if let Some(room) = left_room.room {
-                self.room_updated(room);
-            }
+            self.room_updated(&left_room.room);
+            room_left = self.room_left(&left_room.room, user_id);
 
             for connection_id in left_room.canceled_call_connection_ids {
                 self.peer
@@ -732,6 +734,7 @@ impl Server {
             }
         }
 
+        room_left.await.trace_err();
         for user_id in contacts_to_update {
             self.update_user_contacts(user_id).await?;
         }
@@ -877,6 +880,20 @@ impl Server {
                     },
                 )
                 .trace_err();
+        }
+    }
+
+    fn room_left(&self, room: &proto::Room, user_id: UserId) -> impl Future<Output = Result<()>> {
+        let client = self.app_state.live_kit_client.clone();
+        let room_name = room.live_kit_room.clone();
+        async move {
+            if let Some(client) = client {
+                client
+                    .remove_participant(room_name, user_id.to_string())
+                    .await?;
+            }
+
+            Ok(())
         }
     }
 

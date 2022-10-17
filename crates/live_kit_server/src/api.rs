@@ -2,13 +2,14 @@ use crate::{proto, token};
 use anyhow::{anyhow, Result};
 use prost::Message;
 use reqwest::header::CONTENT_TYPE;
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
-    uri: String,
-    key: String,
-    secret: String,
+    uri: Arc<str>,
+    key: Arc<str>,
+    secret: Arc<str>,
 }
 
 impl Client {
@@ -19,9 +20,9 @@ impl Client {
 
         Self {
             http: reqwest::Client::new(),
-            uri,
-            key,
-            secret,
+            uri: uri.into(),
+            key: key.into(),
+            secret: secret.into(),
         }
     }
 
@@ -49,7 +50,26 @@ impl Client {
             proto::DeleteRoomRequest { room: name },
         );
         async move {
-            response.await?;
+            let _: proto::DeleteRoomResponse = response.await?;
+            Ok(())
+        }
+    }
+
+    pub fn remove_participant(
+        &self,
+        room: String,
+        identity: String,
+    ) -> impl Future<Output = Result<()>> {
+        let response = self.request(
+            "twirp/livekit.RoomService/RemoveParticipant",
+            token::VideoGrant {
+                room_admin: Some(true),
+                ..Default::default()
+            },
+            proto::RoomParticipantIdentity { room, identity },
+        );
+        async move {
+            let _: proto::RemoveParticipantResponse = response.await?;
             Ok(())
         }
     }
