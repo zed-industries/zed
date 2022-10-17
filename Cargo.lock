@@ -3202,12 +3202,13 @@ name = "live_kit_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.24",
  "hmac 0.12.1",
- "hyper",
  "jwt",
  "prost 0.8.0",
  "prost-build",
  "prost-types 0.8.0",
+ "reqwest",
  "serde",
  "sha2 0.10.6",
 ]
