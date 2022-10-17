@@ -5,7 +5,7 @@ use crate::{
     db::{self, ChannelId, MessageId, ProjectId, User, UserId},
     AppState, Result,
 };
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use async_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
@@ -605,37 +605,34 @@ impl Server {
             room = store.create_room(request.sender_id)?.clone();
         }
 
-        let live_kit_token = if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
-            if let Some(_) = live_kit
-                .create_room(room.live_kit_room.clone())
-                .await
-                .with_context(|| {
-                    format!(
-                        "error creating LiveKit room (LiveKit room: {}, Zed room: {})",
-                        room.live_kit_room, room.id
-                    )
-                })
-                .trace_err()
-            {
-                live_kit
-                    .room_token_for_user(&room.live_kit_room, &user_id.to_string())
-                    .with_context(|| {
-                        format!(
-                            "error creating LiveKit access token (LiveKit room: {}, Zed room: {})",
-                            room.live_kit_room, room.id
-                        )
-                    })
+        let live_kit_connection_info =
+            if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+                if let Some(_) = live_kit
+                    .create_room(room.live_kit_room.clone())
+                    .await
                     .trace_err()
+                {
+                    if let Some(token) = live_kit
+                        .room_token_for_user(&room.live_kit_room, &user_id.to_string())
+                        .trace_err()
+                    {
+                        Some(proto::LiveKitConnectionInfo {
+                            server_url: live_kit.url().into(),
+                            token,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         response.send(proto::CreateRoomResponse {
             room: Some(room),
-            live_kit_token,
+            live_kit_connection_info,
         })?;
         self.update_user_contacts(user_id).await?;
         Ok(())
@@ -658,23 +655,26 @@ impl Server {
                     .trace_err();
             }
 
-            let live_kit_token = if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
-                live_kit
-                    .room_token_for_user(&room.live_kit_room, &user_id.to_string())
-                    .with_context(|| {
-                        format!(
-                            "error creating LiveKit access token (LiveKit room: {}, Zed room: {})",
-                            room.live_kit_room, room.id
-                        )
-                    })
-                    .trace_err()
-            } else {
-                None
-            };
+            let live_kit_connection_info =
+                if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+                    if let Some(token) = live_kit
+                        .room_token_for_user(&room.live_kit_room, &user_id.to_string())
+                        .trace_err()
+                    {
+                        Some(proto::LiveKitConnectionInfo {
+                            server_url: live_kit.url().into(),
+                            token,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
             response.send(proto::JoinRoomResponse {
                 room: Some(room.clone()),
-                live_kit_token,
+                live_kit_connection_info,
             })?;
             self.room_updated(room);
         }

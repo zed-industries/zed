@@ -731,6 +731,7 @@ dependencies = [
  "collections",
  "futures 0.3.24",
  "gpui",
+ "live_kit_client",
  "postage",
  "project",
  "util",

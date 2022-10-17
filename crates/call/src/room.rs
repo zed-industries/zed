@@ -7,6 +7,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use live_kit_client::LocalVideoTrack;
 use project::Project;
 use std::sync::Arc;
 use util::ResultExt;
@@ -26,6 +27,7 @@ pub enum Event {
 
 pub struct Room {
     id: u64,
+    live_kit_room: Option<Arc<live_kit_client::Room>>,
     status: RoomStatus,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<PeerId, RemoteParticipant>,
@@ -50,6 +52,7 @@ impl Entity for Room {
 impl Room {
     fn new(
         id: u64,
+        live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         cx: &mut ModelContext<Self>,
@@ -69,8 +72,27 @@ impl Room {
         })
         .detach();
 
+        let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
+            let room = live_kit_client::Room::new();
+            let mut tracks = room.remote_video_tracks();
+            cx.foreground()
+                .spawn(async move {
+                    while let Some(track) = tracks.next().await {
+                        dbg!("received track");
+                    }
+                })
+                .detach();
+            cx.foreground()
+                .spawn(room.connect(&connection_info.server_url, &connection_info.token))
+                .detach_and_log_err(cx);
+            Some(room)
+        } else {
+            None
+        };
+
         Self {
             id,
+            live_kit_room,
             status: RoomStatus::Online,
             participant_user_ids: Default::default(),
             local_participant: Default::default(),
@@ -95,7 +117,15 @@ impl Room {
         cx.spawn(|mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.add_model(|cx| Self::new(room_proto.id, client, user_store, cx));
+            let room = cx.add_model(|cx| {
+                Self::new(
+                    room_proto.id,
+                    response.live_kit_connection_info,
+                    client,
+                    user_store,
+                    cx,
+                )
+            });
 
             let initial_project_id = if let Some(initial_project) = initial_project {
                 let initial_project_id = room
@@ -131,7 +161,15 @@ impl Room {
         cx.spawn(|mut cx| async move {
             let response = client.request(proto::JoinRoom { id: room_id }).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.add_model(|cx| Self::new(room_id, client, user_store, cx));
+            let room = cx.add_model(|cx| {
+                Self::new(
+                    room_id,
+                    response.live_kit_connection_info,
+                    client,
+                    user_store,
+                    cx,
+                )
+            });
             room.update(&mut cx, |room, cx| {
                 room.leave_when_empty = true;
                 room.apply_room_update(room_proto, cx)?;
@@ -455,6 +493,28 @@ impl Room {
                     }),
                 })
                 .await?;
+            Ok(())
+        })
+    }
+
+    pub fn share_screen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
+        let room = if let Some(room) = self.live_kit_room.as_ref() {
+            room.clone()
+        } else {
+            return Task::ready(Err(anyhow!("not connected to LiveKit")));
+        };
+
+        cx.foreground().spawn(async move {
+            let displays = live_kit_client::display_sources().await?;
+            let display = displays
+                .first()
+                .ok_or_else(|| anyhow!("no display found"))?;
+            let track = LocalVideoTrack::screen_share_for_display(display);
+            room.publish_video_track(&track).await?;
             Ok(())
         })
     }

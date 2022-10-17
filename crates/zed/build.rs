@@ -7,6 +7,12 @@ fn main() {
         println!("cargo:rustc-env=ZED_AMPLITUDE_API_KEY={api_key}");
     }
 
+    // Find WebRTC.framework as a sibling of the executable when running outside of an application bundle
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+
+    // Register exported Objective-C selectors, protocols, etc
+    println!("cargo:rustc-link-arg=-Wl,-ObjC");
+
     let output = Command::new("npm")
         .current_dir("../../styles")
         .args(["install", "--no-save"])

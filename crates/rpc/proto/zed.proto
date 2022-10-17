@@ -141,7 +141,7 @@ message CreateRoom {}
 
 message CreateRoomResponse {
     Room room = 1;
-    optional string live_kit_token = 2;
+    optional LiveKitConnectionInfo live_kit_connection_info = 2;
 }
 
 message JoinRoom {
@@ -150,7 +150,7 @@ message JoinRoom {
 
 message JoinRoomResponse {
     Room room = 1;
-    optional string live_kit_token = 2;
+    optional LiveKitConnectionInfo live_kit_connection_info = 2;
 }
 
 message LeaveRoom {
@@ -223,6 +223,11 @@ message UpdateParticipantLocation {
 
 message RoomUpdated {
     Room room = 1;
+}
+
+message LiveKitConnectionInfo {
+    string server_url = 1;
+    string token = 2;
 }
 
 message ShareProject {

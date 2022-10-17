@@ -7,23 +7,27 @@ use std::{future::Future, sync::Arc};
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
-    uri: Arc<str>,
+    url: Arc<str>,
     key: Arc<str>,
     secret: Arc<str>,
 }
 
 impl Client {
-    pub fn new(mut uri: String, key: String, secret: String) -> Self {
-        if uri.ends_with('/') {
-            uri.pop();
+    pub fn new(mut url: String, key: String, secret: String) -> Self {
+        if url.ends_with('/') {
+            url.pop();
         }
 
         Self {
             http: reqwest::Client::new(),
-            uri: uri.into(),
+            url: url.into(),
             key: key.into(),
             secret: secret.into(),
         }
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
     }
 
     pub fn create_room(&self, name: String) -> impl Future<Output = Result<proto::Room>> {
@@ -101,11 +105,11 @@ impl Client {
     {
         let client = self.http.clone();
         let token = token::create(&self.key, &self.secret, None, grant);
-        let uri = format!("{}/{}", self.uri, path);
+        let url = format!("{}/{}", self.url, path);
         async move {
             let token = token?;
             let response = client
-                .post(&uri)
+                .post(&url)
                 .header(CONTENT_TYPE, "application/protobuf")
                 .bearer_auth(token)
                 .body(body.encode_to_vec())
@@ -116,7 +120,7 @@ impl Client {
             } else {
                 Err(anyhow!(
                     "POST {} failed with status code {:?}, {:?}",
-                    uri,
+                    url,
                     response.status(),
                     response.text().await
                 ))

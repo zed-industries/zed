@@ -107,7 +107,7 @@ public func LKVideoTrackAddRenderer(track: UnsafeRawPointer, renderer: UnsafeRaw
 
 @_cdecl("LKDisplaySources")
 public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer, CFArray?, CFString?) -> Void) {
-    MacOSScreenCapturer.displaySources().then { displaySources in
+    MacOSScreenCapturer.sources(for: .display, includeCurrentApplication: false, preferredMethod: .legacy).then { displaySources in
         callback(data, displaySources as CFArray, nil)
     }.catch { error in
         callback(data, nil, error.localizedDescription as CFString)
