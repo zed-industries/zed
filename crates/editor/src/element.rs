@@ -1012,42 +1012,48 @@ impl EditorElement {
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
     ) -> Vec<DiffHunkLayout> {
-        let start_row = DisplayPoint::new(rows.start, 0).to_point(snapshot).row;
-        let end_row = DisplayPoint::new(rows.end, 0).to_point(snapshot).row;
+        let buffer_snapshot = &snapshot.buffer_snapshot;
+        let visual_start = DisplayPoint::new(rows.start, 0).to_point(snapshot).row;
+        let visual_end = DisplayPoint::new(rows.end, 0).to_point(snapshot).row;
+        let hunks = buffer_snapshot.git_diff_hunks_in_range(visual_start..visual_end);
 
         let mut layouts = Vec::new();
-        for hunk in snapshot
-            .buffer_snapshot
-            .git_diff_hunks_in_range(start_row..end_row)
-        {
-            let start = Point::new(hunk.buffer_range.start, 0);
-            let hunk_content_end_row = hunk
-                .buffer_range
-                .end
-                .saturating_sub(1)
-                .max(hunk.buffer_range.start);
-            let hunk_content_end = Point::new(
-                hunk_content_end_row,
-                snapshot.buffer_snapshot.line_len(hunk_content_end_row),
-            );
-            let end = Point::new(hunk.buffer_range.end, 0);
 
-            let is_folded = snapshot
-                .folds_in_range(start..end)
-                .any(|fold_range| {
-                    let fold_point_range = fold_range.to_point(&snapshot.buffer_snapshot);
-                    dbg!(&fold_point_range);
-                    fold_point_range.contains(dbg!(&start))
-                        && fold_point_range.contains(dbg!(&hunk_content_end))
-                        || fold_point_range.end == hunk_content_end
-                });
+        for hunk in hunks {
+            let hunk_start_point = Point::new(hunk.buffer_range.start, 0);
+            let hunk_end_point = Point::new(hunk.buffer_range.end, 0);
+            let hunk_moved_start_point = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
 
-            layouts.push(dbg!(DiffHunkLayout {
-                visual_range: start.to_display_point(snapshot).row()
-                    ..end.to_display_point(snapshot).row(),
+            let is_removal = hunk.status() == DiffHunkStatus::Removed;
+
+            let folds_start = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
+            let folds_end = Point::new(hunk.buffer_range.end + 1, 0);
+            let folds_range = folds_start..folds_end;
+
+            let containing_fold = snapshot.folds_in_range(folds_range).find(|fold_range| {
+                let fold_point_range = fold_range.to_point(buffer_snapshot);
+
+                let folded_start = fold_point_range.contains(&hunk_start_point);
+                let folded_end = fold_point_range.contains(&hunk_end_point);
+                let folded_moved_start = fold_point_range.contains(&hunk_moved_start_point);
+
+                (folded_start && folded_end) || (is_removal && folded_moved_start)
+            });
+
+            let visual_range = if let Some(fold) = containing_fold {
+                let row = fold.start.to_display_point(snapshot).row();
+                row..row
+            } else {
+                let start = hunk_start_point.to_display_point(snapshot).row();
+                let end = hunk_end_point.to_display_point(snapshot).row();
+                start..end
+            };
+
+            layouts.push(DiffHunkLayout {
+                visual_range,
                 status: hunk.status(),
-                is_folded,
-            }));
+                is_folded: containing_fold.is_some(),
+            });
         }
 
         layouts
