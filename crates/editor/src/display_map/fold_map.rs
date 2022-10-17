@@ -987,6 +987,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
     }
 }
 
+#[derive(Clone)]
 pub struct FoldBufferRows<'a> {
     cursor: Cursor<'a, Transform, (FoldPoint, Point)>,
     input_buffer_rows: MultiBufferRows<'a>,

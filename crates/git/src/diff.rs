@@ -190,7 +190,6 @@ impl BufferDiff {
             }
 
             if kind == GitDiffLineType::Deletion {
-                *buffer_row_divergence -= 1;
                 let end = content_offset + content_len;
 
                 match &mut head_byte_range {
@@ -203,6 +202,8 @@ impl BufferDiff {
                     let row = old_row as i64 + *buffer_row_divergence;
                     first_deletion_buffer_row = Some(row as u32);
                 }
+
+                *buffer_row_divergence -= 1;
             }
         }
 

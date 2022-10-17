@@ -143,6 +143,7 @@ struct ExcerptSummary {
     text: TextSummary,
 }
 
+#[derive(Clone)]
 pub struct MultiBufferRows<'a> {
     buffer_row_range: Range<u32>,
     excerpts: Cursor<'a, Excerpt, Point>,

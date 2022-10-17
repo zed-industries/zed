@@ -157,6 +157,7 @@ pub struct BlockChunks<'a> {
     max_output_row: u32,
 }
 
+#[derive(Clone)]
 pub struct BlockBufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
     input_buffer_rows: wrap_map::WrapBufferRows<'a>,
