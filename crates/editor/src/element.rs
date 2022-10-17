@@ -705,7 +705,7 @@ impl EditorElement {
                     cx,
                 );
 
-                if view.show_local_cursors() || *replica_id != local_replica_id {
+                if view.show_local_cursors(cx) || *replica_id != local_replica_id {
                     let cursor_position = selection.head;
                     if layout
                         .visible_display_row_range

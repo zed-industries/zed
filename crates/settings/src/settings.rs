@@ -28,6 +28,7 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
+    pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub vim_mode: bool,
@@ -79,7 +80,6 @@ pub struct GitGutterConfig {}
 pub struct EditorSettings {
     pub tab_size: Option<NonZeroU32>,
     pub hard_tabs: Option<bool>,
-    pub cursor_blink: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<FormatOnSave>,
@@ -235,6 +235,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
+    pub cursor_blink: Option<bool>,
+    #[serde(default)]
     pub hover_popover_enabled: Option<bool>,
     #[serde(default)]
     pub show_completions_on_input: Option<bool>,
@@ -293,6 +295,7 @@ impl Settings {
                 .unwrap(),
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
+            cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             projects_online_by_default: defaults.projects_online_by_default.unwrap(),
@@ -302,7 +305,6 @@ impl Settings {
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
                 hard_tabs: required(defaults.editor.hard_tabs),
-                cursor_blink: required(defaults.editor.cursor_blink),
                 soft_wrap: required(defaults.editor.soft_wrap),
                 preferred_line_length: required(defaults.editor.preferred_line_length),
                 format_on_save: required(defaults.editor.format_on_save),
@@ -348,6 +350,7 @@ impl Settings {
         );
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
+        merge(&mut self.cursor_blink, data.cursor_blink);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(
             &mut self.show_completions_on_input,
@@ -390,10 +393,6 @@ impl Settings {
 
     pub fn hard_tabs(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.hard_tabs)
-    }
-
-    pub fn cursor_blink(&self, language: Option<&str>) -> bool {
-        self.language_setting(language, |settings| settings.cursor_blink)
     }
 
     pub fn soft_wrap(&self, language: Option<&str>) -> SoftWrap {
@@ -442,6 +441,7 @@ impl Settings {
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,
+            cursor_blink: true,
             hover_popover_enabled: true,
             show_completions_on_input: true,
             vim_mode: false,
@@ -450,7 +450,6 @@ impl Settings {
             editor_defaults: EditorSettings {
                 tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(false),
-                cursor_blink: Some(true),
                 soft_wrap: Some(SoftWrap::None),
                 preferred_line_length: Some(80),
                 format_on_save: Some(FormatOnSave::On),

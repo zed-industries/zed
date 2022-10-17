@@ -1,3 +1,4 @@
+mod blink_manager;
 pub mod display_map;
 mod element;
 mod highlight_matching_bracket;
@@ -16,6 +17,7 @@ pub mod test;
 
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
+use blink_manager::BlinkManager;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
@@ -447,12 +449,10 @@ pub struct Editor {
     override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
     focused: bool,
-    show_local_cursors: bool,
+    blink_manager: ModelHandle<BlinkManager>,
     show_local_selections: bool,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    blink_epoch: usize,
-    blinking_paused: bool,
     mode: EditorMode,
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
@@ -1076,6 +1076,8 @@ impl Editor {
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
+        let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
+
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1097,12 +1099,10 @@ impl Editor {
             scroll_top_anchor: Anchor::min(),
             autoscroll_request: None,
             focused: false,
-            show_local_cursors: false,
+            blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
             hide_scrollbar_task: None,
-            blink_epoch: 0,
-            blinking_paused: false,
             mode,
             vertical_scroll_margin: 3.0,
             placeholder_text: None,
@@ -1130,6 +1130,7 @@ impl Editor {
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
+                cx.observe(&blink_manager, |_, _, cx| cx.notify()),
             ],
         };
         this.end_selection(cx);
@@ -1542,7 +1543,7 @@ impl Editor {
             refresh_matching_bracket_highlights(self, cx);
         }
 
-        self.pause_cursor_blinking(cx);
+        self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(Event::SelectionsChanged { local });
         cx.notify();
     }
@@ -6111,70 +6112,8 @@ impl Editor {
         highlights
     }
 
-    fn next_blink_epoch(&mut self) -> usize {
-        self.blink_epoch += 1;
-        self.blink_epoch
-    }
-
-    fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.focused {
-            return;
-        }
-
-        self.show_local_cursors = true;
-        cx.notify();
-
-        let epoch = self.next_blink_epoch();
-        cx.spawn(|this, mut cx| {
-            let this = this.downgrade();
-            async move {
-                Timer::after(CURSOR_BLINK_INTERVAL).await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
-                }
-            }
-        })
-        .detach();
-    }
-
-    fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
-        if epoch == self.blink_epoch {
-            self.blinking_paused = false;
-            self.blink_cursors(epoch, cx);
-        }
-    }
-
-    fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
-        if epoch == self.blink_epoch && self.focused && !self.blinking_paused {
-            let newest_head = self.selections.newest::<usize>(cx).head();
-            let language_name = self
-                .buffer
-                .read(cx)
-                .language_at(newest_head, cx)
-                .map(|l| l.name());
-
-            self.show_local_cursors = !self.show_local_cursors
-                || !cx
-                    .global::<Settings>()
-                    .cursor_blink(language_name.as_deref());
-            cx.notify();
-
-            let epoch = self.next_blink_epoch();
-            cx.spawn(|this, mut cx| {
-                let this = this.downgrade();
-                async move {
-                    Timer::after(CURSOR_BLINK_INTERVAL).await;
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
-                    }
-                }
-            })
-            .detach();
-        }
-    }
-
-    pub fn show_local_cursors(&self) -> bool {
-        self.show_local_cursors && self.focused
+    pub fn show_local_cursors(&self, cx: &AppContext) -> bool {
+        self.blink_manager.read(cx).visible() && self.focused
     }
 
     pub fn show_scrollbars(&self) -> bool {
@@ -6493,7 +6432,7 @@ impl View for Editor {
             cx.focus(&rename.editor);
         } else {
             self.focused = true;
-            self.blink_cursors(self.blink_epoch, cx);
+            self.blink_manager.update(cx, BlinkManager::enable);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_replica_id.is_none() {
@@ -6512,6 +6451,7 @@ impl View for Editor {
         let blurred_event = EditorBlurred(cx.handle());
         cx.emit_global(blurred_event);
         self.focused = false;
+        self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
