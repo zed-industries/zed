@@ -92,6 +92,9 @@ impl LineEnding {
         }
     }
 }
+
+pub struct HomeDir(pub PathBuf);
+
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;

@@ -5,8 +5,8 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
-use fs::LineEnding;
 use fs::{repository::GitRepository, Fs};
+use fs::{HomeDir, LineEnding};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -1839,7 +1839,23 @@ impl language::File for File {
 
     fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
-        full_path.push(self.worktree.read(cx).root_name());
+        let worktree = self.worktree.read(cx);
+        if worktree.is_visible() {
+            full_path.push(worktree.root_name());
+        } else {
+            let home_dir = cx.global::<HomeDir>();
+            let local_path = worktree.as_local().map(|local| local.abs_path.clone());
+            if let Some(path) = local_path {
+                if let Ok(path) = path.strip_prefix(home_dir.0.as_path()) {
+                    full_path.push("~");
+                    full_path.push(path);
+                } else {
+                    full_path.push(path)
+                }
+            } else {
+                full_path.push(Path::new("/host-filesystem/"))
+            }
+        }
         if self.path.components().next().is_some() {
             full_path.push(&self.path);
         }

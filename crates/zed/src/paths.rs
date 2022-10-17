@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 lazy_static::lazy_static! {
-    static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
+    pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
     pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
     pub static ref LOGS_DIR: PathBuf = HOME.join("Library/Logs/Zed");
     pub static ref LANGUAGES_DIR: PathBuf = HOME.join("Library/Application Support/Zed/languages");
