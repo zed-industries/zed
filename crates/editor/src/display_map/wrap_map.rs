@@ -62,6 +62,7 @@ pub struct WrapChunks<'a> {
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
+#[derive(Clone)]
 pub struct WrapBufferRows<'a> {
     input_buffer_rows: fold_map::FoldBufferRows<'a>,
     input_buffer_row: Option<u32>,

@@ -37,6 +37,8 @@ pub struct Settings {
     pub editor_overrides: EditorSettings,
     pub git: GitSettings,
     pub git_overrides: GitSettings,
+    pub journal_defaults: JournalSettings,
+    pub journal_overrides: JournalSettings,
     pub terminal_defaults: TerminalSettings,
     pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
@@ -120,6 +122,34 @@ pub enum Autosave {
     AfterDelay { milliseconds: u64 },
     OnFocusChange,
     OnWindowChange,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct JournalSettings {
+    pub path: Option<String>,
+    pub hour_format: Option<HourFormat>,
+}
+
+impl Default for JournalSettings {
+    fn default() -> Self {
+        Self {
+            path: Some("~".into()),
+            hour_format: Some(Default::default()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HourFormat {
+    Hour12,
+    Hour24,
+}
+
+impl Default for HourFormat {
+    fn default() -> Self {
+        Self::Hour12
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -216,6 +246,8 @@ pub struct SettingsFileContent {
     #[serde(flatten)]
     pub editor: EditorSettings,
     #[serde(default)]
+    pub journal: JournalSettings,
+    #[serde(default)]
     pub terminal: TerminalSettings,
     #[serde(default)]
     pub git: Option<GitSettings>,
@@ -278,6 +310,8 @@ impl Settings {
             editor_overrides: Default::default(),
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
+            journal_defaults: defaults.journal,
+            journal_overrides: Default::default(),
             terminal_defaults: defaults.terminal,
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
@@ -330,6 +364,7 @@ impl Settings {
 
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
+        self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;
         self.terminal_overrides.copy_on_select = data.terminal.copy_on_select;
         self.terminal_overrides = data.terminal;
@@ -416,6 +451,8 @@ impl Settings {
                 enable_language_server: Some(true),
             },
             editor_overrides: Default::default(),
+            journal_defaults: Default::default(),
+            journal_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
             git: Default::default(),

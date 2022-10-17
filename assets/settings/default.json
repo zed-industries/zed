@@ -83,9 +83,19 @@
         //      "git_gutter": "hide"
         "git_gutter": "tracked_files"
     },
+    // Settings specific to journaling
+    "journal": {
+        // The path of the directory where journal entries are stored
+        "path": "~",
+        // What format to display the hours in
+        // May take 2 values:
+        // 1. hour12
+        // 2. hour24
+        "hour_format": "hour12"
+    },
     // Settings specific to the terminal
     "terminal": {
-        // What shell to use when opening a terminal. May take 3 values: 
+        // What shell to use when opening a terminal. May take 3 values:
         // 1. Use the system's default terminal configuration (e.g. $TERM).
         //      "shell": "system"
         // 2. A program:
@@ -102,7 +112,7 @@
         "shell": "system",
         // What working directory to use when launching the terminal.
         // May take 4 values:
-        // 1. Use the current file's project directory.  Will Fallback to the 
+        // 1. Use the current file's project directory.  Will Fallback to the
         //    first project directory strategy if unsuccessful
         //      "working_directory": "current_project_directory"
         // 2. Use the first project in this workspace's directory
@@ -112,7 +122,7 @@
         // 4. Always use a specific directory. This value will be shell expanded.
         //    If this path is not a valid directory the terminal will default to
         //    this platform's home directory  (if we can find it)
-        //      "working_directory": { 
+        //      "working_directory": {
         //        "always": {
         //          "directory": "~/zed/projects/"
         //        }
@@ -124,7 +134,7 @@
         // May take 4 values:
         //  1. Never blink the cursor, ignoring the terminal mode
         //         "blinking": "off",
-        //  2. Default the cursor blink to off, but allow the terminal to 
+        //  2. Default the cursor blink to off, but allow the terminal to
         //     set blinking
         //         "blinking": "terminal_controlled",
         //  3. Always blink the cursor, ignoring the terminal mode
@@ -132,7 +142,7 @@
         "blinking": "terminal_controlled",
         // Set whether Alternate Scroll mode (code: ?1007) is active by default.
         // Alternate Scroll mode converts mouse scroll events into up / down key
-        // presses when in the alternate screen (e.g. when running applications 
+        // presses when in the alternate screen (e.g. when running applications
         // like vim or  less). The terminal can still set and unset this mode.
         // May take 2 values:
         //  1. Default alternate scroll mode to on
