@@ -47,7 +47,7 @@ impl View for Breadcrumbs {
                 .with_children(Itertools::intersperse_with(breadcrumbs.into_iter(), || {
                     Label::new(" 〉 ".to_string(), theme.breadcrumbs.text.clone()).boxed()
                 }))
-                .scrollable::<BreadcrumbTag, _>(1, None, cx)
+                .scrollable::<BreadcrumbTag, _>(0, None, cx)
                 .contained()
                 .with_style(theme.breadcrumbs.container)
                 .aligned()

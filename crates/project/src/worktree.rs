@@ -1840,23 +1840,27 @@ impl language::File for File {
     fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
         let worktree = self.worktree.read(cx);
+
         if worktree.is_visible() {
             full_path.push(worktree.root_name());
         } else {
             if let Some(path) = worktree.as_local().map(|local| local.abs_path.clone()) {
-                if let Ok(trimmed_path) = path.strip_prefix(cx.global::<HomeDir>().0.as_path()) {
+                if let Ok(trimmed_path) = path.strip_prefix(cx.global::<HomeDir>().as_path()) {
                     full_path.push("~");
                     full_path.push(trimmed_path);
                 } else {
                     full_path.push(path)
                 }
             } else {
-                full_path.push(Path::new("/host-filesystem/"))
+                full_path.push(Path::new("/OUTSIDE_PROJECT"));
+                full_path.push(worktree.root_name());
             }
         }
+
         if self.path.components().next().is_some() {
             full_path.push(&self.path);
         }
+
         full_path
     }
 
