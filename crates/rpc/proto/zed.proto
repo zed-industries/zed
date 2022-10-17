@@ -140,7 +140,8 @@ message Test {
 message CreateRoom {}
 
 message CreateRoomResponse {
-    uint64 id = 1;
+    Room room = 1;
+    optional string live_kit_token = 2;
 }
 
 message JoinRoom {
@@ -149,6 +150,7 @@ message JoinRoom {
 
 message JoinRoomResponse {
     Room room = 1;
+    optional string live_kit_token = 2;
 }
 
 message LeaveRoom {
@@ -156,8 +158,10 @@ message LeaveRoom {
 }
 
 message Room {
-    repeated Participant participants = 1;
-    repeated uint64 pending_participant_user_ids = 2;
+    uint64 id = 1;
+    repeated Participant participants = 2;
+    repeated uint64 pending_participant_user_ids = 3;
+    string live_kit_room = 4;
 }
 
 message Participant {

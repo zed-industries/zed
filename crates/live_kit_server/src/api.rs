@@ -54,6 +54,21 @@ impl Client {
         }
     }
 
+    pub fn room_token_for_user(&self, room: &str, identity: &str) -> Result<String> {
+        token::create(
+            &self.key,
+            &self.secret,
+            Some(identity),
+            token::VideoGrant {
+                room: Some(room),
+                room_join: Some(true),
+                can_publish: Some(true),
+                can_subscribe: Some(true),
+                ..Default::default()
+            },
+        )
+    }
+
     fn request<Req, Res>(
         &self,
         path: &str,

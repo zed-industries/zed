@@ -94,7 +94,8 @@ impl Room {
     ) -> Task<Result<ModelHandle<Self>>> {
         cx.spawn(|mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
-            let room = cx.add_model(|cx| Self::new(response.id, client, user_store, cx));
+            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+            let room = cx.add_model(|cx| Self::new(room_proto.id, client, user_store, cx));
 
             let initial_project_id = if let Some(initial_project) = initial_project {
                 let initial_project_id = room

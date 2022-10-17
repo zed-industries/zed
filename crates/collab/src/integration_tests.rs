@@ -6321,6 +6321,7 @@ impl TestServer {
     async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
+            live_kit_client: None,
             api_token: Default::default(),
             invite_link_prefix: Default::default(),
         })

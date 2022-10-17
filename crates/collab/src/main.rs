@@ -30,6 +30,9 @@ pub struct Config {
     pub invite_link_prefix: String,
     pub honeycomb_api_key: Option<String>,
     pub honeycomb_dataset: Option<String>,
+    pub live_kit_server: Option<String>,
+    pub live_kit_key: Option<String>,
+    pub live_kit_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
 }
@@ -38,13 +41,30 @@ pub struct AppState {
     db: Arc<dyn Db>,
     api_token: String,
     invite_link_prefix: String,
+    live_kit_client: Option<live_kit_server::api::Client>,
 }
 
 impl AppState {
     async fn new(config: &Config) -> Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
+        let live_kit_client = if let Some(((server, key), secret)) = config
+            .live_kit_server
+            .as_ref()
+            .zip(config.live_kit_key.as_ref())
+            .zip(config.live_kit_secret.as_ref())
+        {
+            Some(live_kit_server::api::Client::new(
+                server.clone(),
+                key.clone(),
+                secret.clone(),
+            ))
+        } else {
+            None
+        };
+
         let this = Self {
             db: Arc::new(db),
+            live_kit_client,
             api_token: config.api_token.clone(),
             invite_link_prefix: config.invite_link_prefix.clone(),
         };

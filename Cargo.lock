@@ -1100,6 +1100,7 @@ dependencies = [
  "language",
  "lazy_static",
  "lipsum",
+ "live_kit_server",
  "log",
  "lsp",
  "nanoid",

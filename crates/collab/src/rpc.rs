@@ -5,7 +5,7 @@ use crate::{
     db::{self, ChannelId, MessageId, ProjectId, User, UserId},
     AppState, Result,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use async_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
@@ -49,6 +49,7 @@ use std::{
     },
     time::Duration,
 };
+pub use store::{Store, Worktree};
 use time::OffsetDateTime;
 use tokio::{
     sync::{Mutex, MutexGuard},
@@ -56,8 +57,6 @@ use tokio::{
 };
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
-
-pub use store::{Store, Worktree};
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -597,13 +596,45 @@ impl Server {
         response: Response<proto::CreateRoom>,
     ) -> Result<()> {
         let user_id;
-        let room_id;
+        let room;
         {
             let mut store = self.store().await;
             user_id = store.user_id_for_connection(request.sender_id)?;
-            room_id = store.create_room(request.sender_id)?;
+            room = store.create_room(request.sender_id)?.clone();
         }
-        response.send(proto::CreateRoomResponse { id: room_id })?;
+
+        let live_kit_token = if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+            if let Some(_) = live_kit
+                .create_room(room.live_kit_room.clone())
+                .await
+                .with_context(|| {
+                    format!(
+                        "error creating LiveKit room (LiveKit room: {}, Zed room: {})",
+                        room.live_kit_room, room.id
+                    )
+                })
+                .trace_err()
+            {
+                live_kit
+                    .room_token_for_user(&room.live_kit_room, &user_id.to_string())
+                    .with_context(|| {
+                        format!(
+                            "error creating LiveKit access token (LiveKit room: {}, Zed room: {})",
+                            room.live_kit_room, room.id
+                        )
+                    })
+                    .trace_err()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        response.send(proto::CreateRoomResponse {
+            room: Some(room),
+            live_kit_token,
+        })?;
         self.update_user_contacts(user_id).await?;
         Ok(())
     }
@@ -624,8 +655,24 @@ impl Server {
                     .send(recipient_id, proto::CallCanceled {})
                     .trace_err();
             }
+
+            let live_kit_token = if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+                live_kit
+                    .room_token_for_user(&room.live_kit_room, &user_id.to_string())
+                    .with_context(|| {
+                        format!(
+                            "error creating LiveKit access token (LiveKit room: {}, Zed room: {})",
+                            room.live_kit_room, room.id
+                        )
+                    })
+                    .trace_err()
+            } else {
+                None
+            };
+
             response.send(proto::JoinRoomResponse {
                 room: Some(room.clone()),
+                live_kit_token,
             })?;
             self.room_updated(room);
         }
