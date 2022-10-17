@@ -42,12 +42,10 @@ impl View for Breadcrumbs {
             .as_ref()
             .and_then(|item| item.breadcrumbs(&theme, cx))
         {
-            enum BreadcrumbTag {}
             Flex::row()
                 .with_children(Itertools::intersperse_with(breadcrumbs.into_iter(), || {
                     Label::new(" 〉 ".to_string(), theme.breadcrumbs.text.clone()).boxed()
                 }))
-                .scrollable::<BreadcrumbTag, _>(0, None, cx)
                 .contained()
                 .with_style(theme.breadcrumbs.container)
                 .aligned()
