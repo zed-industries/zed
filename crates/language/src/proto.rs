@@ -1,5 +1,6 @@
 use crate::{
-    diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, Diagnostic, Language,
+    diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, CursorShape, Diagnostic,
+    Language,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -52,11 +53,13 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 selections,
                 line_mode,
                 lamport_timestamp,
+                cursor_shape,
             } => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
                 replica_id: lamport_timestamp.replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
                 selections: serialize_selections(selections),
                 line_mode: *line_mode,
+                cursor_shape: serialize_cursor_shape(cursor_shape) as i32,
             }),
             crate::Operation::UpdateDiagnostics {
                 diagnostics,
@@ -122,6 +125,24 @@ pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
         start: Some(serialize_anchor(&selection.start)),
         end: Some(serialize_anchor(&selection.end)),
         reversed: selection.reversed,
+    }
+}
+
+pub fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape {
+    match cursor_shape {
+        CursorShape::Bar => proto::CursorShape::CursorBar,
+        CursorShape::Block => proto::CursorShape::CursorBlock,
+        CursorShape::Underscore => proto::CursorShape::CursorUnderscore,
+        CursorShape::Hollow => proto::CursorShape::CursorHollow,
+    }
+}
+
+pub fn deserialize_cursor_shape(cursor_shape: proto::CursorShape) -> CursorShape {
+    match cursor_shape {
+        proto::CursorShape::CursorBar => CursorShape::Bar,
+        proto::CursorShape::CursorBlock => CursorShape::Block,
+        proto::CursorShape::CursorUnderscore => CursorShape::Underscore,
+        proto::CursorShape::CursorHollow => CursorShape::Hollow,
     }
 }
 
@@ -223,6 +244,10 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     },
                     selections: Arc::from(selections),
                     line_mode: message.line_mode,
+                    cursor_shape: deserialize_cursor_shape(
+                        proto::CursorShape::from_i32(message.cursor_shape)
+                            .ok_or_else(|| anyhow!("Missing cursor shape"))?,
+                    ),
                 }
             }
             proto::operation::Variant::UpdateDiagnostics(message) => {

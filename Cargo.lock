@@ -5828,6 +5828,7 @@ dependencies = [
  "futures 0.3.24",
  "gpui",
  "itertools",
+ "language",
  "lazy_static",
  "libc",
  "mio-extras",

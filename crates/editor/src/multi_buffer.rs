@@ -8,7 +8,7 @@ use git::diff::DiffHunk;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
-    char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk,
+    char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
     DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Outline,
     OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _,
     ToPoint as _, ToPointUtf16 as _, TransactionId,
@@ -604,6 +604,7 @@ impl MultiBuffer {
         &mut self,
         selections: &[Selection<Anchor>],
         line_mode: bool,
+        cursor_shape: CursorShape,
         cx: &mut ModelContext<Self>,
     ) {
         let mut selections_by_buffer: HashMap<usize, Vec<Selection<text::Anchor>>> =
@@ -668,7 +669,7 @@ impl MultiBuffer {
                         }
                         Some(selection)
                     }));
-                    buffer.set_active_selections(merged_selections, line_mode, cx);
+                    buffer.set_active_selections(merged_selections, line_mode, cursor_shape, cx);
                 });
         }
     }
@@ -2698,7 +2699,7 @@ impl MultiBufferSnapshot {
     pub fn remote_selections_in_range<'a>(
         &'a self,
         range: &'a Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = (ReplicaId, bool, Selection<Anchor>)> {
+    ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
         let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
         cursor.seek(&Some(&range.start.excerpt_id), Bias::Left, &());
         cursor
@@ -2715,7 +2716,7 @@ impl MultiBufferSnapshot {
                 excerpt
                     .buffer
                     .remote_selections_in_range(query_range)
-                    .flat_map(move |(replica_id, line_mode, selections)| {
+                    .flat_map(move |(replica_id, line_mode, cursor_shape, selections)| {
                         selections.map(move |selection| {
                             let mut start = Anchor {
                                 buffer_id: Some(excerpt.buffer_id),
@@ -2737,6 +2738,7 @@ impl MultiBufferSnapshot {
                             (
                                 replica_id,
                                 line_mode,
+                                cursor_shape,
                                 Selection {
                                     id: selection.id,
                                     start,

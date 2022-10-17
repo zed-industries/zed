@@ -35,7 +35,7 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity, OffsetUtf16, Point, Selection};
+use language::{Bias, CursorShape, DiagnosticSeverity, OffsetUtf16, Point, Selection};
 use project::ProjectPath;
 use settings::{GitGutter, Settings};
 use smallvec::SmallVec;
@@ -56,6 +56,7 @@ struct DiffHunkLayout {
 
 struct SelectionLayout {
     head: DisplayPoint,
+    cursor_shape: CursorShape,
     range: Range<DisplayPoint>,
 }
 
@@ -63,6 +64,7 @@ impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
+        cursor_shape: CursorShape,
         map: &DisplaySnapshot,
     ) -> Self {
         if line_mode {
@@ -70,6 +72,7 @@ impl SelectionLayout {
             let point_range = map.expand_to_line(selection.range());
             Self {
                 head: selection.head().to_display_point(map),
+                cursor_shape,
                 range: point_range.start.to_display_point(map)
                     ..point_range.end.to_display_point(map),
             }
@@ -77,6 +80,7 @@ impl SelectionLayout {
             let selection = selection.map(|p| p.to_display_point(map));
             Self {
                 head: selection.head(),
+                cursor_shape,
                 range: selection.range(),
             }
         }
@@ -87,19 +91,13 @@ impl SelectionLayout {
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
     style: Arc<EditorStyle>,
-    cursor_shape: CursorShape,
 }
 
 impl EditorElement {
-    pub fn new(
-        view: WeakViewHandle<Editor>,
-        style: EditorStyle,
-        cursor_shape: CursorShape,
-    ) -> Self {
+    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle) -> Self {
         Self {
             view,
             style: Arc::new(style),
-            cursor_shape,
         }
     }
 
@@ -707,7 +705,7 @@ impl EditorElement {
                     cx,
                 );
 
-                if view.show_local_cursors() || *replica_id != local_replica_id {
+                if view.show_local_cursors(cx) || *replica_id != local_replica_id {
                     let cursor_position = selection.head;
                     if layout
                         .visible_display_row_range
@@ -723,7 +721,7 @@ impl EditorElement {
                         if block_width == 0.0 {
                             block_width = layout.position_map.em_width;
                         }
-                        let block_text = if let CursorShape::Block = self.cursor_shape {
+                        let block_text = if let CursorShape::Block = selection.cursor_shape {
                             layout
                                 .position_map
                                 .snapshot
@@ -759,7 +757,7 @@ impl EditorElement {
                             block_width,
                             origin: vec2f(x, y),
                             line_height: layout.position_map.line_height,
-                            shape: self.cursor_shape,
+                            shape: selection.cursor_shape,
                             block_text,
                         });
                     }
@@ -1648,7 +1646,7 @@ impl Element for EditorElement {
             );
 
             let mut remote_selections = HashMap::default();
-            for (replica_id, line_mode, selection) in display_map
+            for (replica_id, line_mode, cursor_shape, selection) in display_map
                 .buffer_snapshot
                 .remote_selections_in_range(&(start_anchor.clone()..end_anchor.clone()))
             {
@@ -1659,7 +1657,12 @@ impl Element for EditorElement {
                 remote_selections
                     .entry(replica_id)
                     .or_insert(Vec::new())
-                    .push(SelectionLayout::new(selection, line_mode, &display_map));
+                    .push(SelectionLayout::new(
+                        selection,
+                        line_mode,
+                        cursor_shape,
+                        &display_map,
+                    ));
             }
             selections.extend(remote_selections);
 
@@ -1691,7 +1694,12 @@ impl Element for EditorElement {
                     local_selections
                         .into_iter()
                         .map(|selection| {
-                            SelectionLayout::new(selection, view.selections.line_mode, &display_map)
+                            SelectionLayout::new(
+                                selection,
+                                view.selections.line_mode,
+                                view.cursor_shape,
+                                &display_map,
+                            )
                         })
                         .collect(),
                 ));
@@ -2094,20 +2102,6 @@ fn layout_line(
     )
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum CursorShape {
-    Bar,
-    Block,
-    Underscore,
-    Hollow,
-}
-
-impl Default for CursorShape {
-    fn default() -> Self {
-        CursorShape::Bar
-    }
-}
-
 #[derive(Debug)]
 pub struct Cursor {
     origin: Vector2F,
@@ -2348,11 +2342,7 @@ mod tests {
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, None, cx)
         });
-        let element = EditorElement::new(
-            editor.downgrade(),
-            editor.read(cx).style(cx),
-            CursorShape::Bar,
-        );
+        let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -2388,11 +2378,7 @@ mod tests {
             cx.blur();
         });
 
-        let mut element = EditorElement::new(
-            editor.downgrade(),
-            editor.read(cx).style(cx),
-            CursorShape::Bar,
-        );
+        let mut element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
 
         let mut scene = Scene::new(1.0);
         let mut presenter = cx.build_presenter(window_id, 30., Default::default());

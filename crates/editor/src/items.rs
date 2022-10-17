@@ -120,6 +120,7 @@ impl FollowableItem for Editor {
                     buffer.set_active_selections(
                         &self.selections.disjoint_anchors(),
                         self.selections.line_mode,
+                        self.cursor_shape,
                         cx,
                     );
                 }
