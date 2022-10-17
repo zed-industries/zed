@@ -1017,7 +1017,7 @@ impl EditorElement {
         let visual_end = DisplayPoint::new(rows.end, 0).to_point(snapshot).row;
         let hunks = buffer_snapshot.git_diff_hunks_in_range(visual_start..visual_end);
 
-        let mut layouts = Vec::new();
+        let mut layouts = Vec::<DiffHunkLayout>::new();
 
         for hunk in hunks {
             let hunk_start_point = Point::new(hunk.buffer_range.start, 0);
@@ -1049,11 +1049,18 @@ impl EditorElement {
                 start..end
             };
 
-            layouts.push(DiffHunkLayout {
-                visual_range,
-                status: hunk.status(),
-                is_folded: containing_fold.is_some(),
-            });
+            let has_existing_layout = match layouts.last() {
+                Some(e) => visual_range == e.visual_range && e.status == hunk.status(),
+                None => false,
+            };
+
+            if !has_existing_layout {
+                layouts.push(DiffHunkLayout {
+                    visual_range,
+                    status: hunk.status(),
+                    is_folded: containing_fold.is_some(),
+                });
+            }
         }
 
         layouts
