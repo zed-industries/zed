@@ -52,6 +52,7 @@ pub struct Settings {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FeatureFlags {
     pub experimental_themes: bool,
+    pub mnemonic_keybindings: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -64,7 +65,13 @@ pub enum ReleaseChannel {
 
 impl FeatureFlags {
     pub fn keymap_files(&self) -> Vec<&'static str> {
-        vec![]
+        let mut experimental_keymaps = Vec::new();
+
+        if self.mnemonic_keybindings {
+            experimental_keymaps.push("keymaps/experiments/mnemonic.json");
+        }
+
+        experimental_keymaps
     }
 }
 

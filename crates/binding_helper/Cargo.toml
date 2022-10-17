@@ -1,0 +1,15 @@
+[package]
+name = "binding_helper"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/binding_helper.rs"
+doctest = false
+
+[dependencies]
+collections = { path = "../collections" }
+gpui = { path = "../gpui" }
+settings = { path = "../settings" }
+smallvec = { version = "1.6", features = ["union"] }
+itertools = "0.10"

@@ -387,7 +387,7 @@ impl View for TerminalView {
     }
 
     fn keymap_context(&self, cx: &gpui::AppContext) -> gpui::keymap::Context {
-        let mut context = Self::default_keymap_context();
+        let mut context = Self::default_keymap_context(cx);
         if self.modal {
             context.set.insert("ModalTerminal".into());
         }

@@ -591,6 +591,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "binding_helper"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
+ "itertools",
+ "settings",
+ "smallvec",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7568,6 +7579,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "binding_helper",
  "call",
  "client",
  "collections",

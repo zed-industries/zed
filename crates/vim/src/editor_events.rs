@@ -22,20 +22,9 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
         vim.active_editor = Some(editor.downgrade());
         vim.selection_subscription = Some(cx.subscribe(editor, |editor, event, cx| {
             if editor.read(cx).leader_replica_id().is_none() {
-                match event {
-                    editor::Event::SelectionsChanged { local: true } => {
-                        let newest_empty =
-                            editor.read(cx).selections.newest::<usize>(cx).is_empty();
-                        editor_local_selections_changed(newest_empty, cx);
-                    }
-                    editor::Event::IgnoredInput => {
-                        Vim::update(cx, |vim, cx| {
-                            if vim.active_operator().is_some() {
-                                vim.clear_operator(cx);
-                            }
-                        });
-                    }
-                    _ => (),
+                if let editor::Event::SelectionsChanged { local: true } = event {
+                    let newest_empty = editor.read(cx).selections.newest::<usize>(cx).is_empty();
+                    editor_local_selections_changed(newest_empty, cx);
                 }
             }
         }));

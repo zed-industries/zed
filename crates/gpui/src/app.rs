@@ -72,11 +72,11 @@ pub trait View: Entity + Sized {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
-        Self::default_keymap_context()
+    fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
+        Self::default_keymap_context(cx)
     }
-    fn default_keymap_context() -> keymap::Context {
-        let mut cx = keymap::Context::default();
+    fn default_keymap_context(cx: &AppContext) -> keymap::Context {
+        let mut cx = cx.global_keymap_context();
         cx.set.insert(Self::ui_name().into());
         cx
     }
@@ -594,6 +594,7 @@ type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContex
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
+type KeystrokeCallback = Box<dyn FnMut(&Keystroke, &MatchResult, &mut MutableAppContext) -> bool>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
@@ -619,6 +620,7 @@ pub struct MutableAppContext {
     observations: CallbackCollection<usize, ObservationCallback>,
     window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
     window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
+    keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
 
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
@@ -656,6 +658,7 @@ impl MutableAppContext {
                 windows: Default::default(),
                 globals: Default::default(),
                 element_states: Default::default(),
+                global_keymap_contaxt: Default::default(),
                 ref_counts: Arc::new(Mutex::new(ref_counts)),
                 background,
                 font_cache,
@@ -678,6 +681,7 @@ impl MutableAppContext {
             global_observations: Default::default(),
             window_activation_observations: Default::default(),
             window_fullscreen_observations: Default::default(),
+            keystroke_observations: Default::default(),
             action_dispatch_observations: Default::default(),
             presenters_and_platform_windows: Default::default(),
             foreground,
@@ -1128,17 +1132,17 @@ impl MutableAppContext {
         let observed = handle.downgrade();
         let view_id = handle.id();
 
-        self.pending_effects.push_back(Effect::FocusObservation {
+        self.focus_observations.add_callback(
             view_id,
             subscription_id,
-            callback: Box::new(move |focused, cx| {
+            Box::new(move |focused, cx| {
                 if let Some(observed) = observed.upgrade(cx) {
                     callback(observed, focused, cx)
                 } else {
                     false
                 }
             }),
-        });
+        );
 
         Subscription::FocusObservation {
             id: subscription_id,
@@ -1224,12 +1228,11 @@ impl MutableAppContext {
         F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
-        self.pending_effects
-            .push_back(Effect::WindowActivationObservation {
-                window_id,
-                subscription_id,
-                callback: Box::new(callback),
-            });
+        self.window_activation_observations.add_callback(
+            window_id,
+            subscription_id,
+            Box::new(callback),
+        );
         Subscription::WindowActivationObservation {
             id: subscription_id,
             window_id,
@@ -1242,16 +1245,30 @@ impl MutableAppContext {
         F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
-        self.pending_effects
-            .push_back(Effect::WindowFullscreenObservation {
-                window_id,
-                subscription_id,
-                callback: Box::new(callback),
-            });
+        self.window_fullscreen_observations.add_callback(
+            window_id,
+            subscription_id,
+            Box::new(callback),
+        );
         Subscription::WindowFullscreenObservation {
             id: subscription_id,
             window_id,
             observations: Some(self.window_activation_observations.downgrade()),
+        }
+    }
+
+    pub fn observe_keystrokes<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&Keystroke, &MatchResult, &mut MutableAppContext) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.keystroke_observations
+            .add_callback(window_id, subscription_id, Box::new(callback));
+
+        Subscription::UnmappedKeypressObservation {
+            id: subscription_id,
+            window_id,
+            observations: Some(self.keystroke_observations.downgrade()),
         }
     }
 
@@ -1331,6 +1348,31 @@ impl MutableAppContext {
                     None
                 }
             })
+    }
+
+    pub fn available_bindings(
+        &self,
+        window_id: usize,
+        view_id: usize,
+    ) -> BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> {
+        let mut result: BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> = Default::default();
+
+        for parent_view_id in self.parents(window_id, view_id) {
+            let keymap_context = self
+                .cx
+                .views
+                .get(&(window_id, parent_view_id))
+                .unwrap()
+                .keymap_context(self.as_ref());
+
+            result.append(
+                &mut self
+                    .keystroke_matcher
+                    .available_bindings(parent_view_id, &keymap_context),
+            );
+        }
+
+        result
     }
 
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
@@ -1538,13 +1580,14 @@ impl MutableAppContext {
                 })
                 .collect();
 
-            match self
+            let match_result = self
                 .keystroke_matcher
-                .push_keystroke(keystroke.clone(), dispatch_path)
-            {
+                .push_keystroke(keystroke.clone(), dispatch_path);
+
+            let keystroke_handled = match match_result {
                 MatchResult::None => false,
                 MatchResult::Pending => true,
-                MatchResult::Match { view_id, action } => {
+                result @ MatchResult::Match { view_id, action } => {
                     if self.handle_dispatch_action_from_effect(
                         window_id,
                         Some(view_id),
@@ -1556,8 +1599,12 @@ impl MutableAppContext {
                         false
                     }
                 }
-            }
+            };
+
+            self.keystroke(window_id, keystroke.clone(), match_result.clone());
+            keystroke_handled
         } else {
+            self.keystroke(window_id, keystroke.clone(), MatchResult::None);
             false
         }
     }
@@ -2036,18 +2083,6 @@ impl MutableAppContext {
                             self.handle_focus_effect(window_id, view_id);
                         }
 
-                        Effect::FocusObservation {
-                            view_id,
-                            subscription_id,
-                            callback,
-                        } => {
-                            self.focus_observations.add_or_remove_callback(
-                                view_id,
-                                subscription_id,
-                                callback,
-                            );
-                        }
-
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
                                 window
@@ -2056,30 +2091,10 @@ impl MutableAppContext {
                             }
                         }
 
-                        Effect::WindowActivationObservation {
-                            window_id,
-                            subscription_id,
-                            callback,
-                        } => self.window_activation_observations.add_or_remove_callback(
-                            window_id,
-                            subscription_id,
-                            callback,
-                        ),
-
                         Effect::ActivateWindow {
                             window_id,
                             is_active,
                         } => self.handle_window_activation_effect(window_id, is_active),
-
-                        Effect::WindowFullscreenObservation {
-                            window_id,
-                            subscription_id,
-                            callback,
-                        } => self.window_fullscreen_observations.add_or_remove_callback(
-                            window_id,
-                            subscription_id,
-                            callback,
-                        ),
 
                         Effect::FullscreenWindow {
                             window_id,
@@ -2109,6 +2124,11 @@ impl MutableAppContext {
                         } => {
                             self.handle_window_should_close_subscription_effect(window_id, callback)
                         }
+                        Effect::Keystroke {
+                            window_id,
+                            keystroke,
+                            result,
+                        } => self.handle_keystroke_effect(window_id, keystroke, result),
                     }
                     self.pending_notifications.clear();
                     self.remove_dropped_entities();
@@ -2184,6 +2204,14 @@ impl MutableAppContext {
         self.pending_effects.push_back(Effect::ActivateWindow {
             window_id,
             is_active,
+        });
+    }
+
+    fn keystroke(&mut self, window_id: usize, keystroke: Keystroke, result: MatchResult) {
+        self.pending_effects.push_back(Effect::Keystroke {
+            window_id,
+            keystroke,
+            result,
         });
     }
 
@@ -2295,6 +2323,20 @@ impl MutableAppContext {
             });
 
             Some(())
+        });
+    }
+
+    fn handle_keystroke_effect(
+        &mut self,
+        window_id: usize,
+        keystroke: Keystroke,
+        result: MatchResult,
+    ) {
+        self.update(|this| {
+            let mut observations = this.keystroke_observations.clone();
+            observations.emit_and_cleanup(window_id, this, {
+                move |callback, this| callback(&keystroke, &result, this)
+            });
         });
     }
 
@@ -2492,6 +2534,10 @@ impl MutableAppContext {
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.ref_counts.lock().leak_detector.clone()
     }
+
+    pub fn update_global_keymap_context(&mut self, update: impl FnOnce(&mut keymap::Context)) {
+        update(&mut self.cx.global_keymap_contaxt);
+    }
 }
 
 impl ReadModel for MutableAppContext {
@@ -2631,6 +2677,7 @@ pub struct AppContext {
     ref_counts: Arc<Mutex<RefCounts>>,
     font_cache: Arc<FontCache>,
     platform: Arc<dyn Platform>,
+    global_keymap_contaxt: keymap::Context,
 }
 
 impl AppContext {
@@ -2678,6 +2725,10 @@ impl AppContext {
         } else {
             panic!("no global has been added for {}", type_name::<T>());
         }
+    }
+
+    pub fn global_keymap_context(&self) -> keymap::Context {
+        self.global_keymap_contaxt.clone()
     }
 }
 
@@ -2825,11 +2876,6 @@ pub enum Effect {
         window_id: usize,
         view_id: Option<usize>,
     },
-    FocusObservation {
-        view_id: usize,
-        subscription_id: usize,
-        callback: FocusObservationCallback,
-    },
     ResizeWindow {
         window_id: usize,
     },
@@ -2841,15 +2887,10 @@ pub enum Effect {
         window_id: usize,
         is_active: bool,
     },
-    WindowActivationObservation {
+    Keystroke {
         window_id: usize,
-        subscription_id: usize,
-        callback: WindowActivationCallback,
-    },
-    WindowFullscreenObservation {
-        window_id: usize,
-        subscription_id: usize,
-        callback: WindowFullscreenCallback,
+        keystroke: Keystroke,
+        result: MatchResult,
     },
     RefreshWindows,
     DispatchActionFrom {
@@ -2931,15 +2972,6 @@ impl Debug for Effect {
                 .field("window_id", window_id)
                 .field("view_id", view_id)
                 .finish(),
-            Effect::FocusObservation {
-                view_id,
-                subscription_id,
-                ..
-            } => f
-                .debug_struct("Effect::FocusObservation")
-                .field("view_id", view_id)
-                .field("subscription_id", subscription_id)
-                .finish(),
             Effect::DispatchActionFrom {
                 window_id, view_id, ..
             } => f
@@ -2954,15 +2986,6 @@ impl Debug for Effect {
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
                 .field("window_id", window_id)
-                .finish(),
-            Effect::WindowActivationObservation {
-                window_id,
-                subscription_id,
-                ..
-            } => f
-                .debug_struct("Effect::WindowActivationObservation")
-                .field("window_id", window_id)
-                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::ActivateWindow {
                 window_id,
@@ -2980,19 +3003,20 @@ impl Debug for Effect {
                 .field("window_id", window_id)
                 .field("is_fullscreen", is_fullscreen)
                 .finish(),
-            Effect::WindowFullscreenObservation {
-                window_id,
-                subscription_id,
-                callback: _,
-            } => f
-                .debug_struct("Effect::WindowFullscreenObservation")
-                .field("window_id", window_id)
-                .field("subscription_id", subscription_id)
-                .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
             Effect::WindowShouldCloseSubscription { window_id, .. } => f
                 .debug_struct("Effect::WindowShouldCloseSubscription")
                 .field("window_id", window_id)
+                .finish(),
+            Effect::Keystroke {
+                window_id,
+                keystroke,
+                result,
+            } => f
+                .debug_struct("Effect::Keystroke")
+                .field("window_id", window_id)
+                .field("keystroke", keystroke)
+                .field("result", result)
                 .finish(),
         }
     }
@@ -3817,6 +3841,24 @@ impl<'a, T: View> ViewContext<'a, T> {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
                         callback(observer, active, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
+    }
+
+    pub fn observe_keystrokes<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, &Keystroke, &MatchResult, &mut ViewContext<T>) -> bool,
+    {
+        let observer = self.weak_handle();
+        self.app
+            .observe_keystrokes(self.window_id(), move |keystroke, result, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, keystroke, result, cx);
                     });
                     true
                 } else {
@@ -5017,6 +5059,11 @@ pub enum Subscription {
         window_id: usize,
         observations: Option<Weak<Mapping<usize, WindowFullscreenCallback>>>,
     },
+    UnmappedKeypressObservation {
+        id: usize,
+        window_id: usize,
+        observations: Option<Weak<Mapping<usize, KeystrokeCallback>>>,
+    },
 
     ReleaseObservation {
         id: usize,
@@ -5059,6 +5106,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::WindowFullscreenObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::UnmappedKeypressObservation { observations, .. } => {
                 observations.take();
             }
         }
@@ -5196,6 +5246,27 @@ impl Drop for Subscription {
                 }
             }
             Subscription::WindowFullscreenObservation {
+                id,
+                window_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations
+                        .lock()
+                        .entry(*window_id)
+                        .or_default()
+                        .entry(*id)
+                    {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+            Subscription::UnmappedKeypressObservation {
                 id,
                 window_id,
                 observations,

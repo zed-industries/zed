@@ -1,0 +1,117 @@
+[
+    // Leader Key. The first binding which triggers the mnemonic bindings
+    {
+        "context": "Workspace",
+        "bindings": {
+            "cmd-shift-space": "zed::Leader"
+        }
+    },
+    {
+        "context": "Workspace && vim_mode == normal && vim_operator == none",
+        "bindings": {
+            "space": "zed::Leader"
+        }
+    },
+    // Top Level. All behind <Leader>
+    {
+        "context": "Leader && Workspace",
+        "bindings": {
+            "1": [
+                "workspace::ActivatePane",
+                0
+            ],
+            "2": [
+                "workspace::ActivatePane",
+                1
+            ],
+            "3": [
+                "workspace::ActivatePane",
+                2
+            ],
+            "4": [
+                "workspace::ActivatePane",
+                3
+            ],
+            "5": [
+                "workspace::ActivatePane",
+                4
+            ],
+            "6": [
+                "workspace::ActivatePane",
+                5
+            ],
+            "7": [
+                "workspace::ActivatePane",
+                6
+            ],
+            "8": [
+                "workspace::ActivatePane",
+                7
+            ],
+            "9": [
+                "workspace::ActivatePane",
+                8
+            ],
+            "space": "command_palette::Toggle",
+            "q q": "zed::Quit"
+        }
+    },
+    // File bindings. All behind <Leader> f
+    {
+        "context": "Leader",
+        "bindings": {
+            "f s": "workspace::Save",
+            "f shift-s": "workspace::SaveAs",
+            "f a": "workspace::SaveAll"
+        }
+    },
+    {
+        "context": "Leader && Workspace",
+        "bindings": {
+            "f f": "file_finder::Toggle",
+            "f e k": "zed::OpenKeymap",
+            "f e K": "zed::OpenDefaultKeymap",
+            "f e s": "zed::OpenSettings",
+            "f e S": "zed::OpenDefaultSettings"
+        }
+    },
+    // Window Bindings. All behind <Leader> w
+    {
+        "context": "Leader",
+        "bindings": {
+            "w q": "workspace::CloseWindow",
+            "w =": "zed::IncreaseBufferFontSize",
+            "w -": "zed::DecreaseBufferFontSize",
+            "w 0": "zed::ResetBufferFontSize",
+            "w h": "zed::Hide",
+            "w H": "zed::HideOthers",
+            "w m": "zed::Minimize",
+            "w f": "zed::ToggleFullScreen"
+        }
+    },
+    {
+        "context": "Leader && Pane",
+        "bindings": {
+            "w s left": "pane::SplitLeft",
+            "w s down": "pane::SplitDown",
+            "w s up": "pane::SplitUp",
+            "w s right": "pane::SplitRight",
+            "w y": "pane::SplitLeft",
+            "w u": "pane::SplitDown",
+            "w i": "pane::SplitUp",
+            "w o": "pane::SplitRight"
+        }
+    },
+    // Tab Bindings. All behind <Leader> t
+    {
+        "context": "Leader && Pane",
+        "bindings": {
+            "t n": "pane::ActivateNextItem",
+            "t p": "pane::ActivatePrevItem",
+            "t d": "pane::CloseActiveItem",
+            "t D": "pane::CloseInactiveItems",
+            "t t": "workspace::NewTerminal",
+            "t e": "workspace::NewFile"
+        }
+    }
+]

@@ -1,5 +1,6 @@
 use crate::Action;
 use anyhow::{anyhow, Result};
+use collections::BTreeMap;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -35,7 +36,17 @@ pub struct Binding {
     context_predicate: Option<ContextPredicate>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl Debug for Binding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Binding")
+            .field("keystrokes", &self.keystrokes)
+            .field(&self.action.name(), &"..")
+            .field("context_predicate", &self.context_predicate)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Keystroke {
     pub ctrl: bool,
     pub alt: bool,
@@ -51,7 +62,7 @@ pub struct Context {
     pub map: HashMap<String, String>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum ContextPredicate {
     Identifier(String),
     Equal(String, String),
@@ -110,6 +121,19 @@ impl PartialEq for MatchResult {
                 },
             ) => view_id == other_view_id && action.eq(other_action.as_ref()),
             _ => false,
+        }
+    }
+}
+
+impl Clone for MatchResult {
+    fn clone(&self) -> Self {
+        match self {
+            MatchResult::None => MatchResult::None,
+            MatchResult::Pending => MatchResult::Pending,
+            MatchResult::Match { view_id, action } => MatchResult::Match {
+                view_id: *view_id,
+                action: Action::boxed_clone(action.as_ref()),
+            },
         }
     }
 }
@@ -227,6 +251,42 @@ impl Matcher {
         }
         None
     }
+
+    pub fn available_bindings(
+        &self,
+        view_id: usize,
+        context: &Context,
+    ) -> BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> {
+        let mut result: BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> = Default::default();
+
+        let pending_keystrokes = self
+            .pending
+            .get(&view_id)
+            .map(|p| p.keystrokes.clone())
+            .unwrap_or_default();
+
+        for binding in self.keymap.bindings.iter().rev() {
+            if binding.keystrokes.starts_with(&pending_keystrokes)
+                && binding
+                    .context_predicate
+                    .as_ref()
+                    .map(|c| c.eval(context))
+                    .unwrap_or(true)
+            {
+                let next_keystrokes = binding
+                    .keystrokes
+                    .iter()
+                    .skip(pending_keystrokes.len())
+                    .cloned()
+                    .collect();
+                if !result.contains_key(&next_keystrokes) {
+                    result.insert(next_keystrokes, binding);
+                }
+            }
+        }
+
+        result
+    }
 }
 
 impl Default for Matcher {
@@ -305,6 +365,13 @@ impl Binding {
 
     pub fn action(&self) -> &dyn Action {
         self.action.as_ref()
+    }
+
+    pub fn context_contains_identifier(&self, id: &str) -> bool {
+        self.context_predicate
+            .as_ref()
+            .map(|pred| pred.contains_identifier(id))
+            .unwrap_or(false)
     }
 }
 
@@ -484,6 +551,16 @@ impl ContextPredicate {
             Self::Not(pred) => !pred.eval(cx),
             Self::And(left, right) => left.eval(cx) && right.eval(cx),
             Self::Or(left, right) => left.eval(cx) || right.eval(cx),
+        }
+    }
+
+    fn contains_identifier(&self, id: &str) -> bool {
+        match self {
+            Self::Identifier(name) => name == id,
+            Self::Not(pred) => pred.contains_identifier(id),
+            Self::And(left, right) => left.contains_identifier(id) || right.contains_identifier(id),
+            Self::Or(left, right) => left.contains_identifier(id) || right.contains_identifier(id),
+            _ => false,
         }
     }
 }

@@ -12,8 +12,10 @@ mod visual;
 
 use collections::HashMap;
 use command_palette::CommandPaletteFilter;
-use editor::{Bias, Cancel, Editor};
-use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
+use editor::{Bias, Cancel, CursorShape, Editor};
+use gpui::{
+    impl_actions, keymap::MatchResult, MutableAppContext, Subscription, ViewContext, WeakViewHandle,
+};
 use language::CursorShape;
 use serde::Deserialize;
 
@@ -79,6 +81,21 @@ pub fn init(cx: &mut MutableAppContext) {
         })
     })
     .detach();
+}
+
+// Any unmapped keypresses should clear any currently active pending operators
+pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
+    cx.observe_keystrokes(window_id, |_keystroke, result, cx| {
+        if let MatchResult::None = result {
+            Vim::update(cx, |vim, cx| {
+                if vim.active_operator().is_some() {
+                    vim.clear_operator(cx);
+                }
+            });
+        }
+        true
+    })
+    .detach()
 }
 
 #[derive(Default)]
@@ -201,6 +218,10 @@ impl Vim {
         let state = &self.state;
         let cursor_shape = state.cursor_shape();
 
+        let enabled = self.enabled;
+        cx.update_global_keymap_context(|context| {
+            state.update_global_keymap_context(context, enabled)
+        });
         cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
             if self.enabled {
                 filter.filtered_namespaces.remove("vim");
@@ -212,20 +233,17 @@ impl Vim {
         for editor in self.editors.values() {
             if let Some(editor) = editor.upgrade(cx) {
                 editor.update(cx, |editor, cx| {
-                    if self.enabled {
+                    if enabled {
                         editor.set_cursor_shape(cursor_shape, cx);
                         editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
                         editor.set_input_enabled(!state.vim_controlled());
                         editor.selections.line_mode =
                             matches!(state.mode, Mode::Visual { line: true });
-                        let context_layer = state.keymap_context_layer();
-                        editor.set_keymap_context_layer::<Self>(context_layer);
                     } else {
                         editor.set_cursor_shape(CursorShape::Bar, cx);
                         editor.set_clip_at_line_ends(false, cx);
                         editor.set_input_enabled(true);
                         editor.selections.line_mode = false;
-                        editor.remove_keymap_context_layer::<Self>();
                     }
                 });
             }

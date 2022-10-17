@@ -19,6 +19,7 @@ use gpui::{
     actions,
     geometry::vector::vec2f,
     impl_actions,
+    keymap::MatchResult,
     platform::{WindowBounds, WindowOptions},
     AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
 };
@@ -65,6 +66,7 @@ actions!(
         ResetBufferFontSize,
         InstallCommandLineInterface,
         ResetDatabase,
+        Leader,
     ]
 );
 
@@ -243,6 +245,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
 
+    if cx.global::<Settings>().experiments.mnemonic_keybindings {
+        cx.add_action(|_: &mut Workspace, _: &Leader, cx| {
+            cx.update_global_keymap_context(|context| {
+                context.set.insert("Leader".to_string());
+            });
+        });
+    }
+
     activity_indicator::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
@@ -336,6 +346,29 @@ pub fn initialize_workspace(
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+
+    let window_id = cx.window_id();
+    vim::observe_keypresses(window_id, cx);
+    if cx.global::<Settings>().experiments.mnemonic_keybindings {
+        cx.observe_keystrokes(|_this, _key, result, cx| {
+            let clear_leader = match result {
+                MatchResult::Action(action) => {
+                    action.namespace() != "zed" || action.name() != "Leader"
+                }
+                MatchResult::None => true,
+                MatchResult::Pending => false,
+            };
+
+            if clear_leader {
+                cx.update_global_keymap_context(|context| {
+                    context.set.remove("Leader");
+                });
+            }
+
+            true
+        })
+        .detach();
+    }
 
     cx.on_window_should_close(|workspace, cx| {
         if let Some(task) = workspace.close(&Default::default(), cx) {

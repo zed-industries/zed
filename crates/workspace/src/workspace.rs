@@ -12,6 +12,7 @@ mod status_bar;
 mod toolbar;
 
 use anyhow::{anyhow, Context, Result};
+use binding_helper::BindingHelper;
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
@@ -1020,6 +1021,7 @@ pub struct Workspace {
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
     active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
+    binding_helper: ViewHandle<BindingHelper>,
     _observe_current_user: Task<()>,
 }
 
@@ -1164,6 +1166,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
+            binding_helper: cx.add_view(BindingHelper::new),
             _observe_current_user,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
@@ -2781,6 +2784,7 @@ impl View for Workspace {
                     .boxed(),
             )
             .with_children(DragAndDrop::render(cx))
+            .with_child(ChildView::new(&self.binding_helper, cx).boxed())
             .with_children(self.render_disconnected_overlay(cx))
             .named("workspace")
     }
@@ -2799,8 +2803,8 @@ impl View for Workspace {
         }
     }
 
-    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
-        let mut keymap = Self::default_keymap_context();
+    fn keymap_context(&self, cx: &AppContext) -> gpui::keymap::Context {
+        let mut keymap = Self::default_keymap_context(cx);
         if self.active_pane() == self.dock_pane() {
             keymap.set.insert("Dock".into());
         }

@@ -6461,7 +6461,6 @@ pub enum Event {
     SelectionsChanged { local: bool },
     ScrollPositionChanged { local: bool },
     Closed,
-    IgnoredInput,
 }
 
 pub struct EditorFocused(pub ViewHandle<Editor>);
@@ -6578,8 +6577,8 @@ impl View for Editor {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
-        let mut context = Self::default_keymap_context();
+    fn keymap_context(&self, cx: &AppContext) -> gpui::keymap::Context {
+        let mut context = Self::default_keymap_context(cx);
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
@@ -6645,7 +6644,6 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::IgnoredInput);
             return;
         }
 
@@ -6682,7 +6680,6 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::IgnoredInput);
             return;
         }
 
