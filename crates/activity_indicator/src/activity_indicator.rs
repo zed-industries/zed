@@ -46,6 +46,7 @@ impl ActivityIndicator {
         cx: &mut ViewContext<Workspace>,
     ) -> ViewHandle<ActivityIndicator> {
         let project = workspace.project().clone();
+        let auto_updater = AutoUpdater::get(cx);
         let this = cx.add_view(|cx: &mut ViewContext<Self>| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn_weak(|this, mut cx| async move {
@@ -66,11 +67,14 @@ impl ActivityIndicator {
             })
             .detach();
             cx.observe(&project, |_, _, cx| cx.notify()).detach();
+            if let Some(auto_updater) = auto_updater.as_ref() {
+                cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
+            }
 
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
-                auto_updater: AutoUpdater::get(cx),
+                auto_updater,
             }
         });
         cx.subscribe(&this, move |workspace, _, event, cx| match event {
