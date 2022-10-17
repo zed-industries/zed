@@ -909,6 +909,7 @@ message SelectionSet {
     repeated Selection selections = 2;
     uint32 lamport_timestamp = 3;
     bool line_mode = 4;
+    CursorShape cursor_shape = 5;
 }
 
 message Selection {
@@ -916,6 +917,13 @@ message Selection {
     Anchor start = 2;
     Anchor end = 3;
     bool reversed = 4;
+}
+
+enum CursorShape {
+    CursorBar = 0;
+    CursorBlock = 1;
+    CursorUnderscore = 2;
+    CursorHollow = 3;
 }
 
 message Anchor {
@@ -983,6 +991,7 @@ message Operation {
         uint32 lamport_timestamp = 2;
         repeated Selection selections = 3;
         bool line_mode = 4;
+        CursorShape cursor_shape = 5;
     }
 
     message UpdateCompletionTriggers {

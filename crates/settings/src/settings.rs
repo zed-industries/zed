@@ -28,6 +28,7 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
+    pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub vim_mode: bool,
@@ -234,6 +235,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
+    pub cursor_blink: Option<bool>,
+    #[serde(default)]
     pub hover_popover_enabled: Option<bool>,
     #[serde(default)]
     pub show_completions_on_input: Option<bool>,
@@ -292,6 +295,7 @@ impl Settings {
                 .unwrap(),
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
+            cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             projects_online_by_default: defaults.projects_online_by_default.unwrap(),
@@ -346,6 +350,7 @@ impl Settings {
         );
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
+        merge(&mut self.cursor_blink, data.cursor_blink);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(
             &mut self.show_completions_on_input,
@@ -436,6 +441,7 @@ impl Settings {
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,
+            cursor_blink: true,
             hover_popover_enabled: true,
             show_completions_on_input: true,
             vim_mode: false,

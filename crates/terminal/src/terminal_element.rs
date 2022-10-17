@@ -4,7 +4,7 @@ use alacritty_terminal::{
     index::Point,
     term::{cell::Flags, TermMode},
 };
-use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
+use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
     elements::{Empty, Overlay},
@@ -20,6 +20,7 @@ use gpui::{
     WeakViewHandle,
 };
 use itertools::Itertools;
+use language::CursorShape;
 use ordered_float::OrderedFloat;
 use settings::Settings;
 use theme::TerminalStyle;

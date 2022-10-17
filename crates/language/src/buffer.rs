@@ -111,9 +111,19 @@ pub enum IndentKind {
     Tab,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum CursorShape {
+    #[default]
+    Bar,
+    Block,
+    Underscore,
+    Hollow,
+}
+
 #[derive(Clone, Debug)]
 struct SelectionSet {
     line_mode: bool,
+    cursor_shape: CursorShape,
     selections: Arc<[Selection<Anchor>]>,
     lamport_timestamp: clock::Lamport,
 }
@@ -161,6 +171,7 @@ pub enum Operation {
         selections: Arc<[Selection<Anchor>]>,
         lamport_timestamp: clock::Lamport,
         line_mode: bool,
+        cursor_shape: CursorShape,
     },
     UpdateCompletionTriggers {
         triggers: Vec<String>,
@@ -395,6 +406,7 @@ impl Buffer {
                 selections: set.selections.clone(),
                 lamport_timestamp: set.lamport_timestamp,
                 line_mode: set.line_mode,
+                cursor_shape: set.cursor_shape,
             })
         }));
         operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
@@ -1227,6 +1239,7 @@ impl Buffer {
         &mut self,
         selections: Arc<[Selection<Anchor>]>,
         line_mode: bool,
+        cursor_shape: CursorShape,
         cx: &mut ModelContext<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
@@ -1236,6 +1249,7 @@ impl Buffer {
                 selections: selections.clone(),
                 lamport_timestamp,
                 line_mode,
+                cursor_shape,
             },
         );
         self.send_operation(
@@ -1243,13 +1257,14 @@ impl Buffer {
                 selections,
                 line_mode,
                 lamport_timestamp,
+                cursor_shape,
             },
             cx,
         );
     }
 
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
-        self.set_active_selections(Arc::from([]), false, cx);
+        self.set_active_selections(Arc::from([]), false, Default::default(), cx);
     }
 
     pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
@@ -1474,6 +1489,7 @@ impl Buffer {
                 selections,
                 lamport_timestamp,
                 line_mode,
+                cursor_shape,
             } => {
                 if let Some(set) = self.remote_selections.get(&lamport_timestamp.replica_id) {
                     if set.lamport_timestamp > lamport_timestamp {
@@ -1487,6 +1503,7 @@ impl Buffer {
                         selections,
                         lamport_timestamp,
                         line_mode,
+                        cursor_shape,
                     },
                 );
                 self.text.lamport_clock.observe(lamport_timestamp);
@@ -2236,6 +2253,7 @@ impl BufferSnapshot {
         Item = (
             ReplicaId,
             bool,
+            CursorShape,
             impl Iterator<Item = &Selection<Anchor>> + '_,
         ),
     > + '_ {
@@ -2259,6 +2277,7 @@ impl BufferSnapshot {
                 (
                     *replica_id,
                     set.line_mode,
+                    set.cursor_shape,
                     set.selections[start_ix..end_ix].iter(),
                 )
             })

@@ -12,11 +12,11 @@ use crate::{
         CmdShiftChanged, GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
     },
     mouse_context_menu::DeployMouseContextMenu,
-    EditorStyle,
+    AnchorRangeExt, EditorStyle,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
-use git::diff::{DiffHunk, DiffHunkStatus};
+use git::diff::DiffHunkStatus;
 use gpui::{
     color::Color,
     elements::*,
@@ -35,7 +35,7 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
+use language::{Bias, CursorShape, DiagnosticSeverity, OffsetUtf16, Point, Selection};
 use project::ProjectPath;
 use settings::{GitGutter, Settings};
 use smallvec::SmallVec;
@@ -46,10 +46,17 @@ use std::{
     ops::{DerefMut, Range},
     sync::Arc,
 };
-use theme::DiffStyle;
+
+#[derive(Debug)]
+struct DiffHunkLayout {
+    visual_range: Range<u32>,
+    status: DiffHunkStatus,
+    is_folded: bool,
+}
 
 struct SelectionLayout {
     head: DisplayPoint,
+    cursor_shape: CursorShape,
     range: Range<DisplayPoint>,
 }
 
@@ -57,6 +64,7 @@ impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
+        cursor_shape: CursorShape,
         map: &DisplaySnapshot,
     ) -> Self {
         if line_mode {
@@ -64,6 +72,7 @@ impl SelectionLayout {
             let point_range = map.expand_to_line(selection.range());
             Self {
                 head: selection.head().to_display_point(map),
+                cursor_shape,
                 range: point_range.start.to_display_point(map)
                     ..point_range.end.to_display_point(map),
             }
@@ -71,6 +80,7 @@ impl SelectionLayout {
             let selection = selection.map(|p| p.to_display_point(map));
             Self {
                 head: selection.head(),
+                cursor_shape,
                 range: selection.range(),
             }
         }
@@ -81,19 +91,13 @@ impl SelectionLayout {
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
     style: Arc<EditorStyle>,
-    cursor_shape: CursorShape,
 }
 
 impl EditorElement {
-    pub fn new(
-        view: WeakViewHandle<Editor>,
-        style: EditorStyle,
-        cursor_shape: CursorShape,
-    ) -> Self {
+    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle) -> Self {
         Self {
             view,
             style: Arc::new(style),
-            cursor_shape,
         }
     }
 
@@ -525,85 +529,11 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        struct GutterLayout {
-            line_height: f32,
-            // scroll_position: Vector2F,
-            scroll_top: f32,
-            bounds: RectF,
-        }
-
-        struct DiffLayout<'a> {
-            buffer_row: u32,
-            last_diff: Option<&'a DiffHunk<u32>>,
-        }
-
-        fn diff_quad(
-            hunk: &DiffHunk<u32>,
-            gutter_layout: &GutterLayout,
-            diff_style: &DiffStyle,
-        ) -> Quad {
-            let color = match hunk.status() {
-                DiffHunkStatus::Added => diff_style.inserted,
-                DiffHunkStatus::Modified => diff_style.modified,
-
-                //TODO: This rendering is entirely a horrible hack
-                DiffHunkStatus::Removed => {
-                    let row = hunk.buffer_range.start;
-
-                    let offset = gutter_layout.line_height / 2.;
-                    let start_y =
-                        row as f32 * gutter_layout.line_height + offset - gutter_layout.scroll_top;
-                    let end_y = start_y + gutter_layout.line_height;
-
-                    let width = diff_style.removed_width_em * gutter_layout.line_height;
-                    let highlight_origin = gutter_layout.bounds.origin() + vec2f(-width, start_y);
-                    let highlight_size = vec2f(width * 2., end_y - start_y);
-                    let highlight_bounds = RectF::new(highlight_origin, highlight_size);
-
-                    return Quad {
-                        bounds: highlight_bounds,
-                        background: Some(diff_style.deleted),
-                        border: Border::new(0., Color::transparent_black()),
-                        corner_radius: 1. * gutter_layout.line_height,
-                    };
-                }
-            };
-
-            let start_row = hunk.buffer_range.start;
-            let end_row = hunk.buffer_range.end;
-
-            let start_y = start_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
-            let end_y = end_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
-
-            let width = diff_style.width_em * gutter_layout.line_height;
-            let highlight_origin = gutter_layout.bounds.origin() + vec2f(-width, start_y);
-            let highlight_size = vec2f(width * 2., end_y - start_y);
-            let highlight_bounds = RectF::new(highlight_origin, highlight_size);
-
-            Quad {
-                bounds: highlight_bounds,
-                background: Some(color),
-                border: Border::new(0., Color::transparent_black()),
-                corner_radius: diff_style.corner_radius * gutter_layout.line_height,
-            }
-        }
+        let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
-        let gutter_layout = {
-            let line_height = layout.position_map.line_height;
-            GutterLayout {
-                scroll_top: scroll_position.y() * line_height,
-                line_height,
-                bounds,
-            }
-        };
+        let scroll_top = scroll_position.y() * line_height;
 
-        let mut diff_layout = DiffLayout {
-            buffer_row: scroll_position.y() as u32,
-            last_diff: None,
-        };
-
-        let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
         let show_gutter = matches!(
             &cx.global::<Settings>()
                 .git_overrides
@@ -612,55 +542,104 @@ impl EditorElement {
             GitGutter::TrackedFiles
         );
 
-        // line is `None` when there's a line wrap
+        if show_gutter {
+            Self::paint_diff_hunks(bounds, layout, cx);
+        }
+
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin()
                     + vec2f(
                         bounds.width() - line.width() - layout.gutter_padding,
-                        ix as f32 * gutter_layout.line_height
-                            - (gutter_layout.scroll_top % gutter_layout.line_height),
+                        ix as f32 * line_height - (scroll_top % line_height),
                     );
 
-                line.paint(line_origin, visible_bounds, gutter_layout.line_height, cx);
-
-                if show_gutter {
-                    //This line starts a buffer line, so let's do the diff calculation
-                    let new_hunk = get_hunk(diff_layout.buffer_row, &layout.diff_hunks);
-
-                    let (is_ending, is_starting) = match (diff_layout.last_diff, new_hunk) {
-                        (Some(old_hunk), Some(new_hunk)) if new_hunk == old_hunk => (false, false),
-                        (a, b) => (a.is_some(), b.is_some()),
-                    };
-
-                    if is_ending {
-                        let last_hunk = diff_layout.last_diff.take().unwrap();
-                        cx.scene
-                            .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style));
-                    }
-
-                    if is_starting {
-                        let new_hunk = new_hunk.unwrap();
-                        diff_layout.last_diff = Some(new_hunk);
-                    };
-
-                    diff_layout.buffer_row += 1;
-                }
+                line.paint(line_origin, visible_bounds, line_height, cx);
             }
-        }
-
-        // If we ran out with a diff hunk still being prepped, paint it now
-        if let Some(last_hunk) = diff_layout.last_diff {
-            cx.scene
-                .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style))
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
             let mut x = bounds.width() - layout.gutter_padding;
-            let mut y = *row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
+            let mut y = *row as f32 * line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
-            y += (gutter_layout.line_height - indicator.size().y()) / 2.;
+            y += (line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
+        }
+    }
+
+    fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
+        let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
+        let line_height = layout.position_map.line_height;
+
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_top = scroll_position.y() * line_height;
+
+        for hunk in &layout.hunk_layouts {
+            let color = match (hunk.status, hunk.is_folded) {
+                (DiffHunkStatus::Added, false) => diff_style.inserted,
+                (DiffHunkStatus::Modified, false) => diff_style.modified,
+
+                //TODO: This rendering is entirely a horrible hack
+                (DiffHunkStatus::Removed, false) => {
+                    let row = hunk.visual_range.start;
+
+                    let offset = line_height / 2.;
+                    let start_y = row as f32 * line_height - offset - scroll_top;
+                    let end_y = start_y + line_height;
+
+                    let width = diff_style.removed_width_em * line_height;
+                    let highlight_origin = bounds.origin() + vec2f(-width, start_y);
+                    let highlight_size = vec2f(width * 2., end_y - start_y);
+                    let highlight_bounds = RectF::new(highlight_origin, highlight_size);
+
+                    cx.scene.push_quad(Quad {
+                        bounds: highlight_bounds,
+                        background: Some(diff_style.deleted),
+                        border: Border::new(0., Color::transparent_black()),
+                        corner_radius: 1. * line_height,
+                    });
+
+                    continue;
+                }
+
+                (_, true) => {
+                    let row = hunk.visual_range.start;
+                    let start_y = row as f32 * line_height - scroll_top;
+                    let end_y = start_y + line_height;
+
+                    let width = diff_style.removed_width_em * line_height;
+                    let highlight_origin = bounds.origin() + vec2f(-width, start_y);
+                    let highlight_size = vec2f(width * 2., end_y - start_y);
+                    let highlight_bounds = RectF::new(highlight_origin, highlight_size);
+
+                    cx.scene.push_quad(Quad {
+                        bounds: highlight_bounds,
+                        background: Some(diff_style.modified),
+                        border: Border::new(0., Color::transparent_black()),
+                        corner_radius: 1. * line_height,
+                    });
+
+                    continue;
+                }
+            };
+
+            let start_row = hunk.visual_range.start;
+            let end_row = hunk.visual_range.end;
+
+            let start_y = start_row as f32 * line_height - scroll_top;
+            let end_y = end_row as f32 * line_height - scroll_top;
+
+            let width = diff_style.width_em * line_height;
+            let highlight_origin = bounds.origin() + vec2f(-width, start_y);
+            let highlight_size = vec2f(width * 2., end_y - start_y);
+            let highlight_bounds = RectF::new(highlight_origin, highlight_size);
+
+            cx.scene.push_quad(Quad {
+                bounds: highlight_bounds,
+                background: Some(color),
+                border: Border::new(0., Color::transparent_black()),
+                corner_radius: diff_style.corner_radius * line_height,
+            });
         }
     }
 
@@ -726,7 +705,7 @@ impl EditorElement {
                     cx,
                 );
 
-                if view.show_local_cursors() || *replica_id != local_replica_id {
+                if view.show_local_cursors(cx) || *replica_id != local_replica_id {
                     let cursor_position = selection.head;
                     if layout
                         .visible_display_row_range
@@ -742,7 +721,7 @@ impl EditorElement {
                         if block_width == 0.0 {
                             block_width = layout.position_map.em_width;
                         }
-                        let block_text = if let CursorShape::Block = self.cursor_shape {
+                        let block_text = if let CursorShape::Block = selection.cursor_shape {
                             layout
                                 .position_map
                                 .snapshot
@@ -778,7 +757,7 @@ impl EditorElement {
                             block_width,
                             origin: vec2f(x, y),
                             line_height: layout.position_map.line_height,
-                            shape: self.cursor_shape,
+                            shape: selection.cursor_shape,
                             block_text,
                         });
                     }
@@ -1120,6 +1099,75 @@ impl EditorElement {
                 )],
             )
             .width()
+    }
+
+    //Folds contained in a hunk are ignored apart from shrinking visual size
+    //If a fold contains any hunks then that fold line is marked as modified
+    fn layout_git_gutters(
+        &self,
+        rows: Range<u32>,
+        snapshot: &EditorSnapshot,
+    ) -> Vec<DiffHunkLayout> {
+        let buffer_snapshot = &snapshot.buffer_snapshot;
+        let visual_start = DisplayPoint::new(rows.start, 0).to_point(snapshot).row;
+        let visual_end = DisplayPoint::new(rows.end, 0).to_point(snapshot).row;
+        let hunks = buffer_snapshot.git_diff_hunks_in_range(visual_start..visual_end);
+
+        let mut layouts = Vec::<DiffHunkLayout>::new();
+
+        for hunk in hunks {
+            let hunk_start_point = Point::new(hunk.buffer_range.start, 0);
+            let hunk_end_point = Point::new(hunk.buffer_range.end, 0);
+            let hunk_start_point_sub = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
+            let hunk_end_point_sub = Point::new(
+                hunk.buffer_range
+                    .end
+                    .saturating_sub(1)
+                    .max(hunk.buffer_range.start),
+                0,
+            );
+
+            let is_removal = hunk.status() == DiffHunkStatus::Removed;
+
+            let folds_start = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
+            let folds_end = Point::new(hunk.buffer_range.end + 1, 0);
+            let folds_range = folds_start..folds_end;
+
+            let containing_fold = snapshot.folds_in_range(folds_range).find(|fold_range| {
+                let fold_point_range = fold_range.to_point(buffer_snapshot);
+                let fold_point_range = fold_point_range.start..=fold_point_range.end;
+
+                let folded_start = fold_point_range.contains(&hunk_start_point);
+                let folded_end = fold_point_range.contains(&hunk_end_point_sub);
+                let folded_start_sub = fold_point_range.contains(&hunk_start_point_sub);
+
+                (folded_start && folded_end) || (is_removal && folded_start_sub)
+            });
+
+            let visual_range = if let Some(fold) = containing_fold {
+                let row = fold.start.to_display_point(snapshot).row();
+                row..row
+            } else {
+                let start = hunk_start_point.to_display_point(snapshot).row();
+                let end = hunk_end_point.to_display_point(snapshot).row();
+                start..end
+            };
+
+            let has_existing_layout = match layouts.last() {
+                Some(e) => visual_range == e.visual_range && e.status == hunk.status(),
+                None => false,
+            };
+
+            if !has_existing_layout {
+                layouts.push(DiffHunkLayout {
+                    visual_range,
+                    status: hunk.status(),
+                    is_folded: containing_fold.is_some(),
+                });
+            }
+        }
+
+        layouts
     }
 
     fn layout_line_numbers(
@@ -1476,27 +1524,6 @@ impl EditorElement {
     }
 }
 
-/// Get the hunk that contains buffer_line, starting from start_idx
-/// Returns none if there is none found, and
-fn get_hunk(buffer_line: u32, hunks: &[DiffHunk<u32>]) -> Option<&DiffHunk<u32>> {
-    for i in 0..hunks.len() {
-        // Safety: Index out of bounds is handled by the check above
-        let hunk = hunks.get(i).unwrap();
-        if hunk.buffer_range.contains(&(buffer_line as u32)) {
-            return Some(hunk);
-        } else if hunk.status() == DiffHunkStatus::Removed && buffer_line == hunk.buffer_range.start
-        {
-            return Some(hunk);
-        } else if hunk.buffer_range.start > buffer_line as u32 {
-            // If we've passed the buffer_line, just stop
-            return None;
-        }
-    }
-
-    // We reached the end of the array without finding a hunk, just return none.
-    return None;
-}
-
 impl Element for EditorElement {
     type LayoutState = LayoutState;
     type PaintState = ();
@@ -1622,7 +1649,7 @@ impl Element for EditorElement {
             );
 
             let mut remote_selections = HashMap::default();
-            for (replica_id, line_mode, selection) in display_map
+            for (replica_id, line_mode, cursor_shape, selection) in display_map
                 .buffer_snapshot
                 .remote_selections_in_range(&(start_anchor.clone()..end_anchor.clone()))
             {
@@ -1633,7 +1660,12 @@ impl Element for EditorElement {
                 remote_selections
                     .entry(replica_id)
                     .or_insert(Vec::new())
-                    .push(SelectionLayout::new(selection, line_mode, &display_map));
+                    .push(SelectionLayout::new(
+                        selection,
+                        line_mode,
+                        cursor_shape,
+                        &display_map,
+                    ));
             }
             selections.extend(remote_selections);
 
@@ -1665,7 +1697,12 @@ impl Element for EditorElement {
                     local_selections
                         .into_iter()
                         .map(|selection| {
-                            SelectionLayout::new(selection, view.selections.line_mode, &display_map)
+                            SelectionLayout::new(
+                                selection,
+                                view.selections.line_mode,
+                                view.cursor_shape,
+                                &display_map,
+                            )
                         })
                         .collect(),
                 ));
@@ -1682,10 +1719,7 @@ impl Element for EditorElement {
         let line_number_layouts =
             self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
 
-        let diff_hunks = snapshot
-            .buffer_snapshot
-            .git_diff_hunks_in_range(start_row..end_row)
-            .collect();
+        let hunk_layouts = self.layout_git_gutters(start_row..end_row, &snapshot);
 
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
@@ -1844,7 +1878,7 @@ impl Element for EditorElement {
                 highlighted_rows,
                 highlighted_ranges,
                 line_number_layouts,
-                diff_hunks,
+                hunk_layouts,
                 blocks,
                 selections,
                 context_menu,
@@ -1982,6 +2016,7 @@ pub struct LayoutState {
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
+    hunk_layouts: Vec<DiffHunkLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
@@ -1989,7 +2024,6 @@ pub struct LayoutState {
     show_scrollbars: bool,
     max_row: u32,
     context_menu: Option<(DisplayPoint, ElementBox)>,
-    diff_hunks: Vec<DiffHunk<u32>>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
 }
@@ -2075,20 +2109,6 @@ fn layout_line(
             },
         )],
     )
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum CursorShape {
-    Bar,
-    Block,
-    Underscore,
-    Hollow,
-}
-
-impl Default for CursorShape {
-    fn default() -> Self {
-        CursorShape::Bar
-    }
 }
 
 #[derive(Debug)]
@@ -2331,11 +2351,7 @@ mod tests {
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, None, cx)
         });
-        let element = EditorElement::new(
-            editor.downgrade(),
-            editor.read(cx).style(cx),
-            CursorShape::Bar,
-        );
+        let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -2371,11 +2387,7 @@ mod tests {
             cx.blur();
         });
 
-        let mut element = EditorElement::new(
-            editor.downgrade(),
-            editor.read(cx).style(cx),
-            CursorShape::Bar,
-        );
+        let mut element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
 
         let mut scene = Scene::new(1.0);
         let mut presenter = cx.build_presenter(window_id, 30., Default::default());
