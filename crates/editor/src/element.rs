@@ -1276,6 +1276,7 @@ impl EditorElement {
         line_height: f32,
         style: &EditorStyle,
         line_layouts: &[text_layout::Line],
+        include_root: bool,
         cx: &mut LayoutContext,
     ) -> (f32, Vec<BlockLayout>) {
         let editor = if let Some(editor) = self.view.upgrade(cx) {
@@ -1379,7 +1380,7 @@ impl EditorElement {
                         let font_size =
                             (style.text_scale_factor * self.style.text.font_size).round();
 
-                        let path = buffer.resolve_file_path(cx, true);
+                        let path = buffer.resolve_file_path(cx, include_root);
                         let mut filename = None;
                         let mut parent_path = None;
                         // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
@@ -1608,6 +1609,7 @@ impl Element for EditorElement {
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
         let mut show_scrollbars = false;
+        let mut include_root = false;
         self.update_view(cx.app, |view, cx| {
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
@@ -1670,6 +1672,11 @@ impl Element for EditorElement {
             }
 
             show_scrollbars = view.show_scrollbars();
+            include_root = view
+                .project
+                .as_ref()
+                .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                .unwrap_or_default()
         });
 
         let line_number_layouts =
@@ -1712,6 +1719,7 @@ impl Element for EditorElement {
             line_height,
             &style,
             &line_layouts,
+            include_root,
             cx,
         );
 
