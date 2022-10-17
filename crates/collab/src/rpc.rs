@@ -42,6 +42,7 @@ use std::{
     marker::PhantomData,
     net::SocketAddr,
     ops::{Deref, DerefMut},
+    os::unix::prelude::OsStrExt,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
@@ -941,6 +942,7 @@ impl Server {
                 id: *id,
                 root_name: worktree.root_name.clone(),
                 visible: worktree.visible,
+                abs_path: worktree.abs_path.as_os_str().as_bytes().to_vec(),
             })
             .collect::<Vec<_>>();
 
@@ -989,6 +991,7 @@ impl Server {
             let message = proto::UpdateWorktree {
                 project_id: project_id.to_proto(),
                 worktree_id: *worktree_id,
+                abs_path: worktree.abs_path.as_os_str().as_bytes().to_vec(),
                 root_name: worktree.root_name.clone(),
                 updated_entries: worktree.entries.values().cloned().collect(),
                 removed_entries: Default::default(),

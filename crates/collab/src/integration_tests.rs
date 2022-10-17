@@ -3038,7 +3038,7 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         assert_eq!(references[1].buffer, references[0].buffer);
         assert_eq!(
             three_buffer.file().unwrap().full_path(cx),
-            Path::new("/OUTSIDE_PROJECT/three.rs")
+            Path::new("/root/dir-2/three.rs")
         );
 
         assert_eq!(references[0].range.to_offset(two_buffer), 24..27);

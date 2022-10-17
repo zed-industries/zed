@@ -8,7 +8,7 @@ use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use project::Project;
-use std::sync::Arc;
+use std::{os::unix::prelude::OsStrExt, sync::Arc};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -389,6 +389,7 @@ impl Room {
                         id: worktree.id().to_proto(),
                         root_name: worktree.root_name().into(),
                         visible: worktree.is_visible(),
+                        abs_path: worktree.abs_path().as_os_str().as_bytes().to_vec(),
                     }
                 })
                 .collect(),

@@ -266,6 +266,7 @@ message UpdateWorktree {
     repeated uint64 removed_entries = 5;
     uint64 scan_id = 6;
     bool is_last_update = 7;
+    bytes abs_path = 8;
 }
 
 message UpdateWorktreeExtensions {
@@ -1052,6 +1053,7 @@ message WorktreeMetadata {
     uint64 id = 1;
     string root_name = 2;
     bool visible = 3;
+    bytes abs_path = 4;
 }
 
 message UpdateDiffBase {
