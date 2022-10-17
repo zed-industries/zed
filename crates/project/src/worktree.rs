@@ -1843,12 +1843,10 @@ impl language::File for File {
         if worktree.is_visible() {
             full_path.push(worktree.root_name());
         } else {
-            let home_dir = cx.global::<HomeDir>();
-            let local_path = worktree.as_local().map(|local| local.abs_path.clone());
-            if let Some(path) = local_path {
-                if let Ok(path) = path.strip_prefix(home_dir.0.as_path()) {
+            if let Some(path) = worktree.as_local().map(|local| local.abs_path.clone()) {
+                if let Ok(trimmed_path) = path.strip_prefix(cx.global::<HomeDir>().0.as_path()) {
                     full_path.push("~");
-                    full_path.push(path);
+                    full_path.push(trimmed_path);
                 } else {
                     full_path.push(path)
                 }
