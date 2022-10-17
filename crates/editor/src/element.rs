@@ -1022,7 +1022,14 @@ impl EditorElement {
         for hunk in hunks {
             let hunk_start_point = Point::new(hunk.buffer_range.start, 0);
             let hunk_end_point = Point::new(hunk.buffer_range.end, 0);
-            let hunk_moved_start_point = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
+            let hunk_start_point_sub = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
+            let hunk_end_point_sub = Point::new(
+                hunk.buffer_range
+                    .end
+                    .saturating_sub(1)
+                    .max(hunk.buffer_range.start),
+                0,
+            );
 
             let is_removal = hunk.status() == DiffHunkStatus::Removed;
 
@@ -1032,12 +1039,13 @@ impl EditorElement {
 
             let containing_fold = snapshot.folds_in_range(folds_range).find(|fold_range| {
                 let fold_point_range = fold_range.to_point(buffer_snapshot);
+                let fold_point_range = fold_point_range.start..=fold_point_range.end;
 
                 let folded_start = fold_point_range.contains(&hunk_start_point);
-                let folded_end = fold_point_range.contains(&hunk_end_point);
-                let folded_moved_start = fold_point_range.contains(&hunk_moved_start_point);
+                let folded_end = fold_point_range.contains(&hunk_end_point_sub);
+                let folded_start_sub = fold_point_range.contains(&hunk_start_point_sub);
 
-                (folded_start && folded_end) || (is_removal && folded_moved_start)
+                (folded_start && folded_end) || (is_removal && folded_start_sub)
             });
 
             let visual_range = if let Some(fold) = containing_fold {
