@@ -1379,10 +1379,11 @@ impl EditorElement {
                         let font_size =
                             (style.text_scale_factor * self.style.text.font_size).round();
 
+                        let path = buffer.resolve_file_path(cx, true);
                         let mut filename = None;
                         let mut parent_path = None;
-                        if let Some(file) = buffer.file() {
-                            let path = file.path();
+                        // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
+                        if let Some(path) = path {
                             filename = path.file_name().map(|f| f.to_string_lossy().to_string());
                             parent_path =
                                 path.parent().map(|p| p.to_string_lossy().to_string() + "/");

@@ -2315,6 +2315,18 @@ impl BufferSnapshot {
         self.file.as_deref()
     }
 
+    pub fn resolve_file_path(&self, cx: &AppContext, include_root: bool) -> Option<PathBuf> {
+        if let Some(file) = self.file() {
+            if file.path().file_name().is_none() || include_root {
+                Some(file.full_path(cx))
+            } else {
+                Some(file.path().to_path_buf())
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
