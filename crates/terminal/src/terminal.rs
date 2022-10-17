@@ -1018,55 +1018,34 @@ impl Terminal {
             self.last_content.size,
             self.last_content.display_offset,
         );
-        // let side = mouse_side(position, self.last_content.size);
 
         if self.mouse_mode(e.shift) {
             if let Some(bytes) = mouse_button_report(point, e, true, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
-            self.left_click(e, origin)
-        }
-    }
+            let position = e.position.sub(origin);
+            let point = grid_point(
+                position,
+                self.last_content.size,
+                self.last_content.display_offset,
+            );
+            let side = mouse_side(position, self.last_content.size);
 
-    pub fn left_click(&mut self, e: &DownRegionEvent, origin: Vector2F) {
-        let position = e.position.sub(origin);
-        if !self.mouse_mode(e.shift) {
-            //Hyperlinks
-            {
-                let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
-                if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
-                    open_uri(link.uri()).log_err();
-                } else {
-                    self.events
-                        .push_back(InternalEvent::FindHyperlink(position, true));
-                }
-            }
+            let selection_type = match e.click_count {
+                0 => return, //This is a release
+                1 => Some(SelectionType::Simple),
+                2 => Some(SelectionType::Semantic),
+                3 => Some(SelectionType::Lines),
+                _ => None,
+            };
 
-            // Selections
-            {
-                let point = grid_point(
-                    position,
-                    self.last_content.size,
-                    self.last_content.display_offset,
-                );
-                let side = mouse_side(position, self.last_content.size);
+            let selection =
+                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-                let selection_type = match e.click_count {
-                    0 => return, //This is a release
-                    1 => Some(SelectionType::Simple),
-                    2 => Some(SelectionType::Semantic),
-                    3 => Some(SelectionType::Lines),
-                    _ => None,
-                };
-
-                let selection = selection_type
-                    .map(|selection_type| Selection::new(selection_type, point, side));
-
-                if let Some(sel) = selection {
-                    self.events
-                        .push_back(InternalEvent::SetSelection(Some((sel, point))));
-                }
+            if let Some(sel) = selection {
+                self.events
+                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
             }
         }
     }
@@ -1094,8 +1073,21 @@ impl Terminal {
             if let Some(bytes) = mouse_button_report(point, e, false, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
-        } else if e.button == MouseButton::Left && copy_on_select {
-            self.copy();
+        } else {
+            if e.button == MouseButton::Left && copy_on_select {
+                self.copy();
+            }
+
+            //Hyperlinks
+            if self.selection_phase == SelectionPhase::Ended {
+                let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
+                if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
+                    open_uri(link.uri()).log_err();
+                } else {
+                    self.events
+                        .push_back(InternalEvent::FindHyperlink(position, true));
+                }
+            }
         }
 
         self.selection_phase = SelectionPhase::Ended;
