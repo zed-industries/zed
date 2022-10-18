@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
-    base::{CFRetain, TCFType},
+    base::{CFRelease, CFRetain, TCFType},
     string::{CFString, CFStringRef},
 };
 use futures::{
@@ -18,8 +18,6 @@ use std::{
 pub type Sid = String;
 
 extern "C" {
-    fn LKRelease(object: *const c_void);
-
     fn LKRoomDelegateCreate(
         callback_data: *mut c_void,
         on_did_subscribe_to_remote_video_track: extern "C" fn(
@@ -198,7 +196,7 @@ impl Drop for Room {
     fn drop(&mut self) {
         unsafe {
             LKRoomDisconnect(self.native_room);
-            LKRelease(self.native_room);
+            CFRelease(self.native_room);
         }
     }
 }
@@ -257,7 +255,7 @@ impl RoomDelegate {
 impl Drop for RoomDelegate {
     fn drop(&mut self) {
         unsafe {
-            LKRelease(self.native_delegate);
+            CFRelease(self.native_delegate);
             let _ = Weak::from_raw(self.weak_room);
         }
     }
@@ -273,7 +271,7 @@ impl LocalVideoTrack {
 
 impl Drop for LocalVideoTrack {
     fn drop(&mut self) {
-        unsafe { LKRelease(self.0) }
+        unsafe { CFRelease(self.0) }
     }
 }
 
@@ -336,7 +334,7 @@ impl RemoteVideoTrack {
 
 impl Drop for RemoteVideoTrack {
     fn drop(&mut self) {
-        unsafe { LKRelease(self.native_track) }
+        unsafe { CFRelease(self.native_track) }
     }
 }
 
@@ -358,7 +356,7 @@ impl MacOSDisplay {
 
 impl Drop for MacOSDisplay {
     fn drop(&mut self) {
-        unsafe { LKRelease(self.0) }
+        unsafe { CFRelease(self.0) }
     }
 }
 

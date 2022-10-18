@@ -55,11 +55,6 @@ class LKVideoRenderer: NSObject, VideoRenderer {
     }
 }
 
-@_cdecl("LKRelease")
-public func LKRelease(ptr: UnsafeRawPointer)  {
-    let _ = Unmanaged<AnyObject>.fromOpaque(ptr).takeRetainedValue()
-}
-
 @_cdecl("LKRoomDelegateCreate")
 public func LKRoomDelegateCreate(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void, onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void) -> UnsafeMutableRawPointer {
     let delegate = LKRoomDelegate(data: data, onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack, onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack)
