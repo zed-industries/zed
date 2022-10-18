@@ -1111,7 +1111,6 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "reqwest",
- "rope",
  "rpc",
  "scrypt",
  "serde",
@@ -1647,7 +1646,6 @@ dependencies = [
  "language",
  "postage",
  "project",
- "rope",
  "serde_json",
  "settings",
  "smallvec",
@@ -1804,7 +1802,6 @@ dependencies = [
  "postage",
  "project",
  "rand 0.8.5",
- "rope",
  "rpc",
  "serde",
  "settings",
@@ -2373,7 +2370,6 @@ dependencies = [
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
- "rope",
  "smol",
  "sum_tree",
  "text",
@@ -2421,7 +2417,6 @@ dependencies = [
  "gpui",
  "menu",
  "postage",
- "rope",
  "settings",
  "text",
  "workspace",
@@ -2959,6 +2954,8 @@ dependencies = [
  "editor",
  "gpui",
  "log",
+ "settings",
+ "shellexpand",
  "util",
  "workspace",
 ]
@@ -3045,7 +3042,6 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "regex",
- "rope",
  "rpc",
  "serde",
  "serde_json",
@@ -4272,7 +4268,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rocksdb",
- "rope",
  "rpc",
  "serde",
  "serde_json",
@@ -5328,7 +5323,6 @@ dependencies = [
  "gpui",
  "json_comments",
  "postage",
- "rope",
  "schemars",
  "serde",
  "serde_json",
@@ -6833,7 +6827,6 @@ dependencies = [
  "nvim-rs",
  "parking_lot 0.11.2",
  "project",
- "rope",
  "search",
  "serde",
  "serde_json",
@@ -7524,7 +7517,6 @@ dependencies = [
  "client",
  "collections",
  "context_menu",
- "db",
  "drag_and_drop",
  "fs",
  "futures 0.3.24",
@@ -7582,7 +7574,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.60.0"
+version = "0.60.4"
 dependencies = [
  "activity_indicator",
  "anyhow",

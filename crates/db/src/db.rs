@@ -9,7 +9,6 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Arc;
 
-pub use items::*;
 pub use kvp::*;
 
 pub struct Db {
