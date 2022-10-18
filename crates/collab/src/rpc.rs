@@ -477,6 +477,10 @@ impl Server {
         let mut contacts_to_update = HashSet::default();
         {
             let mut store = self.store().await;
+
+            #[cfg(test)]
+            let removed_connection = store.remove_connection(connection_id).unwrap();
+            #[cfg(not(test))]
             let removed_connection = store.remove_connection(connection_id)?;
 
             for project in removed_connection.hosted_projects {

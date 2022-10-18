@@ -468,6 +468,14 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
+    // User B disconnects the client that is not on the call. Everything should be fine.
+    client_b1.disconnect(&cx_b1.to_async()).unwrap();
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    client_b1
+        .authenticate_and_connect(false, &cx_b1.to_async())
+        .await
+        .unwrap();
+
     // User B hangs up, and user A calls them again.
     active_call_b2.update(cx_b2, |call, cx| call.hang_up(cx).unwrap());
     deterministic.run_until_parked();
@@ -520,9 +528,9 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
-    // User A disconnects up, causing both connections to stop ringing.
+    // User A disconnects, causing both connections to stop ringing.
     server.disconnect_client(client_a.current_user_id(cx_a));
-    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 }
