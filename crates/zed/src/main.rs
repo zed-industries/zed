@@ -23,7 +23,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Fs, ProjectStore};
+use project::{Fs, HomeDir, ProjectStore};
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -98,6 +98,8 @@ fn main() {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
+
+        cx.set_global(HomeDir(zed::paths::HOME.to_path_buf()));
 
         //Setup settings global before binding actions
         cx.set_global(SettingsFile::new(

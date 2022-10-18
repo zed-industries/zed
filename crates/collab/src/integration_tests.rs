@@ -15,7 +15,7 @@ use editor::{
     self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToOffset,
     ToggleCodeActions, Undo,
 };
-use fs::{FakeFs, Fs as _, LineEnding};
+use fs::{FakeFs, Fs as _, HomeDir, LineEnding};
 use futures::{channel::mpsc, Future, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
@@ -3038,7 +3038,7 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         assert_eq!(references[1].buffer, references[0].buffer);
         assert_eq!(
             three_buffer.file().unwrap().full_path(cx),
-            Path::new("three.rs")
+            Path::new("/root/dir-2/three.rs")
         );
 
         assert_eq!(references[0].range.to_offset(two_buffer), 24..27);
@@ -6130,6 +6130,8 @@ impl TestServer {
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
+            cx.set_global(HomeDir(Path::new("/tmp/").to_path_buf()));
+
             let mut settings = Settings::test(cx);
             settings.projects_online_by_default = false;
             cx.set_global(settings);

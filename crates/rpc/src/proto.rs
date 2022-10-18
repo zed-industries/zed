@@ -435,6 +435,7 @@ pub fn split_worktree_update(
             project_id: message.project_id,
             worktree_id: message.worktree_id,
             root_name: message.root_name.clone(),
+            abs_path: message.abs_path.clone(),
             updated_entries,
             removed_entries: mem::take(&mut message.removed_entries),
             scan_id: message.scan_id,

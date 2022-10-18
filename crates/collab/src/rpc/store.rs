@@ -66,6 +66,7 @@ pub struct Collaborator {
 
 #[derive(Default, Serialize)]
 pub struct Worktree {
+    pub abs_path: PathBuf,
     pub root_name: String,
     pub visible: bool,
     #[serde(skip)]

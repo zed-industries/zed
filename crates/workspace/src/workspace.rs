@@ -927,6 +927,9 @@ impl From<&dyn NotificationHandle> for AnyViewHandle {
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Arc<Self> {
+        use fs::HomeDir;
+
+        cx.set_global(HomeDir(Path::new("/tmp/").to_path_buf()));
         let settings = Settings::test(cx);
         cx.set_global(settings);
 

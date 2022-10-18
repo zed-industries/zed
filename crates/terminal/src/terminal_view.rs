@@ -38,18 +38,7 @@ pub struct SendKeystroke(String);
 
 actions!(
     terminal,
-    [
-        Up,
-        Down,
-        CtrlC,
-        Escape,
-        Enter,
-        Clear,
-        Copy,
-        Paste,
-        ShowCharacterPalette,
-        SearchTest
-    ]
+    [Clear, Copy, Paste, ShowCharacterPalette, SearchTest]
 );
 
 impl_actions!(terminal, [SendText, SendKeystroke]);
