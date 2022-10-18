@@ -60,7 +60,8 @@ fn main() {
 
             let mut track_changes = room_b.remote_video_track_updates();
 
-            let display = live_kit_client::display_source().await.unwrap();
+            let displays = live_kit_client::display_sources().await.unwrap();
+            let display = displays.into_iter().next().unwrap();
 
             let track_a = LocalVideoTrack::screen_share_for_display(&display);
             room_a.publish_video_track(&track_a).await.unwrap();
@@ -68,19 +69,13 @@ fn main() {
             let next_update = track_changes.next().await.unwrap();
 
             if let RemoteVideoTrackUpdate::Subscribed(track) = next_update {
-                println!("A !!!!!!!!!!!!");
                 let remote_tracks = room_b.remote_video_tracks("test-participant-1");
-                println!("B !!!!!!!!!!!!");
                 assert_eq!(remote_tracks.len(), 1);
-                println!("C !!!!!!!!!!!!");
                 assert_eq!(remote_tracks[0].publisher_id(), "test-participant-1");
-                println!("D !!!!!!!!!!!!");
-                // dbg!(track.id());
-                // assert_eq!(track.id(), "test-participant-1");
+                assert_eq!(track.publisher_id(), "test-participant-1");
             } else {
                 panic!("unexpected message")
             }
-            println!("E !!!!!!!!!!!!");
 
             cx.platform().quit();
         })

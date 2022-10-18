@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
-    base::TCFType,
+    base::{CFRetain, TCFType},
     string::{CFString, CFStringRef},
 };
 use futures::{
@@ -65,11 +65,11 @@ extern "C" {
     fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
     fn LKRemoteVideoTrackGetSid(track: *const c_void) -> CFStringRef;
 
-    fn LKDisplaySource(
+    fn LKDisplaySources(
         callback_data: *mut c_void,
         callback: extern "C" fn(
             callback_data: *mut c_void,
-            source: *mut c_void,
+            sources: CFArrayRef,
             error: CFStringRef,
         ),
     );
@@ -119,33 +119,29 @@ impl Room {
         async { rx.await.unwrap().context("error publishing video track") }
     }
 
-    pub fn remote_video_tracks(&self, participant_sid: &sid) -> Vec<Arc<RemoteVideoTrack>> {
+    pub fn remote_video_tracks(&self, participant_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
         unsafe {
             let tracks = LKRoomVideoTracksForRemoteParticipant(
                 self.native_room,
-                CFString::new(participant_sid).as_concrete_TypeRef(),
+                CFString::new(participant_id).as_concrete_TypeRef(),
             );
 
             if tracks.is_null() {
                 Vec::new()
             } else {
-                println!("aaaa >>>>>>>>>>>>>>>");
                 let tracks = CFArray::wrap_under_get_rule(tracks);
-                println!("bbbb >>>>>>>>>>>>>>>");
                 tracks
                     .into_iter()
                     .map(|native_track| {
                         let native_track = *native_track;
-                        println!("cccc >>>>>>>>>>>>>>>");
                         let id =
                             CFString::wrap_under_get_rule(LKRemoteVideoTrackGetSid(native_track))
                                 .to_string();
-                        println!("dddd >>>>>>>>>>>>>>>");
-                        Arc::new(RemoteVideoTrack {
+                        Arc::new(RemoteVideoTrack::new(
                             native_track,
-                            publisher_id: participant_sid.into(),
                             id,
-                        })
+                            participant_id.into(),
+                        ))
                     })
                     .collect()
             }
@@ -235,15 +231,10 @@ impl RoomDelegate {
         let room = unsafe { Weak::from_raw(room as *mut Room) };
         let publisher_id = unsafe { CFString::wrap_under_get_rule(publisher_id).to_string() };
         let track_id = unsafe { CFString::wrap_under_get_rule(track_id).to_string() };
-        let track = RemoteVideoTrack {
-            id: track_id,
-            native_track: track,
-            publisher_id,
-        };
+        let track = RemoteVideoTrack::new(track, track_id, publisher_id);
         if let Some(room) = room.upgrade() {
             room.did_subscribe_to_remote_video_track(track);
         }
-        // let _ = Weak::into_raw(room);
     }
 
     extern "C" fn on_did_unsubscribe_from_remote_video_track(
@@ -286,12 +277,23 @@ impl Drop for LocalVideoTrack {
 
 #[derive(Debug)]
 pub struct RemoteVideoTrack {
-    id: Sid,
     native_track: *const c_void,
-    publisher_id: Sid,
+    id: Sid,
+    publisher_id: String,
 }
 
 impl RemoteVideoTrack {
+    pub fn new(native_track: *const c_void, id: Sid, publisher_id: String) -> Self {
+        unsafe {
+            CFRetain(native_track);
+        }
+        Self {
+            native_track,
+            id,
+            publisher_id,
+        }
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -343,22 +345,35 @@ pub enum RemoteVideoTrackUpdate {
 
 pub struct MacOSDisplay(*const c_void);
 
+impl MacOSDisplay {
+    fn new(ptr: *const c_void) -> Self {
+        unsafe {
+            CFRetain(ptr);
+        }
+        Self(ptr)
+    }
+}
+
 impl Drop for MacOSDisplay {
     fn drop(&mut self) {
         unsafe { LKRelease(self.0) }
     }
 }
 
-pub fn display_source() -> impl Future<Output = Result<MacOSDisplay>> {
-    extern "C" fn callback(tx: *mut c_void, source: *mut c_void, error: CFStringRef) {
+pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
+    extern "C" fn callback(tx: *mut c_void, sources: CFArrayRef, error: CFStringRef) {
         unsafe {
-            let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<MacOSDisplay>>);
+            let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<Vec<MacOSDisplay>>>);
 
-            if source.is_null() {
+            if sources.is_null() {
                 let _ = tx.send(Err(anyhow!("{}", CFString::wrap_under_get_rule(error))));
             } else {
-                let source = MacOSDisplay(source);
-                let _ = tx.send(Ok(source));
+                let sources = CFArray::wrap_under_get_rule(sources)
+                    .into_iter()
+                    .map(|source| MacOSDisplay::new(*source))
+                    .collect();
+
+                let _ = tx.send(Ok(sources));
             }
         }
     }
@@ -366,7 +381,7 @@ pub fn display_source() -> impl Future<Output = Result<MacOSDisplay>> {
     let (tx, rx) = oneshot::channel();
 
     unsafe {
-        LKDisplaySource(Box::into_raw(Box::new(tx)) as *mut _, callback);
+        LKDisplaySources(Box::into_raw(Box::new(tx)) as *mut _, callback);
     }
 
     async move { rx.await.unwrap() }

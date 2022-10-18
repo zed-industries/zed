@@ -100,15 +100,7 @@ public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, partic
     
     for (_, participant) in room.remoteParticipants {
         if participant.identity == participantId as String {
-            var tracks = [UnsafeMutableRawPointer]()
-            for publication in participant.videoTracks {
-                let track = publication.track as? RemoteVideoTrack
-                if track != nil {
-                    tracks.append(Unmanaged.passRetained(track!).toOpaque())
-                }
-                
-            }
-            return tracks as CFArray?
+            return participant.videoTracks.compactMap { $0.track as? RemoteVideoTrack } as CFArray?
         }
     }
     
@@ -140,11 +132,10 @@ public func LKRemoteVideoTrackGetSid(track: UnsafeRawPointer) -> CFString {
     return track.sid! as CFString
 }
 
-@_cdecl("LKDisplaySource")
-public func LKDisplaySource(data: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer?, CFString?) -> Void) {
+@_cdecl("LKDisplaySources")
+public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer, CFArray?, CFString?) -> Void) {
     MacOSScreenCapturer.sources(for: .display, includeCurrentApplication: false, preferredMethod: .legacy).then { displaySources in
-        let displaySource = displaySources.first.map { Unmanaged.passRetained($0).toOpaque() }
-        callback(data, displaySource, nil)
+        callback(data, displaySources as CFArray, nil)
     }.catch { error in
         callback(data, nil, error.localizedDescription as CFString)
     }

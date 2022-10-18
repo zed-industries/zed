@@ -600,7 +600,7 @@ impl Room {
         };
 
         cx.foreground().spawn(async move {
-            let display = live_kit_client::display_source().await?;
+            let display = live_kit_client::display_sources().await?;
             // let display = displays
             //     .first()
             //     .ok_or_else(|| anyhow!("no display found"))?;
