@@ -84,9 +84,19 @@ impl FakeServer {
                         let (connection_id, io, incoming) =
                             peer.add_test_connection(server_conn, cx.background());
                         cx.background().spawn(io).detach();
-                        let mut state = state.lock();
-                        state.connection_id = Some(connection_id);
-                        state.incoming = Some(incoming);
+                        {
+                            let mut state = state.lock();
+                            state.connection_id = Some(connection_id);
+                            state.incoming = Some(incoming);
+                        }
+                        peer.send(
+                            connection_id,
+                            proto::Hello {
+                                peer_id: connection_id.0,
+                            },
+                        )
+                        .unwrap();
+
                         Ok(client_conn)
                     })
                 }
