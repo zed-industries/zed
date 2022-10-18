@@ -1603,6 +1603,7 @@ dependencies = [
  "collections",
  "gpui",
  "lazy_static",
+ "log",
  "parking_lot 0.11.2",
  "rusqlite",
  "rusqlite_migration",

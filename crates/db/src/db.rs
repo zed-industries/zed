@@ -1,19 +1,22 @@
-mod items;
 mod kvp;
 mod migrations;
 
-use anyhow::Result;
-use migrations::MIGRATIONS;
-use parking_lot::Mutex;
-use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Arc;
 
-pub use kvp::*;
+use anyhow::Result;
+use log::error;
+use parking_lot::Mutex;
+use rusqlite::Connection;
 
-pub struct Db {
-    connection: Mutex<Connection>,
-    in_memory: bool,
+use migrations::MIGRATIONS;
+
+pub enum Db {
+    Real {
+        connection: Mutex<Connection>,
+        in_memory: bool,
+    },
+    Null,
 }
 
 // To make a migration:
@@ -23,25 +26,43 @@ pub struct Db {
 impl Db {
     /// Open or create a database at the given file path. Falls back to in memory database if the
     /// database at the given path is corrupted
-    pub fn open(path: &Path) -> Result<Arc<Self>> {
-        let conn = Connection::open(path)?;
-
-        Self::initialize(conn, false).or_else(|_| Self::open_in_memory())
+    pub fn open(path: &Path) -> Arc<Self> {
+        Connection::open(path)
+            .map_err(Into::into)
+            .and_then(|connection| Self::initialize(connection, false))
+            .unwrap_or_else(|e| {
+                error!(
+                    "Connecting to db failed. Falling back to in memory db. {}",
+                    e
+                );
+                Self::open_in_memory()
+            })
     }
 
     /// Open a in memory database for testing and as a fallback.
-    pub fn open_in_memory() -> Result<Arc<Self>> {
-        let conn = Connection::open_in_memory()?;
-
-        Self::initialize(conn, true)
+    pub fn open_in_memory() -> Arc<Self> {
+        Connection::open_in_memory()
+            .map_err(Into::into)
+            .and_then(|connection| Self::initialize(connection, true))
+            .unwrap_or_else(|e| {
+                error!("Connecting to in memory db failed. Reverting to null db. {}");
+                Arc::new(Self::Null)
+            })
     }
 
     fn initialize(mut conn: Connection, in_memory: bool) -> Result<Arc<Self>> {
         MIGRATIONS.to_latest(&mut conn)?;
 
-        Ok(Arc::new(Self {
+        Ok(Arc::new(Self::Real {
             connection: Mutex::new(conn),
             in_memory,
         }))
+    }
+
+    fn persisting(&self) -> bool {
+        match self {
+            Db::Real { in_memory, .. } => *in_memory,
+            _ => false,
+        }
     }
 }

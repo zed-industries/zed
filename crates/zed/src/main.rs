@@ -55,7 +55,7 @@ fn main() {
     let db = app.background().spawn(async move {
         project::Db::open(&*zed::paths::DB)
             .log_err()
-            .unwrap_or_else(project::Db::null)
+            .unwrap_or_else(project::Db::open_in_memory())
     });
 
     load_embedded_fonts(&app);

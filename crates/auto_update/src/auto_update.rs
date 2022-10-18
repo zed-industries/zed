@@ -283,9 +283,9 @@ impl AutoUpdater {
         let db = self.db.clone();
         cx.background().spawn(async move {
             if should_show {
-                db.write([(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY, "")])?;
+                db.write_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY, "")?;
             } else {
-                db.delete([(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)])?;
+                db.delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?;
             }
             Ok(())
         })
@@ -293,8 +293,7 @@ impl AutoUpdater {
 
     fn should_show_update_notification(&self, cx: &AppContext) -> Task<Result<bool>> {
         let db = self.db.clone();
-        cx.background().spawn(async move {
-            Ok(db.read([(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)])?[0].is_some())
-        })
+        cx.background()
+            .spawn(async move { Ok(db.read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?.is_some()) })
     }
 }
