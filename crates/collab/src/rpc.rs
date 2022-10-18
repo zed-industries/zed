@@ -369,6 +369,8 @@ impl Server {
                 });
 
             tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
+            this.peer.send(connection_id, proto::Hello { peer_id: connection_id.0 })?;
+            tracing::info!(%user_id, %login, %connection_id, %address, "sent hello message");
 
             if let Some(send_connection_id) = send_connection_id.as_mut() {
                 let _ = send_connection_id.send(connection_id).await;
