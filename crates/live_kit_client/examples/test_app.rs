@@ -1,4 +1,3 @@
-use core_foundation::base::CFRetain;
 use futures::StreamExt;
 use gpui::{
     actions,

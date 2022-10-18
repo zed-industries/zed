@@ -334,7 +334,7 @@ impl Room {
                             let tracks = room.remote_video_tracks(&peer_id.0.to_string());
                             dbg!(tracks.len());
                             for track in tracks {
-                                dbg!(track.id(), track.publisher_id());
+                                dbg!(track.sid(), track.publisher_id());
                                 this.remote_video_track_updated(
                                     RemoteVideoTrackUpdate::Subscribed(track),
                                     cx,
@@ -386,9 +386,9 @@ impl Room {
     ) -> Result<()> {
         match change {
             RemoteVideoTrackUpdate::Subscribed(track) => {
-                dbg!(track.publisher_id(), track.id());
+                dbg!(track.publisher_id(), track.sid());
                 let peer_id = PeerId(track.publisher_id().parse()?);
-                let track_id = track.id().to_string();
+                let track_id = track.sid().to_string();
                 let participant = self
                     .remote_participants
                     .get_mut(&peer_id)
@@ -600,10 +600,10 @@ impl Room {
         };
 
         cx.foreground().spawn(async move {
-            let display = live_kit_client::display_sources().await?;
-            // let display = displays
-            //     .first()
-            //     .ok_or_else(|| anyhow!("no display found"))?;
+            let displays = live_kit_client::display_sources().await?;
+            let display = displays
+                .first()
+                .ok_or_else(|| anyhow!("no display found"))?;
             let track = LocalVideoTrack::screen_share_for_display(&display);
             room.publish_video_track(&track).await?;
             Ok(())

@@ -16,8 +16,6 @@ use std::{
 };
 
 pub type Sid = String;
-#[allow(non_camel_case_types)]
-pub type sid = str;
 
 extern "C" {
     fn LKRelease(object: *const c_void);
@@ -278,24 +276,24 @@ impl Drop for LocalVideoTrack {
 #[derive(Debug)]
 pub struct RemoteVideoTrack {
     native_track: *const c_void,
-    id: Sid,
+    sid: Sid,
     publisher_id: String,
 }
 
 impl RemoteVideoTrack {
-    pub fn new(native_track: *const c_void, id: Sid, publisher_id: String) -> Self {
+    fn new(native_track: *const c_void, sid: Sid, publisher_id: String) -> Self {
         unsafe {
             CFRetain(native_track);
         }
         Self {
             native_track,
-            id,
+            sid,
             publisher_id,
         }
     }
 
-    pub fn id(&self) -> &str {
-        &self.id
+    pub fn sid(&self) -> &str {
+        &self.sid
     }
 
     pub fn publisher_id(&self) -> &str {
