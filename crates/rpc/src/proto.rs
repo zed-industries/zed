@@ -121,6 +121,7 @@ messages!(
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
     (GetUsers, Foreground),
+    (Hello, Foreground),
     (IncomingCall, Foreground),
     (UsersResponse, Foreground),
     (JoinChannel, Foreground),
