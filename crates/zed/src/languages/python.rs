@@ -90,7 +90,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
-        language: &language::Language,
+        language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let label = &item.label;
         let grammar = language.grammar()?;
@@ -112,7 +112,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
-        language: &language::Language,
+        language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         let (text, filter_range, display_range) = match kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
@@ -149,7 +149,6 @@ mod tests {
     use gpui::{ModelContext, MutableAppContext};
     use language::{AutoindentMode, Buffer};
     use settings::Settings;
-    use std::sync::Arc;
 
     #[gpui::test]
     fn test_python_autoindent(cx: &mut MutableAppContext) {
@@ -160,7 +159,7 @@ mod tests {
         cx.set_global(settings);
 
         cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
+            let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);

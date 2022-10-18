@@ -3,6 +3,7 @@ pub mod test;
 
 pub mod channel;
 pub mod http;
+pub mod telemetry;
 pub mod user;
 
 use anyhow::{anyhow, Context, Result};
@@ -11,10 +12,12 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
+use db::Db;
 use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
-    actions, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AsyncAppContext,
-    Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext, ViewHandle,
+    actions, serde_json::Value, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle,
+    AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use http::HttpClient;
 use lazy_static::lazy_static;
@@ -28,9 +31,11 @@ use std::{
     convert::TryFrom,
     fmt::Write as _,
     future::Future,
+    path::PathBuf,
     sync::{Arc, Weak},
     time::{Duration, Instant},
 };
+use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
@@ -48,14 +53,21 @@ lazy_static! {
 }
 
 pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
+pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
+pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 actions!(client, [Authenticate]);
 
-pub fn init(rpc: Arc<Client>, cx: &mut MutableAppContext) {
-    cx.add_global_action(move |_: &Authenticate, cx| {
-        let rpc = rpc.clone();
-        cx.spawn(|cx| async move { rpc.authenticate_and_connect(true, &cx).log_err().await })
+pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
+    cx.add_global_action({
+        let client = client.clone();
+        move |_: &Authenticate, cx| {
+            let client = client.clone();
+            cx.spawn(
+                |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
+            )
             .detach();
+        }
     });
 }
 
@@ -63,6 +75,7 @@ pub struct Client {
     id: usize,
     peer: Arc<Peer>,
     http: Arc<dyn HttpClient>,
+    telemetry: Arc<Telemetry>,
     state: RwLock<ClientState>,
 
     #[allow(clippy::type_complexity)]
@@ -232,10 +245,11 @@ impl Drop for Subscription {
 }
 
 impl Client {
-    pub fn new(http: Arc<dyn HttpClient>) -> Arc<Self> {
+    pub fn new(http: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         Arc::new(Self {
             id: 0,
             peer: Peer::new(),
+            telemetry: Telemetry::new(http.clone(), cx),
             http,
             state: Default::default(),
 
@@ -318,7 +332,7 @@ impl Client {
                 let reconnect_interval = state.reconnect_interval;
                 state._reconnect_task = Some(cx.spawn(|cx| async move {
                     let mut rng = StdRng::from_entropy();
-                    let mut delay = Duration::from_millis(100);
+                    let mut delay = INITIAL_RECONNECTION_DELAY;
                     while let Err(error) = this.authenticate_and_connect(true, &cx).await {
                         log::error!("failed to connect {}", error);
                         if matches!(*this.status().borrow(), Status::ConnectionError) {
@@ -339,6 +353,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
+                self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
             }
             _ => {}
@@ -419,6 +434,29 @@ impl Client {
             client: Arc::downgrade(self),
             id: message_type_id,
         }
+    }
+
+    pub fn add_request_handler<M, E, H, F>(
+        self: &Arc<Self>,
+        model: ModelHandle<E>,
+        handler: H,
+    ) -> Subscription
+    where
+        M: RequestMessage,
+        E: Entity,
+        H: 'static
+            + Send
+            + Sync
+            + Fn(ModelHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = Result<M::Response>>,
+    {
+        self.add_message_handler(model, move |handle, envelope, this, cx| {
+            Self::respond_to_request(
+                envelope.receipt(),
+                handler(handle, envelope, this.clone(), cx),
+                this,
+            )
+        })
     }
 
     pub fn add_view_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
@@ -595,6 +633,9 @@ impl Client {
         if credentials.is_none() && try_keychain {
             credentials = read_credentials_from_keychain(cx);
             read_from_keychain = credentials.is_some();
+            if read_from_keychain {
+                self.report_event("read credentials from keychain", Default::default());
+            }
         }
         if credentials.is_none() {
             let mut status_rx = self.status();
@@ -622,44 +663,51 @@ impl Client {
             self.set_status(Status::Reconnecting, cx);
         }
 
-        match self.establish_connection(&credentials, cx).await {
-            Ok(conn) => {
-                self.state.write().credentials = Some(credentials.clone());
-                if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
-                    write_credentials_to_keychain(&credentials, cx).log_err();
+        futures::select_biased! {
+            connection = self.establish_connection(&credentials, cx).fuse() => {
+                match connection {
+                    Ok(conn) => {
+                        self.state.write().credentials = Some(credentials.clone());
+                        if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
+                            write_credentials_to_keychain(&credentials, cx).log_err();
+                        }
+                        self.set_connection(conn, cx);
+                        Ok(())
+                    }
+                    Err(EstablishConnectionError::Unauthorized) => {
+                        self.state.write().credentials.take();
+                        if read_from_keychain {
+                            cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
+                            self.set_status(Status::SignedOut, cx);
+                            self.authenticate_and_connect(false, cx).await
+                        } else {
+                            self.set_status(Status::ConnectionError, cx);
+                            Err(EstablishConnectionError::Unauthorized)?
+                        }
+                    }
+                    Err(EstablishConnectionError::UpgradeRequired) => {
+                        self.set_status(Status::UpgradeRequired, cx);
+                        Err(EstablishConnectionError::UpgradeRequired)?
+                    }
+                    Err(error) => {
+                        self.set_status(Status::ConnectionError, cx);
+                        Err(error)?
+                    }
                 }
-                self.set_connection(conn, cx).await;
-                Ok(())
             }
-            Err(EstablishConnectionError::Unauthorized) => {
-                self.state.write().credentials.take();
-                if read_from_keychain {
-                    cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
-                    self.set_status(Status::SignedOut, cx);
-                    self.authenticate_and_connect(false, cx).await
-                } else {
-                    self.set_status(Status::ConnectionError, cx);
-                    Err(EstablishConnectionError::Unauthorized)?
-                }
-            }
-            Err(EstablishConnectionError::UpgradeRequired) => {
-                self.set_status(Status::UpgradeRequired, cx);
-                Err(EstablishConnectionError::UpgradeRequired)?
-            }
-            Err(error) => {
+            _ = cx.background().timer(CONNECTION_TIMEOUT).fuse() => {
                 self.set_status(Status::ConnectionError, cx);
-                Err(error)?
+                Err(anyhow!("timed out trying to establish connection"))
             }
         }
     }
 
-    async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
+    fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
         let executor = cx.background();
         log::info!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self
             .peer
-            .add_connection(conn, move |duration| executor.timer(duration))
-            .await;
+            .add_connection(conn, move |duration| executor.timer(duration));
         log::info!("set status to connected {}", connection_id);
         self.set_status(Status::Connected { connection_id }, cx);
         cx.foreground()
@@ -878,6 +926,7 @@ impl Client {
     ) -> Task<Result<Credentials>> {
         let platform = cx.platform();
         let executor = cx.background();
+        let telemetry = self.telemetry.clone();
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
             // zed server to encrypt the user's access token, so that it can'be intercepted by
@@ -956,6 +1005,8 @@ impl Client {
                 .context("failed to decrypt access token")?;
             platform.activate(true);
 
+            telemetry.report_event("authenticate with browser", Default::default());
+
             Ok(Credentials {
                 user_id: user_id.parse()?,
                 access_token,
@@ -1019,6 +1070,18 @@ impl Client {
     ) -> Result<()> {
         log::debug!("rpc respond. client_id:{}. name:{}", self.id, T::NAME);
         self.peer.respond_with_error(receipt, error)
+    }
+
+    pub fn start_telemetry(&self, db: Arc<Db>) {
+        self.telemetry.start(db);
+    }
+
+    pub fn report_event(&self, kind: &str, properties: Value) {
+        self.telemetry.report_event(kind, properties)
+    }
+
+    pub fn telemetry_log_file_path(&self) -> Option<PathBuf> {
+        self.telemetry.log_file_path()
     }
 }
 
@@ -1085,7 +1148,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
         let mut status = client.status();
         assert!(matches!(
@@ -1116,6 +1179,76 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
+    async fn test_connection_timeout(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        deterministic.forbid_parking();
+
+        let user_id = 5;
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let mut status = client.status();
+
+        // Time out when client tries to connect.
+        client.override_authenticate(move |cx| {
+            cx.foreground().spawn(async move {
+                Ok(Credentials {
+                    user_id,
+                    access_token: "token".into(),
+                })
+            })
+        });
+        client.override_establish_connection(|_, cx| {
+            cx.foreground().spawn(async move {
+                future::pending::<()>().await;
+                unreachable!()
+            })
+        });
+        let auth_and_connect = cx.spawn({
+            let client = client.clone();
+            |cx| async move { client.authenticate_and_connect(false, &cx).await }
+        });
+        deterministic.run_until_parked();
+        assert!(matches!(status.next().await, Some(Status::Connecting)));
+
+        deterministic.advance_clock(CONNECTION_TIMEOUT);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::ConnectionError { .. })
+        ));
+        auth_and_connect.await.unwrap_err();
+
+        // Allow the connection to be established.
+        let server = FakeServer::for_client(user_id, &client, cx).await;
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Connected { .. })
+        ));
+
+        // Disconnect client.
+        server.forbid_connections();
+        server.disconnect();
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
+
+        // Time out when re-establishing the connection.
+        server.allow_connections();
+        client.override_establish_connection(|_, cx| {
+            cx.foreground().spawn(async move {
+                future::pending::<()>().await;
+                unreachable!()
+            })
+        });
+        deterministic.advance_clock(2 * INITIAL_RECONNECTION_DELAY);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Reconnecting { .. })
+        ));
+
+        deterministic.advance_clock(CONNECTION_TIMEOUT);
+        assert!(matches!(
+            status.next().await,
+            Some(Status::ReconnectionError { .. })
+        ));
+    }
+
+    #[gpui::test(iterations = 10)]
     async fn test_authenticating_more_than_once(
         cx: &mut TestAppContext,
         deterministic: Arc<Deterministic>,
@@ -1124,7 +1257,7 @@ mod tests {
 
         let auth_count = Arc::new(Mutex::new(0));
         let dropped_auth_count = Arc::new(Mutex::new(0));
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         client.override_authenticate({
             let auth_count = auth_count.clone();
             let dropped_auth_count = dropped_auth_count.clone();
@@ -1173,7 +1306,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
@@ -1219,7 +1352,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.add_model(|_| Model::default());
@@ -1247,7 +1380,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.add_model(|_| Model::default());

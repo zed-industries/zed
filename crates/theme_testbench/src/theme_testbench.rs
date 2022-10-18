@@ -209,9 +209,9 @@ impl ThemeTestbench {
         MouseEventHandler::<TestBenchButton>::new(layer_index + button_index, cx, |state, cx| {
             let style = if let Some(style_override) = style_override {
                 style_override(&style_set)
-            } else if state.clicked.is_some() {
+            } else if state.clicked().is_some() {
                 &style_set.pressed
-            } else if state.hovered {
+            } else if state.hovered() {
                 &style_set.hovered
             } else {
                 &style_set.default

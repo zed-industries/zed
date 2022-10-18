@@ -1,0 +1,22 @@
+[package]
+name = "db"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/db.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+collections = { path = "../collections" }
+anyhow = "1.0.57"
+async-trait = "0.1"
+parking_lot = "0.11.1"
+rocksdb = "0.18"
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+tempdir = { version = "0.3.7" }

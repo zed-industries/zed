@@ -1,4 +1,6 @@
 mod keymap_file;
+pub mod settings_file;
+pub mod watched_json;
 
 use anyhow::Result;
 use gpui::{
@@ -10,10 +12,11 @@ use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, num::NonZeroU32, str, sync::Arc};
+use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
+use tree_sitter::Query;
 use util::ResultExt as _;
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
@@ -32,6 +35,10 @@ pub struct Settings {
     pub default_dock_anchor: DockAnchor,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
+    pub git: GitSettings,
+    pub git_overrides: GitSettings,
+    pub journal_defaults: JournalSettings,
+    pub journal_overrides: JournalSettings,
     pub terminal_defaults: TerminalSettings,
     pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
@@ -41,7 +48,7 @@ pub struct Settings {
     pub staff_mode: bool,
 }
 
-#[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FeatureFlags {
     pub experimental_themes: bool,
 }
@@ -52,27 +59,44 @@ impl FeatureFlags {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct GitSettings {
+    pub git_gutter: Option<GitGutter>,
+    pub gutter_debounce: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitGutter {
+    #[default]
+    TrackedFiles,
+    Hide,
+}
+
+pub struct GitGutterConfig {}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettings {
     pub tab_size: Option<NonZeroU32>,
     pub hard_tabs: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<FormatOnSave>,
+    pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     None,
     EditorWidth,
     PreferredLineLength,
 }
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
+    On,
     Off,
     LanguageServer,
     External {
@@ -81,7 +105,17 @@ pub enum FormatOnSave {
     },
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Formatter {
+    LanguageServer,
+    External {
+        command: String,
+        arguments: Vec<String>,
+    },
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Autosave {
     Off,
@@ -90,7 +124,35 @@ pub enum Autosave {
     OnWindowChange,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct JournalSettings {
+    pub path: Option<String>,
+    pub hour_format: Option<HourFormat>,
+}
+
+impl Default for JournalSettings {
+    fn default() -> Self {
+        Self {
+            path: Some("~".into()),
+            hour_format: Some(Default::default()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HourFormat {
+    Hour12,
+    Hour24,
+}
+
+impl Default for HourFormat {
+    fn default() -> Self {
+        Self::Hour12
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettings {
     pub shell: Option<Shell>,
     pub working_directory: Option<WorkingDirectory>,
@@ -100,9 +162,10 @@ pub struct TerminalSettings {
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
+    pub copy_on_select: Option<bool>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     Off,
@@ -116,7 +179,7 @@ impl Default for TerminalBlink {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     System,
@@ -130,7 +193,7 @@ impl Default for Shell {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
     On,
@@ -143,7 +206,7 @@ impl Default for AlternateScroll {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
     CurrentProjectDirectory,
@@ -152,7 +215,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Deserialize, JsonSchema)]
+#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DockAnchor {
     #[default]
@@ -161,7 +224,7 @@ pub enum DockAnchor {
     Expanded,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     pub experiments: Option<FeatureFlags>,
     #[serde(default)]
@@ -183,7 +246,11 @@ pub struct SettingsFileContent {
     #[serde(flatten)]
     pub editor: EditorSettings,
     #[serde(default)]
+    pub journal: JournalSettings,
+    #[serde(default)]
     pub terminal: TerminalSettings,
+    #[serde(default)]
+    pub git: Option<GitSettings>,
     #[serde(default)]
     #[serde(alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, EditorSettings>,
@@ -195,7 +262,7 @@ pub struct SettingsFileContent {
     pub staff_mode: Option<bool>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub initialization_options: Option<Value>,
@@ -207,6 +274,7 @@ impl Settings {
         font_cache: &FontCache,
         themes: &ThemeRegistry,
     ) -> Self {
+        #[track_caller]
         fn required<T>(value: Option<T>) -> Option<T> {
             assert!(value.is_some(), "missing default setting value");
             value
@@ -236,10 +304,15 @@ impl Settings {
                 soft_wrap: required(defaults.editor.soft_wrap),
                 preferred_line_length: required(defaults.editor.preferred_line_length),
                 format_on_save: required(defaults.editor.format_on_save),
+                formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
             },
             editor_overrides: Default::default(),
-            terminal_defaults: Default::default(),
+            git: defaults.git.unwrap(),
+            git_overrides: Default::default(),
+            journal_defaults: defaults.journal,
+            journal_overrides: Default::default(),
+            terminal_defaults: defaults.terminal,
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
             language_overrides: Default::default(),
@@ -290,7 +363,10 @@ impl Settings {
         }
 
         self.editor_overrides = data.editor;
+        self.git_overrides = data.git.unwrap_or_default();
+        self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;
+        self.terminal_overrides.copy_on_select = data.terminal.copy_on_select;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
         self.lsp = data.lsp;
@@ -326,6 +402,10 @@ impl Settings {
         self.language_setting(language, |settings| settings.format_on_save.clone())
     }
 
+    pub fn formatter(&self, language: Option<&str>) -> Formatter {
+        self.language_setting(language, |settings| settings.formatter.clone())
+    }
+
     pub fn enable_language_server(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.enable_language_server)
     }
@@ -339,6 +419,14 @@ impl Settings {
             .or_else(|| language.and_then(|l| self.language_defaults.get(l).and_then(&f)))
             .or_else(|| f(&self.editor_defaults))
             .expect("missing default")
+    }
+
+    pub fn git_gutter(&self) -> GitGutter {
+        self.git_overrides.git_gutter.unwrap_or_else(|| {
+            self.git
+                .git_gutter
+                .expect("git_gutter should be some by setting setup")
+        })
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -358,12 +446,17 @@ impl Settings {
                 hard_tabs: Some(false),
                 soft_wrap: Some(SoftWrap::None),
                 preferred_line_length: Some(80),
-                format_on_save: Some(FormatOnSave::LanguageServer),
+                format_on_save: Some(FormatOnSave::On),
+                formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
             },
             editor_overrides: Default::default(),
+            journal_defaults: Default::default(),
+            journal_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
+            git: Default::default(),
+            git_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             lsp: Default::default(),
@@ -448,6 +541,103 @@ pub fn settings_file_json_schema(
     serde_json::to_value(root_schema).unwrap()
 }
 
+/// Expects the key to be unquoted, and the value to be valid JSON
+/// (e.g. values should be unquoted for numbers and bools, quoted for strings)
+pub fn write_top_level_setting(
+    mut settings_content: String,
+    top_level_key: &str,
+    new_val: &str,
+) -> String {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(tree_sitter_json::language()).unwrap();
+    let tree = parser.parse(&settings_content, None).unwrap();
+
+    let mut cursor = tree_sitter::QueryCursor::new();
+
+    let query = Query::new(
+        tree_sitter_json::language(),
+        "
+        (document
+            (object
+                (pair
+                    key: (string) @key
+                    value: (_) @value)))
+    ",
+    )
+    .unwrap();
+
+    let mut first_key_start = None;
+    let mut existing_value_range = None;
+    let matches = cursor.matches(&query, tree.root_node(), settings_content.as_bytes());
+    for mat in matches {
+        if mat.captures.len() != 2 {
+            continue;
+        }
+
+        let key = mat.captures[0];
+        let value = mat.captures[1];
+
+        first_key_start.get_or_insert_with(|| key.node.start_byte());
+
+        if let Some(key_text) = settings_content.get(key.node.byte_range()) {
+            if key_text == format!("\"{top_level_key}\"") {
+                existing_value_range = Some(value.node.byte_range());
+                break;
+            }
+        }
+    }
+
+    match (first_key_start, existing_value_range) {
+        (None, None) => {
+            // No document, create a new object and overwrite
+            settings_content.clear();
+            write!(
+                settings_content,
+                "{{\n    \"{}\": {new_val}\n}}\n",
+                top_level_key
+            )
+            .unwrap();
+        }
+
+        (_, Some(existing_value_range)) => {
+            // Existing theme key, overwrite
+            settings_content.replace_range(existing_value_range, &new_val);
+        }
+
+        (Some(first_key_start), None) => {
+            // No existing theme key, but other settings. Prepend new theme settings and
+            // match style of first key
+            let mut row = 0;
+            let mut column = 0;
+            for (ix, char) in settings_content.char_indices() {
+                if ix == first_key_start {
+                    break;
+                }
+                if char == '\n' {
+                    row += 1;
+                    column = 0;
+                } else {
+                    column += char.len_utf8();
+                }
+            }
+
+            let content = format!(r#""{top_level_key}": {new_val},"#);
+            settings_content.insert_str(first_key_start, &content);
+
+            if row > 0 {
+                settings_content.insert_str(
+                    first_key_start + content.len(),
+                    &format!("\n{:width$}", ' ', width = column),
+                )
+            } else {
+                settings_content.insert_str(first_key_start + content.len(), " ")
+            }
+        }
+    }
+
+    settings_content
+}
+
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
@@ -458,4 +648,115 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
     Ok(serde_json::from_reader(
         json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::write_top_level_setting;
+    use unindent::Unindent;
+
+    #[test]
+    fn test_write_theme_into_settings_with_theme() {
+        let settings = r#"
+            {
+                "theme": "one-dark"
+            }
+        "#
+        .unindent();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_empty_settings() {
+        let settings = r#"
+            {
+            }
+        "#
+        .unindent();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_no_settings() {
+        let settings = "".to_string();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_single_line_settings_without_theme() {
+        let settings = r#"{ "a": "", "ok": true }"#.to_string();
+        let new_settings = r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#;
+
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_pre_object_whitespace() {
+        let settings = r#"          { "a": "", "ok": true }"#.to_string();
+        let new_settings = r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#;
+
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
+
+    #[test]
+    fn test_write_theme_into_multi_line_settings_without_theme() {
+        let settings = r#"
+            {
+                "a": "b"
+            }
+        "#
+        .unindent();
+
+        let new_settings = r#"
+            {
+                "theme": "summerfruit-light",
+                "a": "b"
+            }
+        "#
+        .unindent();
+
+        let settings_after_theme =
+            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+
+        assert_eq!(settings_after_theme, new_settings)
+    }
 }

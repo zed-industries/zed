@@ -4,8 +4,8 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement},
     keymap::Keystroke,
-    Action, AnyViewHandle, Element, Entity, MouseState, MutableAppContext, View, ViewContext,
-    ViewHandle,
+    Action, AnyViewHandle, Element, Entity, MouseState, MutableAppContext, RenderContext, View,
+    ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -131,8 +131,8 @@ impl View for CommandPalette {
         "CommandPalette"
     }
 
-    fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        ChildView::new(self.picker.clone()).boxed()
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
+        ChildView::new(self.picker.clone(), cx).boxed()
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -224,7 +224,7 @@ impl PickerDelegate for CommandPalette {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: MouseState,
+        mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
     ) -> gpui::ElementBox {

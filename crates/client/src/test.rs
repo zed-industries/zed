@@ -6,7 +6,10 @@ use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, Future, StreamExt};
 use gpui::{executor, ModelHandle, TestAppContext};
 use parking_lot::Mutex;
-use rpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
+use rpc::{
+    proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
+    ConnectionId, Peer, Receipt, TypedEnvelope,
+};
 use std::{fmt, rc::Rc, sync::Arc};
 
 pub struct FakeServer {
@@ -79,7 +82,7 @@ impl FakeServer {
 
                         let (client_conn, server_conn, _) = Connection::in_memory(cx.background());
                         let (connection_id, io, incoming) =
-                            peer.add_test_connection(server_conn, cx.background()).await;
+                            peer.add_test_connection(server_conn, cx.background());
                         cx.background().spawn(io).detach();
                         let mut state = state.lock();
                         state.connection_id = Some(connection_id);
@@ -93,14 +96,17 @@ impl FakeServer {
             .authenticate_and_connect(false, &cx.to_async())
             .await
             .unwrap();
+
         server
     }
 
     pub fn disconnect(&self) {
-        self.peer.disconnect(self.connection_id());
-        let mut state = self.state.lock();
-        state.connection_id.take();
-        state.incoming.take();
+        if self.state.lock().connection_id.is_some() {
+            self.peer.disconnect(self.connection_id());
+            let mut state = self.state.lock();
+            state.connection_id.take();
+            state.incoming.take();
+        }
     }
 
     pub fn auth_count(&self) -> usize {
@@ -126,26 +132,45 @@ impl FakeServer {
     #[allow(clippy::await_holding_lock)]
     pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
         self.executor.start_waiting();
-        let message = self
-            .state
-            .lock()
-            .incoming
-            .as_mut()
-            .expect("not connected")
-            .next()
-            .await
-            .ok_or_else(|| anyhow!("other half hung up"))?;
-        self.executor.finish_waiting();
-        let type_name = message.payload_type_name();
-        Ok(*message
-            .into_any()
-            .downcast::<TypedEnvelope<M>>()
-            .unwrap_or_else(|_| {
-                panic!(
-                    "fake server received unexpected message type: {:?}",
-                    type_name
-                );
-            }))
+
+        loop {
+            let message = self
+                .state
+                .lock()
+                .incoming
+                .as_mut()
+                .expect("not connected")
+                .next()
+                .await
+                .ok_or_else(|| anyhow!("other half hung up"))?;
+            self.executor.finish_waiting();
+            let type_name = message.payload_type_name();
+            let message = message.into_any();
+
+            if message.is::<TypedEnvelope<M>>() {
+                return Ok(*message.downcast().unwrap());
+            }
+
+            if message.is::<TypedEnvelope<GetPrivateUserInfo>>() {
+                self.respond(
+                    message
+                        .downcast::<TypedEnvelope<GetPrivateUserInfo>>()
+                        .unwrap()
+                        .receipt(),
+                    GetPrivateUserInfoResponse {
+                        metrics_id: "the-metrics-id".into(),
+                        staff: false,
+                    },
+                )
+                .await;
+                continue;
+            }
+
+            panic!(
+                "fake server received unexpected message type: {:?}",
+                type_name
+            );
+        }
     }
 
     pub async fn respond<T: proto::RequestMessage>(

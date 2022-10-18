@@ -5,7 +5,7 @@ use super::{
 use crate::{Anchor, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{ElementBox, RenderContext};
-use language::{BufferSnapshot, Chunk, Patch};
+use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
@@ -18,7 +18,7 @@ use std::{
     },
 };
 use sum_tree::{Bias, SumTree};
-use text::{Edit, Point};
+use text::Edit;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -42,7 +42,7 @@ pub struct BlockSnapshot {
 pub struct BlockId(usize);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct BlockPoint(pub super::Point);
+pub struct BlockPoint(pub Point);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct BlockRow(u32);
@@ -157,6 +157,7 @@ pub struct BlockChunks<'a> {
     max_output_row: u32,
 }
 
+#[derive(Clone)]
 pub struct BlockBufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
     input_buffer_rows: wrap_map::WrapBufferRows<'a>,
@@ -994,7 +995,7 @@ mod tests {
     use rand::prelude::*;
     use settings::Settings;
     use std::env;
-    use text::RandomCharIter;
+    use util::RandomCharIter;
 
     #[gpui::test]
     fn test_offset_for_row() {

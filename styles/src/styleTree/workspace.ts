@@ -14,6 +14,24 @@ export default function workspace(colorScheme: ColorScheme) {
   const elevation = colorScheme.lowest;
   const layer = elevation.bottom;
   const titlebarPadding = 6;
+  const titlebarButton = {
+    cornerRadius: 6,
+    padding: {
+      top: 1,
+      bottom: 1,
+      left: 8,
+      right: 8,
+    },
+    ...text(layer, "sans", { size: "xs" }),
+    background: background(layer),
+    border: border(layer),
+    hover: {
+      ...text(layer, "sans", "hovered", { size: "xs" }),
+      background: background(layer, "hovered"),
+      border: border(elevation.top, "hovered"),
+    },
+  };
+  const avatarWidth = 18;
 
   return {
     background: background(layer),
@@ -24,6 +42,14 @@ export default function workspace(colorScheme: ColorScheme) {
     joiningProjectMessage: {
       padding: 12,
       ...text(layer, "sans", { size: "lg" }),
+    },
+    externalLocationMessage: {
+      background: background(elevation.middle, "accent"),
+      border: border(elevation.middle, "accent"),
+      cornerRadius: 6,
+      padding: 12,
+      margin: { bottom: 8, right: 8 },
+      ...text(elevation.middle, "sans", "accent", { size: "xs" }),
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
@@ -45,6 +71,8 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     statusBar: statusBar(colorScheme),
     titlebar: {
+      avatarWidth,
+      avatarMargin: 8,
       height: 33, // 32px + 1px for overlaid border
       background: background(layer),
       border: border(layer, { bottom: true, overlay: true }),
@@ -57,14 +85,20 @@ export default function workspace(colorScheme: ColorScheme) {
       title: text(layer, "sans", "variant"),
 
       // Collaborators
-      avatarWidth: 18,
-      avatarMargin: 8,
       avatar: {
-        cornerRadius: 10,
+        cornerRadius: avatarWidth / 2,
         border: {
           color: "#00000088",
           width: 1,
         },
+      },
+      inactiveAvatar: {
+        cornerRadius: avatarWidth / 2,
+        border: {
+          color: "#00000088",
+          width: 1,
+        },
+        grayscale: true,
       },
       avatarRibbon: {
         height: 3,
@@ -75,20 +109,7 @@ export default function workspace(colorScheme: ColorScheme) {
       // Sign in buttom
       // FlatButton, Variant
       signInPrompt: {
-        ...text(layer, "sans", { size: "xs" }),
-        background: background(layer),
-        border: border(layer),
-        cornerRadius: 6,
-        padding: {
-          top: 1,
-          bottom: 1,
-          left: 8,
-          right: 8,
-        },
-        hover: {
-          ...text(layer, "sans", "hovered", { size: "xs" }),
-          background: background(layer, "hovered"),
-        },
+        ...titlebarButton
       },
 
       // Offline Indicator
@@ -117,6 +138,30 @@ export default function workspace(colorScheme: ColorScheme) {
         },
         cornerRadius: 6,
       },
+      toggleContactsButton: {
+        cornerRadius: 6,
+        color: foreground(layer),
+        iconWidth: 8,
+        buttonWidth: 20,
+        active: {
+          background: background(layer, "active"),
+          color: foreground(layer, "active"),
+        },
+        hover: {
+          background: background(layer, "hovered"),
+          color: foreground(layer, "hovered"),
+        },
+      },
+      toggleContactsBadge: {
+        cornerRadius: 3,
+        padding: 2,
+        margin: { top: 3, left: 3 },
+        border: border(layer),
+        background: foreground(layer, "accent"),
+      },
+      shareButton: {
+        ...titlebarButton
+      }
     },
 
     toolbar: {

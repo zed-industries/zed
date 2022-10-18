@@ -11,7 +11,7 @@ mod db;
 
 #[derive(Debug, Deserialize)]
 struct GitHubUser {
-    id: usize,
+    id: i32,
     login: String,
     email: Option<String>,
 }
@@ -26,8 +26,11 @@ async fn main() {
     let github_token = std::env::var("GITHUB_TOKEN").expect("missing GITHUB_TOKEN env var");
     let client = reqwest::Client::new();
 
-    let current_user =
+    let mut current_user =
         fetch_github::<GitHubUser>(&client, &github_token, "https://api.github.com/user").await;
+    current_user
+        .email
+        .get_or_insert_with(|| "placeholder@example.com".to_string());
     let staff_users = fetch_github::<Vec<GitHubUser>>(
         &client,
         &github_token,
@@ -64,16 +67,40 @@ async fn main() {
     let mut zed_user_ids = Vec::<UserId>::new();
     for (github_user, admin) in zed_users {
         if let Some(user) = db
-            .get_user_by_github_login(&github_user.login)
+            .get_user_by_github_account(&github_user.login, Some(github_user.id))
             .await
             .expect("failed to fetch user")
         {
             zed_user_ids.push(user.id);
-        } else {
+        } else if let Some(email) = &github_user.email {
             zed_user_ids.push(
-                db.create_user(&github_user.login, github_user.email.as_deref(), admin)
-                    .await
-                    .expect("failed to insert user"),
+                db.create_user(
+                    email,
+                    admin,
+                    db::NewUserParams {
+                        github_login: github_user.login,
+                        github_user_id: github_user.id,
+                        invite_count: 5,
+                    },
+                )
+                .await
+                .expect("failed to insert user")
+                .user_id,
+            );
+        } else if admin {
+            zed_user_ids.push(
+                db.create_user(
+                    &format!("{}@zed.dev", github_user.login),
+                    admin,
+                    db::NewUserParams {
+                        github_login: github_user.login,
+                        github_user_id: github_user.id,
+                        invite_count: 5,
+                    },
+                )
+                .await
+                .expect("failed to insert user")
+                .user_id,
             );
         }
     }

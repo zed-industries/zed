@@ -1,10 +1,10 @@
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
+use language::{OffsetUtf16, Point, TextDimension};
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},
 };
 use sum_tree::Bias;
-use text::{rope::TextDimension, OffsetUtf16, Point};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {

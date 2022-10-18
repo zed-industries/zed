@@ -3,8 +3,12 @@
     {
         "bindings": {
             "up": "menu::SelectPrev",
+            "pageup": "menu::SelectFirst",
+            "shift-pageup": "menu::SelectFirst",
             "ctrl-p": "menu::SelectPrev",
             "down": "menu::SelectNext",
+            "pagedown": "menu::SelectLast",
+            "shift-pagedown": "menu::SelectFirst",
             "ctrl-n": "menu::SelectNext",
             "cmd-up": "menu::SelectFirst",
             "cmd-down": "menu::SelectLast",
@@ -60,13 +64,18 @@
             "cmd-z": "editor::Undo",
             "cmd-shift-z": "editor::Redo",
             "up": "editor::MoveUp",
+            "pageup": "editor::PageUp",
+            "shift-pageup": "editor::MovePageUp",
             "down": "editor::MoveDown",
+            "pagedown": "editor::PageDown",
+            "shift-pagedown": "editor::MovePageDown",
             "left": "editor::MoveLeft",
             "right": "editor::MoveRight",
             "ctrl-p": "editor::MoveUp",
             "ctrl-n": "editor::MoveDown",
             "ctrl-b": "editor::MoveLeft",
             "ctrl-f": "editor::MoveRight",
+            "ctrl-l": "editor::CenterScreen",
             "alt-left": "editor::MoveToPreviousWordStart",
             "alt-b": "editor::MoveToPreviousWordStart",
             "alt-right": "editor::MoveToNextWordEnd",
@@ -93,6 +102,7 @@
             "cmd-shift-down": "editor::SelectToEnd",
             "cmd-a": "editor::SelectAll",
             "cmd-l": "editor::SelectLine",
+            "cmd-shift-i": "editor::Format",
             "cmd-shift-left": [
                 "editor::SelectToBeginningOfLine",
                 {
@@ -117,8 +127,18 @@
                     "stop_at_soft_wraps": true
                 }
             ],
-            "pageup": "editor::PageUp",
-            "pagedown": "editor::PageDown",
+            "ctrl-v": [
+                "editor::MovePageDown",
+                {
+                    "center_cursor": true
+                }
+            ],
+            "alt-v": [
+                "editor::MovePageUp",
+                {
+                    "center_cursor": true
+                }
+            ],
             "ctrl-cmd-space": "editor::ShowCharacterPalette"
         }
     },
@@ -375,6 +395,7 @@
     {
         "bindings": {
             "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
+            "cmd-shift-c": "collab::ToggleCollaborationMenu",
             "cmd-alt-i": "zed::DebugElements"
         }
     },
@@ -394,7 +415,6 @@
         "context": "Workspace",
         "bindings": {
             "shift-escape": "dock::FocusDock",
-            "cmd-shift-c": "contacts_panel::ToggleFocus",
             "cmd-shift-b": "workspace::ToggleRightSidebar"
         }
     },
@@ -427,17 +447,53 @@
     {
         "context": "Terminal",
         "bindings": {
-            // Overrides for global bindings, remove at your own risk:
-            "up": "terminal::Up",
-            "down": "terminal::Down",
-            "escape": "terminal::Escape",
-            "enter": "terminal::Enter",
-            "ctrl-c": "terminal::CtrlC",
-            // Useful terminal actions:
             "ctrl-cmd-space": "terminal::ShowCharacterPalette",
             "cmd-c": "terminal::Copy",
             "cmd-v": "terminal::Paste",
-            "cmd-k": "terminal::Clear"
+            "cmd-k": "terminal::Clear",
+            // Some nice conveniences
+            "cmd-backspace": [
+                "terminal::SendText",
+                "\u0015"
+            ],
+            "cmd-right": [
+                "terminal::SendText",
+                "\u0005"
+            ],
+            "cmd-left": [
+                "terminal::SendText",
+                "\u0001"
+            ],
+            // There are conflicting bindings for these keys in the global context.
+            // these bindings override them, remove at your own risk:
+            "up": [
+                "terminal::SendKeystroke",
+                "up"
+            ],
+            "pageup": [
+                "terminal::SendKeystroke",
+                "pageup"
+            ],
+            "down": [
+                "terminal::SendKeystroke",
+                "down"
+            ],
+            "pagedown": [
+                "terminal::SendKeystroke",
+                "pagedown"
+            ],
+            "escape": [
+                "terminal::SendKeystroke",
+                "escape"
+            ],
+            "enter": [
+                "terminal::SendKeystroke",
+                "enter"
+            ],
+            "ctrl-c": [
+                "terminal::SendKeystroke",
+                "ctrl-c"
+            ]
         }
     }
 ]

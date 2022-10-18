@@ -1,6 +1,5 @@
 import { text } from "./components";
 import contactFinder from "./contactFinder";
-import contactsPanel from "./contactsPanel";
 import contactsPopover from "./contactsPopover";
 import commandPalette from "./commandPalette";
 import editor from "./editor";
@@ -12,8 +11,11 @@ import contextMenu from "./contextMenu";
 import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
 import updateNotification from "./updateNotification";
+import projectSharedNotification from "./projectSharedNotification";
 import tooltip from "./tooltip";
 import terminal from "./terminal";
+import contactList from "./contactList";
+import incomingCallNotification from "./incomingCallNotification";
 import { ColorScheme } from "../themes/common/colorScheme";
 
 // export const panel = {
@@ -26,16 +28,19 @@ export default function app(colorScheme: ColorScheme): Object {
       name: colorScheme.name,
       isLight: colorScheme.isLight,
     },
+    commandPalette: commandPalette(colorScheme),
+    contactNotification: contactNotification(colorScheme),
+    projectSharedNotification: projectSharedNotification(colorScheme),
+    incomingCallNotification: incomingCallNotification(colorScheme),
     picker: picker(colorScheme),
     workspace: workspace(colorScheme),
     contextMenu: contextMenu(colorScheme),
     editor: editor(colorScheme),
     projectDiagnostics: projectDiagnostics(colorScheme),
-    commandPalette: commandPalette(colorScheme),
     projectPanel: projectPanel(colorScheme),
     contactsPopover: contactsPopover(colorScheme),
-    contactsPanel: contactsPanel(colorScheme),
     contactFinder: contactFinder(colorScheme),
+    contactList: contactList(colorScheme),
     search: search(colorScheme),
     breadcrumbs: {
       ...text(colorScheme.lowest.top, "sans", "variant"),
@@ -43,7 +48,6 @@ export default function app(colorScheme: ColorScheme): Object {
         left: 6,
       },
     },
-    contactNotification: contactNotification(colorScheme),
     updateNotification: updateNotification(colorScheme),
     tooltip: tooltip(colorScheme),
     terminal: terminal(colorScheme.lowest),

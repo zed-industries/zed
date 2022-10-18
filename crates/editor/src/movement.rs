@@ -30,13 +30,32 @@ pub fn up(
     goal: SelectionGoal,
     preserve_column_at_start: bool,
 ) -> (DisplayPoint, SelectionGoal) {
+    up_by_rows(map, start, 1, goal, preserve_column_at_start)
+}
+
+pub fn down(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    goal: SelectionGoal,
+    preserve_column_at_end: bool,
+) -> (DisplayPoint, SelectionGoal) {
+    down_by_rows(map, start, 1, goal, preserve_column_at_end)
+}
+
+pub fn up_by_rows(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    row_count: u32,
+    goal: SelectionGoal,
+    preserve_column_at_start: bool,
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
         map.column_to_chars(start.row(), start.column())
     };
 
-    let prev_row = start.row().saturating_sub(1);
+    let prev_row = start.row().saturating_sub(row_count);
     let mut point = map.clip_point(
         DisplayPoint::new(prev_row, map.line_len(prev_row)),
         Bias::Left,
@@ -62,9 +81,10 @@ pub fn up(
     )
 }
 
-pub fn down(
+pub fn down_by_rows(
     map: &DisplaySnapshot,
     start: DisplayPoint,
+    row_count: u32,
     goal: SelectionGoal,
     preserve_column_at_end: bool,
 ) -> (DisplayPoint, SelectionGoal) {
@@ -74,8 +94,8 @@ pub fn down(
         map.column_to_chars(start.row(), start.column())
     };
 
-    let next_row = start.row() + 1;
-    let mut point = map.clip_point(DisplayPoint::new(next_row, 0), Bias::Right);
+    let new_row = start.row() + row_count;
+    let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
         *point.column_mut() = map.column_from_chars(point.row(), goal_column);
     } else if preserve_column_at_end {
@@ -98,6 +118,22 @@ pub fn down(
 }
 
 pub fn line_beginning(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    stop_at_soft_boundaries: bool,
+) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
+    let line_start = map.prev_line_boundary(point).1;
+
+    if stop_at_soft_boundaries && display_point != soft_line_start {
+        soft_line_start
+    } else {
+        line_start
+    }
+}
+
+pub fn indented_line_beginning(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     stop_at_soft_boundaries: bool,
@@ -167,54 +203,79 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     })
 }
 
-/// Scans for a boundary from the start of each line preceding the given end point until a boundary
-/// is found, indicated by the given predicate returning true. The predicate is called with the
-/// character to the left and right of the candidate boundary location, and will be called with `\n`
-/// characters indicating the start or end of a line. If the predicate returns true multiple times
-/// on a line, the *rightmost* boundary is returned.
+/// Scans for a boundary preceding the given start point `from` until a boundary is found, indicated by the
+/// given predicate returning true. The predicate is called with the character to the left and right
+/// of the candidate boundary location, and will be called with `\n` characters indicating the start
+/// or end of a line.
 pub fn find_preceding_boundary(
     map: &DisplaySnapshot,
-    end: DisplayPoint,
+    from: DisplayPoint,
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    let mut point = end;
-    loop {
-        *point.column_mut() = 0;
-        if point.row() > 0 {
-            if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
-                *point.column_mut() = indent;
+    let mut start_column = 0;
+    let mut soft_wrap_row = from.row() + 1;
+
+    let mut prev = None;
+    for (ch, point) in map.reverse_chars_at(from) {
+        // Recompute soft_wrap_indent if the row has changed
+        if point.row() != soft_wrap_row {
+            soft_wrap_row = point.row();
+
+            if point.row() == 0 {
+                start_column = 0;
+            } else if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
+                start_column = indent;
             }
         }
 
-        let mut boundary = None;
-        let mut prev_ch = if point.is_zero() { None } else { Some('\n') };
-        for ch in map.chars_at(point) {
-            if point >= end {
-                break;
-            }
-
-            if let Some(prev_ch) = prev_ch {
-                if is_boundary(prev_ch, ch) {
-                    boundary = Some(point);
-                }
-            }
-
-            if ch == '\n' {
-                break;
-            }
-
-            prev_ch = Some(ch);
-            *point.column_mut() += ch.len_utf8() as u32;
+        // If the current point is in the soft_wrap, skip comparing it
+        if point.column() < start_column {
+            continue;
         }
 
-        if let Some(boundary) = boundary {
-            return boundary;
-        } else if point.row() == 0 {
-            return DisplayPoint::zero();
-        } else {
-            *point.row_mut() -= 1;
+        if let Some((prev_ch, prev_point)) = prev {
+            if is_boundary(ch, prev_ch) {
+                return prev_point;
+            }
+        }
+
+        prev = Some((ch, point));
+    }
+    DisplayPoint::zero()
+}
+
+/// Scans for a boundary preceding the given start point `from` until a boundary is found, indicated by the
+/// given predicate returning true. The predicate is called with the character to the left and right
+/// of the candidate boundary location, and will be called with `\n` characters indicating the start
+/// or end of a line. If no boundary is found, the start of the line is returned.
+pub fn find_preceding_boundary_in_line(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    let mut start_column = 0;
+    if from.row() > 0 {
+        if let Some(indent) = map.soft_wrap_indent(from.row() - 1) {
+            start_column = indent;
         }
     }
+
+    let mut prev = None;
+    for (ch, point) in map.reverse_chars_at(from) {
+        if let Some((prev_ch, prev_point)) = prev {
+            if is_boundary(ch, prev_ch) {
+                return prev_point;
+            }
+        }
+
+        if ch == '\n' || point.column() < start_column {
+            break;
+        }
+
+        prev = Some((ch, point));
+    }
+
+    prev.map(|(_, point)| point).unwrap_or(from)
 }
 
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the
@@ -223,26 +284,48 @@ pub fn find_preceding_boundary(
 /// or end of a line.
 pub fn find_boundary(
     map: &DisplaySnapshot,
-    mut point: DisplayPoint,
+    from: DisplayPoint,
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
     let mut prev_ch = None;
-    for ch in map.chars_at(point) {
+    for (ch, point) in map.chars_at(from) {
         if let Some(prev_ch) = prev_ch {
             if is_boundary(prev_ch, ch) {
-                break;
+                return map.clip_point(point, Bias::Right);
             }
         }
 
-        if ch == '\n' {
-            *point.row_mut() += 1;
-            *point.column_mut() = 0;
-        } else {
-            *point.column_mut() += ch.len_utf8() as u32;
-        }
         prev_ch = Some(ch);
     }
-    map.clip_point(point, Bias::Right)
+    map.clip_point(map.max_point(), Bias::Right)
+}
+
+/// Scans for a boundary following the given start point until a boundary is found, indicated by the
+/// given predicate returning true. The predicate is called with the character to the left and right
+/// of the candidate boundary location, and will be called with `\n` characters indicating the start
+/// or end of a line. If no boundary is found, the end of the line is returned
+pub fn find_boundary_in_line(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    let mut prev = None;
+    for (ch, point) in map.chars_at(from) {
+        if let Some((prev_ch, _)) = prev {
+            if is_boundary(prev_ch, ch) {
+                return map.clip_point(point, Bias::Right);
+            }
+        }
+
+        prev = Some((ch, point));
+
+        if ch == '\n' {
+            break;
+        }
+    }
+
+    // Return the last position checked so that we give a point right before the newline or eof.
+    map.clip_point(prev.map(|(_, point)| point).unwrap_or(from), Bias::Right)
 }
 
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
@@ -273,7 +356,6 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
 mod tests {
     use super::*;
     use crate::{test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange, MultiBuffer};
-    use language::Point;
     use settings::Settings;
 
     #[gpui::test]

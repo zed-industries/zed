@@ -18,6 +18,7 @@ use crate::{
 #[derive(Copy, Clone, Debug)]
 pub enum Motion {
     Left,
+    Backspace,
     Down,
     Up,
     Right,
@@ -58,6 +59,7 @@ actions!(
     vim,
     [
         Left,
+        Backspace,
         Down,
         Up,
         Right,
@@ -74,6 +76,7 @@ impl_actions!(vim, [NextWordStart, NextWordEnd, PreviousWordStart]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
+    cx.add_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));
     cx.add_action(|_: &mut Workspace, _: &Down, cx: _| motion(Motion::Down, cx));
     cx.add_action(|_: &mut Workspace, _: &Up, cx: _| motion(Motion::Up, cx));
     cx.add_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
@@ -106,19 +109,21 @@ pub fn init(cx: &mut MutableAppContext) {
     );
 }
 
-fn motion(motion: Motion, cx: &mut MutableAppContext) {
-    Vim::update(cx, |vim, cx| {
-        if let Some(Operator::Namespace(_)) = vim.active_operator() {
-            vim.pop_operator(cx);
-        }
-    });
+pub(crate) fn motion(motion: Motion, cx: &mut MutableAppContext) {
+    if let Some(Operator::Namespace(_)) = Vim::read(cx).active_operator() {
+        Vim::update(cx, |vim, cx| vim.pop_operator(cx));
+    }
+
+    let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
+    let operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state.mode {
-        Mode::Normal => normal_motion(motion, cx),
-        Mode::Visual { .. } => visual_motion(motion, cx),
+        Mode::Normal => normal_motion(motion, operator, times, cx),
+        Mode::Visual { .. } => visual_motion(motion, times, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
     }
+    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
 }
 
 // Motion handling is specified here:
@@ -150,30 +155,32 @@ impl Motion {
         map: &DisplaySnapshot,
         point: DisplayPoint,
         goal: SelectionGoal,
+        times: usize,
     ) -> (DisplayPoint, SelectionGoal) {
         use Motion::*;
         match self {
-            Left => (left(map, point), SelectionGoal::None),
-            Down => movement::down(map, point, goal, true),
-            Up => movement::up(map, point, goal, true),
-            Right => (right(map, point), SelectionGoal::None),
+            Left => (left(map, point, times), SelectionGoal::None),
+            Backspace => (backspace(map, point, times), SelectionGoal::None),
+            Down => down(map, point, goal, times),
+            Up => up(map, point, goal, times),
+            Right => (right(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
-                next_word_start(map, point, ignore_punctuation),
+                next_word_start(map, point, ignore_punctuation, times),
                 SelectionGoal::None,
             ),
             NextWordEnd { ignore_punctuation } => (
-                next_word_end(map, point, ignore_punctuation),
+                next_word_end(map, point, ignore_punctuation, times),
                 SelectionGoal::None,
             ),
             PreviousWordStart { ignore_punctuation } => (
-                previous_word_start(map, point, ignore_punctuation),
+                previous_word_start(map, point, ignore_punctuation, times),
                 SelectionGoal::None,
             ),
             FirstNonWhitespace => (first_non_whitespace(map, point), SelectionGoal::None),
             StartOfLine => (start_of_line(map, point), SelectionGoal::None),
             EndOfLine => (end_of_line(map, point), SelectionGoal::None),
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
-            StartOfDocument => (start_of_document(map, point), SelectionGoal::None),
+            StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (end_of_document(map, point), SelectionGoal::None),
             Matching => (matching(map, point), SelectionGoal::None),
         }
@@ -184,9 +191,10 @@ impl Motion {
         self,
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
+        times: usize,
         expand_to_surrounding_newline: bool,
     ) {
-        let (head, goal) = self.move_point(map, selection.head(), selection.goal);
+        let (head, goal) = self.move_point(map, selection.head(), selection.goal, times);
         selection.set_head(head, goal);
 
         if self.linewise() {
@@ -206,7 +214,7 @@ impl Motion {
                 }
             }
 
-            selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
+            (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
         } else {
             // If the motion is exclusive and the end of the motion is in column 1, the
             // end of the motion is moved to the end of the previous line and the motion
@@ -234,95 +242,151 @@ impl Motion {
     }
 }
 
-fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    *point.column_mut() = point.column().saturating_sub(1);
-    map.clip_point(point, Bias::Left)
-}
-
-fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    *point.column_mut() += 1;
-    map.clip_point(point, Bias::Right)
-}
-
-fn next_word_start(
-    map: &DisplaySnapshot,
-    point: DisplayPoint,
-    ignore_punctuation: bool,
-) -> DisplayPoint {
-    let mut crossed_newline = false;
-    movement::find_boundary(map, point, |left, right| {
-        let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-        let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
-        let at_newline = right == '\n';
-
-        let found = (left_kind != right_kind && !right.is_whitespace())
-            || at_newline && crossed_newline
-            || at_newline && left == '\n'; // Prevents skipping repeated empty lines
-
-        if at_newline {
-            crossed_newline = true;
+fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+    for _ in 0..times {
+        *point.column_mut() = point.column().saturating_sub(1);
+        point = map.clip_point(point, Bias::Right);
+        if point.column() == 0 {
+            break;
         }
-        found
-    })
+    }
+    point
+}
+
+fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+    for _ in 0..times {
+        point = movement::left(map, point);
+    }
+    point
+}
+
+fn down(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    mut goal: SelectionGoal,
+    times: usize,
+) -> (DisplayPoint, SelectionGoal) {
+    for _ in 0..times {
+        (point, goal) = movement::down(map, point, goal, true);
+    }
+    (point, goal)
+}
+
+fn up(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    mut goal: SelectionGoal,
+    times: usize,
+) -> (DisplayPoint, SelectionGoal) {
+    for _ in 0..times {
+        (point, goal) = movement::up(map, point, goal, true);
+    }
+    (point, goal)
+}
+
+pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+    for _ in 0..times {
+        let mut new_point = point;
+        *new_point.column_mut() += 1;
+        let new_point = map.clip_point(new_point, Bias::Right);
+        if point == new_point {
+            break;
+        }
+        point = new_point;
+    }
+    point
+}
+
+pub(crate) fn next_word_start(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    ignore_punctuation: bool,
+    times: usize,
+) -> DisplayPoint {
+    for _ in 0..times {
+        let mut crossed_newline = false;
+        point = movement::find_boundary(map, point, |left, right| {
+            let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+            let at_newline = right == '\n';
+
+            let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                || at_newline && crossed_newline
+                || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+
+            if at_newline {
+                crossed_newline = true;
+            }
+            found
+        })
+    }
+    point
 }
 
 fn next_word_end(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> DisplayPoint {
-    *point.column_mut() += 1;
-    point = movement::find_boundary(map, point, |left, right| {
-        let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-        let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+    for _ in 0..times {
+        *point.column_mut() += 1;
+        point = movement::find_boundary(map, point, |left, right| {
+            let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
 
-        left_kind != right_kind && !left.is_whitespace()
-    });
-    // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
-    // we have backtraced already
-    if !map
-        .chars_at(point)
-        .nth(1)
-        .map(|c| c == '\n')
-        .unwrap_or(true)
-    {
-        *point.column_mut() = point.column().saturating_sub(1);
+            left_kind != right_kind && left_kind != CharKind::Whitespace
+        });
+
+        // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
+        // we have backtraced already
+        if !map
+            .chars_at(point)
+            .nth(1)
+            .map(|(c, _)| c == '\n')
+            .unwrap_or(true)
+        {
+            *point.column_mut() = point.column().saturating_sub(1);
+        }
+        point = map.clip_point(point, Bias::Left);
     }
-    map.clip_point(point, Bias::Left)
+    point
 }
 
 fn previous_word_start(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> DisplayPoint {
-    // This works even though find_preceding_boundary is called for every character in the line containing
-    // cursor because the newline is checked only once.
-    point = movement::find_preceding_boundary(map, point, |left, right| {
-        let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-        let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+    for _ in 0..times {
+        // This works even though find_preceding_boundary is called for every character in the line containing
+        // cursor because the newline is checked only once.
+        point = movement::find_preceding_boundary(map, point, |left, right| {
+            let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
 
-        (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
-    });
+            (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
+        });
+    }
     point
 }
 
-fn first_non_whitespace(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut column = 0;
-    for ch in map.chars_at(DisplayPoint::new(point.row(), 0)) {
+fn first_non_whitespace(map: &DisplaySnapshot, from: DisplayPoint) -> DisplayPoint {
+    let mut last_point = DisplayPoint::new(from.row(), 0);
+    for (ch, point) in map.chars_at(last_point) {
         if ch == '\n' {
-            return point;
+            return from;
         }
+
+        last_point = point;
 
         if char_kind(ch) != CharKind::Whitespace {
             break;
         }
-
-        column += ch.len_utf8() as u32;
     }
 
-    *point.column_mut() = column;
-    map.clip_point(point, Bias::Left)
+    map.clip_point(last_point, Bias::Left)
 }
 
 fn start_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
@@ -333,8 +397,8 @@ fn end_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
 }
 
-fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    let mut new_point = 0usize.to_display_point(map);
+fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
+    let mut new_point = (line - 1).to_display_point(map);
     *new_point.column_mut() = point.column();
     map.clip_point(new_point, Bias::Left)
 }

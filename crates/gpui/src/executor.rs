@@ -325,7 +325,12 @@ impl Deterministic {
         let mut state = self.state.lock();
         let wakeup_at = state.now + duration;
         let id = util::post_inc(&mut state.next_timer_id);
-        state.pending_timers.push((id, wakeup_at, tx));
+        match state
+            .pending_timers
+            .binary_search_by_key(&wakeup_at, |e| e.1)
+        {
+            Ok(ix) | Err(ix) => state.pending_timers.insert(ix, (id, wakeup_at, tx)),
+        }
         let state = self.state.clone();
         Timer::Deterministic(DeterministicTimer { rx, id, state })
     }

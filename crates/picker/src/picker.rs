@@ -19,6 +19,7 @@ pub struct Picker<D: PickerDelegate> {
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     max_size: Vector2F,
+    theme: Box<dyn FnMut(&AppContext) -> &theme::Picker>,
     confirmed: bool,
 }
 
@@ -32,7 +33,7 @@ pub trait PickerDelegate: View {
     fn render_match(
         &self,
         ix: usize,
-        state: MouseState,
+        state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox;
@@ -51,8 +52,8 @@ impl<D: PickerDelegate> View for Picker<D> {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
-        let settings = cx.global::<Settings>();
-        let container_style = settings.theme.picker.container;
+        let theme = (self.theme)(cx);
+        let container_style = theme.container;
         let delegate = self.delegate.clone();
         let match_count = if let Some(delegate) = delegate.upgrade(cx.app) {
             delegate.read(cx).match_count()
@@ -62,19 +63,16 @@ impl<D: PickerDelegate> View for Picker<D> {
 
         Flex::new(Axis::Vertical)
             .with_child(
-                ChildView::new(&self.query_editor)
+                ChildView::new(&self.query_editor, cx)
                     .contained()
-                    .with_style(settings.theme.picker.input_editor.container)
+                    .with_style(theme.input_editor.container)
                     .boxed(),
             )
             .with_child(
                 if match_count == 0 {
-                    Label::new(
-                        "No matches".into(),
-                        settings.theme.picker.empty.label.clone(),
-                    )
-                    .contained()
-                    .with_style(settings.theme.picker.empty.container)
+                    Label::new("No matches".into(), theme.empty.label.clone())
+                        .contained()
+                        .with_style(theme.empty.container)
                 } else {
                     UniformList::new(
                         self.list_state.clone(),
@@ -147,6 +145,7 @@ impl<D: PickerDelegate> Picker<D> {
             list_state: Default::default(),
             delegate,
             max_size: vec2f(540., 420.),
+            theme: Box::new(|cx| &cx.global::<Settings>().theme.picker),
             confirmed: false,
         };
         cx.defer(|this, cx| {
@@ -160,6 +159,14 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn with_max_size(mut self, width: f32, height: f32) -> Self {
         self.max_size = vec2f(width, height);
+        self
+    }
+
+    pub fn with_theme<F>(mut self, theme: F) -> Self
+    where
+        F: 'static + FnMut(&AppContext) -> &theme::Picker,
+    {
+        self.theme = Box::new(theme);
         self
     }
 

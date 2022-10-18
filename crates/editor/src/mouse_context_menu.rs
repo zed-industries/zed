@@ -70,8 +70,9 @@ pub fn deploy_context_menu(
 
 #[cfg(test)]
 mod tests {
+    use crate::test::editor_lsp_test_context::EditorLspTestContext;
+
     use super::*;
-    use crate::test::EditorLspTestContext;
     use indoc::indoc;
 
     #[gpui::test]

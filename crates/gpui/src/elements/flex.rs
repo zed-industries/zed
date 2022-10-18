@@ -1,11 +1,10 @@
-use std::{any::Any, f32::INFINITY, ops::Range};
+use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
     presenter::MeasurementContext,
     Axis, DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext,
-    LayoutContext, MouseMovedEvent, PaintContext, RenderContext, ScrollWheelEvent, SizeConstraint,
-    Vector2FExt, View,
+    LayoutContext, PaintContext, RenderContext, SizeConstraint, Vector2FExt, View,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -15,14 +14,14 @@ use serde_json::json;
 
 #[derive(Default)]
 struct ScrollState {
-    scroll_to: Option<usize>,
-    scroll_position: f32,
+    scroll_to: Cell<Option<usize>>,
+    scroll_position: Cell<f32>,
 }
 
 pub struct Flex {
     axis: Axis,
     children: Vec<ElementBox>,
-    scroll_state: Option<ElementStateHandle<ScrollState>>,
+    scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
 }
 
 impl Flex {
@@ -52,9 +51,9 @@ impl Flex {
         Tag: 'static,
         V: View,
     {
-        let scroll_state = cx.default_element_state::<Tag, ScrollState>(element_id);
-        scroll_state.update(cx, |scroll_state, _| scroll_state.scroll_to = scroll_to);
-        self.scroll_state = Some(scroll_state);
+        let scroll_state = cx.default_element_state::<Tag, Rc<ScrollState>>(element_id);
+        scroll_state.read(cx).scroll_to.set(scroll_to);
+        self.scroll_state = Some((scroll_state, cx.handle().id()));
         self
     }
 
@@ -202,9 +201,9 @@ impl Element for Flex {
         }
 
         if let Some(scroll_state) = self.scroll_state.as_ref() {
-            scroll_state.update(cx, |scroll_state, _| {
+            scroll_state.0.update(cx, |scroll_state, _| {
                 if let Some(scroll_to) = scroll_state.scroll_to.take() {
-                    let visible_start = scroll_state.scroll_position;
+                    let visible_start = scroll_state.scroll_position.get();
                     let visible_end = visible_start + size.along(self.axis);
                     if let Some(child) = self.children.get(scroll_to) {
                         let child_start: f32 = self.children[..scroll_to]
@@ -213,15 +212,22 @@ impl Element for Flex {
                             .sum();
                         let child_end = child_start + child.size().along(self.axis);
                         if child_start < visible_start {
-                            scroll_state.scroll_position = child_start;
+                            scroll_state.scroll_position.set(child_start);
                         } else if child_end > visible_end {
-                            scroll_state.scroll_position = child_end - size.along(self.axis);
+                            scroll_state
+                                .scroll_position
+                                .set(child_end - size.along(self.axis));
                         }
                     }
                 }
 
-                scroll_state.scroll_position =
-                    scroll_state.scroll_position.min(-remaining_space).max(0.);
+                scroll_state.scroll_position.set(
+                    scroll_state
+                        .scroll_position
+                        .get()
+                        .min(-remaining_space)
+                        .max(0.),
+                );
             });
         }
 
@@ -235,16 +241,53 @@ impl Element for Flex {
         remaining_space: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        let mut remaining_space = *remaining_space;
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
+        let mut remaining_space = *remaining_space;
         let overflowing = remaining_space < 0.;
         if overflowing {
-            cx.scene.push_layer(Some(bounds));
+            cx.scene.push_layer(Some(visible_bounds));
+        }
+
+        if let Some(scroll_state) = &self.scroll_state {
+            cx.scene.push_mouse_region(
+                crate::MouseRegion::new::<Self>(scroll_state.1, 0, bounds)
+                    .on_scroll({
+                        let scroll_state = scroll_state.0.read(cx).clone();
+                        let axis = self.axis;
+                        move |e, cx| {
+                            if remaining_space < 0. {
+                                let mut delta = match axis {
+                                    Axis::Horizontal => {
+                                        if e.delta.x() != 0. {
+                                            e.delta.x()
+                                        } else {
+                                            e.delta.y()
+                                        }
+                                    }
+                                    Axis::Vertical => e.delta.y(),
+                                };
+                                if !e.precise {
+                                    delta *= 20.;
+                                }
+
+                                scroll_state
+                                    .scroll_position
+                                    .set(scroll_state.scroll_position.get() - delta);
+
+                                cx.notify();
+                            } else {
+                                cx.propogate_event();
+                            }
+                        }
+                    })
+                    .on_move(|_, _| { /* Capture move events */ }),
+            )
         }
 
         let mut child_origin = bounds.origin();
         if let Some(scroll_state) = self.scroll_state.as_ref() {
-            let scroll_position = scroll_state.read(cx).scroll_position;
+            let scroll_position = scroll_state.0.read(cx).scroll_position.get();
             match self.axis {
                 Axis::Horizontal => child_origin.set_x(child_origin.x() - scroll_position),
                 Axis::Vertical => child_origin.set_y(child_origin.y() - scroll_position),
@@ -278,59 +321,15 @@ impl Element for Flex {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        bounds: RectF,
         _: RectF,
-        remaining_space: &mut Self::LayoutState,
+        _: RectF,
+        _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
         let mut handled = false;
         for child in &mut self.children {
             handled = child.dispatch_event(event, cx) || handled;
-        }
-        if !handled {
-            if let &Event::ScrollWheel(ScrollWheelEvent {
-                position,
-                delta,
-                precise,
-                ..
-            }) = event
-            {
-                if *remaining_space < 0. && bounds.contains_point(position) {
-                    if let Some(scroll_state) = self.scroll_state.as_ref() {
-                        scroll_state.update(cx, |scroll_state, cx| {
-                            let mut delta = match self.axis {
-                                Axis::Horizontal => {
-                                    if delta.x() != 0. {
-                                        delta.x()
-                                    } else {
-                                        delta.y()
-                                    }
-                                }
-                                Axis::Vertical => delta.y(),
-                            };
-                            if !precise {
-                                delta *= 20.;
-                            }
-
-                            scroll_state.scroll_position -= delta;
-
-                            handled = true;
-                            cx.notify();
-                        });
-                    }
-                }
-            }
-        }
-
-        if !handled {
-            if let &Event::MouseMoved(MouseMovedEvent { position, .. }) = event {
-                // If this is a scrollable flex, and the mouse is over it, eat the scroll event to prevent
-                // propogating it to the element below.
-                if self.scroll_state.is_some() && bounds.contains_point(position) {
-                    handled = true;
-                }
-            }
         }
 
         handled

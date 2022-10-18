@@ -95,7 +95,7 @@ impl View for ProjectDiagnosticsEditor {
             .with_style(theme.container)
             .boxed()
         } else {
-            ChildView::new(&self.editor).boxed()
+            ChildView::new(&self.editor, cx).boxed()
         }
     }
 

@@ -113,7 +113,7 @@ impl View for Select {
                 Container::new((self.render_item)(
                     self.selected_item_ix,
                     ItemType::Header,
-                    mouse_state.hovered,
+                    mouse_state.hovered(),
                     cx,
                 ))
                 .with_style(style.header)
@@ -145,7 +145,7 @@ impl View for Select {
                                                 } else {
                                                     ItemType::Unselected
                                                 },
-                                                mouse_state.hovered,
+                                                mouse_state.hovered(),
                                                 cx,
                                             )
                                         })

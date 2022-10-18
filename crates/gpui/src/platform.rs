@@ -44,6 +44,8 @@ pub trait Platform: Send + Sync {
     fn unhide_other_apps(&self);
     fn quit(&self);
 
+    fn screen_size(&self) -> Vector2F;
+
     fn open_window(
         &self,
         id: usize,
@@ -63,12 +65,15 @@ pub trait Platform: Send + Sync {
     fn delete_credentials(&self, url: &str) -> Result<()>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+    fn should_auto_hide_scrollbars(&self) -> bool;
 
     fn local_timezone(&self) -> UtcOffset;
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
     fn app_path(&self) -> Result<PathBuf>;
     fn app_version(&self) -> Result<AppVersion>;
+    fn os_name(&self) -> &'static str;
+    fn os_version(&self) -> Result<AppVersion>;
 }
 
 pub(crate) trait ForegroundPlatform {

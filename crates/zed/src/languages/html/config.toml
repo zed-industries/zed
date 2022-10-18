@@ -1,0 +1,12 @@
+name = "HTML"
+path_suffixes = ["html"]
+autoclose_before = ">})"
+brackets = [
+    { start = "<", end = ">", close = true, newline = true },
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false },
+    { start = "!--", end = " --", close = true, newline = false },
+]
+
+block_comment = ["<!-- ", " -->"]

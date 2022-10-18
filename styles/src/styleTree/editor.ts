@@ -1,4 +1,5 @@
 import { fontWeights } from "../common";
+import { withOpacity } from "../utils/color";
 import {
   ColorScheme,
   Layer,
@@ -143,8 +144,14 @@ export default function editor(colorScheme: ColorScheme) {
       indicator: foreground(layer, "variant"),
       verticalScale: 0.55,
     },
-    diffBackgroundDeleted: background(layer, "negative"),
-    diffBackgroundInserted: background(layer, "positive"),
+    diff: {
+      deleted: foreground(layer, "negative"),
+      modified: foreground(layer, "warning"),
+      inserted: foreground(layer, "positive"),
+      removedWidthEm: 0.275,
+      widthEm: 0.16,
+      cornerRadius: 0.05,
+    },
     documentHighlightReadBackground: elevation.ramps
       .neutral(0.5)
       .alpha(0.2)
@@ -251,6 +258,20 @@ export default function editor(colorScheme: ColorScheme) {
         color: foreground(layer, "on", "hovered"),
         background: background(layer, "on", "hovered"),
       },
+    },
+    scrollbar: {
+      width: 12,
+      minHeightFactor: 1.0,
+      track: {
+        border: border(layer, "variant", { left: true }),
+      },
+      thumb: {
+        background: withOpacity(borderColor(layer, "variant"), 0.5),
+        border: {
+          width: 1,
+          color: withOpacity(borderColor(layer, 'variant'), 0.5),
+        }
+      }
     },
     compositionMark: {
       underline: {

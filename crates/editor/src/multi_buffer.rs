@@ -4,12 +4,14 @@ pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
+use git::diff::DiffHunk;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk,
-    DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, Outline, OutlineItem,
-    Selection, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
+    DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _,
+    ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
 use smallvec::SmallVec;
 use std::{
@@ -26,9 +28,8 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     locator::Locator,
-    rope::TextDimension,
     subscription::{Subscription, Topic},
-    Edit, OffsetUtf16, Point, PointUtf16, TextSummary,
+    Edit, TextSummary,
 };
 use theme::SyntaxTheme;
 use util::post_inc;
@@ -90,6 +91,7 @@ struct BufferState {
     last_selections_update_count: usize,
     last_diagnostics_update_count: usize,
     last_file_update_count: usize,
+    last_git_diff_update_count: usize,
     excerpts: Vec<ExcerptId>,
     _subscriptions: [gpui::Subscription; 2],
 }
@@ -101,6 +103,7 @@ pub struct MultiBufferSnapshot {
     parse_count: usize,
     diagnostics_update_count: usize,
     trailing_excerpt_update_count: usize,
+    git_diff_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
@@ -140,6 +143,7 @@ struct ExcerptSummary {
     text: TextSummary,
 }
 
+#[derive(Clone)]
 pub struct MultiBufferRows<'a> {
     buffer_row_range: Range<u32>,
     excerpts: Cursor<'a, Excerpt, Point>,
@@ -165,7 +169,7 @@ struct ExcerptChunks<'a> {
 }
 
 struct ExcerptBytes<'a> {
-    content_bytes: language::rope::Bytes<'a>,
+    content_bytes: text::Bytes<'a>,
     footer_height: usize,
 }
 
@@ -202,6 +206,7 @@ impl MultiBuffer {
                     last_selections_update_count: buffer_state.last_selections_update_count,
                     last_diagnostics_update_count: buffer_state.last_diagnostics_update_count,
                     last_file_update_count: buffer_state.last_file_update_count,
+                    last_git_diff_update_count: buffer_state.last_git_diff_update_count,
                     excerpts: buffer_state.excerpts.clone(),
                     _subscriptions: [
                         new_cx.observe(&buffer_state.buffer, |_, _, cx| cx.notify()),
@@ -306,6 +311,17 @@ impl MultiBuffer {
         cx: &AppContext,
     ) -> Option<(usize, Vec<OutlineItem<Anchor>>)> {
         self.read(cx).symbols_containing(offset, theme)
+    }
+
+    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
+        let buffers = self.buffers.borrow();
+        for buffer_state in buffers.values() {
+            if buffer_state.buffer.read(cx).needs_git_diff_recalc() {
+                buffer_state
+                    .buffer
+                    .update(cx, |buffer, cx| buffer.git_diff_recalc(cx))
+            }
+        }
     }
 
     pub fn edit<I, S, T>(
@@ -827,6 +843,7 @@ impl MultiBuffer {
             last_selections_update_count: buffer_snapshot.selections_update_count(),
             last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
             last_file_update_count: buffer_snapshot.file_update_count(),
+            last_git_diff_update_count: buffer_snapshot.git_diff_update_count(),
             excerpts: Default::default(),
             _subscriptions: [
                 cx.observe(&buffer, |_, _, cx| cx.notify()),
@@ -1212,9 +1229,9 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &'a AppContext,
-    ) -> Option<&'a Arc<Language>> {
+    ) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
-            .and_then(|(buffer, _)| buffer.read(cx).language())
+            .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
     pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a dyn File; 2]> {
@@ -1249,6 +1266,7 @@ impl MultiBuffer {
         let mut excerpts_to_edit = Vec::new();
         let mut reparsed = false;
         let mut diagnostics_updated = false;
+        let mut git_diff_updated = false;
         let mut is_dirty = false;
         let mut has_conflict = false;
         let mut edited = false;
@@ -1260,6 +1278,7 @@ impl MultiBuffer {
             let selections_update_count = buffer.selections_update_count();
             let diagnostics_update_count = buffer.diagnostics_update_count();
             let file_update_count = buffer.file_update_count();
+            let git_diff_update_count = buffer.git_diff_update_count();
 
             let buffer_edited = version.changed_since(&buffer_state.last_version);
             let buffer_reparsed = parse_count > buffer_state.last_parse_count;
@@ -1268,17 +1287,21 @@ impl MultiBuffer {
             let buffer_diagnostics_updated =
                 diagnostics_update_count > buffer_state.last_diagnostics_update_count;
             let buffer_file_updated = file_update_count > buffer_state.last_file_update_count;
+            let buffer_git_diff_updated =
+                git_diff_update_count > buffer_state.last_git_diff_update_count;
             if buffer_edited
                 || buffer_reparsed
                 || buffer_selections_updated
                 || buffer_diagnostics_updated
                 || buffer_file_updated
+                || buffer_git_diff_updated
             {
                 buffer_state.last_version = version;
                 buffer_state.last_parse_count = parse_count;
                 buffer_state.last_selections_update_count = selections_update_count;
                 buffer_state.last_diagnostics_update_count = diagnostics_update_count;
                 buffer_state.last_file_update_count = file_update_count;
+                buffer_state.last_git_diff_update_count = git_diff_update_count;
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
@@ -1290,6 +1313,7 @@ impl MultiBuffer {
             edited |= buffer_edited;
             reparsed |= buffer_reparsed;
             diagnostics_updated |= buffer_diagnostics_updated;
+            git_diff_updated |= buffer_git_diff_updated;
             is_dirty |= buffer.is_dirty();
             has_conflict |= buffer.has_conflict();
         }
@@ -1301,6 +1325,9 @@ impl MultiBuffer {
         }
         if diagnostics_updated {
             snapshot.diagnostics_update_count += 1;
+        }
+        if git_diff_updated {
+            snapshot.git_diff_update_count += 1;
         }
         snapshot.is_dirty = is_dirty;
         snapshot.has_conflict = has_conflict;
@@ -1386,7 +1413,7 @@ impl MultiBuffer {
         edit_count: usize,
         cx: &mut ModelContext<Self>,
     ) {
-        use text::RandomCharIter;
+        use util::RandomCharIter;
 
         let snapshot = self.read(cx);
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
@@ -1425,7 +1452,7 @@ impl MultiBuffer {
     ) {
         use rand::prelude::*;
         use std::env;
-        use text::RandomCharIter;
+        use util::RandomCharIter;
 
         let max_excerpts = env::var("MAX_EXCERPTS")
             .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
@@ -1940,6 +1967,24 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn point_to_buffer_offset<T: ToOffset>(
+        &self,
+        point: T,
+    ) -> Option<(&BufferSnapshot, usize)> {
+        let offset = point.to_offset(&self);
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&offset, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        cursor.item().map(|excerpt| {
+            let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+            let buffer_point = excerpt_start + offset - *cursor.start();
+            (&excerpt.buffer, buffer_point)
+        })
+    }
+
     pub fn suggested_indents(
         &self,
         rows: impl IntoIterator<Item = u32>,
@@ -1949,8 +1994,10 @@ impl MultiBufferSnapshot {
 
         let mut rows_for_excerpt = Vec::new();
         let mut cursor = self.excerpts.cursor::<Point>();
-
         let mut rows = rows.into_iter().peekable();
+        let mut prev_row = u32::MAX;
+        let mut prev_language_indent_size = IndentSize::default();
+
         while let Some(row) = rows.next() {
             cursor.seek(&Point::new(row, 0), Bias::Right, &());
             let excerpt = match cursor.item() {
@@ -1958,7 +2005,17 @@ impl MultiBufferSnapshot {
                 _ => continue,
             };
 
-            let single_indent_size = excerpt.buffer.single_indent_size(cx);
+            // Retrieve the language and indent size once for each disjoint region being indented.
+            let single_indent_size = if row.saturating_sub(1) == prev_row {
+                prev_language_indent_size
+            } else {
+                excerpt
+                    .buffer
+                    .language_indent_size_at(Point::new(row, 0), cx)
+            };
+            prev_language_indent_size = single_indent_size;
+            prev_row = row;
+
             let start_buffer_row = excerpt.range.context.start.to_point(&excerpt.buffer).row;
             let start_multibuffer_row = cursor.start().row;
 
@@ -2479,15 +2536,17 @@ impl MultiBufferSnapshot {
         self.diagnostics_update_count
     }
 
+    pub fn git_diff_update_count(&self) -> usize {
+        self.git_diff_update_count
+    }
+
     pub fn trailing_excerpt_update_count(&self) -> usize {
         self.trailing_excerpt_update_count
     }
 
-    pub fn language(&self) -> Option<&Arc<Language>> {
-        self.excerpts
-            .iter()
-            .next()
-            .and_then(|excerpt| excerpt.buffer.language())
+    pub fn language_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<Language>> {
+        self.point_to_buffer_offset(point)
+            .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -2527,6 +2586,15 @@ impl MultiBufferSnapshot {
                     reversed,
                 )
             })
+    }
+
+    pub fn git_diff_hunks_in_range<'a>(
+        &'a self,
+        row_range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        self.as_singleton()
+            .into_iter()
+            .flat_map(move |(_, _, buffer)| buffer.git_diff_hunks_in_range(row_range.clone()))
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
@@ -3270,7 +3338,7 @@ mod tests {
     use rand::prelude::*;
     use settings::Settings;
     use std::{env, rc::Rc};
-    use text::{Point, RandomCharIter};
+
     use util::test::sample_text;
 
     #[gpui::test]
@@ -3888,7 +3956,9 @@ mod tests {
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
-                        let base_text = RandomCharIter::new(&mut rng).take(10).collect::<String>();
+                        let base_text = util::RandomCharIter::new(&mut rng)
+                            .take(10)
+                            .collect::<String>();
                         buffers.push(cx.add_model(|cx| Buffer::new(0, base_text, cx)));
                         buffers.last().unwrap()
                     } else {

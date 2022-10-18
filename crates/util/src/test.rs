@@ -1,7 +1,11 @@
 mod assertions;
 mod marked_text;
 
-use std::path::{Path, PathBuf};
+use git2;
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 use tempdir::TempDir;
 
 pub use assertions::*;
@@ -24,6 +28,11 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
             match contents {
                 Value::Object(_) => {
                     fs::create_dir(&path).unwrap();
+
+                    if path.file_name() == Some(&OsStr::new(".git")) {
+                        git2::Repository::init(&path.parent().unwrap()).unwrap();
+                    }
+
                     write_tree(&path, contents);
                 }
                 Value::Null => {

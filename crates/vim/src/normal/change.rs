@@ -1,30 +1,20 @@
-use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
-use editor::{char_kind, movement, Autoscroll};
-use gpui::{impl_actions, MutableAppContext, ViewContext};
-use serde::Deserialize;
-use workspace::Workspace;
+use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
+use editor::{char_kind, display_map::DisplaySnapshot, movement, Autoscroll, DisplayPoint};
+use gpui::MutableAppContext;
+use language::Selection;
 
-#[derive(Clone, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct ChangeWord {
-    #[serde(default)]
-    ignore_punctuation: bool,
-}
-
-impl_actions!(vim, [ChangeWord]);
-
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(change_word);
-}
-
-pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
+pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
-                    motion.expand_selection(map, selection, false);
+                    if let Motion::NextWordStart { ignore_punctuation } = motion {
+                        expand_changed_word_selection(map, selection, times, ignore_punctuation);
+                    } else {
+                        motion.expand_selection(map, selection, times, false);
+                    }
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);
@@ -34,43 +24,60 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
     vim.switch_mode(Mode::Insert, false, cx)
 }
 
+pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut MutableAppContext) {
+    let mut objects_found = false;
+    vim.update_active_editor(cx, |editor, cx| {
+        // We are swapping to insert mode anyway. Just set the line end clipping behavior now
+        editor.set_clip_at_line_ends(false, cx);
+        editor.transact(cx, |editor, cx| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    objects_found |= object.expand_selection(map, selection, around);
+                });
+            });
+            if objects_found {
+                copy_selections_content(editor, false, cx);
+                editor.insert("", cx);
+            }
+        });
+    });
+
+    if objects_found {
+        vim.switch_mode(Mode::Insert, false, cx);
+    } else {
+        vim.switch_mode(Mode::Normal, false, cx);
+    }
+}
+
 // From the docs https://vimhelp.org/change.txt.html#cw
 // Special case: When the cursor is in a word, "cw" and "cW" do not include the
 // white space after a word, they only change up to the end of the word. This is
 // because Vim interprets "cw" as change-word, and a word does not include the
 // following white space.
-fn change_word(
-    _: &mut Workspace,
-    &ChangeWord { ignore_punctuation }: &ChangeWord,
-    cx: &mut ViewContext<Workspace>,
+fn expand_changed_word_selection(
+    map: &DisplaySnapshot,
+    selection: &mut Selection<DisplayPoint>,
+    times: usize,
+    ignore_punctuation: bool,
 ) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                // We are swapping to insert mode anyway. Just set the line end clipping behavior now
-                editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                    s.move_with(|map, selection| {
-                        if selection.end.column() == map.line_len(selection.end.row()) {
-                            return;
-                        }
+    if times > 1 {
+        Motion::NextWordStart { ignore_punctuation }.expand_selection(
+            map,
+            selection,
+            times - 1,
+            false,
+        );
+    }
 
-                        selection.end =
-                            movement::find_boundary(map, selection.end, |left, right| {
-                                let left_kind =
-                                    char_kind(left).coerce_punctuation(ignore_punctuation);
-                                let right_kind =
-                                    char_kind(right).coerce_punctuation(ignore_punctuation);
+    if times == 1 && selection.end.column() == map.line_len(selection.end.row()) {
+        return;
+    }
 
-                                left_kind != right_kind || left == '\n' || right == '\n'
-                            });
-                    });
-                });
-                copy_selections_content(editor, false, cx);
-                editor.insert("", cx);
-            });
-        });
-        vim.switch_mode(Mode::Insert, false, cx);
+    selection.end = movement::find_boundary(map, selection.end, |left, right| {
+        let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
+        let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+
+        left_kind != right_kind || left == '\n' || right == '\n'
     });
 }
 
@@ -78,7 +85,10 @@ fn change_word(
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, vim_test_context::VimTestContext};
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_change_h(cx: &mut gpui::TestAppContext) {
@@ -170,8 +180,7 @@ mod test {
                 test"},
             indoc! {"
                 Test test
-                ˇ
-                test"},
+                ˇ"},
         );
 
         let mut cx = cx.binding(["c", "shift-e"]);
@@ -193,6 +202,7 @@ mod test {
                 Test ˇ
                 test"},
         );
+        println!("Marker");
         cx.assert(
             indoc! {"
                 Test test
@@ -441,5 +451,86 @@ mod test {
                 jumps over
                 the lazy"},
         );
+    }
+
+    #[gpui::test]
+    async fn test_repeated_cj(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for count in 1..=5 {
+            cx.assert_binding_matches_all(
+                ["c", &count.to_string(), "j"],
+                indoc! {"
+                    ˇThe quˇickˇ browˇn
+                    ˇ
+                    ˇfox ˇjumpsˇ-ˇoˇver
+                    ˇthe lazy dog
+                    "},
+            )
+            .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_repeated_cl(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for count in 1..=5 {
+            cx.assert_binding_matches_all(
+                ["c", &count.to_string(), "l"],
+                indoc! {"
+                    ˇThe quˇickˇ browˇn
+                    ˇ
+                    ˇfox ˇjumpsˇ-ˇoˇver
+                    ˇthe lazy dog
+                    "},
+            )
+            .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_repeated_cb(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Changing back any number of times from the start of the file doesn't
+        // switch to insert mode in vim. This is weird and painful to implement
+        cx.add_initial_state_exemption(indoc! {"
+            ˇThe quick brown
+            
+            fox jumps-over
+            the lazy dog
+            "});
+
+        for count in 1..=5 {
+            cx.assert_binding_matches_all(
+                ["c", &count.to_string(), "b"],
+                indoc! {"
+                    ˇThe quˇickˇ browˇn
+                    ˇ
+                    ˇfox ˇjumpsˇ-ˇoˇver
+                    ˇthe lazy dog
+                    "},
+            )
+            .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_repeated_ce(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for count in 1..=5 {
+            cx.assert_binding_matches_all(
+                ["c", &count.to_string(), "e"],
+                indoc! {"
+                    ˇThe quˇickˇ browˇn
+                    ˇ
+                    ˇfox ˇjumpsˇ-ˇoˇver
+                    ˇthe lazy dog
+                    "},
+            )
+            .await;
+        }
     }
 }

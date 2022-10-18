@@ -56,7 +56,7 @@ pub struct Subscription {
 
 #[derive(Serialize, Deserialize)]
 struct Request<'a, T> {
-    jsonrpc: &'a str,
+    jsonrpc: &'static str,
     id: usize,
     method: &'a str,
     params: T,
@@ -73,6 +73,7 @@ struct AnyResponse<'a> {
 
 #[derive(Serialize)]
 struct Response<T> {
+    jsonrpc: &'static str,
     id: usize,
     result: Option<T>,
     error: Option<Error>,
@@ -80,8 +81,7 @@ struct Response<T> {
 
 #[derive(Serialize, Deserialize)]
 struct Notification<'a, T> {
-    #[serde(borrow)]
-    jsonrpc: &'a str,
+    jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
     params: T,
@@ -453,11 +453,13 @@ impl LanguageServer {
                                 async move {
                                     let response = match response.await {
                                         Ok(result) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
                                             id,
                                             result: Some(result),
                                             error: None,
                                         },
                                         Err(error) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
                                             id,
                                             result: None,
                                             error: Some(Error {

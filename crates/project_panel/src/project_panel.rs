@@ -1012,7 +1012,7 @@ impl ProjectPanel {
     ) -> ElementBox {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
-        MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, _| {
+        MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, cx| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
             let mut style = theme.entry.style_for(state, details.is_selected).clone();
             if details.is_ignored {
@@ -1051,7 +1051,7 @@ impl ProjectPanel {
                     .boxed(),
                 )
                 .with_child(if show_editor {
-                    ChildView::new(editor.clone())
+                    ChildView::new(editor.clone(), cx)
                         .contained()
                         .with_margin_left(theme.entry.default.icon_spacing)
                         .aligned()
@@ -1147,7 +1147,7 @@ impl View for ProjectPanel {
                 })
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.context_menu).boxed())
+            .with_child(ChildView::new(&self.context_menu, cx).boxed())
             .boxed()
     }
 

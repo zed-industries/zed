@@ -1,9 +1,10 @@
-use crate::{FollowerStatesByLeader, Pane};
+use crate::{FollowerStatesByLeader, JoinProject, Pane, Workspace};
 use anyhow::{anyhow, Result};
-use client::PeerId;
-use collections::HashMap;
-use gpui::{elements::*, Axis, Border, ViewHandle};
-use project::Collaborator;
+use call::ActiveCall;
+use gpui::{
+    elements::*, Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
+};
+use project::Project;
 use serde::Deserialize;
 use theme::Theme;
 
@@ -56,11 +57,14 @@ impl PaneGroup {
 
     pub(crate) fn render(
         &self,
+        project: &ModelHandle<Project>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
-        collaborators: &HashMap<PeerId, Collaborator>,
+        active_call: Option<&ModelHandle<ActiveCall>>,
+        cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
-        self.root.render(theme, follower_states, collaborators)
+        self.root
+            .render(project, theme, follower_states, active_call, cx)
     }
 
     pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
@@ -100,13 +104,16 @@ impl Member {
 
     pub fn render(
         &self,
+        project: &ModelHandle<Project>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
-        collaborators: &HashMap<PeerId, Collaborator>,
+        active_call: Option<&ModelHandle<ActiveCall>>,
+        cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
+        enum FollowIntoExternalProject {}
+
         match self {
             Member::Pane(pane) => {
-                let mut border = Border::default();
                 let leader = follower_states
                     .iter()
                     .find_map(|(leader_id, follower_states)| {
@@ -116,21 +123,115 @@ impl Member {
                             None
                         }
                     })
-                    .and_then(|leader_id| collaborators.get(leader_id));
-                if let Some(leader) = leader {
-                    let leader_color = theme
-                        .editor
-                        .replica_selection_style(leader.replica_id)
-                        .cursor;
+                    .and_then(|leader_id| {
+                        let room = active_call?.read(cx).room()?.read(cx);
+                        let collaborator = project.read(cx).collaborators().get(leader_id)?;
+                        let participant = room.remote_participants().get(&leader_id)?;
+                        Some((collaborator.replica_id, participant))
+                    });
+
+                let mut border = Border::default();
+
+                let prompt = if let Some((replica_id, leader)) = leader {
+                    let leader_color = theme.editor.replica_selection_style(replica_id).cursor;
                     border = Border::all(theme.workspace.leader_border_width, leader_color);
                     border
                         .color
                         .fade_out(1. - theme.workspace.leader_border_opacity);
                     border.overlay = true;
-                }
-                ChildView::new(pane).contained().with_border(border).boxed()
+
+                    match leader.location {
+                        call::ParticipantLocation::SharedProject {
+                            project_id: leader_project_id,
+                        } => {
+                            if Some(leader_project_id) == project.read(cx).remote_id() {
+                                None
+                            } else {
+                                let leader_user = leader.user.clone();
+                                let leader_user_id = leader.user.id;
+                                Some(
+                                    MouseEventHandler::<FollowIntoExternalProject>::new(
+                                        pane.id(),
+                                        cx,
+                                        |_, _| {
+                                            Label::new(
+                                                format!(
+                                                    "Follow {} on their active project",
+                                                    leader_user.github_login,
+                                                ),
+                                                theme
+                                                    .workspace
+                                                    .external_location_message
+                                                    .text
+                                                    .clone(),
+                                            )
+                                            .contained()
+                                            .with_style(
+                                                theme.workspace.external_location_message.container,
+                                            )
+                                            .boxed()
+                                        },
+                                    )
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(MouseButton::Left, move |_, cx| {
+                                        cx.dispatch_action(JoinProject {
+                                            project_id: leader_project_id,
+                                            follow_user_id: leader_user_id,
+                                        })
+                                    })
+                                    .aligned()
+                                    .bottom()
+                                    .right()
+                                    .boxed(),
+                                )
+                            }
+                        }
+                        call::ParticipantLocation::UnsharedProject => Some(
+                            Label::new(
+                                format!(
+                                    "{} is viewing an unshared Zed project",
+                                    leader.user.github_login
+                                ),
+                                theme.workspace.external_location_message.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.workspace.external_location_message.container)
+                            .aligned()
+                            .bottom()
+                            .right()
+                            .boxed(),
+                        ),
+                        call::ParticipantLocation::External => Some(
+                            Label::new(
+                                format!(
+                                    "{} is viewing a window outside of Zed",
+                                    leader.user.github_login
+                                ),
+                                theme.workspace.external_location_message.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.workspace.external_location_message.container)
+                            .aligned()
+                            .bottom()
+                            .right()
+                            .boxed(),
+                        ),
+                    }
+                } else {
+                    None
+                };
+
+                Stack::new()
+                    .with_child(
+                        ChildView::new(pane, cx)
+                            .contained()
+                            .with_border(border)
+                            .boxed(),
+                    )
+                    .with_children(prompt)
+                    .boxed()
             }
-            Member::Axis(axis) => axis.render(theme, follower_states, collaborators),
+            Member::Axis(axis) => axis.render(project, theme, follower_states, active_call, cx),
         }
     }
 
@@ -232,14 +333,16 @@ impl PaneAxis {
 
     fn render(
         &self,
+        project: &ModelHandle<Project>,
         theme: &Theme,
         follower_state: &FollowerStatesByLeader,
-        collaborators: &HashMap<PeerId, Collaborator>,
+        active_call: Option<&ModelHandle<ActiveCall>>,
+        cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut member = member.render(theme, follower_state, collaborators);
+                let mut member = member.render(project, theme, follower_state, active_call, cx);
                 if ix < last_member_ix {
                     let mut border = theme.workspace.pane_divider;
                     border.left = false;

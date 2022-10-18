@@ -1,7 +1,7 @@
 use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, ToPoint as _,
+    MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
 };
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
@@ -9,8 +9,8 @@ use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, File as _, OffsetRangeExt, SelectionGoal};
-use project::{File, Project, ProjectEntryId, ProjectPath};
+use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
+use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -20,9 +20,8 @@ use std::{
     fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
-    time::Duration,
 };
-use text::{Point, Selection};
+use text::Selection;
 use util::TryFutureExt;
 use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -30,7 +29,6 @@ use workspace::{
     ToolbarItemLocation,
 };
 
-pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
@@ -406,10 +404,14 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
+        self.report_event("save editor", cx);
+
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| project.format(buffers, true, cx));
+        let format = project.update(cx, |project, cx| {
+            project.format(buffers, true, FormatTrigger::Save, cx)
+        });
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
                 _ = timeout => {
@@ -474,6 +476,17 @@ impl Item for Editor {
             });
             Ok(())
         })
+    }
+
+    fn git_diff_recalc(
+        &mut self,
+        _project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.buffer().update(cx, |multibuffer, cx| {
+            multibuffer.git_diff_recalc(cx);
+        });
+        Task::ready(Ok(()))
     }
 
     fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {

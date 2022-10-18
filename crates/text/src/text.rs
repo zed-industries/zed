@@ -2,39 +2,28 @@ mod anchor;
 pub mod locator;
 #[cfg(any(test, feature = "test-support"))]
 pub mod network;
-mod offset_utf16;
 pub mod operation_queue;
 mod patch;
-mod point;
-mod point_utf16;
-#[cfg(any(test, feature = "test-support"))]
-pub mod random_char_iter;
-pub mod rope;
 mod selection;
 pub mod subscription;
 #[cfg(test)]
 mod tests;
+mod undo_map;
 
 pub use anchor::*;
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use lazy_static::lazy_static;
+use fs::LineEnding;
 use locator::Locator;
-pub use offset_utf16::*;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
-pub use point::*;
-pub use point_utf16::*;
 use postage::{barrier, oneshot, prelude::*};
-#[cfg(any(test, feature = "test-support"))]
-pub use random_char_iter::*;
-use regex::Regex;
-use rope::TextDimension;
-pub use rope::{Chunks, Rope, TextSummary};
+
+pub use rope::*;
 pub use selection::*;
+
 use std::{
-    borrow::Cow,
     cmp::{self, Ordering, Reverse},
     future::Future,
     iter::Iterator,
@@ -46,10 +35,10 @@ use std::{
 pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree, TreeMap};
+use undo_map::UndoMap;
 
-lazy_static! {
-    static ref CARRIAGE_RETURNS_REGEX: Regex = Regex::new("\r\n|\r").unwrap();
-}
+#[cfg(any(test, feature = "test-support"))]
+use util::RandomCharIter;
 
 pub type TransactionId = clock::Local;
 
@@ -66,7 +55,7 @@ pub struct Buffer {
     version_barriers: Vec<(clock::Global, barrier::Sender)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BufferSnapshot {
     replica_id: ReplicaId,
     remote_id: u64,
@@ -92,12 +81,6 @@ pub struct Transaction {
     pub id: TransactionId,
     pub edit_ids: Vec<clock::Local>,
     pub start: clock::Global,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LineEnding {
-    Unix,
-    Windows,
 }
 
 impl HistoryEntry {
@@ -332,44 +315,6 @@ impl History {
                 .extend(self.redo_stack.drain(entry_ix..).rev());
         }
         &self.undo_stack[undo_stack_start_len..]
-    }
-}
-
-#[derive(Clone, Default, Debug)]
-struct UndoMap(HashMap<clock::Local, Vec<(clock::Local, u32)>>);
-
-impl UndoMap {
-    fn insert(&mut self, undo: &UndoOperation) {
-        for (edit_id, count) in &undo.counts {
-            self.0.entry(*edit_id).or_default().push((undo.id, *count));
-        }
-    }
-
-    fn is_undone(&self, edit_id: clock::Local) -> bool {
-        self.undo_count(edit_id) % 2 == 1
-    }
-
-    fn was_undone(&self, edit_id: clock::Local, version: &clock::Global) -> bool {
-        let undo_count = self
-            .0
-            .get(&edit_id)
-            .unwrap_or(&Vec::new())
-            .iter()
-            .filter(|(undo_id, _)| version.observed(*undo_id))
-            .map(|(_, undo_count)| *undo_count)
-            .max()
-            .unwrap_or(0);
-        undo_count % 2 == 1
-    }
-
-    fn undo_count(&self, edit_id: clock::Local) -> u32 {
-        self.0
-            .get(&edit_id)
-            .unwrap_or(&Vec::new())
-            .iter()
-            .map(|(_, undo_count)| *undo_count)
-            .max()
-            .unwrap_or(0)
     }
 }
 
@@ -1218,13 +1163,6 @@ impl Buffer {
         &self.history.operations
     }
 
-    pub fn undo_history(&self) -> impl Iterator<Item = (&clock::Local, &[(clock::Local, u32)])> {
-        self.undo_map
-            .0
-            .iter()
-            .map(|(edit_id, undo_counts)| (edit_id, undo_counts.as_slice()))
-    }
-
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
         if let Some(entry) = self.history.pop_undo() {
             let transaction = entry.transaction.clone();
@@ -1507,9 +1445,7 @@ impl Buffer {
             last_end = Some(range.end);
 
             let new_text_len = rng.gen_range(0..10);
-            let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
-                .take(new_text_len)
-                .collect();
+            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
             edits.push((range, new_text.into()));
         }
@@ -2409,56 +2345,6 @@ impl operation_queue::Operation for Operation {
             Operation::Undo {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
-        }
-    }
-}
-
-impl Default for LineEnding {
-    fn default() -> Self {
-        #[cfg(unix)]
-        return Self::Unix;
-
-        #[cfg(not(unix))]
-        return Self::CRLF;
-    }
-}
-
-impl LineEnding {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LineEnding::Unix => "\n",
-            LineEnding::Windows => "\r\n",
-        }
-    }
-
-    pub fn detect(text: &str) -> Self {
-        let mut max_ix = cmp::min(text.len(), 1000);
-        while !text.is_char_boundary(max_ix) {
-            max_ix -= 1;
-        }
-
-        if let Some(ix) = text[..max_ix].find(&['\n']) {
-            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
-                Self::Windows
-            } else {
-                Self::Unix
-            }
-        } else {
-            Self::default()
-        }
-    }
-
-    pub fn normalize(text: &mut String) {
-        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(text, "\n") {
-            *text = replaced;
-        }
-    }
-
-    fn normalize_arc(text: Arc<str>) -> Arc<str> {
-        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
         }
     }
 }

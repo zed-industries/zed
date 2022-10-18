@@ -330,10 +330,23 @@ impl DisplaySnapshot {
         DisplayPoint(self.blocks_snapshot.max_point())
     }
 
+    /// Returns text chunks starting at the given display row until the end of the file
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.blocks_snapshot
             .chunks(display_row..self.max_point().row() + 1, false, None)
             .map(|h| h.text)
+    }
+
+    // Returns text chunks starting at the end of the given display row in reverse until the start of the file
+    pub fn reverse_text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
+        (0..=display_row).into_iter().rev().flat_map(|row| {
+            self.blocks_snapshot
+                .chunks(row..row + 1, false, None)
+                .map(|h| h.text)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+        })
     }
 
     pub fn chunks(&self, display_rows: Range<u32>, language_aware: bool) -> DisplayChunks<'_> {
@@ -341,23 +354,67 @@ impl DisplaySnapshot {
             .chunks(display_rows, language_aware, Some(&self.text_highlights))
     }
 
-    pub fn chars_at(&self, point: DisplayPoint) -> impl Iterator<Item = char> + '_ {
-        let mut column = 0;
-        let mut chars = self.text_chunks(point.row()).flat_map(str::chars);
-        while column < point.column() {
-            if let Some(c) = chars.next() {
-                column += c.len_utf8() as u32;
-            } else {
-                break;
-            }
-        }
-        chars
+    pub fn chars_at(
+        &self,
+        mut point: DisplayPoint,
+    ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
+        point = DisplayPoint(self.blocks_snapshot.clip_point(point.0, Bias::Left));
+        self.text_chunks(point.row())
+            .flat_map(str::chars)
+            .skip_while({
+                let mut column = 0;
+                move |char| {
+                    let at_point = column >= point.column();
+                    column += char.len_utf8() as u32;
+                    !at_point
+                }
+            })
+            .map(move |ch| {
+                let result = (ch, point);
+                if ch == '\n' {
+                    *point.row_mut() += 1;
+                    *point.column_mut() = 0;
+                } else {
+                    *point.column_mut() += ch.len_utf8() as u32;
+                }
+                result
+            })
+    }
+
+    pub fn reverse_chars_at(
+        &self,
+        mut point: DisplayPoint,
+    ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
+        point = DisplayPoint(self.blocks_snapshot.clip_point(point.0, Bias::Left));
+        self.reverse_text_chunks(point.row())
+            .flat_map(|chunk| chunk.chars().rev())
+            .skip_while({
+                let mut column = self.line_len(point.row());
+                if self.max_point().row() > point.row() {
+                    column += 1;
+                }
+
+                move |char| {
+                    let at_point = column <= point.column();
+                    column = column.saturating_sub(char.len_utf8() as u32);
+                    !at_point
+                }
+            })
+            .map(move |ch| {
+                if ch == '\n' {
+                    *point.row_mut() -= 1;
+                    *point.column_mut() = self.line_len(point.row());
+                } else {
+                    *point.column_mut() = point.column().saturating_sub(ch.len_utf8() as u32);
+                }
+                (ch, point)
+            })
     }
 
     pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if column >= target {
                 break;
             }
@@ -370,7 +427,7 @@ impl DisplaySnapshot {
     pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
         let mut column = 0;
 
-        for (count, c) in self.chars_at(DisplayPoint::new(display_row, 0)).enumerate() {
+        for (count, (c, _)) in self.chars_at(DisplayPoint::new(display_row, 0)).enumerate() {
             if c == '\n' || count >= char_count as usize {
                 break;
             }
@@ -454,7 +511,7 @@ impl DisplaySnapshot {
     pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if c == ' ' {
                 indent += 1;
             } else {
@@ -565,7 +622,7 @@ pub mod tests {
     use super::*;
     use crate::{movement, test::marked_display_snapshot};
     use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
-    use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
+    use language::{Buffer, Language, LanguageConfig, SelectionGoal};
     use rand::{prelude::*, Rng};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
@@ -609,7 +666,9 @@ pub mod tests {
         let buffer = cx.update(|cx| {
             if rng.gen() {
                 let len = rng.gen_range(0..10);
-                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                let text = util::RandomCharIter::new(&mut rng)
+                    .take(len)
+                    .collect::<String>();
                 MultiBuffer::build_simple(&text, cx)
             } else {
                 MultiBuffer::build_random(&mut rng, cx)

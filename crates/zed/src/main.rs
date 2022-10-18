@@ -14,32 +14,32 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
-use fs::OpenOptions;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
 use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task, ViewContext};
-use isahc::{config::Configurable, AsyncBody, Request};
+use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::{Fs, ProjectStore};
 use serde_json::json;
-use settings::{self, KeymapFileContent, Settings, SettingsFileContent, WorkingDirectory};
+use settings::{
+    self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
+    WorkingDirectory,
+};
 use smol::process::Command;
-use std::{env, ffi::OsStr, fs, panic, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::fs::OpenOptions;
+use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
 use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
 
+use fs::RealFs;
+use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
-use zed::{
-    self, build_window_options,
-    fs::RealFs,
-    initialize_workspace, languages, menus,
-    settings_file::{watch_keymap_file, watch_settings_file, WatchedJsonFile},
-};
+use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();
@@ -88,7 +88,7 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let client = client::Client::new(http.clone());
+        let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
@@ -97,10 +97,15 @@ fn main() {
             .spawn(languages::init(languages.clone(), cx.background().clone()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
-        let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
+        let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
 
         //Setup settings global before binding actions
-        watch_settings_file(default_settings, settings_file, themes.clone(), cx);
+        cx.set_global(SettingsFile::new(
+            &*zed::paths::SETTINGS,
+            settings_file_content.clone(),
+            fs.clone(),
+        ));
+        watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
         context_menu::init(cx);
@@ -111,7 +116,6 @@ fn main() {
         editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
-        contacts_panel::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);
@@ -121,7 +125,6 @@ fn main() {
         terminal::init(cx);
         theme_testbench::init(cx);
 
-        let db = cx.background().block(db);
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
 
@@ -139,7 +142,11 @@ fn main() {
         })
         .detach();
 
-        let project_store = cx.add_model(|_| ProjectStore::new(db.clone()));
+        let project_store = cx.add_model(|_| ProjectStore::new());
+        let db = cx.background().block(db);
+        client.start_telemetry(db.clone());
+        client.report_event("start app", Default::default());
+
         let app_state = Arc::new(AppState {
             languages,
             themes,
@@ -156,6 +163,7 @@ fn main() {
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
+        collab_ui::init(app_state.clone(), cx);
 
         cx.set_menus(menus::menus());
 
@@ -197,23 +205,23 @@ fn main() {
 }
 
 fn init_paths() {
-    fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
-    fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
-    fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
-    fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
+    std::fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
+    std::fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
+    std::fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
+    std::fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
 
     // Copy setting files from legacy locations. TODO: remove this after a few releases.
     thread::spawn(|| {
-        if fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
-            && fs::metadata(&*zed::paths::SETTINGS).is_err()
+        if std::fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
+            && std::fs::metadata(&*zed::paths::SETTINGS).is_err()
         {
-            fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
+            std::fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
         }
 
-        if fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
-            && fs::metadata(&*zed::paths::KEYMAP).is_err()
+        if std::fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
+            && std::fs::metadata(&*zed::paths::KEYMAP).is_err()
         {
-            fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
+            std::fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
         }
     });
 }
@@ -228,9 +236,10 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if fs::metadata(&*zed::paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(&*zed::paths::LOG)
+            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
+            let _ = std::fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
         }
 
         let log_file = OpenOptions::new()
@@ -280,15 +289,13 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
                         "token": ZED_SECRET_CLIENT_TOKEN,
                     }))
                     .unwrap();
-                    let request = Request::builder()
-                        .uri(&panic_report_url)
-                        .method(http::Method::POST)
+                    let request = Request::post(&panic_report_url)
                         .redirect_policy(isahc::config::RedirectPolicy::Follow)
                         .header("Content-Type", "application/json")
-                        .body(AsyncBody::from(body))?;
+                        .body(body.into())?;
                     let response = http.send(request).await.context("error sending panic")?;
                     if response.status().is_success() {
-                        fs::remove_file(child_path)
+                        std::fs::remove_file(child_path)
                             .context("error removing panic after sending it successfully")
                             .log_err();
                     } else {
@@ -337,7 +344,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
         };
 
         let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-        fs::write(
+        std::fs::write(
             zed::paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
             &message,
         )
@@ -394,7 +401,7 @@ fn stdout_is_a_pty() -> bool {
 fn collect_path_args() -> Vec<PathBuf> {
     env::args()
         .skip(1)
-        .filter_map(|arg| match fs::canonicalize(arg) {
+        .filter_map(|arg| match std::fs::canonicalize(arg) {
             Ok(path) => Some(path),
             Err(error) => {
                 log::error!("error parsing path argument: {}", error);

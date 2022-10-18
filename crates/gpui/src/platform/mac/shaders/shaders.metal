@@ -44,6 +44,7 @@ struct QuadFragmentInput {
     float border_left;
     float4 border_color;
     float corner_radius;
+    uchar grayscale; // only used in image shader
 };
 
 float4 quad_sdf(QuadFragmentInput input) {
@@ -110,6 +111,7 @@ vertex QuadFragmentInput quad_vertex(
         quad.border_left,
         coloru_to_colorf(quad.border_color),
         quad.corner_radius,
+        0,
     };
 }
 
@@ -251,6 +253,7 @@ vertex QuadFragmentInput image_vertex(
         image.border_left,
         coloru_to_colorf(image.border_color),
         image.corner_radius,
+        image.grayscale,
     };
 }
 
@@ -260,6 +263,13 @@ fragment float4 image_fragment(
 ) {
     constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
     input.background_color = atlas.sample(atlas_sampler, input.atlas_position);
+    if (input.grayscale) {
+        float grayscale =
+            0.2126 * input.background_color.r +
+            0.7152 * input.background_color.g + 
+            0.0722 * input.background_color.b;
+        input.background_color = float4(grayscale, grayscale, grayscale, input.background_color.a);
+    }
     return quad_sdf(input);
 }
 
@@ -289,6 +299,7 @@ vertex QuadFragmentInput surface_vertex(
         0.,
         float4(0.),
         0.,
+        0,
     };
 }
 

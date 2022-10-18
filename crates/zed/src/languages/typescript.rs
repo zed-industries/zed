@@ -115,7 +115,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
-        language: &language::Language,
+        language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         use lsp::CompletionItemKind as Kind;
         let len = item.label.len();
@@ -144,7 +144,6 @@ impl LspAdapter for TypeScriptLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use gpui::MutableAppContext;
     use unindent::Unindent;
@@ -172,9 +171,8 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.add_model(|cx| {
-            language::Buffer::new(0, text, cx).with_language(Arc::new(language), cx)
-        });
+        let buffer =
+            cx.add_model(|cx| language::Buffer::new(0, text, cx).with_language(language, cx));
         let outline = buffer.read(cx).snapshot().outline(None).unwrap();
         assert_eq!(
             outline

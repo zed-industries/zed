@@ -90,6 +90,7 @@ typedef struct {
   float border_left;
   vector_uchar4 border_color;
   float corner_radius;
+  uint8_t grayscale;
 } GPUIImage;
 
 typedef enum {

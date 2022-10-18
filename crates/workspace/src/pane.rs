@@ -112,10 +112,10 @@ pub fn init(cx: &mut MutableAppContext) {
         pane.activate_item(pane.items.len() - 1, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
-        pane.activate_prev_item(cx);
+        pane.activate_prev_item(true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
-        pane.activate_next_item(cx);
+        pane.activate_next_item(true, cx);
     });
     cx.add_async_action(Pane::close_active_item);
     cx.add_async_action(Pane::close_inactive_items);
@@ -189,7 +189,6 @@ pub fn init(cx: &mut MutableAppContext) {
 
 #[derive(Debug)]
 pub enum Event {
-    Focused,
     ActivateItem { local: bool },
     Remove,
     RemoveItem { item_id: usize },
@@ -201,7 +200,7 @@ pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     is_active: bool,
     active_item_index: usize,
-    last_focused_view: Option<AnyWeakViewHandle>,
+    last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
@@ -263,7 +262,7 @@ impl Pane {
             items: Vec::new(),
             is_active: true,
             active_item_index: 0,
-            last_focused_view: None,
+            last_focused_view_by_item: Default::default(),
             autoscroll: false,
             nav_history: Rc::new(RefCell::new(NavHistory {
                 mode: NavigationMode::Normal,
@@ -632,32 +631,29 @@ impl Pane {
             if focus_item {
                 self.focus_active_item(cx);
             }
-            if activate_pane {
-                cx.emit(Event::Focused);
-            }
             self.autoscroll = true;
             cx.notify();
         }
     }
 
-    pub fn activate_prev_item(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_prev_item(&mut self, activate_pane: bool, cx: &mut ViewContext<Self>) {
         let mut index = self.active_item_index;
         if index > 0 {
             index -= 1;
         } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, true, true, cx);
+        self.activate_item(index, activate_pane, activate_pane, cx);
     }
 
-    pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_next_item(&mut self, activate_pane: bool, cx: &mut ViewContext<Self>) {
         let mut index = self.active_item_index;
         if index + 1 < self.items.len() {
             index += 1;
         } else {
             index = 0;
         }
-        self.activate_item(index, true, true, cx);
+        self.activate_item(index, activate_pane, activate_pane, cx);
     }
 
     pub fn close_active_item(
@@ -784,7 +780,7 @@ impl Pane {
                 // Remove the item from the pane.
                 pane.update(&mut cx, |pane, cx| {
                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
-                        pane.remove_item(item_ix, cx);
+                        pane.remove_item(item_ix, false, cx);
                     }
                 });
             }
@@ -794,15 +790,15 @@ impl Pane {
         })
     }
 
-    fn remove_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
+    fn remove_item(&mut self, item_ix: usize, activate_pane: bool, cx: &mut ViewContext<Self>) {
         if item_ix == self.active_item_index {
             // Activate the previous item if possible.
             // This returns the user to the previously opened tab if they closed
             // a new item they just navigated to.
             if item_ix > 0 {
-                self.activate_prev_item(cx);
+                self.activate_prev_item(activate_pane, cx);
             } else if item_ix + 1 < self.items.len() {
-                self.activate_next_item(cx);
+                self.activate_next_item(activate_pane, cx);
             }
         }
 
@@ -965,25 +961,26 @@ impl Pane {
             log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
             return;
         }
-
         let (item_ix, item_handle) = item_to_move.unwrap();
+        let item_handle = item_handle.clone();
+
+        if from != to {
+            // Close item from previous pane
+            from.update(cx, |from, cx| {
+                from.remove_item(item_ix, false, cx);
+            });
+        }
+
         // This automatically removes duplicate items in the pane
         Pane::add_item(
             workspace,
             &to,
-            item_handle.clone(),
+            item_handle,
             true,
             true,
             Some(destination_index),
             cx,
         );
-
-        if from != to {
-            // Close item from previous pane
-            from.update(cx, |from, cx| {
-                from.remove_item(item_ix, cx);
-            });
-        }
 
         cx.focus(to);
     }
@@ -1091,7 +1088,7 @@ impl Pane {
                         move |mouse_state, cx| {
                             let tab_style =
                                 theme.workspace.tab_bar.tab_style(pane_active, tab_active);
-                            let hovered = mouse_state.hovered;
+                            let hovered = mouse_state.hovered();
                             Self::render_tab(
                                 &item,
                                 pane,
@@ -1164,7 +1161,8 @@ impl Pane {
                         .with_style(filler_style.container)
                         .with_border(filler_style.container.border);
 
-                    if let Some(overlay) = Self::tab_overlay_color(mouse_state.hovered, &theme, cx)
+                    if let Some(overlay) =
+                        Self::tab_overlay_color(mouse_state.hovered(), &theme, cx)
                     {
                         filler = filler.with_overlay_color(overlay);
                     }
@@ -1286,7 +1284,7 @@ impl Pane {
                         enum TabCloseButton {}
                         let icon = Svg::new("icons/x_mark_thin_8.svg");
                         MouseEventHandler::<TabCloseButton>::new(item_id, cx, |mouse_state, _| {
-                            if mouse_state.hovered {
+                            if mouse_state.hovered() {
                                 icon.with_color(tab_style.icon_close_active).boxed()
                             } else {
                                 icon.with_color(tab_style.icon_close).boxed()
@@ -1442,8 +1440,8 @@ impl View for Pane {
                                     .flex(1., false)
                                     .named("tab bar")
                             })
-                            .with_child(ChildView::new(&self.toolbar).expanded().boxed())
-                            .with_child(ChildView::new(active_item).flex(1., true).boxed())
+                            .with_child(ChildView::new(&self.toolbar, cx).expanded().boxed())
+                            .with_child(ChildView::new(active_item, cx).flex(1., true).boxed())
                             .boxed()
                     } else {
                         enum EmptyPane {}
@@ -1483,25 +1481,32 @@ impl View for Pane {
                 })
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.tab_bar_context_menu).boxed())
+            .with_child(ChildView::new(&self.tab_bar_context_menu, cx).boxed())
             .named("pane")
     }
 
     fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            if let Some(last_focused_view) = self
-                .last_focused_view
-                .as_ref()
-                .and_then(|handle| handle.upgrade(cx))
-            {
-                cx.focus(last_focused_view);
+        if let Some(active_item) = self.active_item() {
+            if cx.is_self_focused() {
+                // Pane was focused directly. We need to either focus a view inside the active item,
+                // or focus the active item itself
+                if let Some(weak_last_focused_view) =
+                    self.last_focused_view_by_item.get(&active_item.id())
+                {
+                    if let Some(last_focused_view) = weak_last_focused_view.upgrade(cx) {
+                        cx.focus(last_focused_view);
+                        return;
+                    } else {
+                        self.last_focused_view_by_item.remove(&active_item.id());
+                    }
+                }
+
+                cx.focus(active_item);
             } else {
-                self.focus_active_item(cx);
+                self.last_focused_view_by_item
+                    .insert(active_item.id(), focused.downgrade());
             }
-        } else {
-            self.last_focused_view = Some(focused.downgrade());
         }
-        cx.emit(Event::Focused);
     }
 }
 

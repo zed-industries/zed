@@ -2,9 +2,11 @@ use super::{
     event::key_to_native, status_item::StatusItem, BoolExt as _, Dispatcher, FontSystem, Window,
 };
 use crate::{
-    executor, keymap,
+    executor,
+    geometry::vector::{vec2f, Vector2F},
+    keymap,
     platform::{self, CursorStyle},
-    Action, ClipboardItem, Event, Menu, MenuItem,
+    Action, AppVersion, ClipboardItem, Event, Menu, MenuItem,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -12,11 +14,12 @@ use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypeString, NSSavePanel, NSWindow,
+        NSPasteboardTypeString, NSSavePanel, NSScreen, NSWindow,
     },
     base::{id, nil, selector, YES},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
+        NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -485,6 +488,14 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn screen_size(&self) -> Vector2F {
+        unsafe {
+            let screen = NSScreen::mainScreen(nil);
+            let frame = NSScreen::frame(screen);
+            vec2f(frame.size.width as f32, frame.size.height as f32)
+        }
+    }
+
     fn open_window(
         &self,
         id: usize,
@@ -698,6 +709,16 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn should_auto_hide_scrollbars(&self) -> bool {
+        #[allow(non_upper_case_globals)]
+        const NSScrollerStyleOverlay: NSInteger = 1;
+
+        unsafe {
+            let style: NSInteger = msg_send![class!(NSScroller), preferredScrollerStyle];
+            style == NSScrollerStyleOverlay
+        }
+    }
+
     fn local_timezone(&self) -> UtcOffset {
         unsafe {
             let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
@@ -746,6 +767,22 @@ impl platform::Platform for MacPlatform {
                 let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
                 version.parse()
             }
+        }
+    }
+
+    fn os_name(&self) -> &'static str {
+        "macOS"
+    }
+
+    fn os_version(&self) -> Result<crate::AppVersion> {
+        unsafe {
+            let process_info = NSProcessInfo::processInfo(nil);
+            let version = process_info.operatingSystemVersion();
+            Ok(AppVersion {
+                major: version.majorVersion as usize,
+                minor: version.minorVersion as usize,
+                patch: version.patchVersion as usize,
+            })
         }
     }
 }
