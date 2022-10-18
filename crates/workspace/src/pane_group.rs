@@ -1,8 +1,10 @@
 use crate::{FollowerStatesByLeader, JoinProject, Pane, Workspace};
 use anyhow::{anyhow, Result};
-use call::ActiveCall;
+use call::{ActiveCall, ParticipantLocation};
 use gpui::{
-    elements::*, Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -130,18 +132,45 @@ impl Member {
                         Some((collaborator.replica_id, participant))
                     });
 
-                let mut border = Border::default();
-
-                let prompt = if let Some((replica_id, leader)) = leader {
-                    let leader_color = theme.editor.replica_selection_style(replica_id).cursor;
-                    border = Border::all(theme.workspace.leader_border_width, leader_color);
+                let border = if let Some((replica_id, _)) = leader.as_ref() {
+                    let leader_color = theme.editor.replica_selection_style(*replica_id).cursor;
+                    let mut border = Border::all(theme.workspace.leader_border_width, leader_color);
                     border
                         .color
                         .fade_out(1. - theme.workspace.leader_border_opacity);
                     border.overlay = true;
+                    border
+                } else {
+                    Border::default()
+                };
 
+                let content = if leader.as_ref().map_or(false, |(_, leader)| {
+                    leader.location == ParticipantLocation::External && !leader.tracks.is_empty()
+                }) {
+                    let (_, leader) = leader.unwrap();
+                    let track = leader.tracks.values().next().unwrap();
+                    let frame = track.frame().cloned();
+                    Canvas::new(move |bounds, _, cx| {
+                        if let Some(frame) = frame.clone() {
+                            let size = constrain_size_preserving_aspect_ratio(
+                                bounds.size(),
+                                vec2f(frame.width() as f32, frame.height() as f32),
+                            );
+                            let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
+                            cx.scene.push_surface(gpui::mac::Surface {
+                                bounds: RectF::new(origin, size),
+                                image_buffer: frame,
+                            });
+                        }
+                    })
+                    .boxed()
+                } else {
+                    ChildView::new(pane, cx).boxed()
+                };
+
+                let prompt = if let Some((_, leader)) = leader {
                     match leader.location {
-                        call::ParticipantLocation::SharedProject {
+                        ParticipantLocation::SharedProject {
                             project_id: leader_project_id,
                         } => {
                             if Some(leader_project_id) == project.read(cx).remote_id() {
@@ -186,7 +215,7 @@ impl Member {
                                 )
                             }
                         }
-                        call::ParticipantLocation::UnsharedProject => Some(
+                        ParticipantLocation::UnsharedProject => Some(
                             Label::new(
                                 format!(
                                     "{} is viewing an unshared Zed project",
@@ -201,35 +230,28 @@ impl Member {
                             .right()
                             .boxed(),
                         ),
-                        call::ParticipantLocation::External => {
-                            let frame = leader
-                                .tracks
-                                .values()
-                                .next()
-                                .and_then(|track| track.frame())
-                                .cloned();
-                            return Canvas::new(move |bounds, _, cx| {
-                                if let Some(frame) = frame.clone() {
-                                    cx.scene.push_surface(gpui::mac::Surface {
-                                        bounds,
-                                        image_buffer: frame,
-                                    });
-                                }
-                            })
-                            .boxed();
-                        }
+                        ParticipantLocation::External => Some(
+                            Label::new(
+                                format!(
+                                    "{} is viewing a window outside of Zed",
+                                    leader.user.github_login
+                                ),
+                                theme.workspace.external_location_message.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.workspace.external_location_message.container)
+                            .aligned()
+                            .bottom()
+                            .right()
+                            .boxed(),
+                        ),
                     }
                 } else {
                     None
                 };
 
                 Stack::new()
-                    .with_child(
-                        ChildView::new(pane, cx)
-                            .contained()
-                            .with_border(border)
-                            .boxed(),
-                    )
+                    .with_child(Container::new(content).with_border(border).boxed())
                     .with_children(prompt)
                     .boxed()
             }

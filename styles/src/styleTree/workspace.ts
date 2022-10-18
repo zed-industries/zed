@@ -49,7 +49,7 @@ export default function workspace(theme: Theme) {
       ...text(theme, "sans", "primary", { size: "lg" }),
     },
     externalLocationMessage: {
-      background: backgroundColor(theme, "info"),
+      background: backgroundColor(theme, "on500Info"),
       border: border(theme, "secondary"),
       cornerRadius: 6,
       padding: 12,
