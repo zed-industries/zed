@@ -259,7 +259,7 @@ impl Element for Flex {
                             if remaining_space < 0. {
                                 let mut delta = match axis {
                                     Axis::Horizontal => {
-                                        if e.delta.x() != 0. {
+                                        if e.delta.x().abs() >= e.delta.y().abs() {
                                             e.delta.x()
                                         } else {
                                             e.delta.y()
