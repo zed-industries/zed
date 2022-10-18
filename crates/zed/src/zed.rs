@@ -63,6 +63,7 @@ actions!(
         DecreaseBufferFontSize,
         ResetBufferFontSize,
         InstallCommandLineInterface,
+        ResetDatabase,
     ]
 );
 

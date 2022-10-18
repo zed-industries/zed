@@ -1142,7 +1142,7 @@ impl Client {
         self.peer.respond_with_error(receipt, error)
     }
 
-    pub fn start_telemetry(&self, db: Arc<Db>) {
+    pub fn start_telemetry(&self, db: Db) {
         self.telemetry.start(db);
     }
 
