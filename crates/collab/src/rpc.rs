@@ -397,7 +397,7 @@ impl Server {
 
                 if let Some((code, count)) = invite_code {
                     this.peer.send(connection_id, proto::UpdateInviteInfo {
-                        url: format!("{}{}", this.app_state.invite_link_prefix, code),
+                        url: format!("{}{}", this.app_state.config.invite_link_prefix, code),
                         count,
                     })?;
                 }
@@ -561,7 +561,7 @@ impl Server {
                     self.peer.send(
                         connection_id,
                         proto::UpdateInviteInfo {
-                            url: format!("{}{}", self.app_state.invite_link_prefix, &code),
+                            url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
                             count: user.invite_count as u32,
                         },
                     )?;
@@ -579,7 +579,10 @@ impl Server {
                     self.peer.send(
                         connection_id,
                         proto::UpdateInviteInfo {
-                            url: format!("{}{}", self.app_state.invite_link_prefix, invite_code),
+                            url: format!(
+                                "{}{}",
+                                self.app_state.config.invite_link_prefix, invite_code
+                            ),
                             count: user.invite_count as u32,
                         },
                     )?;

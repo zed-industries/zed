@@ -76,7 +76,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
     let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
-    if token != state.api_token {
+    if token != state.config.api_token {
         Err(Error::Http(
             StatusCode::UNAUTHORIZED,
             "invalid authorization token".to_string(),

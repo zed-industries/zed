@@ -34,17 +34,15 @@ pub struct Config {
 
 pub struct AppState {
     db: Arc<dyn Db>,
-    api_token: String,
-    invite_link_prefix: String,
+    config: Config,
 }
 
 impl AppState {
-    async fn new(config: &Config) -> Result<Arc<Self>> {
+    async fn new(config: Config) -> Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
         let this = Self {
             db: Arc::new(db),
-            api_token: config.api_token.clone(),
-            invite_link_prefix: config.invite_link_prefix.clone(),
+            config,
         };
         Ok(Arc::new(this))
     }
@@ -61,9 +59,9 @@ async fn main() -> Result<()> {
 
     let config = envy::from_env::<Config>().expect("error loading config");
     init_tracing(&config);
-    let state = AppState::new(&config).await?;
+    let state = AppState::new(config).await?;
 
-    let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
+    let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
         .expect("failed to bind TCP listener");
     let rpc_server = rpc::Server::new(state.clone(), None);
 
