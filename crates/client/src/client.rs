@@ -319,6 +319,14 @@ impl Client {
             .map(|credentials| credentials.user_id)
     }
 
+    pub fn peer_id(&self) -> Option<PeerId> {
+        if let Status::Connected { peer_id, .. } = &*self.status().borrow() {
+            Some(*peer_id)
+        } else {
+            None
+        }
+    }
+
     pub fn status(&self) -> watch::Receiver<Status> {
         self.state.read().status.1.clone()
     }
