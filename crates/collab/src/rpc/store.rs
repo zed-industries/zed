@@ -495,7 +495,7 @@ impl Store {
                 }
             });
 
-        let room = if room.participants.is_empty() && room.pending_participant_user_ids.is_empty() {
+        let room = if room.participants.is_empty() {
             Cow::Owned(self.rooms.remove(&room_id).unwrap())
         } else {
             Cow::Borrowed(self.rooms.get(&room_id).unwrap())

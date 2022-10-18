@@ -3197,6 +3197,7 @@ dependencies = [
  "futures 0.3.24",
  "hmac 0.12.1",
  "jwt",
+ "log",
  "prost 0.8.0",
  "prost-build",
  "prost-types 0.8.0",

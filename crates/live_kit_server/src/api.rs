@@ -110,6 +110,7 @@ impl Client {
         let client = self.http.clone();
         let token = token::create(&self.key, &self.secret, None, grant);
         let url = format!("{}/{}", self.url, path);
+        log::info!("Request {}: {:?}", url, body);
         async move {
             let token = token?;
             let response = client
@@ -119,9 +120,12 @@ impl Client {
                 .body(body.encode_to_vec())
                 .send()
                 .await?;
+
             if response.status().is_success() {
+                log::info!("Response {}: {:?}", url, response.status());
                 Ok(Res::decode(response.bytes().await?)?)
             } else {
+                log::error!("Response {}: {:?}", url, response.status());
                 Err(anyhow!(
                     "POST {} failed with status code {:?}, {:?}",
                     url,

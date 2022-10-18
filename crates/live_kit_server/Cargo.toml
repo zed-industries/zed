@@ -12,6 +12,7 @@ doctest = false
 anyhow = "1.0.38"
 futures = "0.3"
 hmac = "0.12"
+log = "0.4"
 jwt = "0.16"
 prost = "0.8"
 prost-types = "0.8"

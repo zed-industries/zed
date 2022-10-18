@@ -890,11 +890,16 @@ impl Server {
     ) -> impl Future<Output = Result<()>> {
         let client = self.app_state.live_kit_client.clone();
         let room_name = room.live_kit_room.clone();
+        let participant_count = room.participants.len();
         async move {
             if let Some(client) = client {
                 client
-                    .remove_participant(room_name, connection_id.to_string())
+                    .remove_participant(room_name.clone(), connection_id.to_string())
                     .await?;
+
+                if participant_count == 0 {
+                    client.delete_room(room_name).await?;
+                }
             }
 
             Ok(())
