@@ -50,7 +50,9 @@ impl Entity for Room {
     type Event = Event;
 
     fn release(&mut self, _: &mut MutableAppContext) {
-        self.client.send(proto::LeaveRoom { id: self.id }).log_err();
+        if self.status.is_online() {
+            self.client.send(proto::LeaveRoom { id: self.id }).log_err();
+        }
     }
 }
 
@@ -210,6 +212,7 @@ impl Room {
         self.pending_participants.clear();
         self.participant_user_ids.clear();
         self.subscriptions.clear();
+        self.live_kit_room.take();
         self.client.send(proto::LeaveRoom { id: self.id })?;
         Ok(())
     }
@@ -629,5 +632,9 @@ pub enum RoomStatus {
 impl RoomStatus {
     pub fn is_offline(&self) -> bool {
         matches!(self, RoomStatus::Offline)
+    }
+
+    pub fn is_online(&self) -> bool {
+        matches!(self, RoomStatus::Online)
     }
 }

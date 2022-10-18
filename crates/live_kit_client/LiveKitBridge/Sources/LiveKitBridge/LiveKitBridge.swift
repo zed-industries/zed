@@ -83,6 +83,12 @@ public func LKRoomConnect(room: UnsafeRawPointer, url: CFString, token: CFString
     }
 }
 
+@_cdecl("LKRoomDisconnect")
+public func LKRoomDisconnect(room: UnsafeRawPointer) {
+    let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
+    room.disconnect()
+}
+
 @_cdecl("LKRoomPublishVideoTrack")
 public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer, CFString?) -> Void, callback_data: UnsafeRawPointer) {
     let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()

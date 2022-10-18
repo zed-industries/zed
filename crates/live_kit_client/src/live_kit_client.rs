@@ -43,6 +43,7 @@ extern "C" {
         callback: extern "C" fn(*mut c_void, CFStringRef),
         callback_data: *mut c_void,
     );
+    fn LKRoomDisconnect(room: *const c_void);
     fn LKRoomPublishVideoTrack(
         room: *const c_void,
         track: *const c_void,
@@ -195,7 +196,10 @@ impl Room {
 
 impl Drop for Room {
     fn drop(&mut self) {
-        unsafe { LKRelease(self.native_room) }
+        unsafe {
+            LKRoomDisconnect(self.native_room);
+            LKRelease(self.native_room);
+        }
     }
 }
 
