@@ -20,12 +20,6 @@ pub struct UpdateGoToDefinitionLink {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct CmdShiftChanged {
-    pub cmd_down: bool,
-    pub shift_down: bool,
-}
-
-#[derive(Clone, PartialEq)]
 pub struct GoToFetchedDefinition {
     pub point: DisplayPoint,
 }
@@ -39,7 +33,6 @@ impl_internal_actions!(
     editor,
     [
         UpdateGoToDefinitionLink,
-        CmdShiftChanged,
         GoToFetchedDefinition,
         GoToFetchedTypeDefinition
     ]
@@ -47,7 +40,6 @@ impl_internal_actions!(
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(update_go_to_definition_link);
-    cx.add_action(cmd_shift_changed);
     cx.add_action(go_to_fetched_definition);
     cx.add_action(go_to_fetched_type_definition);
 }
@@ -111,37 +103,6 @@ pub fn update_go_to_definition_link(
     }
 
     hide_link_definition(editor, cx);
-}
-
-pub fn cmd_shift_changed(
-    editor: &mut Editor,
-    &CmdShiftChanged {
-        cmd_down,
-        shift_down,
-    }: &CmdShiftChanged,
-    cx: &mut ViewContext<Editor>,
-) {
-    let pending_selection = editor.has_pending_selection();
-
-    if let Some(point) = editor
-        .link_go_to_definition_state
-        .last_mouse_location
-        .clone()
-    {
-        if cmd_down && !pending_selection {
-            let snapshot = editor.snapshot(cx);
-            let kind = if shift_down {
-                LinkDefinitionKind::Type
-            } else {
-                LinkDefinitionKind::Symbol
-            };
-
-            show_link_definition(kind, editor, point, snapshot, cx);
-            return;
-        }
-    }
-
-    hide_link_definition(editor, cx)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -397,6 +358,7 @@ fn go_to_fetched_definition_of_kind(
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
+    use gpui::{ModifiersChangedEvent, View};
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
 
@@ -467,11 +429,10 @@ mod tests {
 
         // Unpress shift causes highlight to go away (normal goto-definition is not valid here)
         cx.update_editor(|editor, cx| {
-            cmd_shift_changed(
-                editor,
-                &CmdShiftChanged {
-                    cmd_down: true,
-                    shift_down: false,
+            editor.modifiers_changed(
+                &gpui::ModifiersChangedEvent {
+                    cmd: true,
+                    ..Default::default()
                 },
                 cx,
             );
@@ -581,14 +542,7 @@ mod tests {
 
         // Unpress cmd causes highlight to go away
         cx.update_editor(|editor, cx| {
-            cmd_shift_changed(
-                editor,
-                &CmdShiftChanged {
-                    cmd_down: false,
-                    shift_down: false,
-                },
-                cx,
-            );
+            editor.modifiers_changed(&Default::default(), cx);
         });
 
         // Assert no link highlights
@@ -704,11 +658,10 @@ mod tests {
             ])))
         });
         cx.update_editor(|editor, cx| {
-            cmd_shift_changed(
-                editor,
-                &CmdShiftChanged {
-                    cmd_down: true,
-                    shift_down: false,
+            editor.modifiers_changed(
+                &ModifiersChangedEvent {
+                    cmd: true,
+                    ..Default::default()
                 },
                 cx,
             );

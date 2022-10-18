@@ -7,11 +7,11 @@ use pathfinder_geometry::rect::RectF;
 use crate::{EventContext, MouseButton};
 
 use super::{
-    mouse_region_event::{
-        ClickRegionEvent, DownOutRegionEvent, DownRegionEvent, DragRegionEvent, HoverRegionEvent,
-        MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
+    mouse_event::{
+        MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover, MouseMove, MouseUp,
+        MouseUpOut,
     },
-    ScrollWheelRegionEvent,
+    MouseScrollWheel,
 };
 
 #[derive(Clone)]
@@ -62,7 +62,7 @@ impl MouseRegion {
     pub fn on_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DownRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDown, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down(button, handler);
         self
@@ -71,7 +71,7 @@ impl MouseRegion {
     pub fn on_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(UpRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUp, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up(button, handler);
         self
@@ -80,7 +80,7 @@ impl MouseRegion {
     pub fn on_click(
         mut self,
         button: MouseButton,
-        handler: impl Fn(ClickRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseClick, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_click(button, handler);
         self
@@ -89,7 +89,7 @@ impl MouseRegion {
     pub fn on_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DownOutRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDownOut, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down_out(button, handler);
         self
@@ -98,7 +98,7 @@ impl MouseRegion {
     pub fn on_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(UpOutRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUpOut, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up_out(button, handler);
         self
@@ -107,31 +107,25 @@ impl MouseRegion {
     pub fn on_drag(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DragRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDrag, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
         self
     }
 
-    pub fn on_hover(
-        mut self,
-        handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
+    pub fn on_hover(mut self, handler: impl Fn(MouseHover, &mut EventContext) + 'static) -> Self {
         self.handlers = self.handlers.on_hover(handler);
         self
     }
 
-    pub fn on_move(
-        mut self,
-        handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
+    pub fn on_move(mut self, handler: impl Fn(MouseMove, &mut EventContext) + 'static) -> Self {
         self.handlers = self.handlers.on_move(handler);
         self
     }
 
     pub fn on_scroll(
         mut self,
-        handler: impl Fn(ScrollWheelRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseScrollWheel, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_scroll(handler);
         self
@@ -187,8 +181,8 @@ impl MouseRegionId {
 pub struct HandlerSet {
     #[allow(clippy::type_complexity)]
     pub set: HashMap<
-        (Discriminant<MouseRegionEvent>, Option<MouseButton>),
-        Rc<dyn Fn(MouseRegionEvent, &mut EventContext)>,
+        (Discriminant<MouseEvent>, Option<MouseButton>),
+        Rc<dyn Fn(MouseEvent, &mut EventContext)>,
     >,
 }
 
@@ -196,68 +190,50 @@ impl HandlerSet {
     pub fn capture_all() -> Self {
         #[allow(clippy::type_complexity)]
         let mut set: HashMap<
-            (Discriminant<MouseRegionEvent>, Option<MouseButton>),
-            Rc<dyn Fn(MouseRegionEvent, &mut EventContext)>,
+            (Discriminant<MouseEvent>, Option<MouseButton>),
+            Rc<dyn Fn(MouseEvent, &mut EventContext)>,
         > = Default::default();
 
-        set.insert((MouseRegionEvent::move_disc(), None), Rc::new(|_, _| {}));
-        set.insert((MouseRegionEvent::hover_disc(), None), Rc::new(|_, _| {}));
+        set.insert((MouseEvent::move_disc(), None), Rc::new(|_, _| {}));
+        set.insert((MouseEvent::hover_disc(), None), Rc::new(|_, _| {}));
         for button in MouseButton::all() {
+            set.insert((MouseEvent::drag_disc(), Some(button)), Rc::new(|_, _| {}));
+            set.insert((MouseEvent::down_disc(), Some(button)), Rc::new(|_, _| {}));
+            set.insert((MouseEvent::up_disc(), Some(button)), Rc::new(|_, _| {}));
+            set.insert((MouseEvent::click_disc(), Some(button)), Rc::new(|_, _| {}));
             set.insert(
-                (MouseRegionEvent::drag_disc(), Some(button)),
+                (MouseEvent::down_out_disc(), Some(button)),
                 Rc::new(|_, _| {}),
             );
             set.insert(
-                (MouseRegionEvent::down_disc(), Some(button)),
-                Rc::new(|_, _| {}),
-            );
-            set.insert(
-                (MouseRegionEvent::up_disc(), Some(button)),
-                Rc::new(|_, _| {}),
-            );
-            set.insert(
-                (MouseRegionEvent::click_disc(), Some(button)),
-                Rc::new(|_, _| {}),
-            );
-            set.insert(
-                (MouseRegionEvent::down_out_disc(), Some(button)),
-                Rc::new(|_, _| {}),
-            );
-            set.insert(
-                (MouseRegionEvent::up_out_disc(), Some(button)),
+                (MouseEvent::up_out_disc(), Some(button)),
                 Rc::new(|_, _| {}),
             );
         }
-        set.insert(
-            (MouseRegionEvent::scroll_wheel_disc(), None),
-            Rc::new(|_, _| {}),
-        );
+        set.insert((MouseEvent::scroll_wheel_disc(), None), Rc::new(|_, _| {}));
 
         HandlerSet { set }
     }
 
     pub fn get(
         &self,
-        key: &(Discriminant<MouseRegionEvent>, Option<MouseButton>),
-    ) -> Option<Rc<dyn Fn(MouseRegionEvent, &mut EventContext)>> {
+        key: &(Discriminant<MouseEvent>, Option<MouseButton>),
+    ) -> Option<Rc<dyn Fn(MouseEvent, &mut EventContext)>> {
         self.set.get(key).cloned()
     }
 
     pub fn contains_handler(
         &self,
-        event: Discriminant<MouseRegionEvent>,
+        event: Discriminant<MouseEvent>,
         button: Option<MouseButton>,
     ) -> bool {
         self.set.contains_key(&(event, button))
     }
 
-    pub fn on_move(
-        mut self,
-        handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
-        self.set.insert((MouseRegionEvent::move_disc(), None),
+    pub fn on_move(mut self, handler: impl Fn(MouseMove, &mut EventContext) + 'static) -> Self {
+        self.set.insert((MouseEvent::move_disc(), None),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Move(e) = region_event {
+                if let MouseEvent::Move(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -271,11 +247,11 @@ impl HandlerSet {
     pub fn on_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DownRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDown, &mut EventContext) + 'static,
     ) -> Self {
-        self.set.insert((MouseRegionEvent::down_disc(), Some(button)),
+        self.set.insert((MouseEvent::down_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Down(e) = region_event {
+                if let MouseEvent::Down(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -289,11 +265,11 @@ impl HandlerSet {
     pub fn on_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(UpRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUp, &mut EventContext) + 'static,
     ) -> Self {
-        self.set.insert((MouseRegionEvent::up_disc(), Some(button)),
+        self.set.insert((MouseEvent::up_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Up(e) = region_event {
+                if let MouseEvent::Up(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -307,11 +283,11 @@ impl HandlerSet {
     pub fn on_click(
         mut self,
         button: MouseButton,
-        handler: impl Fn(ClickRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseClick, &mut EventContext) + 'static,
     ) -> Self {
-        self.set.insert((MouseRegionEvent::click_disc(), Some(button)),
+        self.set.insert((MouseEvent::click_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Click(e) = region_event {
+                if let MouseEvent::Click(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -325,11 +301,11 @@ impl HandlerSet {
     pub fn on_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DownOutRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDownOut, &mut EventContext) + 'static,
     ) -> Self {
-        self.set.insert((MouseRegionEvent::down_out_disc(), Some(button)),
+        self.set.insert((MouseEvent::down_out_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::DownOut(e) = region_event {
+                if let MouseEvent::DownOut(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -343,11 +319,11 @@ impl HandlerSet {
     pub fn on_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(UpOutRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUpOut, &mut EventContext) + 'static,
     ) -> Self {
-        self.set.insert((MouseRegionEvent::up_out_disc(), Some(button)),
+        self.set.insert((MouseEvent::up_out_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::UpOut(e) = region_event {
+                if let MouseEvent::UpOut(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -361,11 +337,11 @@ impl HandlerSet {
     pub fn on_drag(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DragRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDrag, &mut EventContext) + 'static,
     ) -> Self {
-        self.set.insert((MouseRegionEvent::drag_disc(), Some(button)),
+        self.set.insert((MouseEvent::drag_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Drag(e) = region_event {
+                if let MouseEvent::Drag(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -376,13 +352,10 @@ impl HandlerSet {
         self
     }
 
-    pub fn on_hover(
-        mut self,
-        handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
-        self.set.insert((MouseRegionEvent::hover_disc(), None),
+    pub fn on_hover(mut self, handler: impl Fn(MouseHover, &mut EventContext) + 'static) -> Self {
+        self.set.insert((MouseEvent::hover_disc(), None),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Hover(e) = region_event {
+                if let MouseEvent::Hover(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(
@@ -395,11 +368,11 @@ impl HandlerSet {
 
     pub fn on_scroll(
         mut self,
-        handler: impl Fn(ScrollWheelRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseScrollWheel, &mut EventContext) + 'static,
     ) -> Self {
-        self.set.insert((MouseRegionEvent::scroll_wheel_disc(), None),
+        self.set.insert((MouseEvent::scroll_wheel_disc(), None),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::ScrollWheel(e) = region_event {
+                if let MouseEvent::ScrollWheel(e) = region_event {
                     handler(e, cx);
                 } else {
                     panic!(

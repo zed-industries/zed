@@ -6,7 +6,7 @@ use alacritty_terminal::grid::Dimensions;
 /// with modifications for our circumstances
 use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point, Side};
 use alacritty_terminal::term::TermMode;
-use gpui::scene::ScrollWheelRegionEvent;
+use gpui::scene::MouseScrollWheel;
 use gpui::{geometry::vector::Vector2F, MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent};
 
 use crate::TerminalSize;
@@ -115,7 +115,7 @@ impl MouseButton {
 pub fn scroll_report(
     point: Point,
     scroll_lines: i32,
-    e: &ScrollWheelRegionEvent,
+    e: &MouseScrollWheel,
     mode: TermMode,
 ) -> Option<impl Iterator<Item = Vec<u8>>> {
     if mode.intersects(TermMode::MOUSE_MODE) {

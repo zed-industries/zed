@@ -107,7 +107,7 @@ impl View for ContextMenu {
             .boxed()
     }
 
-    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.reset(cx);
     }
 }

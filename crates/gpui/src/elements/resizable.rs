@@ -4,7 +4,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 
 use crate::{
-    geometry::rect::RectF, scene::DragRegionEvent, Axis, CursorStyle, Element, ElementBox,
+    geometry::rect::RectF, scene::MouseDrag, Axis, CursorStyle, Element, ElementBox,
     ElementStateHandle, MouseButton, MouseRegion, RenderContext, View,
 };
 
@@ -42,7 +42,7 @@ impl Side {
         }
     }
 
-    fn compute_delta(&self, e: DragRegionEvent) -> f32 {
+    fn compute_delta(&self, e: MouseDrag) -> f32 {
         if self.before_content() {
             self.relevant_component(e.prev_mouse_position) - self.relevant_component(e.position)
         } else {
@@ -185,18 +185,6 @@ impl Element for Resizable {
         cx.scene.pop_stacking_context();
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &crate::Event,
-        _bounds: pathfinder_geometry::rect::RectF,
-        _visible_bounds: pathfinder_geometry::rect::RectF,
-        _layout: &mut Self::LayoutState,
-        _paint: &mut Self::PaintState,
-        cx: &mut crate::EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

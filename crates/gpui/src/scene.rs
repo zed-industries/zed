@@ -1,5 +1,5 @@
+mod mouse_event;
 mod mouse_region;
-mod mouse_region_event;
 
 #[cfg(debug_assertions)]
 use collections::HashSet;
@@ -15,8 +15,8 @@ use crate::{
     platform::{current::Surface, CursorStyle},
     ImageData,
 };
+pub use mouse_event::*;
 pub use mouse_region::*;
-pub use mouse_region_event::*;
 
 pub struct Scene {
     scale_factor: f32,

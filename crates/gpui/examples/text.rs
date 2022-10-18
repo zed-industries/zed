@@ -101,18 +101,6 @@ impl gpui::Element for TextElement {
         line.paint(bounds.origin(), visible_bounds, bounds.height(), cx);
     }
 
-    fn dispatch_event(
-        &mut self,
-        _: &gpui::Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut gpui::EventContext,
-    ) -> bool {
-        false
-    }
-
     fn rect_for_text_range(
         &self,
         _: Range<usize>,

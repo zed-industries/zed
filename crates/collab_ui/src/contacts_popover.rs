@@ -160,7 +160,7 @@ impl View for ContactsPopover {
         .boxed()
     }
 
-    fn on_focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             match &self.child {
                 Child::ContactList(child) => cx.focus(child),

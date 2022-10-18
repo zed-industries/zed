@@ -6,8 +6,7 @@ use crate::{
     },
     json::{json, ToJson},
     presenter::MeasurementContext,
-    scene, Border, DebugContext, Element, Event, EventContext, ImageData, LayoutContext,
-    PaintContext, SizeConstraint,
+    scene, Border, DebugContext, Element, ImageData, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc};
@@ -79,18 +78,6 @@ impl Element for Image {
             grayscale: self.style.grayscale,
             data: self.data.clone(),
         });
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut EventContext,
-    ) -> bool {
-        false
     }
 
     fn rect_for_text_range(

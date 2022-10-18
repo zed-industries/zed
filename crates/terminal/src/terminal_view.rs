@@ -332,18 +332,33 @@ impl View for TerminalView {
             .boxed()
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
         cx.notify();
     }
 
-    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
         });
         cx.notify();
+    }
+
+    fn key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
+        self.clear_bel(cx);
+        self.pause_cursor_blinking(cx);
+
+        self.terminal.update(cx, |term, cx| {
+            term.try_keystroke(
+                &event.keystroke,
+                cx.global::<Settings>()
+                    .terminal_overrides
+                    .option_as_meta
+                    .unwrap_or(false),
+            )
+        })
     }
 
     //IME stuff

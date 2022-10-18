@@ -186,18 +186,6 @@ impl Element for Tooltip {
         }
     }
 
-    fn dispatch_event(
-        &mut self,
-        event: &crate::Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut crate::EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
-    }
-
     fn rect_for_text_range(
         &self,
         range: Range<usize>,

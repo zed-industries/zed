@@ -397,7 +397,7 @@ impl View for ChatPanel {
         .boxed()
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if matches!(
             *self.rpc.status().borrow(),
             client::Status::Connected { .. }
