@@ -7,7 +7,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use live_kit_client::{LocalVideoTrack, RemoteVideoTrackUpdate};
+use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::watch;
 use project::Project;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ pub enum Event {
 
 pub struct Room {
     id: u64,
-    live_kit_room: Option<(Arc<live_kit_client::Room>, Task<()>)>,
+    live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<PeerId, RemoteParticipant>,
@@ -82,7 +82,7 @@ impl Room {
         let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
             let room = live_kit_client::Room::new();
             let mut track_changes = room.remote_video_track_updates();
-            let maintain_room = cx.spawn_weak(|this, mut cx| async move {
+            let _maintain_room = cx.spawn_weak(|this, mut cx| async move {
                 while let Some(track_change) = track_changes.next().await {
                     let this = if let Some(this) = this.upgrade(&cx) {
                         this
@@ -98,14 +98,18 @@ impl Room {
             cx.foreground()
                 .spawn(room.connect(&connection_info.server_url, &connection_info.token))
                 .detach_and_log_err(cx);
-            Some((room, maintain_room))
+            Some(LiveKitRoom {
+                room,
+                screen_track: None,
+                _maintain_room,
+            })
         } else {
             None
         };
 
         Self {
             id,
-            live_kit_room,
+            live_kit: live_kit_room,
             status: RoomStatus::Online,
             participant_user_ids: Default::default(),
             local_participant: Default::default(),
@@ -212,7 +216,7 @@ impl Room {
         self.pending_participants.clear();
         self.participant_user_ids.clear();
         self.subscriptions.clear();
-        self.live_kit_room.take();
+        self.live_kit.take();
         self.client.send(proto::LeaveRoom { id: self.id })?;
         Ok(())
     }
@@ -342,8 +346,9 @@ impl Room {
                                 },
                             );
 
-                            if let Some((room, _)) = this.live_kit_room.as_ref() {
-                                let tracks = room.remote_video_tracks(&peer_id.0.to_string());
+                            if let Some(live_kit) = this.live_kit.as_ref() {
+                                let tracks =
+                                    live_kit.room.remote_video_tracks(&peer_id.0.to_string());
                                 for track in tracks {
                                     this.remote_video_track_updated(
                                         RemoteVideoTrackUpdate::Subscribed(track),
@@ -605,22 +610,34 @@ impl Room {
             return Task::ready(Err(anyhow!("room is offline")));
         }
 
-        let room = if let Some((room, _)) = self.live_kit_room.as_ref() {
-            room.clone()
-        } else {
-            return Task::ready(Err(anyhow!("not connected to LiveKit")));
-        };
-
-        cx.foreground().spawn(async move {
+        cx.spawn_weak(|this, mut cx| async move {
             let displays = live_kit_client::display_sources().await?;
             let display = displays
                 .first()
                 .ok_or_else(|| anyhow!("no display found"))?;
             let track = LocalVideoTrack::screen_share_for_display(&display);
-            room.publish_video_track(&track).await?;
-            Ok(())
+
+            let publication = this
+                .upgrade(&cx)?
+                .read_with(&cx, |this, _| {
+                    this.live_kit
+                        .as_ref()
+                        .map(|live_kit| live_kit.room.publish_video_track(&track))
+                })?
+                .await?;
+
+            this.upgrade(&cx)?.update(cx, |this, _| {
+                this.live_kit.as_mut()?.screen_track = Some(publication);
+                Some(())
+            })
         })
     }
+}
+
+struct LiveKitRoom {
+    room: Arc<live_kit_client::Room>,
+    screen_track: Option<LocalTrackPublication>,
+    _maintain_room: Task<()>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

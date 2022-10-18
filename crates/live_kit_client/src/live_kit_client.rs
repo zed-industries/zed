@@ -45,7 +45,7 @@ extern "C" {
     fn LKRoomPublishVideoTrack(
         room: *const c_void,
         track: *const c_void,
-        callback: extern "C" fn(*mut c_void, CFStringRef),
+        callback: extern "C" fn(*mut c_void, *mut c_void, CFStringRef),
         callback_data: *mut c_void,
     );
     fn LKRoomVideoTracksForRemoteParticipant(
@@ -108,10 +108,28 @@ impl Room {
         async { rx.await.unwrap().context("error connecting to room") }
     }
 
-    pub fn publish_video_track(&self, track: &LocalVideoTrack) -> impl Future<Output = Result<()>> {
-        let (did_publish, tx, rx) = Self::build_done_callback();
+    pub fn publish_video_track(
+        &self,
+        track: &LocalVideoTrack,
+    ) -> impl Future<Output = Result<LocalTrackPublication>> {
+        let (tx, rx) = oneshot::channel::<Result<LocalTrackPublication>>();
+        extern "C" fn callback(tx: *mut c_void, publication: *mut c_void, error: CFStringRef) {
+            let tx =
+                unsafe { Box::from_raw(tx as *mut oneshot::Sender<Result<LocalTrackPublication>>) };
+            if error.is_null() {
+                let _ = tx.send(Ok(LocalTrackPublication(publication)));
+            } else {
+                let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
+                let _ = tx.send(Err(anyhow!(error)));
+            }
+        }
         unsafe {
-            LKRoomPublishVideoTrack(self.native_room, track.0, did_publish, tx);
+            LKRoomPublishVideoTrack(
+                self.native_room,
+                track.0,
+                callback,
+                Box::into_raw(Box::new(tx)) as *mut c_void,
+            );
         }
         async { rx.await.unwrap().context("error publishing video track") }
     }
@@ -270,6 +288,14 @@ impl LocalVideoTrack {
 }
 
 impl Drop for LocalVideoTrack {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.0) }
+    }
+}
+
+pub struct LocalTrackPublication(*const c_void);
+
+impl Drop for LocalTrackPublication {
     fn drop(&mut self) {
         unsafe { CFRelease(self.0) }
     }
