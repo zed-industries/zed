@@ -533,6 +533,23 @@ async fn test_calls_on_multiple_connections(
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // User A reconnects automatically, then calls user B again.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User B disconnects all clients, causing user A to no longer see a pending call for them.
+    println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    server.disconnect_client(client_b1.current_user_id(cx_b1));
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
 }
 
 #[gpui::test(iterations = 10)]
