@@ -980,9 +980,8 @@ pub struct Workspace {
     follower_states_by_leader: FollowerStatesByLeader,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
-    active_call: Option<ModelHandle<ActiveCall>>,
+    active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
     _observe_current_user: Task<()>,
-    _active_call_observation: Option<gpui::Subscription>,
 }
 
 #[derive(Default)]
@@ -1092,11 +1091,18 @@ impl Workspace {
         });
 
         let mut active_call = None;
-        let mut active_call_observation = None;
         if cx.has_global::<ModelHandle<ActiveCall>>() {
             let call = cx.global::<ModelHandle<ActiveCall>>().clone();
-            active_call_observation = Some(cx.observe(&call, |_, _, cx| cx.notify()));
-            active_call = Some(call);
+            let mut subscriptions = Vec::new();
+            subscriptions.push(cx.observe(&call, |_, _, cx| cx.notify()));
+            subscriptions.push(cx.subscribe(&call, |this, _, event, cx| {
+                if let call::room::Event::Frame { participant_id, .. } = event {
+                    if this.follower_states_by_leader.contains_key(&participant_id) {
+                        cx.notify();
+                    }
+                }
+            }));
+            active_call = Some((call, subscriptions));
         }
 
         let mut this = Workspace {
@@ -1127,7 +1133,6 @@ impl Workspace {
             window_edited: false,
             active_call,
             _observe_current_user,
-            _active_call_observation: active_call_observation,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -1262,7 +1267,7 @@ impl Workspace {
         quitting: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        let active_call = self.active_call.clone();
+        let active_call = self.active_call().cloned();
         let window_id = cx.window_id();
         let workspace_count = cx
             .window_ids()
@@ -2549,6 +2554,10 @@ impl Workspace {
             }
         }
     }
+
+    fn active_call(&self) -> Option<&ModelHandle<ActiveCall>> {
+        self.active_call.as_ref().map(|(call, _)| call)
+    }
 }
 
 impl Entity for Workspace {
@@ -2590,7 +2599,7 @@ impl View for Workspace {
                                                         &project,
                                                         &theme,
                                                         &self.follower_states_by_leader,
-                                                        self.active_call.as_ref(),
+                                                        self.active_call(),
                                                         cx,
                                                     ))
                                                     .flex(1., true)

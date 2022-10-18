@@ -15,6 +15,10 @@ use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    Frame {
+        participant_id: PeerId,
+        track_id: live_kit_client::Sid,
+    },
     RemoteProjectShared {
         owner: Arc<User>,
         project_id: u64,
@@ -390,7 +394,6 @@ impl Room {
     ) -> Result<()> {
         match change {
             RemoteVideoTrackUpdate::Subscribed(track) => {
-                dbg!(track.publisher_id(), track.sid());
                 let peer_id = PeerId(track.publisher_id().parse()?);
                 let track_id = track.sid().to_string();
                 let participant = self
@@ -413,14 +416,16 @@ impl Room {
                                 };
 
                                 let done = this.update(&mut cx, |this, cx| {
-                                    // TODO: replace this with an emit.
-                                    cx.notify();
                                     if let Some(track) =
                                         this.remote_participants.get_mut(&peer_id).and_then(
                                             |participant| participant.tracks.get_mut(&track_id),
                                         )
                                     {
                                         track.frame = frame;
+                                        cx.emit(Event::Frame {
+                                            participant_id: peer_id,
+                                            track_id: track_id.clone(),
+                                        });
                                         false
                                     } else {
                                         true

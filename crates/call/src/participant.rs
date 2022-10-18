@@ -41,7 +41,7 @@ pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
-    pub tracks: HashMap<String, RemoteVideoTrack>,
+    pub tracks: HashMap<live_kit_client::Sid, RemoteVideoTrack>,
 }
 
 #[derive(Clone)]
