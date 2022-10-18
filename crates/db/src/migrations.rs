@@ -1,6 +1,6 @@
 use rusqlite_migration::{Migrations, M};
 
-use crate::items::ITEMS_M_1;
+// use crate::items::ITEMS_M_1;
 use crate::kvp::KVP_M_1;
 
 // This must be ordered by development time! Only ever add new migrations to the end!!
@@ -10,6 +10,6 @@ use crate::kvp::KVP_M_1;
 lazy_static::lazy_static! {
     pub static ref MIGRATIONS: Migrations<'static> = Migrations::new(vec![
         M::up(KVP_M_1),
-        M::up(ITEMS_M_1),
+        // M::up(ITEMS_M_1),
     ]);
 }
