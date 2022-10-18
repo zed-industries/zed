@@ -40,6 +40,9 @@ fn main() {
     build_bridge(&swift_target);
     link_swift_stdlib(&swift_target);
     link_webrtc_framework(&swift_target);
+
+    // Register exported Objective-C selectors, protocols, etc when building example binaries.
+    println!("cargo:rustc-link-arg=-Wl,-ObjC");
 }
 
 fn build_bridge(swift_target: &SwiftTarget) {
@@ -94,6 +97,8 @@ fn link_webrtc_framework(swift_target: &SwiftTarget) {
     );
     // Find WebRTC.framework as a sibling of the executable when running tests.
     println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+    // Find WebRTC.framework in parent directory of the executable when running examples.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/..");
 
     let source_path = swift_out_dir_path.join("WebRTC.framework");
     let deps_dir_path =

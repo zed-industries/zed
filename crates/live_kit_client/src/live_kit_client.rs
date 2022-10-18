@@ -15,6 +15,10 @@ use std::{
     sync::{Arc, Weak},
 };
 
+pub type Sid = String;
+#[allow(non_camel_case_types)]
+pub type sid = str;
+
 extern "C" {
     fn LKRelease(object: *const c_void);
 
@@ -47,6 +51,10 @@ extern "C" {
         callback: extern "C" fn(*mut c_void, CFStringRef),
         callback_data: *mut c_void,
     );
+    fn LKRoomVideoTracksForRemoteParticipant(
+        room: *const c_void,
+        participant_id: CFStringRef,
+    ) -> CFArrayRef;
 
     fn LKVideoRendererCreate(
         callback_data: *mut c_void,
@@ -55,12 +63,13 @@ extern "C" {
     ) -> *const c_void;
 
     fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
+    fn LKRemoteVideoTrackGetSid(track: *const c_void) -> CFStringRef;
 
-    fn LKDisplaySources(
+    fn LKDisplaySource(
         callback_data: *mut c_void,
         callback: extern "C" fn(
             callback_data: *mut c_void,
-            sources: CFArrayRef,
+            source: *mut c_void,
             error: CFStringRef,
         ),
     );
@@ -69,7 +78,7 @@ extern "C" {
 
 pub struct Room {
     native_room: *const c_void,
-    remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteVideoTrackChange>>>,
+    remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteVideoTrackUpdate>>>,
     _delegate: RoomDelegate,
 }
 
@@ -110,7 +119,40 @@ impl Room {
         async { rx.await.unwrap().context("error publishing video track") }
     }
 
-    pub fn remote_video_tracks(&self) -> mpsc::UnboundedReceiver<RemoteVideoTrackChange> {
+    pub fn remote_video_tracks(&self, participant_sid: &sid) -> Vec<Arc<RemoteVideoTrack>> {
+        unsafe {
+            let tracks = LKRoomVideoTracksForRemoteParticipant(
+                self.native_room,
+                CFString::new(participant_sid).as_concrete_TypeRef(),
+            );
+
+            if tracks.is_null() {
+                Vec::new()
+            } else {
+                println!("aaaa >>>>>>>>>>>>>>>");
+                let tracks = CFArray::wrap_under_get_rule(tracks);
+                println!("bbbb >>>>>>>>>>>>>>>");
+                tracks
+                    .into_iter()
+                    .map(|native_track| {
+                        let native_track = *native_track;
+                        println!("cccc >>>>>>>>>>>>>>>");
+                        let id =
+                            CFString::wrap_under_get_rule(LKRemoteVideoTrackGetSid(native_track))
+                                .to_string();
+                        println!("dddd >>>>>>>>>>>>>>>");
+                        Arc::new(RemoteVideoTrack {
+                            native_track,
+                            publisher_id: participant_sid.into(),
+                            id,
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    pub fn remote_video_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteVideoTrackUpdate> {
         let (tx, rx) = mpsc::unbounded();
         self.remote_video_track_subscribers.lock().push(tx);
         rx
@@ -119,14 +161,14 @@ impl Room {
     fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
         let track = Arc::new(track);
         self.remote_video_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteVideoTrackChange::Subscribed(track.clone()))
+            tx.unbounded_send(RemoteVideoTrackUpdate::Subscribed(track.clone()))
                 .is_ok()
         });
     }
 
     fn did_unsubscribe_from_remote_video_track(&self, publisher_id: String, track_id: String) {
         self.remote_video_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteVideoTrackChange::Unsubscribed {
+            tx.unbounded_send(RemoteVideoTrackUpdate::Unsubscribed {
                 publisher_id: publisher_id.clone(),
                 track_id: track_id.clone(),
             })
@@ -201,7 +243,7 @@ impl RoomDelegate {
         if let Some(room) = room.upgrade() {
             room.did_subscribe_to_remote_video_track(track);
         }
-        let _ = Weak::into_raw(room);
+        // let _ = Weak::into_raw(room);
     }
 
     extern "C" fn on_did_unsubscribe_from_remote_video_track(
@@ -244,9 +286,9 @@ impl Drop for LocalVideoTrack {
 
 #[derive(Debug)]
 pub struct RemoteVideoTrack {
-    id: String,
+    id: Sid,
     native_track: *const c_void,
-    publisher_id: String,
+    publisher_id: Sid,
 }
 
 impl RemoteVideoTrack {
@@ -294,12 +336,9 @@ impl Drop for RemoteVideoTrack {
     }
 }
 
-pub enum RemoteVideoTrackChange {
+pub enum RemoteVideoTrackUpdate {
     Subscribed(Arc<RemoteVideoTrack>),
-    Unsubscribed {
-        publisher_id: String,
-        track_id: String,
-    },
+    Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
 pub struct MacOSDisplay(*const c_void);
@@ -310,17 +349,16 @@ impl Drop for MacOSDisplay {
     }
 }
 
-pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
-    extern "C" fn callback(tx: *mut c_void, sources: CFArrayRef, error: CFStringRef) {
+pub fn display_source() -> impl Future<Output = Result<MacOSDisplay>> {
+    extern "C" fn callback(tx: *mut c_void, source: *mut c_void, error: CFStringRef) {
         unsafe {
-            let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<Vec<MacOSDisplay>>>);
+            let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<MacOSDisplay>>);
 
-            if sources.is_null() {
+            if source.is_null() {
                 let _ = tx.send(Err(anyhow!("{}", CFString::wrap_under_get_rule(error))));
             } else {
-                let sources = CFArray::wrap_under_get_rule(sources);
-                let sources_vec = sources.iter().map(|source| MacOSDisplay(*source)).collect();
-                let _ = tx.send(Ok(sources_vec));
+                let source = MacOSDisplay(source);
+                let _ = tx.send(Ok(source));
             }
         }
     }
@@ -328,8 +366,14 @@ pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
     let (tx, rx) = oneshot::channel();
 
     unsafe {
-        LKDisplaySources(Box::into_raw(Box::new(tx)) as *mut _, callback);
+        LKDisplaySource(Box::into_raw(Box::new(tx)) as *mut _, callback);
     }
 
     async move { rx.await.unwrap() }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_client() {}
 }

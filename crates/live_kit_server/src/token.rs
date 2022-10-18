@@ -38,6 +38,18 @@ pub struct VideoGrant<'a> {
     pub recorder: Option<bool>,
 }
 
+impl<'a> VideoGrant<'a> {
+    pub fn to_join(room: &'a str) -> Self {
+        Self {
+            room: Some(room),
+            room_join: Some(true),
+            can_publish: Some(true),
+            can_subscribe: Some(true),
+            ..Default::default()
+        }
+    }
+}
+
 pub fn create(
     api_key: &str,
     secret_key: &str,

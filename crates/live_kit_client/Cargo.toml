@@ -8,6 +8,9 @@ description = "Bindings to LiveKit Swift client SDK"
 path = "src/live_kit_client.rs"
 doctest = false
 
+[[example]]
+name = "test_app"
+
 [dependencies]
 media = { path = "../media" }
 
@@ -16,6 +19,30 @@ core-foundation = "0.9.3"
 core-graphics = "0.22.3"
 futures = "0.3"
 parking_lot = "0.11.1"
+
+[dev-dependencies]
+gpui = { path = "../gpui" }
+live_kit_server = { path = "../live_kit_server" }
+media = { path = "../media" }
+
+anyhow = "1.0.38"
+block = "0.1"
+bytes = "1.2"
+byteorder = "1.4"
+cocoa = "0.24"
+core-foundation = "0.9.3"
+core-graphics = "0.22.3"
+foreign-types = "0.3"
+futures = "0.3"
+hmac = "0.12"
+jwt = "0.16"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+objc = "0.2"
+parking_lot = "0.11.1"
+postage = { version = "0.4.1", features = ["futures-traits"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
+sha2 = "0.10"
+simplelog = "0.9"
 
 [build-dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }

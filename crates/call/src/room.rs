@@ -7,7 +7,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use live_kit_client::{LocalVideoTrack, RemoteVideoTrackChange};
+use live_kit_client::{LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::watch;
 use project::Project;
 use std::sync::Arc;
@@ -75,9 +75,9 @@ impl Room {
 
         let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
             let room = live_kit_client::Room::new();
-            let mut tracks = room.remote_video_tracks();
+            let mut track_changes = room.remote_video_track_updates();
             let maintain_room = cx.spawn_weak(|this, mut cx| async move {
-                while let Some(track_change) = tracks.next().await {
+                while let Some(track_change) = track_changes.next().await {
                     let this = if let Some(this) = this.upgrade(&cx) {
                         this
                     } else {
@@ -85,7 +85,7 @@ impl Room {
                     };
 
                     this.update(&mut cx, |this, cx| {
-                        this.remote_video_track_changed(track_change, cx).log_err()
+                        this.remote_video_track_updated(track_change, cx).log_err()
                     });
                 }
             });
@@ -330,13 +330,16 @@ impl Room {
                         );
 
                         if let Some((room, _)) = this.live_kit_room.as_ref() {
-                            for track in
-                                room.video_tracks_for_remote_participant(peer_id.0.to_string())
-                            {
-                                this.remote_video_track_changed(
-                                    RemoteVideoTrackChange::Subscribed(track),
+                            println!("getting video tracks for peer id {}", peer_id.0.to_string());
+                            let tracks = room.remote_video_tracks(&peer_id.0.to_string());
+                            dbg!(tracks.len());
+                            for track in tracks {
+                                dbg!(track.id(), track.publisher_id());
+                                this.remote_video_track_updated(
+                                    RemoteVideoTrackUpdate::Subscribed(track),
                                     cx,
-                                );
+                                )
+                                .log_err();
                             }
                         }
                     }
@@ -376,13 +379,14 @@ impl Room {
         Ok(())
     }
 
-    fn remote_video_track_changed(
+    fn remote_video_track_updated(
         &mut self,
-        change: RemoteVideoTrackChange,
+        change: RemoteVideoTrackUpdate,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match change {
-            RemoteVideoTrackChange::Subscribed(track) => {
+            RemoteVideoTrackUpdate::Subscribed(track) => {
+                dbg!(track.publisher_id(), track.id());
                 let peer_id = PeerId(track.publisher_id().parse()?);
                 let track_id = track.id().to_string();
                 let participant = self
@@ -427,7 +431,7 @@ impl Room {
                     },
                 );
             }
-            RemoteVideoTrackChange::Unsubscribed {
+            RemoteVideoTrackUpdate::Unsubscribed {
                 publisher_id,
                 track_id,
             } => {
@@ -596,11 +600,11 @@ impl Room {
         };
 
         cx.foreground().spawn(async move {
-            let displays = live_kit_client::display_sources().await?;
-            let display = displays
-                .first()
-                .ok_or_else(|| anyhow!("no display found"))?;
-            let track = LocalVideoTrack::screen_share_for_display(display);
+            let display = live_kit_client::display_source().await?;
+            // let display = displays
+            //     .first()
+            //     .ok_or_else(|| anyhow!("no display found"))?;
+            let track = LocalVideoTrack::screen_share_for_display(&display);
             room.publish_video_track(&track).await?;
             Ok(())
         })
