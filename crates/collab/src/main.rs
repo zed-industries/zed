@@ -28,8 +28,6 @@ pub struct Config {
     pub database_url: String,
     pub api_token: String,
     pub invite_link_prefix: String,
-    pub honeycomb_api_key: Option<String>,
-    pub honeycomb_dataset: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
 }
