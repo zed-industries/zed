@@ -52,11 +52,9 @@ fn main() {
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
     init_panic_hook(app_version, http.clone(), app.background());
-    let db = app.background().spawn(async move {
-        project::Db::open(&*zed::paths::DB)
-            .log_err()
-            .unwrap_or_else(project::Db::open_in_memory())
-    });
+    let db = app
+        .background()
+        .spawn(async move { project::Db::open(&*zed::paths::DB_DIR) });
 
     load_embedded_fonts(&app);
 

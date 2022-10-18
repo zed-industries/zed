@@ -3,7 +3,7 @@ use rusqlite::OptionalExtension;
 
 use super::Db;
 
-pub(crate) const KVP_M_1: &str = "
+pub(crate) const KVP_M_1_UP: &str = "
 CREATE TABLE kv_store(
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -12,31 +12,44 @@ CREATE TABLE kv_store(
 
 impl Db {
     pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
-        let lock = self.connection.lock();
-        let mut stmt = lock.prepare_cached("SELECT value FROM kv_store WHERE key = (?)")?;
+        self.real()
+            .map(|db| {
+                let lock = db.connection.lock();
+                let mut stmt = lock.prepare_cached("SELECT value FROM kv_store WHERE key = (?)")?;
 
-        Ok(stmt.query_row([key], |row| row.get(0)).optional()?)
-    }
-
-    pub fn delete_kvp(&self, key: &str) -> Result<()> {
-        let lock = self.connection.lock();
-
-        let mut stmt = lock.prepare_cached("DELETE FROM kv_store WHERE key = (?)")?;
-
-        stmt.execute([key])?;
-
-        Ok(())
+                Ok(stmt.query_row([key], |row| row.get(0)).optional()?)
+            })
+            .unwrap_or(Ok(None))
     }
 
     pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
-        let lock = self.connection.lock();
+        self.real()
+            .map(|db| {
+                let lock = db.connection.lock();
 
-        let mut stmt =
-            lock.prepare_cached("INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))")?;
+                let mut stmt = lock.prepare_cached(
+                    "INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))",
+                )?;
 
-        stmt.execute([key, value])?;
+                stmt.execute([key, value])?;
 
-        Ok(())
+                Ok(())
+            })
+            .unwrap_or(Ok(()))
+    }
+
+    pub fn delete_kvp(&self, key: &str) -> Result<()> {
+        self.real()
+            .map(|db| {
+                let lock = db.connection.lock();
+
+                let mut stmt = lock.prepare_cached("DELETE FROM kv_store WHERE key = (?)")?;
+
+                stmt.execute([key])?;
+
+                Ok(())
+            })
+            .unwrap_or(Ok(()))
     }
 }
 
@@ -48,7 +61,7 @@ mod tests {
 
     #[test]
     fn test_kvp() -> Result<()> {
-        let db = Db::open_in_memory()?;
+        let db = Db::open_in_memory();
 
         assert_eq!(db.read_kvp("key-1")?, None);
 

@@ -40,7 +40,7 @@ pub struct AutoUpdater {
     current_version: AppVersion,
     http_client: Arc<dyn HttpClient>,
     pending_poll: Option<Task<()>>,
-    db: Arc<project::Db>,
+    db: project::Db,
     server_url: String,
 }
 
@@ -55,7 +55,7 @@ impl Entity for AutoUpdater {
 }
 
 pub fn init(
-    db: Arc<project::Db>,
+    db: project::Db,
     http_client: Arc<dyn HttpClient>,
     server_url: String,
     cx: &mut MutableAppContext,
@@ -116,7 +116,7 @@ impl AutoUpdater {
 
     fn new(
         current_version: AppVersion,
-        db: Arc<project::Db>,
+        db: project::Db,
         http_client: Arc<dyn HttpClient>,
         server_url: String,
     ) -> Self {

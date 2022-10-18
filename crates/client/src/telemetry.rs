@@ -135,7 +135,7 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>, db: Arc<Db>) {
+    pub fn start(self: &Arc<Self>, db: Db) {
         let this = self.clone();
         self.executor
             .spawn(
