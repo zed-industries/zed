@@ -418,7 +418,7 @@ async fn test_calls_on_multiple_connections(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b1 = server.create_client(cx_b1, "user_b").await;
-    let _client_b2 = server.create_client(cx_b2, "user_b").await;
+    let client_b2 = server.create_client(cx_b2, "user_b").await;
     server
         .make_contacts(&mut [(&client_a, cx_a), (&client_b1, cx_b1)])
         .await;
@@ -548,8 +548,9 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
     // User B disconnects all clients, causing user A to no longer see a pending call for them.
-    println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    server.forbid_connections();
     server.disconnect_client(client_b1.peer_id().unwrap());
+    server.disconnect_client(client_b2.peer_id().unwrap());
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
 }

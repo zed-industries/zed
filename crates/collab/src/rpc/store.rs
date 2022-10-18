@@ -221,6 +221,9 @@ impl Store {
                 result.guest_projects = left_room.left_projects;
                 result.room_id = Some(room_id);
                 result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
+            } else if connected_user.connection_ids.len() == 1 {
+                self.decline_call(room_id, connection_id)?;
+                result.room_id = Some(room_id);
             }
         }
 
