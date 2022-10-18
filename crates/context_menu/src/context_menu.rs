@@ -315,13 +315,16 @@ impl ContextMenu {
     fn render_menu(&self, cx: &mut RenderContext<Self>) -> impl Element {
         enum Menu {}
         enum MenuItem {}
+
         let style = cx.global::<Settings>().theme.context_menu.clone();
+
         MouseEventHandler::<Menu>::new(0, cx, |_, cx| {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
                         ContextMenuItem::Item { label, action } => {
                             let action = action.boxed_clone();
+
                             MouseEventHandler::<MenuItem>::new(ix, cx, |state, _| {
                                 let style =
                                     style.item.style_for(state, Some(ix) == self.selected_index);
@@ -350,6 +353,7 @@ impl ContextMenu {
                                 cx.dispatch_action(Clicked);
                                 cx.dispatch_any_action(action.boxed_clone());
                             })
+                            .on_drag(MouseButton::Left, |_, _| {})
                             .boxed()
                         }
                         ContextMenuItem::Separator => Empty::new()
