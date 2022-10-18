@@ -68,9 +68,13 @@ impl Client {
             "twirp/livekit.RoomService/RemoveParticipant",
             token::VideoGrant {
                 room_admin: Some(true),
+                room: Some(&room),
                 ..Default::default()
             },
-            proto::RoomParticipantIdentity { room, identity },
+            proto::RoomParticipantIdentity {
+                room: room.clone(),
+                identity,
+            },
         );
         async move {
             let _: proto::RemoveParticipantResponse = response.await?;
