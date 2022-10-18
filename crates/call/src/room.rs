@@ -318,28 +318,32 @@ impl Room {
                             });
                         }
 
-                        this.remote_participants.insert(
-                            peer_id,
-                            RemoteParticipant {
-                                user: user.clone(),
-                                projects: participant.projects,
-                                location: ParticipantLocation::from_proto(participant.location)
-                                    .unwrap_or(ParticipantLocation::External),
-                                tracks: Default::default(),
-                            },
-                        );
+                        let location = ParticipantLocation::from_proto(participant.location)
+                            .unwrap_or(ParticipantLocation::External);
+                        if let Some(remote_participant) = this.remote_participants.get_mut(&peer_id)
+                        {
+                            remote_participant.projects = participant.projects;
+                            remote_participant.location = location;
+                        } else {
+                            this.remote_participants.insert(
+                                peer_id,
+                                RemoteParticipant {
+                                    user: user.clone(),
+                                    projects: participant.projects,
+                                    location,
+                                    tracks: Default::default(),
+                                },
+                            );
 
-                        if let Some((room, _)) = this.live_kit_room.as_ref() {
-                            println!("getting video tracks for peer id {}", peer_id.0.to_string());
-                            let tracks = room.remote_video_tracks(&peer_id.0.to_string());
-                            dbg!(tracks.len());
-                            for track in tracks {
-                                dbg!(track.sid(), track.publisher_id());
-                                this.remote_video_track_updated(
-                                    RemoteVideoTrackUpdate::Subscribed(track),
-                                    cx,
-                                )
-                                .log_err();
+                            if let Some((room, _)) = this.live_kit_room.as_ref() {
+                                let tracks = room.remote_video_tracks(&peer_id.0.to_string());
+                                for track in tracks {
+                                    this.remote_video_track_updated(
+                                        RemoteVideoTrackUpdate::Subscribed(track),
+                                        cx,
+                                    )
+                                    .log_err();
+                                }
                             }
                         }
                     }

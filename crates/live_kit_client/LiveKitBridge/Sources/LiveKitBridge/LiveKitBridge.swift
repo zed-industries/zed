@@ -15,13 +15,13 @@ class LKRoomDelegate: RoomDelegate {
 
     func room(_ room: Room, participant: RemoteParticipant, didSubscribe publication: RemoteTrackPublication, track: Track) {
         if track.kind == .video {
-            self.onDidSubscribeToRemoteVideoTrack(self.data, participant.identity as CFString, track.id as CFString, Unmanaged.passUnretained(track).toOpaque())
+            self.onDidSubscribeToRemoteVideoTrack(self.data, participant.identity as CFString, track.sid! as CFString, Unmanaged.passUnretained(track).toOpaque())
         }
     }
     
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribe publication: RemoteTrackPublication, track: Track) {
         if track.kind == .video {
-            self.onDidUnsubscribeFromRemoteVideoTrack(self.data, participant.sid as CFString, track.id as CFString)
+            self.onDidUnsubscribeFromRemoteVideoTrack(self.data, participant.identity as CFString, track.sid! as CFString)
         }
     }
 }
