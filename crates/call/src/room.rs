@@ -418,31 +418,33 @@ impl Room {
                         _live_kit_track: track,
                         _maintain_frame: Arc::new(cx.spawn_weak(|this, mut cx| async move {
                             while let Some(frame) = rx.next().await {
-                                let this = if let Some(this) = this.upgrade(&cx) {
-                                    this
-                                } else {
-                                    break;
-                                };
-
-                                let done = this.update(&mut cx, |this, cx| {
-                                    if let Some(track) =
-                                        this.remote_participants.get_mut(&peer_id).and_then(
-                                            |participant| participant.tracks.get_mut(&track_id),
-                                        )
-                                    {
-                                        track.frame = frame;
-                                        cx.emit(Event::Frame {
-                                            participant_id: peer_id,
-                                            track_id: track_id.clone(),
-                                        });
-                                        false
+                                if let Some(frame) = frame {
+                                    let this = if let Some(this) = this.upgrade(&cx) {
+                                        this
                                     } else {
-                                        true
-                                    }
-                                });
+                                        break;
+                                    };
 
-                                if done {
-                                    break;
+                                    let done = this.update(&mut cx, |this, cx| {
+                                        if let Some(track) =
+                                            this.remote_participants.get_mut(&peer_id).and_then(
+                                                |participant| participant.tracks.get_mut(&track_id),
+                                            )
+                                        {
+                                            track.frame = Some(frame);
+                                            cx.emit(Event::Frame {
+                                                participant_id: peer_id,
+                                                track_id: track_id.clone(),
+                                            });
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    });
+
+                                    if done {
+                                        break;
+                                    }
                                 }
                             }
                         })),
@@ -620,18 +622,18 @@ impl Room {
             return Task::ready(Err(anyhow!("screen was already shared")));
         }
 
-        let publish_id = if let Some(live_kit) = self.live_kit.as_mut() {
+        let (displays, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
             let publish_id = post_inc(&mut live_kit.next_publish_id);
             live_kit.screen_track = ScreenTrack::Pending { publish_id };
             cx.notify();
-            publish_id
+            (live_kit.room.display_sources(), publish_id)
         } else {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
         cx.spawn_weak(|this, mut cx| async move {
             let publish_track = async {
-                let displays = live_kit_client::display_sources().await?;
+                let displays = displays.await?;
                 let display = displays
                     .first()
                     .ok_or_else(|| anyhow!("no display found"))?;
@@ -710,6 +712,15 @@ impl Room {
                 Ok(())
             }
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_display_sources(&self, sources: Vec<live_kit_client::MacOSDisplay>) {
+        self.live_kit
+            .as_ref()
+            .unwrap()
+            .room
+            .set_display_sources(sources);
     }
 }
 

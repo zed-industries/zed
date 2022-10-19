@@ -8,7 +8,8 @@ use futures::{
     channel::{mpsc, oneshot},
     Future,
 };
-use media::core_video::{CVImageBuffer, CVImageBufferRef};
+pub use media::core_video::CVImageBuffer;
+use media::core_video::CVImageBufferRef;
 use parking_lot::Mutex;
 use std::{
     ffi::c_void,
@@ -109,8 +110,35 @@ impl Room {
         async { rx.await.unwrap().context("error connecting to room") }
     }
 
+    pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
+        extern "C" fn callback(tx: *mut c_void, sources: CFArrayRef, error: CFStringRef) {
+            unsafe {
+                let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<Vec<MacOSDisplay>>>);
+
+                if sources.is_null() {
+                    let _ = tx.send(Err(anyhow!("{}", CFString::wrap_under_get_rule(error))));
+                } else {
+                    let sources = CFArray::wrap_under_get_rule(sources)
+                        .into_iter()
+                        .map(|source| MacOSDisplay::new(*source))
+                        .collect();
+
+                    let _ = tx.send(Ok(sources));
+                }
+            }
+        }
+
+        let (tx, rx) = oneshot::channel();
+
+        unsafe {
+            LKDisplaySources(Box::into_raw(Box::new(tx)) as *mut _, callback);
+        }
+
+        async move { rx.await.unwrap() }
+    }
+
     pub fn publish_video_track(
-        &self,
+        self: &Arc<Self>,
         track: &LocalVideoTrack,
     ) -> impl Future<Output = Result<LocalTrackPublication>> {
         let (tx, rx) = oneshot::channel::<Result<LocalTrackPublication>>();
@@ -338,16 +366,16 @@ impl RemoteVideoTrack {
 
     pub fn add_renderer<F>(&self, callback: F)
     where
-        F: 'static + FnMut(CVImageBuffer),
+        F: 'static + Send + Sync + FnMut(Frame),
     {
         extern "C" fn on_frame<F>(callback_data: *mut c_void, frame: CVImageBufferRef)
         where
-            F: FnMut(CVImageBuffer),
+            F: FnMut(Frame),
         {
             unsafe {
                 let buffer = CVImageBuffer::wrap_under_get_rule(frame);
                 let callback = &mut *(callback_data as *mut F);
-                callback(buffer);
+                callback(Frame(buffer));
             }
         }
 
@@ -394,29 +422,18 @@ impl Drop for MacOSDisplay {
     }
 }
 
-pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
-    extern "C" fn callback(tx: *mut c_void, sources: CFArrayRef, error: CFStringRef) {
-        unsafe {
-            let tx = Box::from_raw(tx as *mut oneshot::Sender<Result<Vec<MacOSDisplay>>>);
+pub struct Frame(CVImageBuffer);
 
-            if sources.is_null() {
-                let _ = tx.send(Err(anyhow!("{}", CFString::wrap_under_get_rule(error))));
-            } else {
-                let sources = CFArray::wrap_under_get_rule(sources)
-                    .into_iter()
-                    .map(|source| MacOSDisplay::new(*source))
-                    .collect();
-
-                let _ = tx.send(Ok(sources));
-            }
-        }
+impl Frame {
+    pub fn width(&self) -> usize {
+        self.0.width()
     }
 
-    let (tx, rx) = oneshot::channel();
-
-    unsafe {
-        LKDisplaySources(Box::into_raw(Box::new(tx)) as *mut _, callback);
+    pub fn height(&self) -> usize {
+        self.0.height()
     }
 
-    async move { rx.await.unwrap() }
+    pub fn image(&self) -> CVImageBuffer {
+        self.0.clone()
+    }
 }

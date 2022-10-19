@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{channel::mpsc, future};
-use gpui::executor::Background;
+use futures::{Stream, StreamExt};
+use gpui::executor::{self, Background};
 use lazy_static::lazy_static;
 use live_kit_server::token;
 use media::core_video::CVImageBuffer;
@@ -96,14 +96,14 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&*room_name)
             .ok_or_else(|| anyhow!("room {:?} does not exist", room_name))?;
-        if room.clients.contains_key(&identity) {
+        if room.client_rooms.contains_key(&identity) {
             Err(anyhow!(
                 "{:?} attempted to join room {:?} twice",
                 identity,
                 room_name
             ))
         } else {
-            room.clients.insert(identity, client_room);
+            room.client_rooms.insert(identity, client_room);
             Ok(())
         }
     }
@@ -117,7 +117,7 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&*room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
-        room.clients.remove(&identity).ok_or_else(|| {
+        room.client_rooms.remove(&identity).ok_or_else(|| {
             anyhow!(
                 "{:?} attempted to leave room {:?} before joining it",
                 identity,
@@ -135,7 +135,7 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
-        room.clients.remove(&identity).ok_or_else(|| {
+        room.client_rooms.remove(&identity).ok_or_else(|| {
             anyhow!(
                 "participant {:?} did not join room {:?}",
                 identity,
@@ -144,11 +144,44 @@ impl TestServer {
         })?;
         Ok(())
     }
+
+    async fn publish_video_track(&self, token: String, local_track: LocalVideoTrack) -> Result<()> {
+        self.background.simulate_random_delay().await;
+        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let identity = claims.sub.unwrap().to_string();
+        let room_name = claims.video.room.unwrap();
+
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&*room_name)
+            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+
+        let update = RemoteVideoTrackUpdate::Subscribed(Arc::new(RemoteVideoTrack {
+            sid: nanoid::nanoid!(17),
+            publisher_id: identity.clone(),
+            frames_rx: local_track.frames_rx.clone(),
+            background: self.background.clone(),
+        }));
+
+        for (id, client_room) in &room.client_rooms {
+            if *id != identity {
+                let _ = client_room
+                    .0
+                    .lock()
+                    .video_track_updates
+                    .0
+                    .try_broadcast(update.clone())
+                    .unwrap();
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Default)]
 struct TestServerRoom {
-    clients: HashMap<Sid, Arc<Room>>,
+    client_rooms: HashMap<Sid, Arc<Room>>,
 }
 
 impl TestServerRoom {}
@@ -194,17 +227,29 @@ impl live_kit_server::api::Client for TestApiClient {
 
 pub type Sid = String;
 
-#[derive(Default)]
 struct RoomState {
-    token: Option<String>,
+    connection: Option<ConnectionState>,
+    display_sources: Vec<MacOSDisplay>,
+    video_track_updates: (
+        async_broadcast::Sender<RemoteVideoTrackUpdate>,
+        async_broadcast::Receiver<RemoteVideoTrackUpdate>,
+    ),
 }
 
-#[derive(Default)]
+struct ConnectionState {
+    url: String,
+    token: String,
+}
+
 pub struct Room(Mutex<RoomState>);
 
 impl Room {
     pub fn new() -> Arc<Self> {
-        Default::default()
+        Arc::new(Self(Mutex::new(RoomState {
+            connection: None,
+            display_sources: Default::default(),
+            video_track_updates: async_broadcast::broadcast(128),
+        })))
     }
 
     pub fn connect(self: &Arc<Self>, url: &str, token: &str) -> impl Future<Output = Result<()>> {
@@ -214,36 +259,75 @@ impl Room {
         async move {
             let server = TestServer::get(&url)?;
             server.join_room(token.clone(), this.clone()).await?;
-            this.0.lock().token = Some(token);
+            this.0.lock().connection = Some(ConnectionState { url, token });
             Ok(())
         }
     }
 
-    pub fn publish_video_track(
-        &self,
-        track: &LocalVideoTrack,
-    ) -> impl Future<Output = Result<LocalTrackPublication>> {
-        future::pending()
+    pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
+        let this = self.clone();
+        async move {
+            let server = this.test_server();
+            server.background.simulate_random_delay().await;
+            Ok(this.0.lock().display_sources.clone())
+        }
     }
 
-    pub fn unpublish_track(&self, publication: LocalTrackPublication) {}
+    pub fn publish_video_track(
+        self: &Arc<Self>,
+        track: &LocalVideoTrack,
+    ) -> impl Future<Output = Result<LocalTrackPublication>> {
+        let this = self.clone();
+        let track = track.clone();
+        async move {
+            this.test_server()
+                .publish_video_track(this.token(), track)
+                .await?;
+            Ok(LocalTrackPublication)
+        }
+    }
 
-    pub fn remote_video_tracks(&self, participant_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
+    pub fn unpublish_track(&self, _: LocalTrackPublication) {}
+
+    pub fn remote_video_tracks(&self, _: &str) -> Vec<Arc<RemoteVideoTrack>> {
         Default::default()
     }
 
-    pub fn remote_video_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteVideoTrackUpdate> {
-        mpsc::unbounded().1
+    pub fn remote_video_track_updates(&self) -> impl Stream<Item = RemoteVideoTrackUpdate> {
+        self.0.lock().video_track_updates.1.clone()
+    }
+
+    pub fn set_display_sources(&self, sources: Vec<MacOSDisplay>) {
+        self.0.lock().display_sources = sources;
+    }
+
+    fn test_server(&self) -> Arc<TestServer> {
+        let this = self.0.lock();
+        let connection = this
+            .connection
+            .as_ref()
+            .expect("must be connected to call this method");
+        TestServer::get(&connection.url).unwrap()
+    }
+
+    fn token(&self) -> String {
+        self.0
+            .lock()
+            .connection
+            .as_ref()
+            .expect("must be connected to call this method")
+            .token
+            .clone()
     }
 }
 
 impl Drop for Room {
     fn drop(&mut self) {
-        if let Some(token) = self.0.lock().token.take() {
-            if let Ok(server) = TestServer::get(&token) {
+        if let Some(connection) = self.0.lock().connection.take() {
+            if let Ok(server) = TestServer::get(&connection.token) {
                 let background = server.background.clone();
                 background
-                    .spawn(async move { server.leave_room(token).await.unwrap() })
+                    .spawn(async move { server.leave_room(connection.token).await.unwrap() })
                     .detach();
             }
         }
@@ -252,17 +336,24 @@ impl Drop for Room {
 
 pub struct LocalTrackPublication;
 
-pub struct LocalVideoTrack;
+#[derive(Clone)]
+pub struct LocalVideoTrack {
+    frames_rx: async_broadcast::Receiver<Frame>,
+}
 
 impl LocalVideoTrack {
     pub fn screen_share_for_display(display: &MacOSDisplay) -> Self {
-        Self
+        Self {
+            frames_rx: display.frames.1.clone(),
+        }
     }
 }
 
 pub struct RemoteVideoTrack {
     sid: Sid,
     publisher_id: Sid,
+    frames_rx: async_broadcast::Receiver<Frame>,
+    background: Arc<executor::Background>,
 }
 
 impl RemoteVideoTrack {
@@ -274,20 +365,64 @@ impl RemoteVideoTrack {
         &self.publisher_id
     }
 
-    pub fn add_renderer<F>(&self, callback: F)
+    pub fn add_renderer<F>(&self, mut callback: F)
     where
-        F: 'static + FnMut(CVImageBuffer),
+        F: 'static + Send + Sync + FnMut(Frame),
     {
+        let mut frames_rx = self.frames_rx.clone();
+        self.background
+            .spawn(async move {
+                while let Some(frame) = frames_rx.next().await {
+                    callback(frame)
+                }
+            })
+            .detach();
     }
 }
 
+#[derive(Clone)]
 pub enum RemoteVideoTrackUpdate {
     Subscribed(Arc<RemoteVideoTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
-pub struct MacOSDisplay;
+#[derive(Clone)]
+pub struct MacOSDisplay {
+    frames: (
+        async_broadcast::Sender<Frame>,
+        async_broadcast::Receiver<Frame>,
+    ),
+}
 
-pub fn display_sources() -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
-    future::pending()
+impl MacOSDisplay {
+    pub fn new() -> Self {
+        Self {
+            frames: async_broadcast::broadcast(128),
+        }
+    }
+
+    pub fn send_frame(&self, frame: Frame) {
+        self.frames.0.try_broadcast(frame).unwrap();
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Frame {
+    pub label: String,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Frame {
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn image(&self) -> CVImageBuffer {
+        unimplemented!("you can't call this in test mode")
+    }
 }

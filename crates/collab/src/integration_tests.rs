@@ -5,7 +5,10 @@ use crate::{
 };
 use ::rpc::Peer;
 use anyhow::anyhow;
-use call::{room, ActiveCall, ParticipantLocation, Room};
+use call::{
+    room::{self, Event},
+    ActiveCall, ParticipantLocation, Room,
+};
 use client::{
     self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
     Credentials, EstablishConnectionError, PeerId, User, UserStore, RECEIVE_TIMEOUT,
@@ -30,6 +33,7 @@ use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, LanguageRegistry, OffsetRangeExt, Point, Rope,
 };
+use live_kit_client::{Frame, MacOSDisplay};
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
 use project::{
@@ -184,6 +188,45 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
+
+    // User A shares their screen
+    let display = MacOSDisplay::new();
+    let events_b = active_call_events(cx_b);
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_display_sources(vec![display.clone()]);
+                room.share_screen(cx)
+            })
+        })
+        .await
+        .unwrap();
+
+    let frame = Frame {
+        width: 800,
+        height: 600,
+        label: "a".into(),
+    };
+    display.send_frame(frame.clone());
+    deterministic.run_until_parked();
+
+    assert_eq!(events_b.borrow().len(), 1);
+    let event = events_b.borrow().first().unwrap().clone();
+    if let Event::Frame {
+        participant_id,
+        track_id,
+    } = event
+    {
+        assert_eq!(participant_id, client_a.peer_id().unwrap());
+        room_b.read_with(cx_b, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.peer_id().unwrap()].tracks[&track_id].frame(),
+                Some(&frame)
+            );
+        });
+    } else {
+        panic!("unexpected event")
+    }
 
     // User A leaves the room.
     active_call_a.update(cx_a, |call, cx| {
@@ -954,21 +997,21 @@ async fn test_active_call_events(
     deterministic.run_until_parked();
     assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
     assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
+}
 
-    fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> {
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let active_call = cx.read(ActiveCall::global);
-        cx.update({
-            let events = events.clone();
-            |cx| {
-                cx.subscribe(&active_call, move |_, event, _| {
-                    events.borrow_mut().push(event.clone())
-                })
-                .detach()
-            }
-        });
-        events
-    }
+fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let active_call = cx.read(ActiveCall::global);
+    cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&active_call, move |_, event, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach()
+        }
+    });
+    events
 }
 
 #[gpui::test(iterations = 10)]

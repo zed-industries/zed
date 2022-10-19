@@ -182,6 +182,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-broadcast"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d26004fe83b2d1cd3a97609b21e39f9a31535822210fe83205d2ce48866ea61"
+dependencies = [
+ "event-listener",
+ "futures-core",
+ "parking_lot 0.12.1",
+]
+
+[[package]]
 name = "async-channel"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2991,7 +3002,7 @@ name = "language"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-broadcast",
+ "async-broadcast 0.3.4",
  "async-trait",
  "client",
  "clock",
@@ -3164,6 +3175,7 @@ name = "live_kit_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-broadcast 0.4.1",
  "async-trait",
  "block",
  "byteorder",
@@ -3181,6 +3193,7 @@ dependencies = [
  "live_kit_server",
  "log",
  "media",
+ "nanoid",
  "objc",
  "parking_lot 0.11.2",
  "postage",

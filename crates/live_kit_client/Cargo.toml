@@ -13,11 +13,13 @@ name = "test_app"
 
 [features]
 test-support = [
+    "async-broadcast",
     "async-trait", 
     "collections/test-support",
     "gpui/test-support",
     "lazy_static",
-    "live_kit_server"
+    "live_kit_server",
+    "nanoid",
 ]
 
 [dependencies]
@@ -27,12 +29,15 @@ live_kit_server = { path = "../live_kit_server", optional = true }
 media = { path = "../media" }
 
 anyhow = "1.0.38"
-async-trait = { version = "0.1", optional = true }
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"
 futures = "0.3"
-lazy_static = { version = "1.4", optional = true }
 parking_lot = "0.11.1"
+
+async-broadcast = { version = "0.4", optional = true }
+async-trait = { version = "0.1", optional = true }
+lazy_static = { version = "1.4", optional = true }
+nanoid = { version ="0.4", optional = true}
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

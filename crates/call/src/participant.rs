@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use client::{proto, User};
 use collections::HashMap;
 use gpui::{Task, WeakModelHandle};
-use media::core_video::CVImageBuffer;
+use live_kit_client::Frame;
 use project::Project;
 use std::sync::Arc;
 
@@ -46,13 +46,13 @@ pub struct RemoteParticipant {
 
 #[derive(Clone)]
 pub struct RemoteVideoTrack {
-    pub(crate) frame: Option<CVImageBuffer>,
+    pub(crate) frame: Option<Frame>,
     pub(crate) _live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
     pub(crate) _maintain_frame: Arc<Task<()>>,
 }
 
 impl RemoteVideoTrack {
-    pub fn frame(&self) -> Option<&CVImageBuffer> {
+    pub fn frame(&self) -> Option<&Frame> {
         self.frame.as_ref()
     }
 }

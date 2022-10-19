@@ -159,7 +159,7 @@ impl Member {
                             let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
                             cx.scene.push_surface(gpui::mac::Surface {
                                 bounds: RectF::new(origin, size),
-                                image_buffer: frame,
+                                image_buffer: frame.image(),
                             });
                         }
                     })
