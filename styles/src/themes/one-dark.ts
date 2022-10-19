@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./common/base16";
+import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "one";
 const author = "Chris Kempson (http://chriskempson.com)";
@@ -24,16 +24,9 @@ const base0E = "#c678dd";
 const base0F = "#be5046";
 
 const ramps = {
-  neutral: chroma.scale([
-    base00,
-    base01,
-    base02,
-    base03,
-    base04,
-    base05,
-    base06,
-    base07,
-  ]),
+  neutral: chroma
+    .scale([base00, base01, base02, base03, base04, base05, base06, base07])
+    .domain([0.05, 0.22, 0.25, 0.45, 0.62, 0.8, 0.9, 1]),
   red: colorRamp(chroma(base08)),
   orange: colorRamp(chroma(base09)),
   yellow: colorRamp(chroma(base0A)),
@@ -44,4 +37,4 @@ const ramps = {
   magenta: colorRamp(chroma(base0F)),
 };
 
-export const dark = createTheme(`${name}-dark`, false, ramps);
+export const dark = createColorScheme(`${name}-dark`, false, ramps);

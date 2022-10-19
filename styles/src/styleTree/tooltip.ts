@@ -1,21 +1,22 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor, border, popoverShadow, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, text } from "./components";
 
-export default function tooltip(theme: Theme) {
+export default function tooltip(colorScheme: ColorScheme) {
+  let layer = colorScheme.middle;
   return {
-    background: backgroundColor(theme, 500),
-    border: border(theme, "secondary"),
+    background: background(layer),
+    border: border(layer),
     padding: { top: 4, bottom: 4, left: 8, right: 8 },
     margin: { top: 6, left: 6 },
-    shadow: popoverShadow(theme),
+    shadow: colorScheme.popoverShadow,
     cornerRadius: 6,
-    text: text(theme, "sans", "primary", { size: "xs" }),
+    text: text(layer, "sans", { size: "xs" }),
     keystroke: {
-      background: backgroundColor(theme, "on500"),
+      background: background(layer, "on"),
       cornerRadius: 4,
       margin: { left: 6 },
       padding: { left: 4, right: 4 },
-      ...text(theme, "mono", "secondary", { size: "xs", weight: "bold" }),
+      ...text(layer, "mono", "on", { size: "xs", weight: "bold" }),
     },
     maxTextWidth: 200,
   };

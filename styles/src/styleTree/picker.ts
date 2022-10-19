@@ -1,17 +1,16 @@
-import Theme from "../themes/common/theme";
-import {
-  backgroundColor,
-  border,
-  player,
-  modalShadow,
-  text,
-} from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, text } from "./components";
 
-export default function picker(theme: Theme) {
+export default function picker(colorScheme: ColorScheme) {
+  let layer = colorScheme.lowest;
   return {
-    background: backgroundColor(theme, 300),
-    cornerRadius: 8,
-    padding: 8,
+    background: background(layer),
+    border: border(layer),
+    shadow: colorScheme.modalShadow,
+    cornerRadius: 12,
+    padding: {
+      bottom: 4,
+    },
     item: {
       padding: {
         bottom: 4,
@@ -19,41 +18,48 @@ export default function picker(theme: Theme) {
         right: 12,
         top: 4,
       },
+      margin: {
+        top: 1,
+        left: 4,
+        right: 4,
+      },
       cornerRadius: 8,
-      text: text(theme, "sans", "secondary"),
-      highlightText: text(theme, "sans", "feature", { weight: "bold" }),
+      text: text(layer, "sans", "variant"),
+      highlightText: text(layer, "sans", "accent", { weight: "bold" }),
       active: {
-        background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "sans", "active"),
+        background: background(layer, "base", "active"),
+        text: text(layer, "sans", "base", "active"),
+        highlightText: text(layer, "sans", "accent", {
+          weight: "bold",
+        }),
       },
       hover: {
-        background: backgroundColor(theme, 300, "hovered"),
+        background: background(layer, "hovered"),
       },
     },
-    border: border(theme, "primary"),
     empty: {
-      text: text(theme, "sans", "muted"),
+      text: text(layer, "sans", "variant"),
       padding: {
-        bottom: 4,
-        left: 12,
-        right: 12,
+        bottom: 8,
+        left: 16,
+        right: 16,
         top: 8,
       },
     },
     inputEditor: {
-      background: backgroundColor(theme, 500),
-      cornerRadius: 8,
-      placeholderText: text(theme, "sans", "placeholder"),
-      selection: player(theme, 1).selection,
-      text: text(theme, "mono", "primary"),
-      border: border(theme, "secondary"),
+      placeholderText: text(layer, "sans", "on", "disabled"),
+      selection: colorScheme.players[0],
+      text: text(layer, "mono", "on"),
+      border: border(layer, { bottom: true }),
       padding: {
-        bottom: 7,
+        bottom: 8,
         left: 16,
         right: 16,
-        top: 7,
+        top: 8,
+      },
+      margin: {
+        bottom: 4,
       },
     },
-    shadow: modalShadow(theme),
   };
 }

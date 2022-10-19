@@ -1,36 +1,36 @@
-import Theme from "../themes/common/theme";
-import { panel } from "./app";
-import { backgroundColor, iconColor, player, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, foreground, text } from "./components";
 
-export default function projectPanel(theme: Theme) {
+export default function projectPanel(colorScheme: ColorScheme) {
+  let layer = colorScheme.middle;
   return {
-    ...panel,
+    background: background(layer),
     padding: { left: 12, right: 12, top: 6, bottom: 6 },
     indentWidth: 8,
     entry: {
       height: 24,
-      iconColor: iconColor(theme, "muted"),
+      iconColor: foreground(layer, "variant"),
       iconSize: 8,
       iconSpacing: 8,
-      text: text(theme, "mono", "secondary", { size: "sm" }),
+      text: text(layer, "mono", "variant", { size: "sm" }),
       hover: {
-        background: backgroundColor(theme, 300, "hovered"),
+        background: background(layer, "variant", "hovered"),
       },
       active: {
-        background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "mono", "active", { size: "sm" }),
+        background: background(layer, "active"),
+        text: text(layer, "mono", "active", { size: "sm" }),
       },
       activeHover: {
-        background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "mono", "active", { size: "sm" }),
+        background: background(layer, "active"),
+        text: text(layer, "mono", "active", { size: "sm" }),
       },
     },
     cutEntryFade: 0.4,
     ignoredEntryFade: 0.6,
     filenameEditor: {
-      background: backgroundColor(theme, "on300"),
-      text: text(theme, "mono", "active", { size: "sm" }),
-      selection: player(theme, 1).selection,
+      background: background(layer, "on"),
+      text: text(layer, "mono", "on", { size: "sm" }),
+      selection: colorScheme.players[0],
     },
   };
 }

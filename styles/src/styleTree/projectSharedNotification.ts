@@ -1,12 +1,14 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor, borderColor, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, text } from "./components";
 
-export default function projectSharedNotification(theme: Theme): Object {
+export default function projectSharedNotification(colorScheme: ColorScheme): Object {
+  let layer = colorScheme.middle;
+
   const avatarSize = 48;
   return {
     windowHeight: 74,
     windowWidth: 380,
-    background: backgroundColor(theme, 300),
+    background: background(layer),
     ownerContainer: {
       padding: 12,
     },
@@ -19,26 +21,26 @@ export default function projectSharedNotification(theme: Theme): Object {
       margin: { left: 10 },
     },
     ownerUsername: {
-      ...text(theme, "sans", "active", { size: "sm", weight: "bold" }),
+      ...text(layer, "sans", { size: "sm", weight: "bold" }),
       margin: { top: -3 },
     },
     message: {
-      ...text(theme, "sans", "secondary", { size: "xs" }),
+      ...text(layer, "sans", "variant", { size: "xs" }),
       margin: { top: -3 },
     },
     worktreeRoots: {
-      ...text(theme, "sans", "secondary", { size: "xs", weight: "bold" }),
+      ...text(layer, "sans", "variant", { size: "xs", weight: "bold" }),
       margin: { top: -3 },
     },
     buttonWidth: 96,
     openButton: {
-      background: backgroundColor(theme, "info", "active"),
-      border: { left: true, bottom: true, width: 1, color: borderColor(theme, "primary") },
-      ...text(theme, "sans", "info", { size: "xs", weight: "extra_bold" })
+      background: background(layer, "accent"),
+      border: border(layer, { left: true, bottom: true, }),
+      ...text(layer, "sans", "accent", { size: "xs", weight: "extra_bold" })
     },
     dismissButton: {
-      border: { left: true, width: 1, color: borderColor(theme, "primary") },
-      ...text(theme, "sans", "secondary", { size: "xs", weight: "extra_bold" })
+      border: border(layer, { left: true }),
+      ...text(layer, "sans", "variant", { size: "xs", weight: "extra_bold" })
     },
   };
 }

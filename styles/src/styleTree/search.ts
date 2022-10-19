@@ -1,17 +1,19 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor, border, player, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, text } from "./components";
 
-export default function search(theme: Theme) {
+export default function search(colorScheme: ColorScheme) {
+  let layer = colorScheme.highest;
+
   // Search input
   const editor = {
-    background: backgroundColor(theme, 500),
+    background: background(layer),
     cornerRadius: 8,
     minWidth: 200,
     maxWidth: 500,
-    placeholderText: text(theme, "mono", "placeholder"),
-    selection: player(theme, 1).selection,
-    text: text(theme, "mono", "active"),
-    border: border(theme, "secondary"),
+    placeholderText: text(layer, "mono", "disabled"),
+    selection: colorScheme.players[0],
+    text: text(layer, "mono", "default"),
+    border: border(layer),
     margin: {
       right: 12,
     },
@@ -24,14 +26,14 @@ export default function search(theme: Theme) {
   };
 
   return {
-    matchBackground: theme.editor.highlight.match,
+    matchBackground: background(layer), // theme.editor.highlight.match,
     tabIconSpacing: 8,
     tabIconWidth: 14,
     optionButton: {
-      ...text(theme, "mono", "secondary"),
-      background: backgroundColor(theme, "on500"),
+      ...text(layer, "mono", "on"),
+      background: background(layer, "on"),
       cornerRadius: 6,
-      border: border(theme, "secondary"),
+      border: border(layer, "on"),
       margin: {
         right: 4,
       },
@@ -42,28 +44,28 @@ export default function search(theme: Theme) {
         top: 2,
       },
       active: {
-        ...text(theme, "mono", "active"),
-        background: backgroundColor(theme, "on500", "active"),
-        border: border(theme, "muted"),
+        ...text(layer, "mono", "on", "inverted"),
+        background: background(layer, "on", "inverted"),
+        border: border(layer, "on", "inverted"),
       },
       clicked: {
-        ...text(theme, "mono", "active"),
-        background: backgroundColor(theme, "on300", "active"),
-        border: border(theme, "secondary"),
+        ...text(layer, "mono", "on", "pressed"),
+        background: background(layer, "on", "pressed"),
+        border: border(layer, "on", "pressed"),
       },
       hover: {
-        ...text(theme, "mono", "active"),
-        background: backgroundColor(theme, "on500", "hovered"),
-        border: border(theme, "muted"),
+        ...text(layer, "mono", "on", "hovered"),
+        background: background(layer, "on", "hovered"),
+        border: border(layer, "on", "hovered"),
       },
     },
     editor,
     invalidEditor: {
       ...editor,
-      border: border(theme, "error"),
+      border: border(layer, "negative"),
     },
     matchIndex: {
-      ...text(theme, "mono", "muted"),
+      ...text(layer, "mono", "variant"),
       padding: 6,
     },
     optionButtonGroup: {
@@ -73,7 +75,7 @@ export default function search(theme: Theme) {
       },
     },
     resultsStatus: {
-      ...text(theme, "mono", "primary"),
+      ...text(layer, "mono", "on"),
       size: 18,
     },
   };

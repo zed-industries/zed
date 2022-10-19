@@ -1,0 +1,18 @@
+[package]
+name = "theme_testbench"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/theme_testbench.rs"
+doctest = false
+
+
+[dependencies]
+gpui = { path = "../gpui" }
+theme = { path = "../theme" }
+settings = { path = "../settings" }
+workspace = { path = "../workspace" }
+project = { path = "../project" }
+
+smallvec = { version = "1.6", features = ["union"] }

@@ -2,7 +2,7 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, TooltipStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
     Border, MouseState,
 };
@@ -18,7 +18,6 @@ pub struct Theme {
     pub meta: ThemeMeta,
     pub workspace: Workspace,
     pub context_menu: ContextMenu,
-    pub chat_panel: ChatPanel,
     pub contacts_popover: ContactsPopover,
     pub contact_list: ContactList,
     pub contact_finder: ContactFinder,
@@ -35,6 +34,7 @@ pub struct Theme {
     pub incoming_call_notification: IncomingCallNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
+    pub color_scheme: ColorScheme,
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -316,18 +316,6 @@ pub struct SidebarItem {
     pub container: ContainerStyle,
     pub icon_color: Color,
     pub icon_size: f32,
-}
-
-#[derive(Deserialize, Default)]
-pub struct ChatPanel {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub message: ChatMessage,
-    pub pending_message: ChatMessage,
-    pub channel_select: ChannelSelect,
-    pub input_editor: FieldEditor,
-    pub sign_in_prompt: TextStyle,
-    pub hovered_sign_in_prompt: TextStyle,
 }
 
 #[derive(Deserialize, Default)]
@@ -772,12 +760,6 @@ pub struct HoverPopover {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct TerminalStyle {
-    pub colors: TerminalColors,
-    pub modal_container: ContainerStyle,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct TerminalColors {
     pub black: Color,
     pub red: Color,
     pub green: Color,
@@ -808,4 +790,68 @@ pub struct TerminalColors {
     pub dim_white: Color,
     pub bright_foreground: Color,
     pub dim_foreground: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct ColorScheme {
+    pub name: String,
+    pub is_light: bool,
+
+    pub ramps: RampSet,
+
+    pub lowest: Layer,
+    pub middle: Layer,
+    pub highest: Layer,
+
+    pub popover_shadow: Shadow,
+    pub modal_shadow: Shadow,
+
+    pub players: Vec<Player>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Player {
+    pub cursor: Color,
+    pub selection: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct RampSet {
+    pub neutral: Vec<Color>,
+    pub red: Vec<Color>,
+    pub orange: Vec<Color>,
+    pub yellow: Vec<Color>,
+    pub green: Vec<Color>,
+    pub cyan: Vec<Color>,
+    pub blue: Vec<Color>,
+    pub violet: Vec<Color>,
+    pub magenta: Vec<Color>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Layer {
+    pub base: StyleSet,
+    pub variant: StyleSet,
+    pub on: StyleSet,
+    pub accent: StyleSet,
+    pub positive: StyleSet,
+    pub warning: StyleSet,
+    pub negative: StyleSet,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct StyleSet {
+    pub default: Style,
+    pub active: Style,
+    pub disabled: Style,
+    pub hovered: Style,
+    pub pressed: Style,
+    pub inverted: Style,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Style {
+    pub background: Color,
+    pub border: Color,
+    pub foreground: Color,
 }
