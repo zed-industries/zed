@@ -132,8 +132,6 @@ impl ActiveCall {
                         Room::create(recipient_user_id, initial_project, client, user_store, cx)
                     })
                     .await?;
-                room.update(&mut cx, |room, cx| room.share_screen(cx))
-                    .await?;
                 this.update(&mut cx, |this, cx| this.set_room(Some(room), cx));
             };
 

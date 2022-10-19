@@ -10,17 +10,21 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     Border, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::ops::Range;
 use theme::Theme;
 use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
-actions!(collab, [ToggleCollaborationMenu, ShareProject]);
+actions!(
+    collab,
+    [ToggleCollaborationMenu, ToggleScreenSharing, ShareProject]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
+    cx.add_action(CollabTitlebarItem::toggle_screen_sharing);
     cx.add_action(CollabTitlebarItem::share_project);
 }
 
@@ -48,10 +52,12 @@ impl View for CollabTitlebarItem {
         };
 
         let theme = cx.global::<Settings>().theme.clone();
-        let project = workspace.read(cx).project().read(cx);
 
         let mut container = Flex::row();
+        container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
+
         if workspace.read(cx).client().status().borrow().is_connected() {
+            let project = workspace.read(cx).project().read(cx);
             if project.is_shared()
                 || project.is_remote()
                 || ActiveCall::global(cx).read(cx).room().is_none()
@@ -169,6 +175,19 @@ impl CollabTitlebarItem {
         cx.notify();
     }
 
+    pub fn toggle_screen_sharing(&mut self, _: &ToggleScreenSharing, cx: &mut ViewContext<Self>) {
+        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+            let toggle_screen_sharing = room.update(cx, |room, cx| {
+                if room.is_screen_sharing() {
+                    Task::ready(room.unshare_screen(cx))
+                } else {
+                    room.share_screen(cx)
+                }
+            });
+            toggle_screen_sharing.detach_and_log_err(cx);
+        }
+    }
+
     fn render_toggle_contacts_button(
         &self,
         theme: &Theme,
@@ -235,6 +254,43 @@ impl CollabTitlebarItem {
                 .boxed()
             }))
             .boxed()
+    }
+
+    fn render_toggle_screen_sharing_button(
+        &self,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> Option<ElementBox> {
+        let active_call = ActiveCall::global(cx);
+        let room = active_call.read(cx).room().cloned()?;
+        let icon = if room.read(cx).is_screen_sharing() {
+            "icons/disable_screen_sharing_12.svg"
+        } else {
+            "icons/enable_screen_sharing_12.svg"
+        };
+        let titlebar = &theme.workspace.titlebar;
+        Some(
+            MouseEventHandler::<ToggleScreenSharing>::new(0, cx, |state, _| {
+                let style = titlebar.call_control.style_for(state, false);
+                Svg::new(icon)
+                    .with_color(style.color)
+                    .constrained()
+                    .with_width(style.icon_width)
+                    .aligned()
+                    .constrained()
+                    .with_width(style.button_width)
+                    .with_height(style.button_width)
+                    .contained()
+                    .with_style(style.container)
+                    .boxed()
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, move |_, cx| {
+                cx.dispatch_action(ToggleScreenSharing);
+            })
+            .aligned()
+            .boxed(),
+        )
     }
 
     fn render_share_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {

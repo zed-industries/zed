@@ -48,6 +48,7 @@ extern "C" {
         callback: extern "C" fn(*mut c_void, *mut c_void, CFStringRef),
         callback_data: *mut c_void,
     );
+    fn LKRoomUnpublishTrack(room: *const c_void, publication: *const c_void);
     fn LKRoomVideoTracksForRemoteParticipant(
         room: *const c_void,
         participant_id: CFStringRef,
@@ -132,6 +133,12 @@ impl Room {
             );
         }
         async { rx.await.unwrap().context("error publishing video track") }
+    }
+
+    pub fn unpublish_track(&self, publication: LocalTrackPublication) {
+        unsafe {
+            LKRoomUnpublishTrack(self.native_room, publication.0);
+        }
     }
 
     pub fn remote_video_tracks(&self, participant_id: &str) -> Vec<Arc<RemoteVideoTrack>> {

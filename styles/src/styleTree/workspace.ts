@@ -138,7 +138,18 @@ export default function workspace(theme: Theme) {
         },
         cornerRadius: 6,
       },
+      callControl: {
+        cornerRadius: 6,
+        color: iconColor(theme, "secondary"),
+        iconWidth: 12,
+        buttonWidth: 20,
+        hover: {
+          background: backgroundColor(theme, "on300", "hovered"),
+          color: iconColor(theme, "active"),
+        },
+      },
       toggleContactsButton: {
+        margin: { left: 6 },
         cornerRadius: 6,
         color: iconColor(theme, "secondary"),
         iconWidth: 8,

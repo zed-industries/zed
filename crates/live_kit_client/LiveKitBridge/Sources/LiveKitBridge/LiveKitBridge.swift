@@ -95,6 +95,13 @@ public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPoin
     }
 }
 
+@_cdecl("LKRoomUnpublishTrack")
+public func LKRoomUnpublishTrack(room: UnsafeRawPointer, publication: UnsafeRawPointer) {
+    let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
+    let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+    room.localParticipant?.unpublish(publication: publication)
+}
+
 @_cdecl("LKRoomVideoTracksForRemoteParticipant")
 public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, participantId: CFString) -> CFArray? {
     let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()

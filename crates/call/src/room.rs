@@ -606,6 +606,12 @@ impl Room {
         })
     }
 
+    pub fn is_screen_sharing(&self) -> bool {
+        self.live_kit
+            .as_ref()
+            .map_or(false, |live_kit| live_kit.screen_track.is_some())
+    }
+
     pub fn share_screen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
@@ -617,21 +623,48 @@ impl Room {
                 .first()
                 .ok_or_else(|| anyhow!("no display found"))?;
             let track = LocalVideoTrack::screen_share_for_display(&display);
-
             let publication = this
-                .upgrade(&cx)?
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("room was dropped"))?
                 .read_with(&cx, |this, _| {
                     this.live_kit
                         .as_ref()
                         .map(|live_kit| live_kit.room.publish_video_track(&track))
-                })?
+                })
+                .ok_or_else(|| anyhow!("live-kit was not initialized"))?
                 .await?;
 
-            this.upgrade(&cx)?.update(cx, |this, _| {
-                this.live_kit.as_mut()?.screen_track = Some(publication);
-                Some(())
-            })
+            this.upgrade(&cx)
+                .ok_or_else(|| anyhow!("room was dropped"))?
+                .update(&mut cx, |this, cx| {
+                    let live_kit = this
+                        .live_kit
+                        .as_mut()
+                        .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
+                    live_kit.screen_track = Some(publication);
+                    cx.notify();
+                    Ok(())
+                })
         })
+    }
+
+    pub fn unshare_screen(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+        if self.status.is_offline() {
+            return Err(anyhow!("room is offline"));
+        }
+
+        let live_kit = self
+            .live_kit
+            .as_mut()
+            .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
+        let track = live_kit
+            .screen_track
+            .take()
+            .ok_or_else(|| anyhow!("screen was not shared"))?;
+        live_kit.room.unpublish_track(track);
+        cx.notify();
+
+        Ok(())
     }
 }
 
