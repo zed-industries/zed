@@ -2164,6 +2164,7 @@ async fn test_rescan_and_remote_updates(
             proto::WorktreeMetadata {
                 id: initial_snapshot.id().to_proto(),
                 root_name: initial_snapshot.root_name().into(),
+                abs_path: initial_snapshot.abs_path().as_os_str().as_bytes().to_vec(),
                 visible: true,
             },
             rpc.clone(),

@@ -1,3 +1,4 @@
+mod blink_manager;
 pub mod display_map;
 mod element;
 mod highlight_matching_bracket;
@@ -16,6 +17,7 @@ pub mod test;
 
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
+use blink_manager::BlinkManager;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
@@ -33,20 +35,22 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     serde_json::json,
-    text_layout, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox,
-    Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    text_layout, AnyViewHandle, AppContext, AsyncAppContext, Axis, ClipboardItem, Element,
+    ElementBox, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
-    AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
-    DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
-    Selection, SelectionGoal, TransactionId,
+    AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
+    Diagnostic, DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16,
+    Point, Selection, SelectionGoal, TransactionId,
 };
-use link_go_to_definition::{hide_link_definition, LinkGoToDefinitionState};
+use link_go_to_definition::{
+    hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
+};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -80,6 +84,7 @@ const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -90,7 +95,10 @@ pub struct SelectNext {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Scroll(pub Vector2F);
+pub struct Scroll {
+    pub scroll_position: Vector2F,
+    pub axis: Option<Axis>,
+}
 
 #[derive(Clone, PartialEq)]
 pub struct Select(pub SelectPhase);
@@ -259,7 +267,7 @@ struct ScrollbarAutoHide(bool);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::new_file);
-    cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
+    cx.add_action(Editor::scroll);
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
@@ -425,6 +433,69 @@ pub type GetFieldEditorTheme = fn(&theme::Theme) -> theme::FieldEditor;
 
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
+#[derive(Clone, Copy)]
+pub struct OngoingScroll {
+    last_timestamp: Instant,
+    axis: Option<Axis>,
+}
+
+impl OngoingScroll {
+    fn initial() -> OngoingScroll {
+        OngoingScroll {
+            last_timestamp: Instant::now() - SCROLL_EVENT_SEPARATION,
+            axis: None,
+        }
+    }
+
+    fn update(&mut self, axis: Option<Axis>) {
+        self.last_timestamp = Instant::now();
+        self.axis = axis;
+    }
+
+    pub fn filter(&self, delta: &mut Vector2F) -> Option<Axis> {
+        const UNLOCK_PERCENT: f32 = 1.9;
+        const UNLOCK_LOWER_BOUND: f32 = 6.;
+        let mut axis = self.axis;
+
+        let x = delta.x().abs();
+        let y = delta.y().abs();
+        let duration = Instant::now().duration_since(self.last_timestamp);
+        if duration > SCROLL_EVENT_SEPARATION {
+            //New ongoing scroll will start, determine axis
+            axis = if x <= y {
+                Some(Axis::Vertical)
+            } else {
+                Some(Axis::Horizontal)
+            };
+        } else if x.max(y) >= UNLOCK_LOWER_BOUND {
+            //Check if the current ongoing will need to unlock
+            match axis {
+                Some(Axis::Vertical) => {
+                    if x > y && x >= y * UNLOCK_PERCENT {
+                        axis = None;
+                    }
+                }
+
+                Some(Axis::Horizontal) => {
+                    if y > x && y >= x * UNLOCK_PERCENT {
+                        axis = None;
+                    }
+                }
+
+                None => {}
+            }
+        }
+
+        match axis {
+            Some(Axis::Vertical) => *delta = vec2f(0., delta.y()),
+            Some(Axis::Horizontal) => *delta = vec2f(delta.x(), 0.),
+            None => {}
+        }
+
+        axis
+    }
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -439,6 +510,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
+    ongoing_scroll: OngoingScroll,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_request: Option<(Autoscroll, bool)>,
@@ -447,12 +519,10 @@ pub struct Editor {
     override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
     focused: bool,
-    show_local_cursors: bool,
+    blink_manager: ModelHandle<BlinkManager>,
     show_local_selections: bool,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    blink_epoch: usize,
-    blinking_paused: bool,
     mode: EditorMode,
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
@@ -484,6 +554,7 @@ pub struct EditorSnapshot {
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
+    ongoing_scroll: OngoingScroll,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
 }
@@ -1076,6 +1147,8 @@ impl Editor {
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
+        let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
+
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1093,16 +1166,15 @@ impl Editor {
             soft_wrap_mode_override: None,
             get_field_editor_theme,
             project,
+            ongoing_scroll: OngoingScroll::initial(),
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
             autoscroll_request: None,
             focused: false,
-            show_local_cursors: false,
+            blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
             hide_scrollbar_task: None,
-            blink_epoch: 0,
-            blinking_paused: false,
             mode,
             vertical_scroll_margin: 3.0,
             placeholder_text: None,
@@ -1130,6 +1202,7 @@ impl Editor {
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
+                cx.observe(&blink_manager, |_, _, cx| cx.notify()),
             ],
         };
         this.end_selection(cx);
@@ -1186,6 +1259,7 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
+            ongoing_scroll: self.ongoing_scroll,
             scroll_position: self.scroll_position,
             scroll_top_anchor: self.scroll_top_anchor.clone(),
             placeholder_text: self.placeholder_text.clone(),
@@ -1478,6 +1552,7 @@ impl Editor {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors(),
                     self.selections.line_mode,
+                    self.cursor_shape,
                     cx,
                 )
             });
@@ -1541,7 +1616,7 @@ impl Editor {
             refresh_matching_bracket_highlights(self, cx);
         }
 
-        self.pause_cursor_blinking(cx);
+        self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(Event::SelectionsChanged { local });
         cx.notify();
     }
@@ -1586,6 +1661,11 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
         });
+    }
+
+    fn scroll(&mut self, action: &Scroll, cx: &mut ViewContext<Self>) {
+        self.ongoing_scroll.update(action.axis);
+        self.set_scroll_position(action.scroll_position, cx);
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
@@ -6110,60 +6190,8 @@ impl Editor {
         highlights
     }
 
-    fn next_blink_epoch(&mut self) -> usize {
-        self.blink_epoch += 1;
-        self.blink_epoch
-    }
-
-    fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.focused {
-            return;
-        }
-
-        self.show_local_cursors = true;
-        cx.notify();
-
-        let epoch = self.next_blink_epoch();
-        cx.spawn(|this, mut cx| {
-            let this = this.downgrade();
-            async move {
-                Timer::after(CURSOR_BLINK_INTERVAL).await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
-                }
-            }
-        })
-        .detach();
-    }
-
-    fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
-        if epoch == self.blink_epoch {
-            self.blinking_paused = false;
-            self.blink_cursors(epoch, cx);
-        }
-    }
-
-    fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
-        if epoch == self.blink_epoch && self.focused && !self.blinking_paused {
-            self.show_local_cursors = !self.show_local_cursors;
-            cx.notify();
-
-            let epoch = self.next_blink_epoch();
-            cx.spawn(|this, mut cx| {
-                let this = this.downgrade();
-                async move {
-                    Timer::after(CURSOR_BLINK_INTERVAL).await;
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
-                    }
-                }
-            })
-            .detach();
-        }
-    }
-
-    pub fn show_local_cursors(&self) -> bool {
-        self.show_local_cursors && self.focused
+    pub fn show_local_cursors(&self, cx: &AppContext) -> bool {
+        self.blink_manager.read(cx).visible() && self.focused
     }
 
     pub fn show_scrollbars(&self) -> bool {
@@ -6466,9 +6494,7 @@ impl View for Editor {
         }
 
         Stack::new()
-            .with_child(
-                EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed(),
-            )
+            .with_child(EditorElement::new(self.handle.clone(), style.clone()).boxed())
             .with_child(ChildView::new(&self.mouse_context_menu, cx).boxed())
             .boxed()
     }
@@ -6477,20 +6503,21 @@ impl View for Editor {
         "Editor"
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let focused_event = EditorFocused(cx.handle());
         cx.emit_global(focused_event);
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
         } else {
             self.focused = true;
-            self.blink_cursors(self.blink_epoch, cx);
+            self.blink_manager.update(cx, BlinkManager::enable);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_replica_id.is_none() {
                     buffer.set_active_selections(
                         &self.selections.disjoint_anchors(),
                         self.selections.line_mode,
+                        self.cursor_shape,
                         cx,
                     );
                 }
@@ -6498,16 +6525,55 @@ impl View for Editor {
         }
     }
 
-    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let blurred_event = EditorBlurred(cx.handle());
         cx.emit_global(blurred_event);
         self.focused = false;
+        self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
         hide_hover(self, cx);
         cx.emit(Event::Blurred);
         cx.notify();
+    }
+
+    fn modifiers_changed(
+        &mut self,
+        event: &gpui::ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let pending_selection = self.has_pending_selection();
+
+        if let Some(point) = self.link_go_to_definition_state.last_mouse_location.clone() {
+            if event.cmd && !pending_selection {
+                let snapshot = self.snapshot(cx);
+                let kind = if event.shift {
+                    LinkDefinitionKind::Type
+                } else {
+                    LinkDefinitionKind::Symbol
+                };
+
+                show_link_definition(kind, self, point, snapshot, cx);
+                return false;
+            }
+        }
+
+        {
+            if self.link_go_to_definition_state.symbol_range.is_some()
+                || !self.link_go_to_definition_state.definitions.is_empty()
+            {
+                self.link_go_to_definition_state.symbol_range.take();
+                self.link_go_to_definition_state.definitions.clear();
+                cx.notify();
+            }
+
+            self.link_go_to_definition_state.task = None;
+
+            self.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+        }
+
+        false
     }
 
     fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {

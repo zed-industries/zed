@@ -24,7 +24,7 @@ use axum::{
 };
 use collections::{HashMap, HashSet};
 use futures::{
-    channel::mpsc,
+    channel::{mpsc, oneshot},
     future::{self, BoxFuture},
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
@@ -42,6 +42,7 @@ use std::{
     marker::PhantomData,
     net::SocketAddr,
     ops::{Deref, DerefMut},
+    os::unix::prelude::OsStrExt,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
@@ -347,7 +348,7 @@ impl Server {
         connection: Connection,
         address: String,
         user: User,
-        mut send_connection_id: Option<mpsc::Sender<ConnectionId>>,
+        mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: E,
     ) -> impl Future<Output = Result<()>> {
         let mut this = self.clone();
@@ -368,9 +369,11 @@ impl Server {
                 });
 
             tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
+            this.peer.send(connection_id, proto::Hello { peer_id: connection_id.0 })?;
+            tracing::info!(%user_id, %login, %connection_id, %address, "sent hello message");
 
-            if let Some(send_connection_id) = send_connection_id.as_mut() {
-                let _ = send_connection_id.send(connection_id).await;
+            if let Some(send_connection_id) = send_connection_id.take() {
+                let _ = send_connection_id.send(connection_id);
             }
 
             if !user.connected_once {
@@ -476,6 +479,10 @@ impl Server {
         let mut contacts_to_update = HashSet::default();
         {
             let mut store = self.store().await;
+
+            #[cfg(test)]
+            let removed_connection = store.remove_connection(connection_id).unwrap();
+            #[cfg(not(test))]
             let removed_connection = store.remove_connection(connection_id)?;
 
             for project in removed_connection.hosted_projects {
@@ -941,6 +948,7 @@ impl Server {
                 id: *id,
                 root_name: worktree.root_name.clone(),
                 visible: worktree.visible,
+                abs_path: worktree.abs_path.as_os_str().as_bytes().to_vec(),
             })
             .collect::<Vec<_>>();
 
@@ -989,6 +997,7 @@ impl Server {
             let message = proto::UpdateWorktree {
                 project_id: project_id.to_proto(),
                 worktree_id: *worktree_id,
+                abs_path: worktree.abs_path.as_os_str().as_bytes().to_vec(),
                 root_name: worktree.root_name.clone(),
                 updated_entries: worktree.entries.values().cloned().collect(),
                 removed_entries: Default::default(),

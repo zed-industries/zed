@@ -11,7 +11,7 @@ use crate::{
     platform::CursorStyle,
     presenter::MeasurementContext,
     scene::{self, Border, CursorRegion, Quad},
-    Element, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -283,18 +283,6 @@ impl Element for Container {
                 cx.scene.pop_layer();
             }
         }
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

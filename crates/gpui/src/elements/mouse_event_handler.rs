@@ -6,11 +6,10 @@ use crate::{
     },
     platform::CursorStyle,
     scene::{
-        ClickRegionEvent, CursorRegion, DownOutRegionEvent, DownRegionEvent, DragRegionEvent,
-        HandlerSet, HoverRegionEvent, MoveRegionEvent, ScrollWheelRegionEvent, UpOutRegionEvent,
-        UpRegionEvent,
+        CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
+        MouseMove, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MeasurementContext,
+    DebugContext, Element, ElementBox, EventContext, LayoutContext, MeasurementContext,
     MouseButton, MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
@@ -61,10 +60,7 @@ impl<Tag> MouseEventHandler<Tag> {
         self
     }
 
-    pub fn on_move(
-        mut self,
-        handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
+    pub fn on_move(mut self, handler: impl Fn(MouseMove, &mut EventContext) + 'static) -> Self {
         self.handlers = self.handlers.on_move(handler);
         self
     }
@@ -72,7 +68,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DownRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDown, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down(button, handler);
         self
@@ -81,7 +77,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(UpRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUp, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up(button, handler);
         self
@@ -90,7 +86,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_click(
         mut self,
         button: MouseButton,
-        handler: impl Fn(ClickRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseClick, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_click(button, handler);
         self
@@ -99,7 +95,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DownOutRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDownOut, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down_out(button, handler);
         self
@@ -108,7 +104,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(UpOutRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUpOut, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up_out(button, handler);
         self
@@ -117,23 +113,20 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_drag(
         mut self,
         button: MouseButton,
-        handler: impl Fn(DragRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDrag, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
         self
     }
 
-    pub fn on_hover(
-        mut self,
-        handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
+    pub fn on_hover(mut self, handler: impl Fn(MouseHover, &mut EventContext) + 'static) -> Self {
         self.handlers = self.handlers.on_hover(handler);
         self
     }
 
     pub fn on_scroll(
         mut self,
-        handler: impl Fn(ScrollWheelRegionEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MouseScrollWheel, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_scroll(handler);
         self
@@ -199,18 +192,6 @@ impl<Tag> Element for MouseEventHandler<Tag> {
         );
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

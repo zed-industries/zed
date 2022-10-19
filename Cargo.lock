@@ -706,17 +706,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec8a7b6a70fde80372154c65702f00a0f56f3e1c36abbc6c440484be248856db"
 
 [[package]]
-name = "bzip2-sys"
-version = "0.1.11+1.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "736a955f3fa7875102d57c82b8cac37ec45224a07fd32d58f9f7a186b6cd4cdc"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
-]
-
-[[package]]
 name = "cache-padded"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -865,6 +854,22 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
+name = "chat_panel"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "editor",
+ "gpui",
+ "menu",
+ "postage",
+ "settings",
+ "theme",
+ "time 0.3.15",
+ "util",
+ "workspace",
+]
 
 [[package]]
 name = "chrono"
@@ -1586,8 +1591,13 @@ dependencies = [
  "async-trait",
  "collections",
  "gpui",
+ "lazy_static",
+ "log",
  "parking_lot 0.11.2",
- "rocksdb",
+ "rusqlite",
+ "rusqlite_migration",
+ "serde",
+ "serde_rusqlite",
  "tempdir",
 ]
 
@@ -1906,6 +1916,12 @@ name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fastrand"
@@ -3102,17 +3118,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "librocksdb-sys"
-version = "0.7.1+7.3.1"
-source = "git+https://github.com/rust-rocksdb/rust-rocksdb?rev=39dc822dde743b2a26eb160b660e8fbdab079d49#39dc822dde743b2a26eb160b660e8fbdab079d49"
+name = "libsqlite3-sys"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f0455f2c1bc9a7caa792907026e469c1d91761fb0ea37cbb16427c77280cf35"
 dependencies = [
- "bindgen",
- "bzip2-sys",
  "cc",
- "glob",
- "libc",
- "libz-sys",
- "zstd-sys",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -4229,7 +4242,6 @@ dependencies = [
  "pulldown-cmark",
  "rand 0.8.5",
  "regex",
- "rocksdb",
  "rpc",
  "serde",
  "serde_json",
@@ -4729,15 +4741,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rocksdb"
-version = "0.18.0"
-source = "git+https://github.com/rust-rocksdb/rust-rocksdb?rev=39dc822dde743b2a26eb160b660e8fbdab079d49#39dc822dde743b2a26eb160b660e8fbdab079d49"
-dependencies = [
- "libc",
- "librocksdb-sys",
-]
-
-[[package]]
 name = "rope"
 version = "0.1.0"
 dependencies = [
@@ -4806,6 +4809,31 @@ dependencies = [
  "simple_asn1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rusqlite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01e213bc3ecb39ac32e81e51ebe31fd888a940515173e3a18a35f8c6e896422a"
+dependencies = [
+ "bitflags",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink",
+ "libsqlite3-sys",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "rusqlite_migration"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eda44233be97aea786691f9f6f7ef230bcf905061f4012e90f4f39e6dcf31163"
+dependencies = [
+ "log",
+ "rusqlite",
 ]
 
 [[package]]
@@ -5201,6 +5229,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_rusqlite"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "538b51f10ee271375cbd9caa04fa6e3e50af431a21db97caae48da92a074244a"
+dependencies = [
+ "rusqlite",
+ "serde",
 ]
 
 [[package]]
@@ -5809,6 +5847,7 @@ dependencies = [
  "futures 0.3.24",
  "gpui",
  "itertools",
+ "language",
  "lazy_static",
  "libc",
  "mio-extras",
@@ -7580,7 +7619,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.60.4"
+version = "0.61.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

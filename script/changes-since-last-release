@@ -67,7 +67,7 @@ async function main() {
     console.log("  URL:    ", webURL);
 
     // If the pull request contains a 'closes' line, print the closed issue.
-    const fixesMatch = pullRequest.body.match(FIXES_REGEX);
+    const fixesMatch = (pullRequest.body || '').match(FIXES_REGEX);
     if (fixesMatch) {
       const fixedIssueURL = fixesMatch[2];
       console.log("  Issue: ", fixedIssueURL);

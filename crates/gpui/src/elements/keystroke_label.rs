@@ -2,7 +2,7 @@ use crate::{
     elements::*,
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
-    Action, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    Action, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
 
@@ -62,18 +62,6 @@ impl Element for KeystrokeLabel {
         cx: &mut PaintContext,
     ) {
         element.paint(bounds.origin(), visible_bounds, cx);
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        element: &mut ElementBox,
-        _: &mut (),
-        cx: &mut EventContext,
-    ) -> bool {
-        element.dispatch_event(event, cx)
     }
 
     fn rect_for_text_range(

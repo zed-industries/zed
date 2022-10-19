@@ -135,22 +135,16 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>, db: Arc<Db>) {
+    pub fn start(self: &Arc<Self>, db: Db) {
         let this = self.clone();
         self.executor
             .spawn(
                 async move {
-                    let device_id = if let Some(device_id) = db
-                        .read(["device_id"])?
-                        .into_iter()
-                        .flatten()
-                        .next()
-                        .and_then(|bytes| String::from_utf8(bytes).ok())
-                    {
+                    let device_id = if let Ok(Some(device_id)) = db.read_kvp("device_id") {
                         device_id
                     } else {
                         let device_id = Uuid::new_v4().to_string();
-                        db.write([("device_id", device_id.as_bytes())])?;
+                        db.write_kvp("device_id", &device_id)?;
                         device_id
                     };
 

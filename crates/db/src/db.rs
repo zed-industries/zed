@@ -1,161 +1,119 @@
-use anyhow::Result;
-use std::path::Path;
+mod kvp;
+mod migrations;
+
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub struct Db(DbStore);
+use anyhow::Result;
+use log::error;
+use parking_lot::Mutex;
+use rusqlite::Connection;
 
-enum DbStore {
+use migrations::MIGRATIONS;
+
+#[derive(Clone)]
+pub enum Db {
+    Real(Arc<RealDb>),
     Null,
-    Real(rocksdb::DB),
+}
 
-    #[cfg(any(test, feature = "test-support"))]
-    Fake {
-        data: parking_lot::Mutex<collections::HashMap<Vec<u8>, Vec<u8>>>,
-    },
+pub struct RealDb {
+    connection: Mutex<Connection>,
+    path: Option<PathBuf>,
 }
 
 impl Db {
-    /// Open or create a database at the given file path.
-    pub fn open(path: &Path) -> Result<Arc<Self>> {
-        let db = rocksdb::DB::open_default(path)?;
-        Ok(Arc::new(Self(DbStore::Real(db))))
+    /// Open or create a database at the given directory path.
+    pub fn open(db_dir: &Path) -> Self {
+        // Use 0 for now. Will implement incrementing and clearing of old db files soon TM
+        let current_db_dir = db_dir.join(Path::new("0"));
+        fs::create_dir_all(&current_db_dir)
+            .expect("Should be able to create the database directory");
+        let db_path = current_db_dir.join(Path::new("db.sqlite"));
+
+        Connection::open(db_path)
+            .map_err(Into::into)
+            .and_then(|connection| Self::initialize(connection))
+            .map(|connection| {
+                Db::Real(Arc::new(RealDb {
+                    connection,
+                    path: Some(db_dir.to_path_buf()),
+                }))
+            })
+            .unwrap_or_else(|e| {
+                error!(
+                    "Connecting to file backed db failed. Reverting to null db. {}",
+                    e
+                );
+                Self::Null
+            })
     }
 
-    /// Open a null database that stores no data, for use as a fallback
-    /// when there is an error opening the real database.
-    pub fn null() -> Arc<Self> {
-        Arc::new(Self(DbStore::Null))
-    }
-
-    /// Open a fake database for testing.
+    /// Open a in memory database for testing and as a fallback.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn open_fake() -> Arc<Self> {
-        Arc::new(Self(DbStore::Fake {
-            data: Default::default(),
-        }))
+    pub fn open_in_memory() -> Self {
+        Connection::open_in_memory()
+            .map_err(Into::into)
+            .and_then(|connection| Self::initialize(connection))
+            .map(|connection| {
+                Db::Real(Arc::new(RealDb {
+                    connection,
+                    path: None,
+                }))
+            })
+            .unwrap_or_else(|e| {
+                error!(
+                    "Connecting to in memory db failed. Reverting to null db. {}",
+                    e
+                );
+                Self::Null
+            })
     }
 
-    pub fn read<K, I>(&self, keys: I) -> Result<Vec<Option<Vec<u8>>>>
-    where
-        K: AsRef<[u8]>,
-        I: IntoIterator<Item = K>,
-    {
-        match &self.0 {
-            DbStore::Real(db) => db
-                .multi_get(keys)
-                .into_iter()
-                .map(|e| e.map_err(Into::into))
-                .collect(),
+    fn initialize(mut conn: Connection) -> Result<Mutex<Connection>> {
+        MIGRATIONS.to_latest(&mut conn)?;
 
-            DbStore::Null => Ok(keys.into_iter().map(|_| None).collect()),
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", true)?;
+        conn.pragma_update(None, "case_sensitive_like", true)?;
 
-            #[cfg(any(test, feature = "test-support"))]
-            DbStore::Fake { data: db } => {
-                let db = db.lock();
-                Ok(keys
-                    .into_iter()
-                    .map(|key| db.get(key.as_ref()).cloned())
-                    .collect())
-            }
-        }
+        Ok(Mutex::new(conn))
     }
 
-    pub fn delete<K, I>(&self, keys: I) -> Result<()>
-    where
-        K: AsRef<[u8]>,
-        I: IntoIterator<Item = K>,
-    {
-        match &self.0 {
-            DbStore::Real(db) => {
-                let mut batch = rocksdb::WriteBatch::default();
-                for key in keys {
-                    batch.delete(key);
-                }
-                db.write(batch)?;
-            }
-
-            DbStore::Null => {}
-
-            #[cfg(any(test, feature = "test-support"))]
-            DbStore::Fake { data: db } => {
-                let mut db = db.lock();
-                for key in keys {
-                    db.remove(key.as_ref());
-                }
-            }
-        }
-        Ok(())
+    pub fn persisting(&self) -> bool {
+        self.real().and_then(|db| db.path.as_ref()).is_some()
     }
 
-    pub fn write<K, V, I>(&self, entries: I) -> Result<()>
-    where
-        K: AsRef<[u8]>,
-        V: AsRef<[u8]>,
-        I: IntoIterator<Item = (K, V)>,
-    {
-        match &self.0 {
-            DbStore::Real(db) => {
-                let mut batch = rocksdb::WriteBatch::default();
-                for (key, value) in entries {
-                    batch.put(key, value);
-                }
-                db.write(batch)?;
-            }
-
-            DbStore::Null => {}
-
-            #[cfg(any(test, feature = "test-support"))]
-            DbStore::Fake { data: db } => {
-                let mut db = db.lock();
-                for (key, value) in entries {
-                    db.insert(key.as_ref().into(), value.as_ref().into());
-                }
-            }
+    pub fn real(&self) -> Option<&RealDb> {
+        match self {
+            Db::Real(db) => Some(&db),
+            _ => None,
         }
-        Ok(())
+    }
+}
+
+impl Drop for Db {
+    fn drop(&mut self) {
+        match self {
+            Db::Real(real_db) => {
+                let lock = real_db.connection.lock();
+
+                let _ = lock.pragma_update(None, "analysis_limit", "500");
+                let _ = lock.pragma_update(None, "optimize", "");
+            }
+            Db::Null => {}
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tempdir::TempDir;
+    use crate::migrations::MIGRATIONS;
 
-    #[gpui::test]
-    fn test_db() {
-        let dir = TempDir::new("db-test").unwrap();
-        let fake_db = Db::open_fake();
-        let real_db = Db::open(&dir.path().join("test.db")).unwrap();
-
-        for db in [&real_db, &fake_db] {
-            assert_eq!(
-                db.read(["key-1", "key-2", "key-3"]).unwrap(),
-                &[None, None, None]
-            );
-
-            db.write([("key-1", "one"), ("key-3", "three")]).unwrap();
-            assert_eq!(
-                db.read(["key-1", "key-2", "key-3"]).unwrap(),
-                &[
-                    Some("one".as_bytes().to_vec()),
-                    None,
-                    Some("three".as_bytes().to_vec())
-                ]
-            );
-
-            db.delete(["key-3", "key-4"]).unwrap();
-            assert_eq!(
-                db.read(["key-1", "key-2", "key-3"]).unwrap(),
-                &[Some("one".as_bytes().to_vec()), None, None,]
-            );
-        }
-
-        drop(real_db);
-
-        let real_db = Db::open(&dir.path().join("test.db")).unwrap();
-        assert_eq!(
-            real_db.read(["key-1", "key-2", "key-3"]).unwrap(),
-            &[Some("one".as_bytes().to_vec()), None, None,]
-        );
+    #[test]
+    fn test_migrations() {
+        assert!(MIGRATIONS.validate().is_ok());
     }
 }

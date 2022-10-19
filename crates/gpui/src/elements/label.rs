@@ -9,7 +9,7 @@ use crate::{
     json::{ToJson, Value},
     presenter::MeasurementContext,
     text_layout::{Line, RunStyle},
-    DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    DebugContext, Element, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -163,18 +163,6 @@ impl Element for Label {
         cx: &mut PaintContext,
     ) -> Self::PaintState {
         line.paint(bounds.origin(), visible_bounds, bounds.size().y(), cx)
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut EventContext,
-    ) -> bool {
-        false
     }
 
     fn rect_for_text_range(

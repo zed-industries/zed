@@ -1,0 +1,20 @@
+[package]
+name = "chat_panel"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/chat_panel.rs"
+doctest = false
+
+[dependencies]
+client = { path = "../client" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+menu = { path = "../menu" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }
+postage = { version = "0.4.1", features = ["futures-traits"] }
+time = { version = "0.3", features = ["serde", "serde-well-known"] }

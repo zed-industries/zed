@@ -66,6 +66,7 @@ pub struct Collaborator {
 
 #[derive(Default, Serialize)]
 pub struct Worktree {
+    pub abs_path: PathBuf,
     pub root_name: String,
     pub visible: bool,
     #[serde(skip)]
@@ -214,11 +215,16 @@ impl Store {
         let connected_user = self.connected_users.get(&user_id).unwrap();
         if let Some(active_call) = connected_user.active_call.as_ref() {
             let room_id = active_call.room_id;
-            let left_room = self.leave_room(room_id, connection_id)?;
-            result.hosted_projects = left_room.unshared_projects;
-            result.guest_projects = left_room.left_projects;
-            result.room_id = Some(room_id);
-            result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
+            if active_call.connection_id == Some(connection_id) {
+                let left_room = self.leave_room(room_id, connection_id)?;
+                result.hosted_projects = left_room.unshared_projects;
+                result.guest_projects = left_room.left_projects;
+                result.room_id = Some(room_id);
+                result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
+            } else if connected_user.connection_ids.len() == 1 {
+                self.decline_call(room_id, connection_id)?;
+                result.room_id = Some(room_id);
+            }
         }
 
         let connected_user = self.connected_users.get_mut(&user_id).unwrap();
