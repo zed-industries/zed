@@ -88,7 +88,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
 #[derive(Debug, Deserialize)]
 struct AuthenticatedUserParams {
-    github_user_id: i32,
+    github_user_id: Option<i32>,
     github_login: String,
 }
 
@@ -104,7 +104,7 @@ async fn get_authenticated_user(
 ) -> Result<Json<AuthenticatedUserResponse>> {
     let user = app
         .db
-        .get_user_by_github_account(&params.github_login, Some(params.github_user_id))
+        .get_user_by_github_account(&params.github_login, params.github_user_id)
         .await?
         .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "user not found".into()))?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;

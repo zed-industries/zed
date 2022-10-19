@@ -41,12 +41,18 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         )
     })?;
 
-    let state = req.extensions().get::<Arc<AppState>>().unwrap();
     let mut credentials_valid = false;
-    for password_hash in state.db.get_access_token_hashes(user_id).await? {
-        if verify_access_token(access_token, &password_hash)? {
+    let state = req.extensions().get::<Arc<AppState>>().unwrap();
+    if let Some(admin_token) = access_token.strip_prefix("ADMIN_TOKEN:") {
+        if state.config.api_token == admin_token {
             credentials_valid = true;
-            break;
+        }
+    } else {
+        for password_hash in state.db.get_access_token_hashes(user_id).await? {
+            if verify_access_token(access_token, &password_hash)? {
+                credentials_valid = true;
+                break;
+            }
         }
     }
 
