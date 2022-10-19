@@ -227,7 +227,7 @@ function buildStyleDefinition(bgBase: number, fgBase: number, step: number = 0.0
       default: bgBase,
       hovered: bgBase + step,
       pressed: bgBase + step * 1.5,
-      active: bgBase + step * 3,
+      active: bgBase + step * 2.2,
       disabled: bgBase,
       inverted: fgBase + step * 6,
     },

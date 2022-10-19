@@ -44,9 +44,9 @@ export default function search(colorScheme: ColorScheme) {
         top: 2,
       },
       active: {
-        ...text(layer, "mono", "on", "active"),
-        background: background(layer, "on", "active"),
-        border: border(layer, "on", "active"),
+        ...text(layer, "mono", "on", "inverted"),
+        background: background(layer, "on", "inverted"),
+        border: border(layer, "on", "inverted"),
       },
       clicked: {
         ...text(layer, "mono", "on", "pressed"),

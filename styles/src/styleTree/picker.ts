@@ -28,9 +28,9 @@ export default function picker(colorScheme: ColorScheme) {
       text: text(layer, "sans", "variant"),
       highlightText: text(layer, "sans", "accent", { weight: "bold" }),
       active: {
-        background: background(layer, "base", "inverted"),
-        text: text(layer, "sans", "base", "inverted"),
-        highlightText: text(layer, "sans", "accent", "inverted", {
+        background: background(layer, "base", "active"),
+        text: text(layer, "sans", "base", "active"),
+        highlightText: text(layer, "sans", "accent", {
           weight: "bold",
         }),
       },
