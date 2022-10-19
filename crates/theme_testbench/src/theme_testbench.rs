@@ -268,7 +268,7 @@ impl View for ThemeTestbench {
                 Self::render_ramps(color_scheme)
                     .contained()
                     .with_margin_right(10.)
-                    .flex(0.2, false)
+                    .flex(0.1, false)
                     .boxed(),
             )
             .with_child(
@@ -288,6 +288,7 @@ impl View for ThemeTestbench {
                             .flex(1., true)
                             .boxed(),
                     )
+                    .flex(1., false)
                     .boxed(),
             )
             .boxed()
