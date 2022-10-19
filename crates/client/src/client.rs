@@ -926,29 +926,34 @@ impl Client {
     }
 
     async fn get_rpc_url(http: Arc<dyn HttpClient>) -> Result<Url> {
-        let rpc_response = http
-            .get(
-                &(format!("{}/rpc", *ZED_SERVER_URL)),
-                Default::default(),
-                false,
-            )
-            .await?;
-        if !rpc_response.status().is_redirection() {
+        let url = format!("{}/rpc", *ZED_SERVER_URL);
+        let response = http.get(&url, Default::default(), false).await?;
+
+        // Normally, ZED_SERVER_URL is set to the URL of zed.dev website.
+        // The website's /rpc endpoint redirects to a collab server's /rpc endpoint,
+        // which requires authorization via an HTTP header.
+        //
+        // For testing purposes, ZED_SERVER_URL can also set to the direct URL of
+        // of a collab server. In that case, a request to the /rpc endpoint will
+        // return an 'unauthorized' response.
+        let collab_url = if response.status().is_redirection() {
+            response
+                .headers()
+                .get("Location")
+                .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
+                .to_str()
+                .map_err(EstablishConnectionError::other)?
+                .to_string()
+        } else if response.status() == StatusCode::UNAUTHORIZED {
+            url
+        } else {
             Err(anyhow!(
                 "unexpected /rpc response status {}",
-                rpc_response.status()
+                response.status()
             ))?
-        }
+        };
 
-        let rpc_url = rpc_response
-            .headers()
-            .get("Location")
-            .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
-            .to_str()
-            .map_err(EstablishConnectionError::other)?
-            .to_string();
-
-        Url::parse(&rpc_url).context("invalid rpc url")
+        Url::parse(&collab_url).context("invalid rpc url")
     }
 
     fn establish_websocket_connection(
@@ -1105,25 +1110,6 @@ impl Client {
         login: String,
         mut api_token: String,
     ) -> Result<Credentials> {
-        let mut url = Self::get_rpc_url(http.clone()).await?;
-        url.set_path("/user");
-        url.set_query(Some(&format!("github_login={login}")));
-        let request = Request::get(url.as_str())
-            .header("Authorization", format!("token {api_token}"))
-            .body("".into())?;
-
-        let mut response = http.send(request).await?;
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        if !response.status().is_success() {
-            Err(anyhow!(
-                "admin user request failed {} - {}",
-                response.status().as_u16(),
-                body,
-            ))?;
-        }
-
         #[derive(Deserialize)]
         struct AuthenticatedUserResponse {
             user: User,
@@ -1134,8 +1120,28 @@ impl Client {
             id: u64,
         }
 
+        // Use the collab server's admin API to retrieve the id
+        // of the impersonated user.
+        let mut url = Self::get_rpc_url(http.clone()).await?;
+        url.set_path("/user");
+        url.set_query(Some(&format!("github_login={login}")));
+        let request = Request::get(url.as_str())
+            .header("Authorization", format!("token {api_token}"))
+            .body("".into())?;
+
+        let mut response = http.send(request).await?;
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        if !response.status().is_success() {
+            Err(anyhow!(
+                "admin user request failed {} - {}",
+                response.status().as_u16(),
+                body,
+            ))?;
+        }
         let response: AuthenticatedUserResponse = serde_json::from_str(&body)?;
 
+        // Use the admin API token to authenticate as the impersonated user.
         api_token.insert_str(0, "ADMIN_TOKEN:");
         Ok(Credentials {
             user_id: response.user.id,

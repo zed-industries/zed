@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
-use super::db::{self, UserId};
-use crate::{AppState, Error, Result};
+use crate::{
+    db::{self, UserId},
+    AppState, Error, Result,
+};
 use anyhow::{anyhow, Context};
 use axum::{
     http::{self, Request, StatusCode},
@@ -13,6 +13,7 @@ use scrypt::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Scrypt,
 };
+use std::sync::Arc;
 
 pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
     let mut auth_header = req
@@ -21,7 +22,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
             Error::Http(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNAUTHORIZED,
                 "missing authorization header".to_string(),
             )
         })?
