@@ -423,18 +423,27 @@ impl EditorElement {
             return false;
         }
 
+        let line_height = position_map.line_height;
         let max_glyph_width = position_map.em_width;
-        if !precise {
-            delta *= vec2f(max_glyph_width, position_map.line_height);
-        }
+
+        let axis = if precise {
+            //Trackpad
+            position_map.snapshot.ongoing_scroll.filter(&mut delta)
+        } else {
+            //Not trackpad
+            delta *= vec2f(max_glyph_width, line_height);
+            None //Resets ongoing scroll
+        };
 
         let scroll_position = position_map.snapshot.scroll_position();
         let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
-        let y =
-            (scroll_position.y() * position_map.line_height - delta.y()) / position_map.line_height;
+        let y = (scroll_position.y() * line_height - delta.y()) / line_height;
         let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), position_map.scroll_max);
 
-        cx.dispatch_action(Scroll(scroll_position));
+        cx.dispatch_action(Scroll {
+            scroll_position,
+            axis,
+        });
 
         true
     }
