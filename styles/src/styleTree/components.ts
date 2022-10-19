@@ -123,7 +123,6 @@ export function text(
   properties?: TextProperties
 ) {
   let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties);
-  let size = fontSizes[properties?.size || "sm"];
 
   if (typeof styleSetStyleOrProperties === "object") {
     properties = styleSetStyleOrProperties;
@@ -131,6 +130,8 @@ export function text(
   if (typeof styleOrProperties === "object") {
     properties = styleOrProperties;
   }
+
+  let size = fontSizes[properties?.size || "sm"];
 
   return {
     family: fontFamilies[fontFamily],

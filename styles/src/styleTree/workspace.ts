@@ -139,16 +139,16 @@ export default function workspace(colorScheme: ColorScheme) {
       },
       toggleContactsButton: {
         cornerRadius: 6,
-        color: foreground(layer),
+        color: foreground(layer, "variant"),
         iconWidth: 8,
         buttonWidth: 20,
         active: {
-          background: background(layer, "active"),
-          color: foreground(layer, "active"),
+          background: background(layer, "variant", "active"),
+          color: foreground(layer, "variant", "active"),
         },
         hover: {
-          background: background(layer, "hovered"),
-          color: foreground(layer, "hovered"),
+          background: background(layer, "variant", "hovered"),
+          color: foreground(layer, "variant", "hovered"),
         },
       },
       toggleContactsBadge: {

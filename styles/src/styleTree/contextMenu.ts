@@ -2,7 +2,7 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, borderColor, text } from "./components";
 
 export default function contextMenu(colorScheme: ColorScheme) {
-  let layer = colorScheme.lowest;
+  let layer = colorScheme.middle;
   return {
     background: background(layer),
     cornerRadius: 10,
