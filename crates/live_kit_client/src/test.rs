@@ -1,35 +1,40 @@
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use collections::HashMap;
 use futures::{channel::mpsc, future};
 use gpui::executor::Background;
 use lazy_static::lazy_static;
+use live_kit_server::token;
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
 use std::{future::Future, sync::Arc};
 
 lazy_static! {
-    static ref SERVERS: Mutex<HashMap<String, Arc<FakeServer>>> = Default::default();
+    static ref SERVERS: Mutex<HashMap<String, Arc<TestServer>>> = Default::default();
 }
 
-pub struct FakeServer {
-    url: String,
-    secret_key: String,
-    rooms: Mutex<HashMap<String, FakeServerRoom>>,
+pub struct TestServer {
+    pub url: String,
+    pub api_key: String,
+    pub secret_key: String,
+    rooms: Mutex<HashMap<String, TestServerRoom>>,
     background: Arc<Background>,
 }
 
-impl FakeServer {
+impl TestServer {
     pub fn create(
         url: String,
+        api_key: String,
         secret_key: String,
         background: Arc<Background>,
-    ) -> Result<Arc<FakeServer>> {
+    ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
         if servers.contains_key(&url) {
             Err(anyhow!("a server with url {:?} already exists", url))
         } else {
-            let server = Arc::new(FakeServer {
+            let server = Arc::new(TestServer {
                 url: url.clone(),
+                api_key,
                 secret_key,
                 rooms: Default::default(),
                 background,
@@ -39,7 +44,7 @@ impl FakeServer {
         }
     }
 
-    fn get(url: &str) -> Result<Arc<FakeServer>> {
+    fn get(url: &str) -> Result<Arc<TestServer>> {
         Ok(SERVERS
             .lock()
             .get(url)
@@ -55,33 +60,151 @@ impl FakeServer {
         Ok(())
     }
 
+    pub fn create_api_client(&self) -> TestApiClient {
+        TestApiClient {
+            url: self.url.clone(),
+        }
+    }
+
+    async fn create_room(&self, room: String) -> Result<()> {
+        self.background.simulate_random_delay().await;
+        let mut server_rooms = self.rooms.lock();
+        if server_rooms.contains_key(&room) {
+            Err(anyhow!("room {:?} already exists", room))
+        } else {
+            server_rooms.insert(room, Default::default());
+            Ok(())
+        }
+    }
+
+    async fn delete_room(&self, room: String) -> Result<()> {
+        // TODO: clear state associated with all `Room`s.
+        self.background.simulate_random_delay().await;
+        let mut server_rooms = self.rooms.lock();
+        server_rooms
+            .remove(&room)
+            .ok_or_else(|| anyhow!("room {:?} does not exist", room))?;
+        Ok(())
+    }
+
     async fn join_room(&self, token: String, client_room: Arc<Room>) -> Result<()> {
         self.background.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
-        let room = claims.video.room.unwrap();
+        let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
-            .get_mut(&*room)
-            .ok_or_else(|| anyhow!("room {} does not exist", room))?;
-        room.clients.insert(identity, client_room);
+            .get_mut(&*room_name)
+            .ok_or_else(|| anyhow!("room {:?} does not exist", room_name))?;
+        if room.clients.contains_key(&identity) {
+            Err(anyhow!(
+                "{:?} attempted to join room {:?} twice",
+                identity,
+                room_name
+            ))
+        } else {
+            room.clients.insert(identity, client_room);
+            Ok(())
+        }
+    }
+
+    async fn leave_room(&self, token: String) -> Result<()> {
+        self.background.simulate_random_delay().await;
+        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let identity = claims.sub.unwrap().to_string();
+        let room_name = claims.video.room.unwrap();
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&*room_name)
+            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+        room.clients.remove(&identity).ok_or_else(|| {
+            anyhow!(
+                "{:?} attempted to leave room {:?} before joining it",
+                identity,
+                room_name
+            )
+        })?;
+        Ok(())
+    }
+
+    async fn remove_participant(&self, room_name: String, identity: String) -> Result<()> {
+        // TODO: clear state associated with the `Room`.
+
+        self.background.simulate_random_delay().await;
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&room_name)
+            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+        room.clients.remove(&identity).ok_or_else(|| {
+            anyhow!(
+                "participant {:?} did not join room {:?}",
+                identity,
+                room_name
+            )
+        })?;
         Ok(())
     }
 }
 
-struct FakeServerRoom {
+#[derive(Default)]
+struct TestServerRoom {
     clients: HashMap<Sid, Arc<Room>>,
 }
 
-impl FakeServerRoom {}
+impl TestServerRoom {}
+
+pub struct TestApiClient {
+    url: String,
+}
+
+#[async_trait]
+impl live_kit_server::api::Client for TestApiClient {
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    async fn create_room(&self, name: String) -> Result<()> {
+        let server = TestServer::get(&self.url)?;
+        server.create_room(name).await?;
+        Ok(())
+    }
+
+    async fn delete_room(&self, name: String) -> Result<()> {
+        let server = TestServer::get(&self.url)?;
+        server.delete_room(name).await?;
+        Ok(())
+    }
+
+    async fn remove_participant(&self, room: String, identity: String) -> Result<()> {
+        let server = TestServer::get(&self.url)?;
+        server.remove_participant(room, identity).await?;
+        Ok(())
+    }
+
+    fn room_token(&self, room: &str, identity: &str) -> Result<String> {
+        let server = TestServer::get(&self.url)?;
+        token::create(
+            &server.api_key,
+            &server.secret_key,
+            Some(identity),
+            token::VideoGrant::to_join(room),
+        )
+    }
+}
 
 pub type Sid = String;
 
-pub struct Room;
+#[derive(Default)]
+struct RoomState {
+    token: Option<String>,
+}
+
+#[derive(Default)]
+pub struct Room(Mutex<RoomState>);
 
 impl Room {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self)
+        Default::default()
     }
 
     pub fn connect(self: &Arc<Self>, url: &str, token: &str) -> impl Future<Output = Result<()>> {
@@ -89,8 +212,9 @@ impl Room {
         let url = url.to_string();
         let token = token.to_string();
         async move {
-            let server = FakeServer::get(&url)?;
-            server.join_room(token, this).await?;
+            let server = TestServer::get(&url)?;
+            server.join_room(token.clone(), this.clone()).await?;
+            this.0.lock().token = Some(token);
             Ok(())
         }
     }
@@ -115,7 +239,14 @@ impl Room {
 
 impl Drop for Room {
     fn drop(&mut self) {
-        todo!()
+        if let Some(token) = self.0.lock().token.take() {
+            if let Ok(server) = TestServer::get(&token) {
+                let background = server.background.clone();
+                background
+                    .spawn(async move { server.leave_room(token).await.unwrap() })
+                    .detach();
+            }
+        }
     }
 }
 

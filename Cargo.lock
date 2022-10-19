@@ -1066,6 +1066,7 @@ dependencies = [
  "language",
  "lazy_static",
  "lipsum",
+ "live_kit_client",
  "live_kit_server",
  "log",
  "lsp",
@@ -3163,6 +3164,7 @@ name = "live_kit_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "block",
  "byteorder",
  "bytes 1.2.1",
@@ -3193,6 +3195,7 @@ name = "live_kit_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "futures 0.3.24",
  "hmac 0.12.1",
  "jwt",

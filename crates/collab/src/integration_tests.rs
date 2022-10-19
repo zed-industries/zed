@@ -47,7 +47,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::Duration,
@@ -6138,6 +6138,7 @@ struct TestServer {
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
     forbid_connections: Arc<AtomicBool>,
     _test_db: TestDb,
+    test_live_kit_server: Arc<live_kit_client::TestServer>,
 }
 
 impl TestServer {
@@ -6145,8 +6146,18 @@ impl TestServer {
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
     ) -> Self {
+        static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
+
         let test_db = TestDb::fake(background.clone());
-        let app_state = Self::build_app_state(&test_db).await;
+        let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
+        let live_kit_server = live_kit_client::TestServer::create(
+            format!("http://livekit.{}.test", live_kit_server_id),
+            format!("devkey-{}", live_kit_server_id),
+            format!("secret-{}", live_kit_server_id),
+            background.clone(),
+        )
+        .unwrap();
+        let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
         let peer = Peer::new();
         let notifications = mpsc::unbounded();
         let server = Server::new(app_state.clone(), Some(notifications.0));
@@ -6159,6 +6170,7 @@ impl TestServer {
             connection_killers: Default::default(),
             forbid_connections: Default::default(),
             _test_db: test_db,
+            test_live_kit_server: live_kit_server,
         }
     }
 
@@ -6354,10 +6366,13 @@ impl TestServer {
         }
     }
 
-    async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {
+    async fn build_app_state(
+        test_db: &TestDb,
+        fake_server: &live_kit_client::TestServer,
+    ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
-            live_kit_client: None,
+            live_kit_client: Some(Arc::new(fake_server.create_api_client())),
             api_token: Default::default(),
             invite_link_prefix: Default::default(),
         })
@@ -6390,6 +6405,7 @@ impl Deref for TestServer {
 impl Drop for TestServer {
     fn drop(&mut self) {
         self.peer.reset();
+        self.test_live_kit_server.teardown().unwrap();
     }
 }
 

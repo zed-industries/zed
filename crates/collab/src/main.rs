@@ -41,7 +41,7 @@ pub struct AppState {
     db: Arc<dyn Db>,
     api_token: String,
     invite_link_prefix: String,
-    live_kit_client: Option<live_kit_server::api::Client>,
+    live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
 }
 
 impl AppState {
@@ -53,11 +53,11 @@ impl AppState {
             .zip(config.live_kit_key.as_ref())
             .zip(config.live_kit_secret.as_ref())
         {
-            Some(live_kit_server::api::Client::new(
+            Some(Arc::new(live_kit_server::api::LiveKitClient::new(
                 server.clone(),
                 key.clone(),
                 secret.clone(),
-            ))
+            )) as Arc<dyn live_kit_server::api::Client>)
         } else {
             None
         };

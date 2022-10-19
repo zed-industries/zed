@@ -7,7 +7,10 @@ use gpui::{
     Menu, MenuItem, ViewContext,
 };
 use live_kit_client::{LocalVideoTrack, RemoteVideoTrackUpdate, Room};
-use live_kit_server::token::{self, VideoGrant};
+use live_kit_server::{
+    api::Client,
+    token::{self, VideoGrant},
+};
 use log::LevelFilter;
 use media::core_video::CVImageBuffer;
 use postage::watch;

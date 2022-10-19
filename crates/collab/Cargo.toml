@@ -62,15 +62,17 @@ editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
 git = { path = "../git", features = ["test-support"] }
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 theme = { path = "../theme" }
 workspace = { path = "../workspace", features = ["test-support"] }
+
 ctor = "0.1"
 env_logger = "0.9"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 util = { path = "../util" }
 lazy_static = "1.4"
 serde_json = { version = "1.0", features = ["preserve_order"] }

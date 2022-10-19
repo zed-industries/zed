@@ -12,7 +12,13 @@ doctest = false
 name = "test_app"
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "lazy_static", "live_kit_server"]
+test-support = [
+    "async-trait", 
+    "collections/test-support",
+    "gpui/test-support",
+    "lazy_static",
+    "live_kit_server"
+]
 
 [dependencies]
 collections = { path = "../collections", optional = true }
@@ -21,6 +27,7 @@ live_kit_server = { path = "../live_kit_server", optional = true }
 media = { path = "../media" }
 
 anyhow = "1.0.38"
+async-trait = { version = "0.1", optional = true }
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"
 futures = "0.3"
@@ -30,11 +37,11 @@ parking_lot = "0.11.1"
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-lazy_static = "1.4"
 live_kit_server = { path = "../live_kit_server" }
 media = { path = "../media" }
 
 anyhow = "1.0.38"
+async-trait = "0.1"
 block = "0.1"
 bytes = "1.2"
 byteorder = "1.4"
@@ -45,6 +52,7 @@ foreign-types = "0.3"
 futures = "0.3"
 hmac = "0.12"
 jwt = "0.16"
+lazy_static = "1.4"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 objc = "0.2"
 parking_lot = "0.11.1"

@@ -1,18 +1,28 @@
 use crate::{proto, token};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use prost::Message;
 use reqwest::header::CONTENT_TYPE;
 use std::{future::Future, sync::Arc};
 
+#[async_trait]
+pub trait Client: Send + Sync {
+    fn url(&self) -> &str;
+    async fn create_room(&self, name: String) -> Result<()>;
+    async fn delete_room(&self, name: String) -> Result<()>;
+    async fn remove_participant(&self, room: String, identity: String) -> Result<()>;
+    fn room_token(&self, room: &str, identity: &str) -> Result<String>;
+}
+
 #[derive(Clone)]
-pub struct Client {
+pub struct LiveKitClient {
     http: reqwest::Client,
     url: Arc<str>,
     key: Arc<str>,
     secret: Arc<str>,
 }
 
-impl Client {
+impl LiveKitClient {
     pub fn new(mut url: String, key: String, secret: String) -> Self {
         if url.ends_with('/') {
             url.pop();
@@ -24,67 +34,6 @@ impl Client {
             key: key.into(),
             secret: secret.into(),
         }
-    }
-
-    pub fn url(&self) -> &str {
-        &self.url
-    }
-
-    pub fn create_room(&self, name: String) -> impl Future<Output = Result<proto::Room>> {
-        self.request(
-            "twirp/livekit.RoomService/CreateRoom",
-            token::VideoGrant {
-                room_create: Some(true),
-                ..Default::default()
-            },
-            proto::CreateRoomRequest {
-                name,
-                ..Default::default()
-            },
-        )
-    }
-
-    pub fn delete_room(&self, name: String) -> impl Future<Output = Result<()>> {
-        let response = self.request(
-            "twirp/livekit.RoomService/DeleteRoom",
-            token::VideoGrant {
-                room_create: Some(true),
-                ..Default::default()
-            },
-            proto::DeleteRoomRequest { room: name },
-        );
-        async move {
-            let _: proto::DeleteRoomResponse = response.await?;
-            Ok(())
-        }
-    }
-
-    pub fn remove_participant(
-        &self,
-        room: String,
-        identity: String,
-    ) -> impl Future<Output = Result<()>> {
-        let response = self.request(
-            "twirp/livekit.RoomService/RemoveParticipant",
-            token::VideoGrant::to_admin(&room),
-            proto::RoomParticipantIdentity {
-                room: room.clone(),
-                identity,
-            },
-        );
-        async move {
-            let _: proto::RemoveParticipantResponse = response.await?;
-            Ok(())
-        }
-    }
-
-    pub fn room_token(&self, room: &str, identity: &str) -> Result<String> {
-        token::create(
-            &self.key,
-            &self.secret,
-            Some(identity),
-            token::VideoGrant::to_join(room),
-        )
     }
 
     fn request<Req, Res>(
@@ -124,5 +73,67 @@ impl Client {
                 ))
             }
         }
+    }
+}
+
+#[async_trait]
+impl Client for LiveKitClient {
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    async fn create_room(&self, name: String) -> Result<()> {
+        let x: proto::Room = self
+            .request(
+                "twirp/livekit.RoomService/CreateRoom",
+                token::VideoGrant {
+                    room_create: Some(true),
+                    ..Default::default()
+                },
+                proto::CreateRoomRequest {
+                    name,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        dbg!(x);
+        Ok(())
+    }
+
+    async fn delete_room(&self, name: String) -> Result<()> {
+        let _: proto::DeleteRoomResponse = self
+            .request(
+                "twirp/livekit.RoomService/DeleteRoom",
+                token::VideoGrant {
+                    room_create: Some(true),
+                    ..Default::default()
+                },
+                proto::DeleteRoomRequest { room: name },
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn remove_participant(&self, room: String, identity: String) -> Result<()> {
+        let _: proto::RemoveParticipantResponse = self
+            .request(
+                "twirp/livekit.RoomService/RemoveParticipant",
+                token::VideoGrant::to_admin(&room),
+                proto::RoomParticipantIdentity {
+                    room: room.clone(),
+                    identity,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    fn room_token(&self, room: &str, identity: &str) -> Result<String> {
+        token::create(
+            &self.key,
+            &self.secret,
+            Some(identity),
+            token::VideoGrant::to_join(room),
+        )
     }
 }

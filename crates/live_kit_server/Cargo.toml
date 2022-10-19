@@ -10,6 +10,7 @@ doctest = false
 
 [dependencies]
 anyhow = "1.0.38"
+async-trait = "0.1"
 futures = "0.3"
 hmac = "0.12"
 log = "0.4"
