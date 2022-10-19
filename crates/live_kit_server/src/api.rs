@@ -66,11 +66,7 @@ impl Client {
     ) -> impl Future<Output = Result<()>> {
         let response = self.request(
             "twirp/livekit.RoomService/RemoveParticipant",
-            token::VideoGrant {
-                room_admin: Some(true),
-                room: Some(&room),
-                ..Default::default()
-            },
+            token::VideoGrant::to_admin(&room),
             proto::RoomParticipantIdentity {
                 room: room.clone(),
                 identity,
@@ -87,13 +83,7 @@ impl Client {
             &self.key,
             &self.secret,
             Some(identity),
-            token::VideoGrant {
-                room: Some(room),
-                room_join: Some(true),
-                can_publish: Some(true),
-                can_subscribe: Some(true),
-                ..Default::default()
-            },
+            token::VideoGrant::to_join(room),
         )
     }
 

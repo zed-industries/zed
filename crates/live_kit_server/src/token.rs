@@ -1,28 +1,29 @@
 use anyhow::{anyhow, Result};
 use hmac::{Hmac, Mac};
-use jwt::SignWithKey;
-use serde::Serialize;
+use jwt::{SignWithKey, VerifyWithKey};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::{
+    borrow::Cow,
     ops::Add,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 static DEFAULT_TTL: Duration = Duration::from_secs(6 * 60 * 60); // 6 hours
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ClaimGrants<'a> {
-    iss: &'a str,
-    sub: Option<&'a str>,
-    iat: u64,
-    exp: u64,
-    nbf: u64,
-    jwtid: Option<&'a str>,
-    video: VideoGrant<'a>,
+pub struct ClaimGrants<'a> {
+    pub iss: Cow<'a, str>,
+    pub sub: Option<Cow<'a, str>>,
+    pub iat: u64,
+    pub exp: u64,
+    pub nbf: u64,
+    pub jwtid: Option<Cow<'a, str>>,
+    pub video: VideoGrant<'a>,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoGrant<'a> {
     pub room_create: Option<bool>,
@@ -30,7 +31,7 @@ pub struct VideoGrant<'a> {
     pub room_list: Option<bool>,
     pub room_record: Option<bool>,
     pub room_admin: Option<bool>,
-    pub room: Option<&'a str>,
+    pub room: Option<Cow<'a, str>>,
     pub can_publish: Option<bool>,
     pub can_subscribe: Option<bool>,
     pub can_publish_data: Option<bool>,
@@ -39,9 +40,17 @@ pub struct VideoGrant<'a> {
 }
 
 impl<'a> VideoGrant<'a> {
+    pub fn to_admin(room: &'a str) -> Self {
+        Self {
+            room_admin: Some(true),
+            room: Some(Cow::Borrowed(room)),
+            ..Default::default()
+        }
+    }
+
     pub fn to_join(room: &'a str) -> Self {
         Self {
-            room: Some(room),
+            room: Some(Cow::Borrowed(room)),
             room_join: Some(true),
             can_publish: Some(true),
             can_subscribe: Some(true),
@@ -67,8 +76,8 @@ pub fn create(
     let now = SystemTime::now();
 
     let claims = ClaimGrants {
-        iss: api_key,
-        sub: identity,
+        iss: Cow::Borrowed(api_key),
+        sub: identity.map(Cow::Borrowed),
         iat: now.duration_since(UNIX_EPOCH).unwrap().as_secs(),
         exp: now
             .add(DEFAULT_TTL)
@@ -76,8 +85,13 @@ pub fn create(
             .unwrap()
             .as_secs(),
         nbf: 0,
-        jwtid: identity,
+        jwtid: identity.map(Cow::Borrowed),
         video: video_grant,
     };
     Ok(claims.sign_with_key(&secret_key)?)
+}
+
+pub fn validate<'a>(token: &'a str, secret_key: &str) -> Result<ClaimGrants<'a>> {
+    let secret_key: Hmac<Sha256> = Hmac::new_from_slice(secret_key.as_bytes())?;
+    Ok(token.verify_with_key(&secret_key)?)
 }

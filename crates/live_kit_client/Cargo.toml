@@ -12,19 +12,25 @@ doctest = false
 name = "test_app"
 
 [features]
-test-support = []
+test-support = ["collections/test-support", "gpui/test-support", "lazy_static", "live_kit_server"]
 
 [dependencies]
+collections = { path = "../collections", optional = true }
+gpui = { path = "../gpui", optional = true }
+live_kit_server = { path = "../live_kit_server", optional = true }
 media = { path = "../media" }
 
 anyhow = "1.0.38"
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"
 futures = "0.3"
+lazy_static = { version = "1.4", optional = true }
 parking_lot = "0.11.1"
 
 [dev-dependencies]
-gpui = { path = "../gpui" }
+collections = { path = "../collections", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+lazy_static = "1.4"
 live_kit_server = { path = "../live_kit_server" }
 media = { path = "../media" }
 
