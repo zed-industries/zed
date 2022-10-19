@@ -2,7 +2,7 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, foreground, text } from "./components";
 
 export default function projectPanel(colorScheme: ColorScheme) {
-  let layer = colorScheme.lowest.middle;
+  let layer = colorScheme.middle;
   return {
     background: background(layer),
     padding: { left: 12, right: 12, top: 6, bottom: 6 },

@@ -856,22 +856,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
-name = "chat_panel"
-version = "0.1.0"
-dependencies = [
- "client",
- "editor",
- "gpui",
- "menu",
- "postage",
- "settings",
- "theme",
- "time 0.3.15",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "chrono"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"

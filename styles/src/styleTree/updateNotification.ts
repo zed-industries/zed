@@ -4,7 +4,7 @@ import { foreground, text } from "./components";
 const headerPadding = 8;
 
 export default function updateNotification(colorScheme: ColorScheme): Object {
-  let layer = colorScheme.middle.middle;
+  let layer = colorScheme.middle;
   return {
     message: {
       ...text(layer, "sans", { size: "xs" }),

@@ -5,7 +5,7 @@ const avatarSize = 12;
 const headerPadding = 8;
 
 export default function contactNotification(colorScheme: ColorScheme): Object {
-  let layer = colorScheme.middle.bottom;
+  let layer = colorScheme.lowest;
   return {
     headerAvatar: {
       height: avatarSize,

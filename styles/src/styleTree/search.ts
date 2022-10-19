@@ -2,7 +2,7 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, text } from "./components";
 
 export default function search(colorScheme: ColorScheme) {
-  let layer = colorScheme.lowest.top;
+  let layer = colorScheme.highest;
 
   // Search input
   const editor = {

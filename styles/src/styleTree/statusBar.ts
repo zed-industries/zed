@@ -2,7 +2,7 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, foreground, text } from "./components";
 
 export default function statusBar(colorScheme: ColorScheme) {
-  let layer = colorScheme.lowest.bottom;
+  let layer = colorScheme.lowest;
 
   const statusContainer = {
     cornerRadius: 6,

@@ -11,8 +11,7 @@ import statusBar from "./statusBar";
 import tabBar from "./tabBar";
 
 export default function workspace(colorScheme: ColorScheme) {
-  const elevation = colorScheme.lowest;
-  const layer = elevation.bottom;
+  const layer = colorScheme.lowest;
   const titlebarPadding = 6;
   const titlebarButton = {
     cornerRadius: 6,
@@ -28,7 +27,7 @@ export default function workspace(colorScheme: ColorScheme) {
     hover: {
       ...text(layer, "sans", "hovered", { size: "xs" }),
       background: background(layer, "hovered"),
-      border: border(elevation.top, "hovered"),
+      border: border(layer, "hovered"),
     },
   };
   const avatarWidth = 18;
@@ -44,12 +43,12 @@ export default function workspace(colorScheme: ColorScheme) {
       ...text(layer, "sans", { size: "lg" }),
     },
     externalLocationMessage: {
-      background: background(elevation.middle, "accent"),
-      border: border(elevation.middle, "accent"),
+      background: background(colorScheme.middle, "accent"),
+      border: border(colorScheme.middle, "accent"),
       cornerRadius: 6,
       padding: 12,
       margin: { bottom: 8, right: 8 },
-      ...text(elevation.middle, "sans", "accent", { size: "xs" }),
+      ...text(colorScheme.middle, "sans", "accent", { size: "xs" }),
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
@@ -166,20 +165,20 @@ export default function workspace(colorScheme: ColorScheme) {
 
     toolbar: {
       height: 34,
-      background: background(elevation.top),
-      border: border(elevation.top, { bottom: true }),
+      background: background(colorScheme.highest),
+      border: border(colorScheme.highest, { bottom: true }),
       itemSpacing: 8,
       navButton: {
-        color: foreground(elevation.top, "on"),
+        color: foreground(colorScheme.highest, "on"),
         iconWidth: 12,
         buttonWidth: 24,
         cornerRadius: 6,
         hover: {
-          color: foreground(elevation.top, "on", "hovered"),
-          background: background(elevation.top, "on", "hovered"),
+          color: foreground(colorScheme.highest, "on", "hovered"),
+          background: background(colorScheme.highest, "on", "hovered"),
         },
         disabled: {
-          color: foreground(elevation.top, "on", "disabled"),
+          color: foreground(colorScheme.highest, "on", "disabled"),
         },
       },
       padding: { left: 8, right: 8, top: 4, bottom: 4 },
@@ -194,11 +193,11 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     notification: {
       margin: { top: 10 },
-      background: background(elevation.above.middle),
+      background: background(colorScheme.middle),
       cornerRadius: 6,
       padding: 12,
-      border: border(elevation.above.middle),
-      shadow: elevation.above.shadow,
+      border: border(colorScheme.middle),
+      shadow: colorScheme.popoverShadow,
     },
     notifications: {
       width: 400,
@@ -207,14 +206,14 @@ export default function workspace(colorScheme: ColorScheme) {
     dock: {
       initialSizeRight: 640,
       initialSizeBottom: 480,
-      wash_color: withOpacity(background(elevation.top), 0.5),
+      wash_color: withOpacity(background(colorScheme.highest), 0.5),
       panel: {
-        border: border(elevation.top),
+        border: border(colorScheme.highest),
       },
       maximized: {
         margin: 32,
-        border: border(elevation.above.top, { overlay: true }),
-        shadow: elevation.above.shadow,
+        border: border(colorScheme.highest, { overlay: true }),
+        shadow: colorScheme.modalShadow,
       },
     },
   };

@@ -2,13 +2,12 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, borderColor, text } from "./components";
 
 export default function contextMenu(colorScheme: ColorScheme) {
-  let elevation = colorScheme.middle;
-  let layer = elevation.bottom;
+  let layer = colorScheme.lowest;
   return {
     background: background(layer),
     cornerRadius: 10,
     padding: 4,
-    shadow: elevation.shadow,
+    shadow: colorScheme.popoverShadow,
     border: border(layer),
     keystrokeMargin: 30,
     item: {

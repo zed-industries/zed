@@ -1,8 +1,8 @@
-import { Elevation } from "../themes/common/colorScheme";
+import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, text } from "./components";
 
-export default function HoverPopover(elevation: Elevation) {
-  let layer = elevation.middle;
+export default function HoverPopover(colorScheme: ColorScheme) {
+  let layer = colorScheme.middle;
   let baseContainer = {
     background: background(layer),
     cornerRadius: 8,
@@ -12,7 +12,7 @@ export default function HoverPopover(elevation: Elevation) {
       top: 4,
       bottom: 4,
     },
-    shadow: elevation.shadow,
+    shadow: colorScheme.popoverShadow,
     border: border(layer),
     margin: {
       left: -8,
@@ -40,6 +40,6 @@ export default function HoverPopover(elevation: Elevation) {
       padding: { top: 4 },
     },
     prose: text(layer, "sans", { size: "sm" }),
-    highlight: elevation.ramps.neutral(0.5).alpha(0.2).hex(), // TODO: blend was used here. Replace with something better
+    highlight: colorScheme.ramps.neutral(0.5).alpha(0.2).hex(), // TODO: blend was used here. Replace with something better
   };
 }

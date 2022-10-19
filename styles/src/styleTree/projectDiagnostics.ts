@@ -2,7 +2,7 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, text } from "./components";
 
 export default function projectDiagnostics(colorScheme: ColorScheme) {
-  let layer = colorScheme.lowest.top;
+  let layer = colorScheme.highest;
   return {
     background: background(layer),
     tabIconSpacing: 4,

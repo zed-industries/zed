@@ -797,22 +797,16 @@ pub struct ColorScheme {
     pub name: String,
     pub is_light: bool,
 
-    pub lowest: Elevation,
-    pub middle: Elevation,
-    pub highest: Elevation,
-
-    pub players: Vec<Player>,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct Elevation {
     pub ramps: RampSet,
 
-    pub bottom: Layer,
+    pub lowest: Layer,
     pub middle: Layer,
-    pub top: Layer,
+    pub highest: Layer,
 
-    pub shadow: Option<Shadow>,
+    pub popover_shadow: Shadow,
+    pub modal_shadow: Shadow,
+
+    pub players: Vec<Player>,
 }
 
 #[derive(Clone, Deserialize, Default)]

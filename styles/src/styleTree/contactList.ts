@@ -11,7 +11,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
   const nameMargin = 8;
   const sidePadding = 12;
 
-  let layer = colorScheme.lowest.middle;
+  let layer = colorScheme.middle;
 
   const contactButton = {
     background: background(layer, "on"),

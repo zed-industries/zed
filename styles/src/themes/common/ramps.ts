@@ -1,11 +1,9 @@
 import chroma, { Color, Scale } from "chroma-js";
 import {
   ColorScheme,
-  Elevation,
   Layer,
   Player,
   RampSet,
-  Shadow,
   Style,
   Styles,
   StyleSet,
@@ -23,7 +21,7 @@ export function createColorScheme(
   colorRamps: { [rampName: string]: Scale }
 ): ColorScheme {
   // Chromajs scales from 0 to 1 flipped if isLight is true
-  let baseRamps: typeof colorRamps = {};
+  let ramps: RampSet = {} as any;
 
   // Chromajs mutates the underlying ramp when you call domain. This causes problems because
   // we now store the ramps object in the theme so that we can pull colors out of them.
@@ -33,72 +31,65 @@ export function createColorScheme(
   // function to any in order to get the colors back out from the original ramps.
   if (isLight) {
     for (var rampName in colorRamps) {
-      baseRamps[rampName] = chroma.scale(
+      (ramps as any)[rampName] = chroma.scale(
         colorRamps[rampName].colors(100).reverse()
       );
     }
-    baseRamps.neutral = chroma.scale(colorRamps.neutral.colors(100).reverse());
+    ramps.neutral = chroma.scale(colorRamps.neutral.colors(100).reverse());
   } else {
     for (var rampName in colorRamps) {
-      baseRamps[rampName] = chroma.scale(colorRamps[rampName].colors(100));
+      (ramps as any)[rampName] = chroma.scale(colorRamps[rampName].colors(100));
     }
-    baseRamps.neutral = chroma.scale(colorRamps.neutral.colors(100));
+    ramps.neutral = chroma.scale(colorRamps.neutral.colors(100));
   }
 
-  let baseSet = {
-    neutral: baseRamps.neutral,
-    red: baseRamps.red,
-    orange: baseRamps.orange,
-    yellow: baseRamps.yellow,
-    green: baseRamps.green,
-    cyan: baseRamps.cyan,
-    blue: baseRamps.blue,
-    violet: baseRamps.violet,
-    magenta: baseRamps.magenta,
-  };
+  let lowest = lowestLayer(ramps);
+  let middle = middleLayer(ramps);
+  let highest = highestLayer(ramps);
 
-  let lowest = elevation(resampleSet(baseSet, evenSamples(0, 1)));
-
-  let middle = elevation(resampleSet(baseSet, evenSamples(0.08, 1)), {
+  let popoverShadow = {
     blur: 4,
-    color: baseSet
+    color: ramps
       .neutral(isLight ? 7 : 0)
       .darken()
       .alpha(0.2)
       .hex(), // TODO used blend previously. Replace with something else
     offset: [1, 2],
-  });
-  lowest.above = middle;
+  };
 
-  let highest = elevation(resampleSet(baseSet, evenSamples(0.16, 1)), {
+  let modalShadow = {
     blur: 16,
-    color: baseSet
+    color: ramps
       .neutral(isLight ? 7 : 0)
       .darken()
       .alpha(0.2)
       .hex(), // TODO used blend previously. Replace with something else
     offset: [0, 2],
-  });
-  middle.above = highest;
+  };
 
   let players = {
-    "0": player(baseSet.blue),
-    "1": player(baseSet.green),
-    "2": player(baseSet.magenta),
-    "3": player(baseSet.orange),
-    "4": player(baseSet.violet),
-    "5": player(baseSet.cyan),
-    "6": player(baseSet.red),
-    "7": player(baseSet.yellow),
+    "0": player(ramps.blue),
+    "1": player(ramps.green),
+    "2": player(ramps.magenta),
+    "3": player(ramps.orange),
+    "4": player(ramps.violet),
+    "5": player(ramps.cyan),
+    "6": player(ramps.red),
+    "7": player(ramps.yellow),
   };
 
   return {
     name,
     isLight,
 
+    ramps,
+
     lowest,
     middle,
     highest,
+
+    popoverShadow,
+    modalShadow,
 
     players,
   };
@@ -111,47 +102,7 @@ function player(ramp: Scale): Player {
   };
 }
 
-function evenSamples(min: number, max: number): number[] {
-  return Array.from(Array(101).keys()).map(
-    (i) => (i / 100) * (max - min) + min
-  );
-}
-
-function resampleSet(ramps: RampSet, samples: number[]): RampSet {
-  return {
-    neutral: resample(ramps.neutral, samples),
-    red: resample(ramps.red, samples),
-    orange: resample(ramps.orange, samples),
-    yellow: resample(ramps.yellow, samples),
-    green: resample(ramps.green, samples),
-    cyan: resample(ramps.cyan, samples),
-    blue: resample(ramps.blue, samples),
-    violet: resample(ramps.violet, samples),
-    magenta: resample(ramps.magenta, samples),
-  };
-}
-
-function resample(scale: Scale, samples: number[]): Scale {
-  let newColors = samples.map((sample) => scale(sample));
-  return chroma.scale(newColors);
-}
-
-function elevation(
-  ramps: RampSet,
-  shadow?: Shadow
-): Elevation {
-  return {
-    ramps,
-
-    bottom: bottomLayer(ramps),
-    middle: middleLayer(ramps),
-    top: topLayer(ramps),
-
-    shadow,
-  };
-}
-
-function bottomLayer(ramps: RampSet): Layer {
+function lowestLayer(ramps: RampSet): Layer {
   return {
     base: buildStyleSet(ramps.neutral, 0.2, 1),
     variant: buildStyleSet(ramps.neutral, 0.2, 0.7),
@@ -175,7 +126,7 @@ function middleLayer(ramps: RampSet): Layer {
   };
 }
 
-function topLayer(ramps: RampSet): Layer {
+function highestLayer(ramps: RampSet): Layer {
   return {
     base: buildStyleSet(ramps.neutral, 0, 1),
     variant: buildStyleSet(ramps.neutral, 0, 0.7),

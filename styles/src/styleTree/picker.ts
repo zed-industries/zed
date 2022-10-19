@@ -2,12 +2,11 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, text } from "./components";
 
 export default function picker(colorScheme: ColorScheme) {
-  let elevation = colorScheme.highest;
-  let layer = elevation.top;
+  let layer = colorScheme.highest;
   return {
     background: background(layer),
     border: border(layer),
-    shadow: elevation.shadow,
+    shadow: colorScheme.modalShadow,
     cornerRadius: 12,
     padding: {
       bottom: 4,

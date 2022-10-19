@@ -5,9 +5,8 @@ import { text, border, background, foreground } from "./components";
 export default function tabBar(colorScheme: ColorScheme) {
   const height = 32;
 
-  let elevation = colorScheme.lowest;
-  let activeLayer = elevation.top;
-  let layer = elevation.middle;
+  let activeLayer = colorScheme.highest;
+  let layer = colorScheme.middle;
 
   const tab = {
     height,
@@ -70,7 +69,7 @@ export default function tabBar(colorScheme: ColorScheme) {
     ...activePaneActiveTab,
     background: withOpacity(tab.background, 0.95),
     border: undefined as any,
-    shadow: elevation.above.shadow,
+    shadow: colorScheme.popoverShadow,
   };
 
   return {

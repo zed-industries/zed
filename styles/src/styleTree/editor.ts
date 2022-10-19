@@ -15,8 +15,7 @@ import {
 import hoverPopover from "./hoverPopover";
 
 export default function editor(colorScheme: ColorScheme) {
-  let elevation = colorScheme.lowest;
-  let layer = elevation.top;
+  let layer = colorScheme.highest;
 
   const autocompleteItem = {
     cornerRadius: 6,
@@ -48,88 +47,88 @@ export default function editor(colorScheme: ColorScheme) {
 
   const syntax = {
     primary: {
-      color: elevation.ramps.neutral(1).hex(),
+      color: colorScheme.ramps.neutral(1).hex(),
       weight: fontWeights.normal,
     },
     comment: {
-      color: elevation.ramps.neutral(0.71).hex(),
+      color: colorScheme.ramps.neutral(0.71).hex(),
       weight: fontWeights.normal,
     },
     punctuation: {
-      color: elevation.ramps.neutral(0.86).hex(),
+      color: colorScheme.ramps.neutral(0.86).hex(),
       weight: fontWeights.normal,
     },
     constant: {
-      color: elevation.ramps.green(0.5).hex(),
+      color: colorScheme.ramps.green(0.5).hex(),
       weight: fontWeights.normal,
     },
     keyword: {
-      color: elevation.ramps.blue(0.5).hex(),
+      color: colorScheme.ramps.blue(0.5).hex(),
       weight: fontWeights.normal,
     },
     function: {
-      color: elevation.ramps.yellow(0.5).hex(),
+      color: colorScheme.ramps.yellow(0.5).hex(),
       weight: fontWeights.normal,
     },
     type: {
-      color: elevation.ramps.cyan(0.5).hex(),
+      color: colorScheme.ramps.cyan(0.5).hex(),
       weight: fontWeights.normal,
     },
     constructor: {
-      color: elevation.ramps.blue(0.5).hex(),
+      color: colorScheme.ramps.blue(0.5).hex(),
       weight: fontWeights.normal,
     },
     variant: {
-      color: elevation.ramps.blue(0.5).hex(),
+      color: colorScheme.ramps.blue(0.5).hex(),
       weight: fontWeights.normal,
     },
     property: {
-      color: elevation.ramps.blue(0.5).hex(),
+      color: colorScheme.ramps.blue(0.5).hex(),
       weight: fontWeights.normal,
     },
     enum: {
-      color: elevation.ramps.orange(0.5).hex(),
+      color: colorScheme.ramps.orange(0.5).hex(),
       weight: fontWeights.normal,
     },
     operator: {
-      color: elevation.ramps.orange(0.5).hex(),
+      color: colorScheme.ramps.orange(0.5).hex(),
       weight: fontWeights.normal,
     },
     string: {
-      color: elevation.ramps.orange(0.5).hex(),
+      color: colorScheme.ramps.orange(0.5).hex(),
       weight: fontWeights.normal,
     },
     number: {
-      color: elevation.ramps.green(0.5).hex(),
+      color: colorScheme.ramps.green(0.5).hex(),
       weight: fontWeights.normal,
     },
     boolean: {
-      color: elevation.ramps.green(0.5).hex(),
+      color: colorScheme.ramps.green(0.5).hex(),
       weight: fontWeights.normal,
     },
     predictive: {
-      color: elevation.ramps.neutral(0.57).hex(),
+      color: colorScheme.ramps.neutral(0.57).hex(),
       weight: fontWeights.normal,
     },
     title: {
-      color: elevation.ramps.yellow(0.5).hex(),
+      color: colorScheme.ramps.yellow(0.5).hex(),
       weight: fontWeights.bold,
     },
     emphasis: {
-      color: elevation.ramps.blue(0.5).hex(),
+      color: colorScheme.ramps.blue(0.5).hex(),
       weight: fontWeights.normal,
     },
     "emphasis.strong": {
-      color: elevation.ramps.blue(0.5).hex(),
+      color: colorScheme.ramps.blue(0.5).hex(),
       weight: fontWeights.bold,
     },
     linkUri: {
-      color: elevation.ramps.green(0.5).hex(),
+      color: colorScheme.ramps.green(0.5).hex(),
       weight: fontWeights.normal,
       underline: true,
     },
     linkText: {
-      color: elevation.ramps.orange(0.5).hex(),
+      color: colorScheme.ramps.orange(0.5).hex(),
       weight: fontWeights.normal,
       italic: true,
     },
@@ -152,11 +151,11 @@ export default function editor(colorScheme: ColorScheme) {
       widthEm: 0.16,
       cornerRadius: 0.05,
     },
-    documentHighlightReadBackground: elevation.ramps
+    documentHighlightReadBackground: colorScheme.ramps
       .neutral(0.5)
       .alpha(0.2)
       .hex(), // TODO: This was blend
-    documentHighlightWriteBackground: elevation.ramps
+    documentHighlightWriteBackground: colorScheme.ramps
       .neutral(0.5)
       .alpha(0.4)
       .hex(), // TODO: This was blend * 2
@@ -178,67 +177,69 @@ export default function editor(colorScheme: ColorScheme) {
       colorScheme.players[7],
     ],
     autocomplete: {
-      background: background(elevation.bottom),
+      background: background(colorScheme.lowest),
       cornerRadius: 8,
       padding: 4,
       margin: {
         left: -14,
       },
-      border: border(elevation.bottom),
-      shadow: elevation.above.shadow,
-      matchHighlight: elevation.above.ramps.blue(0.5).hex(),
+      border: border(colorScheme.lowest),
+      shadow: colorScheme.popoverShadow,
+      matchHighlight: foreground(colorScheme.lowest, "accent"),
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,
-        background: background(elevation.bottom, "hovered"),
+        matchHighlight: foreground(colorScheme.lowest, "accent", "hovered"),
+        background: background(colorScheme.lowest, "hovered"),
       },
       selectedItem: {
         ...autocompleteItem,
-        background: background(elevation.bottom, "active"),
+        matchHighlight: foreground(colorScheme.lowest, "accent", "active"),
+        background: background(colorScheme.lowest, "active"),
       },
     },
     diagnosticHeader: {
-      background: background(elevation.middle),
+      background: background(colorScheme.middle),
       iconWidthFactor: 1.5,
       textScaleFactor: 0.857,
-      border: border(elevation.middle, {
+      border: border(colorScheme.middle, {
         bottom: true,
         top: true,
       }),
       code: {
-        ...text(elevation.middle, "mono", { size: "sm" }),
+        ...text(colorScheme.middle, "mono", { size: "sm" }),
         margin: {
           left: 10,
         },
       },
       message: {
-        highlightText: text(elevation.middle, "sans", {
+        highlightText: text(colorScheme.middle, "sans", {
           size: "sm",
           weight: "bold",
         }),
-        text: text(elevation.middle, "sans", { size: "sm" }),
+        text: text(colorScheme.middle, "sans", { size: "sm" }),
       },
     },
     diagnosticPathHeader: {
-      background: background(elevation.middle),
+      background: background(colorScheme.middle),
       textScaleFactor: 0.857,
-      filename: text(elevation.middle, "mono", { size: "sm" }),
+      filename: text(colorScheme.middle, "mono", { size: "sm" }),
       path: {
-        ...text(elevation.middle, "mono", { size: "sm" }),
+        ...text(colorScheme.middle, "mono", { size: "sm" }),
         margin: {
           left: 12,
         },
       },
     },
-    errorDiagnostic: diagnostic(elevation.middle, "negative"),
-    warningDiagnostic: diagnostic(elevation.middle, "warning"),
-    informationDiagnostic: diagnostic(elevation.middle, "accent"),
-    hintDiagnostic: diagnostic(elevation.middle, "warning"),
-    invalidErrorDiagnostic: diagnostic(elevation.middle, "base"),
-    invalidHintDiagnostic: diagnostic(elevation.middle, "base"),
-    invalidInformationDiagnostic: diagnostic(elevation.middle, "base"),
-    invalidWarningDiagnostic: diagnostic(elevation.middle, "base"),
-    hoverPopover: hoverPopover(elevation.above),
+    errorDiagnostic: diagnostic(colorScheme.middle, "negative"),
+    warningDiagnostic: diagnostic(colorScheme.middle, "warning"),
+    informationDiagnostic: diagnostic(colorScheme.middle, "accent"),
+    hintDiagnostic: diagnostic(colorScheme.middle, "warning"),
+    invalidErrorDiagnostic: diagnostic(colorScheme.middle, "base"),
+    invalidHintDiagnostic: diagnostic(colorScheme.middle, "base"),
+    invalidInformationDiagnostic: diagnostic(colorScheme.middle, "base"),
+    invalidWarningDiagnostic: diagnostic(colorScheme.middle, "base"),
+    hoverPopover: hoverPopover(colorScheme),
     linkDefinition: {
       color: syntax.linkUri.color,
       underline: syntax.linkUri.underline,

@@ -3,7 +3,7 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, foreground, text } from "./components";
 
 export default function contactFinder(colorScheme: ColorScheme) {
-  let layer = colorScheme.highest.top;
+  let layer = colorScheme.highest;
 
   const sideMargin = 6;
   const contactButton = {

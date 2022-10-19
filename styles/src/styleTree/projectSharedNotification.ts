@@ -2,14 +2,13 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, text } from "./components";
 
 export default function projectSharedNotification(colorScheme: ColorScheme): Object {
-  let elevation = colorScheme.middle;
-  let layer = elevation.middle;
+  let layer = colorScheme.middle;
 
   const avatarSize = 48;
   return {
     windowHeight: 74,
     windowWidth: 380,
-    background: background(layer,),
+    background: background(layer),
     ownerContainer: {
       padding: 12,
     },

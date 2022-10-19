@@ -3,7 +3,7 @@ import { withOpacity } from "../utils/color";
 import { text, background } from "./components";
 
 export default function commandPalette(colorScheme: ColorScheme) {
-  let layer = colorScheme.highest.top;
+  let layer = colorScheme.highest;
   return {
     keystrokeSpacing: 8,
     key: {

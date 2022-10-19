@@ -4,9 +4,14 @@ export interface ColorScheme {
   name: string;
   isLight: boolean;
 
-  lowest: Elevation;
-  middle: Elevation;
-  highest: Elevation;
+  lowest: Layer;
+  middle: Layer;
+  highest: Layer;
+
+  ramps: RampSet;
+
+  popoverShadow: Shadow;
+  modalShadow: Shadow;
 
   players: Players;
 }
@@ -25,17 +30,6 @@ export interface Players {
   "5": Player;
   "6": Player;
   "7": Player;
-}
-
-export interface Elevation {
-  ramps: RampSet;
-
-  bottom: Layer;
-  middle: Layer;
-  top: Layer;
-
-  above?: Elevation;
-  shadow?: Shadow;
 }
 
 export interface Shadow {

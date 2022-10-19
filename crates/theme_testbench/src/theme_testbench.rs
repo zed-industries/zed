@@ -11,7 +11,7 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
-use theme::{ColorScheme, Elevation, Layer, Style, StyleSet};
+use theme::{ColorScheme, Layer, Style, StyleSet};
 use workspace::{Item, Workspace};
 
 actions!(theme, [DeployThemeTestbench]);
@@ -51,38 +51,15 @@ impl ThemeTestbench {
         }
 
         Flex::column()
-            .with_child(display_ramp(&color_scheme.lowest.ramps.neutral))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.red))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.orange))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.yellow))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.green))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.cyan))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.blue))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.violet))
-            .with_child(display_ramp(&color_scheme.lowest.ramps.magenta))
-    }
-
-    fn render_elevation(
-        elevation_index: usize,
-        elevation: &Elevation,
-        cx: &mut RenderContext<'_, Self>,
-    ) -> Flex {
-        Flex::column()
-            .with_child(
-                Self::render_layer(elevation_index * 1000 + 100, &elevation.bottom, cx)
-                    .flex(1., true)
-                    .boxed(),
-            )
-            .with_child(
-                Self::render_layer(elevation_index * 1000 + 200, &elevation.middle, cx)
-                    .flex(1., true)
-                    .boxed(),
-            )
-            .with_child(
-                Self::render_layer(elevation_index * 1000 + 300, &elevation.top, cx)
-                    .flex(1., true)
-                    .boxed(),
-            )
+            .with_child(display_ramp(&color_scheme.ramps.neutral))
+            .with_child(display_ramp(&color_scheme.ramps.red))
+            .with_child(display_ramp(&color_scheme.ramps.orange))
+            .with_child(display_ramp(&color_scheme.ramps.yellow))
+            .with_child(display_ramp(&color_scheme.ramps.green))
+            .with_child(display_ramp(&color_scheme.ramps.cyan))
+            .with_child(display_ramp(&color_scheme.ramps.blue))
+            .with_child(display_ramp(&color_scheme.ramps.violet))
+            .with_child(display_ramp(&color_scheme.ramps.magenta))
     }
 
     fn render_layer(
@@ -272,44 +249,6 @@ impl ThemeTestbench {
 
         Label::new(text, text_style)
     }
-
-    fn elevation_style(elevation: &Elevation) -> ContainerStyle {
-        let style = ContainerStyle {
-            margin: Margin {
-                top: 10.,
-                bottom: 10.,
-                left: 10.,
-                right: 10.,
-            },
-            background_color: Some(elevation.bottom.base.default.background),
-            ..Default::default()
-        };
-
-        if elevation.shadow.is_some() {
-            ContainerStyle {
-                padding: Padding {
-                    top: 10.,
-                    bottom: 10.,
-                    left: 10.,
-                    right: 10.,
-                },
-                border: Border {
-                    width: 1.,
-                    color: elevation.bottom.base.default.border,
-                    overlay: false,
-                    top: true,
-                    bottom: true,
-                    left: true,
-                    right: true,
-                },
-                corner_radius: 32.,
-                shadow: elevation.shadow,
-                ..style
-            }
-        } else {
-            style
-        }
-    }
 }
 
 impl Entity for ThemeTestbench {
@@ -333,32 +272,24 @@ impl View for ThemeTestbench {
                     .boxed(),
             )
             .with_child(
-                Self::render_elevation(0, &color_scheme.lowest, cx)
-                    .flex(1., true)
-                    .boxed(),
-            )
-            .with_child(
-                Flex::row()
+                Flex::column()
                     .with_child(
-                        Self::render_elevation(1, &color_scheme.middle, cx)
+                        Self::render_layer(100, &color_scheme.lowest, cx)
                             .flex(1., true)
                             .boxed(),
                     )
                     .with_child(
-                        Container::new(
-                            Self::render_elevation(2, &color_scheme.highest, cx).boxed(),
-                        )
-                        .with_style(Self::elevation_style(&color_scheme.highest))
-                        .flex(1., true)
-                        .boxed(),
+                        Self::render_layer(200, &color_scheme.middle, cx)
+                            .flex(1., true)
+                            .boxed(),
                     )
-                    .contained()
-                    .with_style(Self::elevation_style(&color_scheme.middle))
-                    .flex(2., true)
+                    .with_child(
+                        Self::render_layer(300, &color_scheme.highest, cx)
+                            .flex(1., true)
+                            .boxed(),
+                    )
                     .boxed(),
             )
-            .contained()
-            .with_style(Self::elevation_style(&color_scheme.lowest))
             .boxed()
     }
 }
