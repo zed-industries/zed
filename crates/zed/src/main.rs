@@ -441,7 +441,7 @@ async fn watch_themes(
     while (events.next().await).is_some() {
         let output = Command::new("npm")
             .current_dir("styles")
-            .args(["run", "build-themes"])
+            .args(["run", "build"])
             .output()
             .await
             .log_err()?;
@@ -449,7 +449,7 @@ async fn watch_themes(
             cx.update(|cx| theme_selector::ThemeSelector::reload(themes.clone(), cx))
         } else {
             eprintln!(
-                "build-themes script failed {}",
+                "build script failed {}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }

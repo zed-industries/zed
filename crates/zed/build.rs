@@ -26,7 +26,7 @@ fn main() {
         .expect("failed to run npm");
     if !output.status.success() {
         panic!(
-            "build-themes script failed {}",
+            "build script failed {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
