@@ -13,8 +13,8 @@ import {
 
 export function colorRamp(color: Color): Scale {
   let endColor = color.desaturate(1).brighten(5);
-  let startColor = color.desaturate(1).darken(5);
-  return chroma.scale([startColor, color, endColor]).mode("hsl");
+  let startColor = color.desaturate(1).darken(4);
+  return chroma.scale([startColor, color, endColor]).mode("lab");
 }
 
 export function createColorScheme(
