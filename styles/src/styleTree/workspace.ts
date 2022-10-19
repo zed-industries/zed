@@ -21,13 +21,13 @@ export default function workspace(colorScheme: ColorScheme) {
       left: 8,
       right: 8,
     },
-    ...text(layer, "sans", { size: "xs" }),
-    background: background(layer),
+    ...text(layer, "sans", "variant", { size: "xs" }),
+    background: background(layer, "variant"),
     border: border(layer),
     hover: {
-      ...text(layer, "sans", "hovered", { size: "xs" }),
-      background: background(layer, "hovered"),
-      border: border(layer, "hovered"),
+      ...text(layer, "sans", "variant", "hovered", { size: "xs" }),
+      background: background(layer, "variant", "hovered"),
+      border: border(layer, "variant", "hovered"),
     },
   };
   const avatarWidth = 18;

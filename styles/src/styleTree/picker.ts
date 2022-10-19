@@ -2,7 +2,7 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, text } from "./components";
 
 export default function picker(colorScheme: ColorScheme) {
-  let layer = colorScheme.highest;
+  let layer = colorScheme.lowest;
   return {
     background: background(layer),
     border: border(layer),

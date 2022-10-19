@@ -15,7 +15,7 @@ export const dark = createColorScheme(`${name}-dark`, false, {
       "#e2dfe7",
       "#efecf4",
     ])
-    .domain([0, 0.3, 0.45, 0.6, 0.65, 0.7, 0.85, 1]),
+    .domain([0, 0.15, 0.45, 0.6, 0.65, 0.7, 0.85, 1]),
   red: colorRamp(chroma("#be4678")),
   orange: colorRamp(chroma("#aa573c")),
   yellow: colorRamp(chroma("#a06e3b")),

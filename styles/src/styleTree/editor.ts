@@ -177,25 +177,25 @@ export default function editor(colorScheme: ColorScheme) {
       colorScheme.players[7],
     ],
     autocomplete: {
-      background: background(colorScheme.lowest),
+      background: background(colorScheme.middle),
       cornerRadius: 8,
       padding: 4,
       margin: {
         left: -14,
       },
-      border: border(colorScheme.lowest),
+      border: border(colorScheme.middle),
       shadow: colorScheme.popoverShadow,
-      matchHighlight: foreground(colorScheme.lowest, "accent"),
+      matchHighlight: foreground(colorScheme.middle, "accent"),
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,
-        matchHighlight: foreground(colorScheme.lowest, "accent", "hovered"),
-        background: background(colorScheme.lowest, "hovered"),
+        matchHighlight: foreground(colorScheme.middle, "accent", "hovered"),
+        background: background(colorScheme.middle, "hovered"),
       },
       selectedItem: {
         ...autocompleteItem,
-        matchHighlight: foreground(colorScheme.lowest, "accent", "active"),
-        background: background(colorScheme.lowest, "active"),
+        matchHighlight: foreground(colorScheme.middle, "accent", "active"),
+        background: background(colorScheme.middle, "active"),
       },
     },
     diagnosticHeader: {
