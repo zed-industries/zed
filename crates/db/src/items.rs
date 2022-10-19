@@ -148,38 +148,18 @@ impl Db {
 
                 let tx = lock.transaction()?;
 
-        // When working with transactions in rusqlite, need to make this kind of scope
-        // To make the borrow stuff work correctly. Don't know why, rust is wild.
-        let result = {
-            let mut read_editors = tx
-                .prepare_cached(
-                    r#"
+                // When working with transactions in rusqlite, need to make this kind of scope
+                // To make the borrow stuff work correctly. Don't know why, rust is wild.
+                let result = {
+                    let mut editors_stmt = tx.prepare_cached(
+                        r#"
                         SELECT items.id, item_path.path
                         FROM items
                         LEFT JOIN item_path
-	            ON items.id = item_path.item_id
-                    WHERE items.kind = "Editor";
-                "#r,
-                )?
-                .query_map([], |row| {
-                    let buf: Vec<u8> = row.get(2)?;
-                    let path: PathBuf = OsStr::from_bytes(&buf).into();
-
-                    Ok(SerializedItem::Editor(id, path))
-                })?;
-
-            let mut read_stmt = tx.prepare_cached(
-                "
-                    SELECT items.id, items.kind, item_path.path, item_query.query
-                    FROM items
-                    LEFT JOIN item_path
-                        ON items.id = item_path.item_id
-                    LEFT JOIN item_query
-                        ON items.id = item_query.item_id
-                    WHERE 
-                    ORDER BY items.id;
-            ",
-            )?;
+                            ON items.id = item_path.item_id
+                        WHERE items.kind = ?;
+                        "#,
+                    )?;
 
                     let editors_iter = editors_stmt.query_map(
                         [SerializedItemKind::Editor.to_string()],

@@ -1,3 +1,4 @@
+mod items;
 mod kvp;
 mod migrations;
 
