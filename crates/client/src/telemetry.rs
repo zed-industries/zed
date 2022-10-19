@@ -196,16 +196,10 @@ impl Telemetry {
                             distinct_id: device_id,
                             set: json!({ "staff": is_staff, "id": metrics_id }),
                         }])?;
-
-                        eprintln!("request: {}", std::str::from_utf8(&json_bytes).unwrap());
-
                         let request = Request::post(MIXPANEL_ENGAGE_URL)
                             .header("Content-Type", "application/json")
                             .body(json_bytes.into())?;
-                        let response = this.http_client.send(request).await?;
-
-                        eprintln!("response: {:?} {:?}", response.status(), response.body());
-
+                        this.http_client.send(request).await?;
                         Ok(())
                     }
                     .log_err(),
@@ -281,16 +275,10 @@ impl Telemetry {
 
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &events)?;
-
-                        eprintln!("request: {}", std::str::from_utf8(&json_bytes).unwrap());
-
                         let request = Request::post(MIXPANEL_EVENTS_URL)
                             .header("Content-Type", "application/json")
                             .body(json_bytes.into())?;
-                        let response = this.http_client.send(request).await?;
-
-                        eprintln!("response: {:?} {:?}", response.status(), response.body());
-
+                        this.http_client.send(request).await?;
                         Ok(())
                     }
                     .log_err(),
