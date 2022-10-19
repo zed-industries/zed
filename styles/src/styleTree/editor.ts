@@ -60,7 +60,7 @@ export default function editor(colorScheme: ColorScheme) {
       weight: fontWeights.normal,
     },
     constant: {
-      color: elevation.ramps.neutral(0.57).hex(),
+      color: elevation.ramps.green(0.5).hex(),
       weight: fontWeights.normal,
     },
     keyword: {
