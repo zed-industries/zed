@@ -260,6 +260,7 @@ impl RoomDelegate {
         if let Some(room) = room.upgrade() {
             room.did_subscribe_to_remote_video_track(track);
         }
+        let _ = Weak::into_raw(room);
     }
 
     extern "C" fn on_did_unsubscribe_from_remote_video_track(

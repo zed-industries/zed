@@ -63,17 +63,32 @@ fn main() {
             let display = displays.into_iter().next().unwrap();
 
             let track_a = LocalVideoTrack::screen_share_for_display(&display);
-            room_a.publish_video_track(&track_a).await.unwrap();
+            let track_a_publication = room_a.publish_video_track(&track_a).await.unwrap();
 
-            let next_update = track_changes.next().await.unwrap();
-
-            if let RemoteVideoTrackUpdate::Subscribed(track) = next_update {
+            if let RemoteVideoTrackUpdate::Subscribed(track) = track_changes.next().await.unwrap() {
                 let remote_tracks = room_b.remote_video_tracks("test-participant-1");
                 assert_eq!(remote_tracks.len(), 1);
                 assert_eq!(remote_tracks[0].publisher_id(), "test-participant-1");
                 assert_eq!(track.publisher_id(), "test-participant-1");
             } else {
-                panic!("unexpected message")
+                panic!("unexpected message");
+            }
+
+            let remote_track = room_b
+                .remote_video_tracks("test-participant-1")
+                .pop()
+                .unwrap();
+            room_a.unpublish_track(track_a_publication);
+            if let RemoteVideoTrackUpdate::Unsubscribed {
+                publisher_id,
+                track_id,
+            } = track_changes.next().await.unwrap()
+            {
+                assert_eq!(publisher_id, "test-participant-1");
+                assert_eq!(remote_track.sid(), track_id);
+                assert_eq!(room_b.remote_video_tracks("test-participant-1").len(), 0);
+            } else {
+                panic!("unexpected message");
             }
 
             cx.platform().quit();
