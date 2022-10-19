@@ -1,6 +1,6 @@
 import { Elevation } from "../themes/common/colorScheme";
 
-export default function terminal(elevation: Elevation) {
+export default function terminal(elevation: Elevation, cursor_color: string) {
   /**
    * Colors are controlled per-cell in the terminal grid.
    * Cells can be set to any of these more 'theme-capable' colors
@@ -37,7 +37,7 @@ export default function terminal(elevation: Elevation) {
     /**
      * Default color for the cursor
      */
-    cursor: elevation.ramps.blue(0).hex(),
+    cursor: cursor_color,
     dimBlack: elevation.ramps.neutral(1).hex(),
     dimRed: elevation.ramps.red(0.75).hex(),
     dimGreen: elevation.ramps.green(0.75).hex(),

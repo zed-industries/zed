@@ -50,7 +50,7 @@ export default function app(colorScheme: ColorScheme): Object {
     },
     updateNotification: updateNotification(colorScheme),
     tooltip: tooltip(colorScheme),
-    terminal: terminal(colorScheme.lowest),
+    terminal: terminal(colorScheme.lowest, colorScheme.players[0].cursor),
     colorScheme: {
       ...colorScheme,
       lowest: {
