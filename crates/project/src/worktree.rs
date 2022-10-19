@@ -5,8 +5,8 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
-use fs::LineEnding;
 use fs::{repository::GitRepository, Fs};
+use fs::{HomeDir, LineEnding};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -87,6 +87,7 @@ pub struct RemoteWorktree {
 #[derive(Clone)]
 pub struct Snapshot {
     id: WorktreeId,
+    abs_path: Arc<Path>,
     root_name: String,
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
@@ -118,7 +119,6 @@ impl std::fmt::Debug for GitRepositoryEntry {
 }
 
 pub struct LocalSnapshot {
-    abs_path: Arc<Path>,
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     git_repositories: Vec<GitRepositoryEntry>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
@@ -130,7 +130,6 @@ pub struct LocalSnapshot {
 impl Clone for LocalSnapshot {
     fn clone(&self) -> Self {
         Self {
-            abs_path: self.abs_path.clone(),
             ignores_by_parent_abs_path: self.ignores_by_parent_abs_path.clone(),
             git_repositories: self.git_repositories.iter().cloned().collect(),
             removed_entry_ids: self.removed_entry_ids.clone(),
@@ -221,8 +220,11 @@ impl Worktree {
             .collect();
         let root_name = worktree.root_name.clone();
         let visible = worktree.visible;
+
+        let abs_path = PathBuf::from(OsString::from_vec(worktree.abs_path));
         let snapshot = Snapshot {
             id: WorktreeId(remote_id as usize),
+            abs_path: Arc::from(abs_path.deref()),
             root_name,
             root_char_bag,
             entries_by_path: Default::default(),
@@ -372,6 +374,13 @@ impl Worktree {
             Self::Remote(worktree) => worktree.poll_snapshot(cx),
         };
     }
+
+    pub fn abs_path(&self) -> Arc<Path> {
+        match self {
+            Worktree::Local(worktree) => worktree.abs_path.clone(),
+            Worktree::Remote(worktree) => worktree.abs_path.clone(),
+        }
+    }
 }
 
 impl LocalWorktree {
@@ -402,13 +411,13 @@ impl LocalWorktree {
             watch::channel_with(ScanState::Initializing);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = LocalSnapshot {
-                abs_path,
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 removed_entry_ids: Default::default(),
                 next_entry_id,
                 snapshot: Snapshot {
                     id: WorktreeId::from_usize(cx.model_id()),
+                    abs_path,
                     root_name: root_name.clone(),
                     root_char_bag,
                     entries_by_path: Default::default(),
@@ -647,6 +656,7 @@ impl LocalWorktree {
             id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             visible: self.visible,
+            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
         }
     }
 
@@ -980,6 +990,7 @@ impl LocalWorktree {
                             let update = proto::UpdateWorktree {
                                 project_id,
                                 worktree_id,
+                                abs_path: snapshot.abs_path().as_os_str().as_bytes().to_vec(),
                                 root_name: snapshot.root_name().to_string(),
                                 updated_entries: snapshot
                                     .entries_by_path
@@ -1389,6 +1400,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id: self.id().to_proto(),
+            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
             root_name,
             updated_entries: self.entries_by_path.iter().map(Into::into).collect(),
             removed_entries: Default::default(),
@@ -1456,6 +1468,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
+            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
             root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries,
@@ -1839,10 +1852,25 @@ impl language::File for File {
 
     fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
-        full_path.push(self.worktree.read(cx).root_name());
+        let worktree = self.worktree.read(cx);
+
+        if worktree.is_visible() {
+            full_path.push(worktree.root_name());
+        } else {
+            let path = worktree.abs_path();
+
+            if worktree.is_local() && path.starts_with(cx.global::<HomeDir>().as_path()) {
+                full_path.push("~");
+                full_path.push(path.strip_prefix(cx.global::<HomeDir>().as_path()).unwrap());
+            } else {
+                full_path.push(path)
+            }
+        }
+
         if self.path.components().next().is_some() {
             full_path.push(&self.path);
         }
+
         full_path
     }
 
@@ -3455,7 +3483,6 @@ mod tests {
         let fs = Arc::new(RealFs);
         let next_entry_id = Arc::new(AtomicUsize::new(0));
         let mut initial_snapshot = LocalSnapshot {
-            abs_path: root_dir.path().into(),
             removed_entry_ids: Default::default(),
             ignores_by_parent_abs_path: Default::default(),
             git_repositories: Default::default(),
@@ -3464,6 +3491,7 @@ mod tests {
                 id: WorktreeId::from_usize(0),
                 entries_by_path: Default::default(),
                 entries_by_id: Default::default(),
+                abs_path: root_dir.path().into(),
                 root_name: Default::default(),
                 root_char_bag: Default::default(),
                 scan_id: 0,

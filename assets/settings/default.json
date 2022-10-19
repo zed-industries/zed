@@ -10,6 +10,8 @@
     // Whether to show the informational hover box when moving the mouse
     // over symbols in the editor.
     "hover_popover_enabled": true,
+    // Whether the cursor blinks in the editor.
+    "cursor_blink": true,
     // Whether to pop the completions menu while typing in an editor without
     // explicitly requesting it.
     "show_completions_on_input": true,

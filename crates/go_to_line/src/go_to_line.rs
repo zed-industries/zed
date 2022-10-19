@@ -183,7 +183,7 @@ impl View for GoToLine {
         .named("go to line")
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.line_editor);
     }
 }

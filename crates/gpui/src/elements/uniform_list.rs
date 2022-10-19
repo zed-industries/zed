@@ -1,4 +1,4 @@
-use super::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
+use super::{Element, EventContext, LayoutContext, PaintContext, SizeConstraint};
 use crate::{
     geometry::{
         rect::RectF,
@@ -6,7 +6,7 @@ use crate::{
     },
     json::{self, json},
     presenter::MeasurementContext,
-    scene::ScrollWheelRegionEvent,
+    scene::MouseScrollWheel,
     ElementBox, MouseRegion, RenderContext, ScrollWheelEvent, View,
 };
 use json::ToJson;
@@ -292,7 +292,7 @@ impl Element for UniformList {
             MouseRegion::new::<Self>(self.view_id, 0, visible_bounds).on_scroll({
                 let scroll_max = layout.scroll_max;
                 let state = self.state.clone();
-                move |ScrollWheelRegionEvent {
+                move |MouseScrollWheel {
                           platform_event:
                               ScrollWheelEvent {
                                   position,
@@ -322,23 +322,6 @@ impl Element for UniformList {
         }
 
         cx.scene.pop_layer();
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        layout: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        let mut handled = false;
-        for item in &mut layout.items {
-            handled = item.dispatch_event(event, cx) || handled;
-        }
-
-        handled
     }
 
     fn rect_for_text_range(

@@ -13,6 +13,7 @@ use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::borrow::Cow;
 use std::cmp;
 use std::io::Write;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::{
     io,
@@ -92,6 +93,17 @@ impl LineEnding {
         }
     }
 }
+
+pub struct HomeDir(pub PathBuf);
+
+impl Deref for HomeDir {
+    type Target = PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;

@@ -1121,13 +1121,13 @@ impl View for ContactList {
             .boxed()
     }
 
-    fn on_focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if !self.filter_editor.is_focused(cx) {
             cx.focus(&self.filter_editor);
         }
     }
 
-    fn on_focus_out(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if !self.filter_editor.is_focused(cx) {
             cx.emit(Event::Dismissed);
         }

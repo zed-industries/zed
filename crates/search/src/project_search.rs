@@ -195,7 +195,7 @@ impl View for ProjectSearchView {
         }
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let handle = cx.weak_handle();
         cx.update_global(|state: &mut ActiveSearches, cx| {
             state

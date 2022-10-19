@@ -41,8 +41,8 @@ use crate::{
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseButton,
-    MouseRegionId, PathPromptOptions, TextLayoutCache,
+    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, KeyUpEvent,
+    ModifiersChangedEvent, MouseButton, MouseRegionId, PathPromptOptions, TextLayoutCache,
 };
 
 pub trait Entity: 'static {
@@ -60,8 +60,18 @@ pub trait Entity: 'static {
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox;
-    fn on_focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
-    fn on_focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
+    fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
+    fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
+    fn key_down(&mut self, _: &KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
+    fn key_up(&mut self, _: &KeyUpEvent, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
+    fn modifiers_changed(&mut self, _: &ModifiersChangedEvent, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
+
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
         Self::default_keymap_context()
     }
@@ -1297,7 +1307,7 @@ impl MutableAppContext {
     ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
         let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
 
-        for view_id in self.parents(window_id, view_id) {
+        for view_id in self.ancestors(window_id, view_id) {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
                 let view_type = view.as_any().type_id();
                 if let Some(actions) = self.actions.get(&view_type) {
@@ -1327,7 +1337,7 @@ impl MutableAppContext {
         let action_type = action.as_any().type_id();
         if let Some(window_id) = self.cx.platform.key_window_id() {
             if let Some(focused_view_id) = self.focused_view_id(window_id) {
-                for view_id in self.parents(window_id, focused_view_id) {
+                for view_id in self.ancestors(window_id, focused_view_id) {
                     if let Some(view) = self.views.get(&(window_id, view_id)) {
                         let view_type = view.as_any().type_id();
                         if let Some(actions) = self.actions.get(&view_type) {
@@ -1376,7 +1386,7 @@ impl MutableAppContext {
         mut visit: impl FnMut(usize, bool, &mut MutableAppContext) -> bool,
     ) -> bool {
         // List of view ids from the leaf to the root of the window
-        let path = self.parents(window_id, view_id).collect::<Vec<_>>();
+        let path = self.ancestors(window_id, view_id).collect::<Vec<_>>();
 
         // Walk down from the root to the leaf calling visit with capture_phase = true
         for view_id in path.iter().rev() {
@@ -1397,7 +1407,7 @@ impl MutableAppContext {
 
     // Returns an iterator over all of the view ids from the passed view up to the root of the window
     // Includes the passed view itself
-    fn parents(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
+    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
         std::iter::once(view_id)
             .into_iter()
             .chain(std::iter::from_fn(move || {
@@ -1445,11 +1455,81 @@ impl MutableAppContext {
         self.keystroke_matcher.clear_bindings();
     }
 
+    pub fn dispatch_key_down(&mut self, window_id: usize, event: &KeyDownEvent) -> bool {
+        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+            for view_id in self
+                .ancestors(window_id, focused_view_id)
+                .collect::<Vec<_>>()
+            {
+                if let Some(mut view) = self.cx.views.remove(&(window_id, view_id)) {
+                    let handled = view.key_down(event, self, window_id, view_id);
+                    self.cx.views.insert((window_id, view_id), view);
+                    if handled {
+                        return true;
+                    }
+                } else {
+                    log::error!("view {} does not exist", view_id)
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn dispatch_key_up(&mut self, window_id: usize, event: &KeyUpEvent) -> bool {
+        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+            for view_id in self
+                .ancestors(window_id, focused_view_id)
+                .collect::<Vec<_>>()
+            {
+                if let Some(mut view) = self.cx.views.remove(&(window_id, view_id)) {
+                    let handled = view.key_up(event, self, window_id, view_id);
+                    self.cx.views.insert((window_id, view_id), view);
+                    if handled {
+                        return true;
+                    }
+                } else {
+                    log::error!("view {} does not exist", view_id)
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn dispatch_modifiers_changed(
+        &mut self,
+        window_id: usize,
+        event: &ModifiersChangedEvent,
+    ) -> bool {
+        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+            for view_id in self
+                .ancestors(window_id, focused_view_id)
+                .collect::<Vec<_>>()
+            {
+                if let Some(mut view) = self.cx.views.remove(&(window_id, view_id)) {
+                    let handled = view.modifiers_changed(event, self, window_id, view_id);
+                    self.cx.views.insert((window_id, view_id), view);
+                    if handled {
+                        return true;
+                    }
+                } else {
+                    log::error!("view {} does not exist", view_id)
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: &Keystroke) -> bool {
         let mut pending = false;
 
         if let Some(focused_view_id) = self.focused_view_id(window_id) {
-            for view_id in self.parents(window_id, focused_view_id).collect::<Vec<_>>() {
+            for view_id in self
+                .ancestors(window_id, focused_view_id)
+                .collect::<Vec<_>>()
+            {
                 let keymap_context = self
                     .cx
                     .views
@@ -1580,7 +1660,7 @@ impl MutableAppContext {
                     is_fullscreen: false,
                 },
             );
-            root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
+            root_view.update(this, |view, cx| view.focus_in(cx.handle().into(), cx));
 
             let window =
                 this.cx
@@ -1612,7 +1692,7 @@ impl MutableAppContext {
                     is_fullscreen: false,
                 },
             );
-            root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
+            root_view.update(this, |view, cx| view.focus_in(cx.handle().into(), cx));
 
             let status_item = this.cx.platform.add_status_item();
             this.register_platform_window(window_id, status_item);
@@ -2235,12 +2315,12 @@ impl MutableAppContext {
 
             //Handle focus
             let focused_id = window.focused_view_id?;
-            for view_id in this.parents(window_id, focused_id).collect::<Vec<_>>() {
+            for view_id in this.ancestors(window_id, focused_id).collect::<Vec<_>>() {
                 if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
                     if active {
-                        view.on_focus_in(this, window_id, view_id, focused_id);
+                        view.focus_in(this, window_id, view_id, focused_id);
                     } else {
-                        view.on_focus_out(this, window_id, view_id, focused_id);
+                        view.focus_out(this, window_id, view_id, focused_id);
                     }
                     this.cx.views.insert((window_id, view_id), view);
                 }
@@ -2272,16 +2352,16 @@ impl MutableAppContext {
             });
 
             let blurred_parents = blurred_id
-                .map(|blurred_id| this.parents(window_id, blurred_id).collect::<Vec<_>>())
+                .map(|blurred_id| this.ancestors(window_id, blurred_id).collect::<Vec<_>>())
                 .unwrap_or_default();
             let focused_parents = focused_id
-                .map(|focused_id| this.parents(window_id, focused_id).collect::<Vec<_>>())
+                .map(|focused_id| this.ancestors(window_id, focused_id).collect::<Vec<_>>())
                 .unwrap_or_default();
 
             if let Some(blurred_id) = blurred_id {
                 for view_id in blurred_parents.iter().copied() {
                     if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
-                        view.on_focus_out(this, window_id, view_id, blurred_id);
+                        view.focus_out(this, window_id, view_id, blurred_id);
                         this.cx.views.insert((window_id, view_id), view);
                     }
                 }
@@ -2294,7 +2374,7 @@ impl MutableAppContext {
             if let Some(focused_id) = focused_id {
                 for view_id in focused_parents {
                     if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
-                        view.on_focus_in(this, window_id, view_id, focused_id);
+                        view.focus_in(this, window_id, view_id, focused_id);
                         this.cx.views.insert((window_id, view_id), view);
                     }
                 }
@@ -2961,20 +3041,41 @@ pub trait AnyView {
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
     fn render(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
-    fn on_focus_in(
+    fn focus_in(
         &mut self,
         cx: &mut MutableAppContext,
         window_id: usize,
         view_id: usize,
         focused_id: usize,
     );
-    fn on_focus_out(
+    fn focus_out(
         &mut self,
         cx: &mut MutableAppContext,
         window_id: usize,
         view_id: usize,
         focused_id: usize,
     );
+    fn key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) -> bool;
+    fn key_up(
+        &mut self,
+        event: &KeyUpEvent,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) -> bool;
+    fn modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) -> bool;
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
     fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
 
@@ -3040,7 +3141,7 @@ where
         View::render(self, &mut RenderContext::new(params, cx))
     }
 
-    fn on_focus_in(
+    fn focus_in(
         &mut self,
         cx: &mut MutableAppContext,
         window_id: usize,
@@ -3059,10 +3160,10 @@ where
                 .type_id();
             AnyViewHandle::new(window_id, focused_id, focused_type, cx.ref_counts.clone())
         };
-        View::on_focus_in(self, focused_view_handle, &mut cx);
+        View::focus_in(self, focused_view_handle, &mut cx);
     }
 
-    fn on_focus_out(
+    fn focus_out(
         &mut self,
         cx: &mut MutableAppContext,
         window_id: usize,
@@ -3081,7 +3182,40 @@ where
                 .type_id();
             AnyViewHandle::new(window_id, blurred_id, blurred_type, cx.ref_counts.clone())
         };
-        View::on_focus_out(self, blurred_view_handle, &mut cx);
+        View::focus_out(self, blurred_view_handle, &mut cx);
+    }
+
+    fn key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) -> bool {
+        let mut cx = ViewContext::new(cx, window_id, view_id);
+        View::key_down(self, event, &mut cx)
+    }
+
+    fn key_up(
+        &mut self,
+        event: &KeyUpEvent,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) -> bool {
+        let mut cx = ViewContext::new(cx, window_id, view_id);
+        View::key_up(self, event, &mut cx)
+    }
+
+    fn modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) -> bool {
+        let mut cx = ViewContext::new(cx, window_id, view_id);
+        View::modifiers_changed(self, event, &mut cx)
     }
 
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
@@ -3463,7 +3597,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         if self.window_id != view.window_id {
             return false;
         }
-        self.parents(view.window_id, view.view_id)
+        self.ancestors(view.window_id, view.view_id)
             .any(|parent| parent == self.view_id)
     }
 
@@ -6354,13 +6488,13 @@ mod tests {
                 "View"
             }
 
-            fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+            fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
                 if cx.handle().id() == focused.id() {
                     self.events.lock().push(format!("{} focused", &self.name));
                 }
             }
 
-            fn on_focus_out(&mut self, blurred: AnyViewHandle, cx: &mut ViewContext<Self>) {
+            fn focus_out(&mut self, blurred: AnyViewHandle, cx: &mut ViewContext<Self>) {
                 if cx.handle().id() == blurred.id() {
                     self.events.lock().push(format!("{} blurred", &self.name));
                 }

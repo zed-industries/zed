@@ -5,7 +5,7 @@ use crate::{
     },
     json::json,
     presenter::MeasurementContext,
-    DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, MouseRegion,
+    DebugContext, Element, ElementBox, ElementRc, EventContext, LayoutContext, MouseRegion,
     PaintContext, RenderContext, SizeConstraint, View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
@@ -13,7 +13,6 @@ use sum_tree::{Bias, SumTree};
 
 pub struct List {
     state: ListState,
-    invalidated_elements: Vec<ElementRc>,
 }
 
 #[derive(Clone)]
@@ -82,10 +81,7 @@ struct Height(f32);
 
 impl List {
     pub fn new(state: ListState) -> Self {
-        Self {
-            state,
-            invalidated_elements: Default::default(),
-        }
+        Self { state }
     }
 }
 
@@ -287,50 +283,6 @@ impl Element for List {
         }
 
         cx.scene.pop_layer();
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        bounds: RectF,
-        _: RectF,
-        scroll_top: &mut ListOffset,
-        _: &mut (),
-        cx: &mut EventContext,
-    ) -> bool {
-        let mut handled = false;
-
-        let mut state = self.state.0.borrow_mut();
-        let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
-        let mut cursor = state.items.cursor::<Count>();
-        let mut new_items = cursor.slice(&Count(scroll_top.item_ix), Bias::Right, &());
-        while let Some(item) = cursor.item() {
-            if item_origin.y() > bounds.max_y() {
-                break;
-            }
-
-            if let ListItem::Rendered(element) = item {
-                let prev_notify_count = cx.notify_count();
-                let mut element = element.clone();
-                handled = element.dispatch_event(event, cx) || handled;
-                item_origin.set_y(item_origin.y() + element.size().y());
-                if cx.notify_count() > prev_notify_count {
-                    new_items.push(ListItem::Unrendered, &());
-                    self.invalidated_elements.push(element);
-                } else {
-                    new_items.push(item.clone(), &());
-                }
-                cursor.next(&());
-            } else {
-                unreachable!();
-            }
-        }
-
-        new_items.push_tree(cursor.suffix(&()), &());
-        drop(cursor);
-        state.items = new_items;
-
-        handled
     }
 
     fn rect_for_text_range(
@@ -961,18 +913,6 @@ mod tests {
         }
 
         fn paint(&mut self, _: RectF, _: RectF, _: &mut (), _: &mut PaintContext) {
-            todo!()
-        }
-
-        fn dispatch_event(
-            &mut self,
-            _: &Event,
-            _: RectF,
-            _: RectF,
-            _: &mut (),
-            _: &mut (),
-            _: &mut EventContext,
-        ) -> bool {
             todo!()
         }
 

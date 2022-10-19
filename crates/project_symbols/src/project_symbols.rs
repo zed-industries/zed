@@ -51,7 +51,7 @@ impl View for ProjectSymbolsView {
         ChildView::new(self.picker.clone(), cx).boxed()
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             cx.focus(&self.picker);
         }

@@ -4,8 +4,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{self, json, ToJson},
     presenter::MeasurementContext,
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 
 #[derive(Default)]
@@ -47,23 +46,6 @@ impl Element for Stack {
             child.paint(bounds.origin(), visible_bounds, cx);
             cx.scene.pop_layer();
         }
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        for child in self.children.iter_mut().rev() {
-            if child.dispatch_event(event, cx) {
-                return true;
-            }
-        }
-        false
     }
 
     fn rect_for_text_range(

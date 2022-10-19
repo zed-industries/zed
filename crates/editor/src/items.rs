@@ -120,6 +120,7 @@ impl FollowableItem for Editor {
                     buffer.set_active_selections(
                         &self.selections.disjoint_anchors(),
                         self.selections.line_mode,
+                        self.cursor_shape,
                         cx,
                     );
                 }
@@ -531,21 +532,17 @@ impl Item for Editor {
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
-        let filename = if let Some(file) = buffer.file() {
-            if file.path().file_name().is_none()
-                || self
-                    .project
+        let filename = buffer
+            .snapshot()
+            .resolve_file_path(
+                cx,
+                self.project
                     .as_ref()
                     .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                    .unwrap_or_default()
-            {
-                file.full_path(cx).to_string_lossy().to_string()
-            } else {
-                file.path().to_string_lossy().to_string()
-            }
-        } else {
-            "untitled".to_string()
-        };
+                    .unwrap_or_default(),
+            )
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".to_string());
 
         let mut breadcrumbs = vec![Label::new(filename, theme.breadcrumbs.text.clone()).boxed()];
         breadcrumbs.extend(symbols.into_iter().map(|symbol| {

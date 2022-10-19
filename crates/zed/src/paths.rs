@@ -1,12 +1,11 @@
 use std::path::PathBuf;
 
 lazy_static::lazy_static! {
-    static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
+    pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
     pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
     pub static ref LOGS_DIR: PathBuf = HOME.join("Library/Logs/Zed");
     pub static ref LANGUAGES_DIR: PathBuf = HOME.join("Library/Application Support/Zed/languages");
     pub static ref DB_DIR: PathBuf = HOME.join("Library/Application Support/Zed/db");
-    pub static ref DB: PathBuf = DB_DIR.join("zed.db");
     pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
     pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
     pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");

@@ -53,7 +53,7 @@ use thiserror::Error;
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    scene::{DownRegionEvent, DragRegionEvent, ScrollWheelRegionEvent, UpRegionEvent},
+    scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
     ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext, Task,
 };
 
@@ -971,7 +971,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_drag(&mut self, e: DragRegionEvent, origin: Vector2F) {
+    pub fn mouse_drag(&mut self, e: MouseDrag, origin: Vector2F) {
         let position = e.position.sub(origin);
         self.last_mouse_position = Some(position);
 
@@ -997,7 +997,7 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&mut self, e: DragRegionEvent) -> Option<f32> {
+    fn drag_line_delta(&mut self, e: MouseDrag) -> Option<f32> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = e.region.origin_y() + (self.last_content.size.line_height * 2.);
         let bottom = e.region.lower_left().y() - (self.last_content.size.line_height * 2.);
@@ -1011,67 +1011,46 @@ impl Terminal {
         Some(scroll_delta)
     }
 
-    pub fn mouse_down(&mut self, e: &DownRegionEvent, origin: Vector2F) {
+    pub fn mouse_down(&mut self, e: &MouseDown, origin: Vector2F) {
         let position = e.position.sub(origin);
         let point = grid_point(
             position,
             self.last_content.size,
             self.last_content.display_offset,
         );
-        // let side = mouse_side(position, self.last_content.size);
 
         if self.mouse_mode(e.shift) {
             if let Some(bytes) = mouse_button_report(point, e, true, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
-            self.left_click(e, origin)
-        }
-    }
+            let position = e.position.sub(origin);
+            let point = grid_point(
+                position,
+                self.last_content.size,
+                self.last_content.display_offset,
+            );
+            let side = mouse_side(position, self.last_content.size);
 
-    pub fn left_click(&mut self, e: &DownRegionEvent, origin: Vector2F) {
-        let position = e.position.sub(origin);
-        if !self.mouse_mode(e.shift) {
-            //Hyperlinks
-            {
-                let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
-                if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
-                    open_uri(link.uri()).log_err();
-                } else {
-                    self.events
-                        .push_back(InternalEvent::FindHyperlink(position, true));
-                }
-            }
+            let selection_type = match e.click_count {
+                0 => return, //This is a release
+                1 => Some(SelectionType::Simple),
+                2 => Some(SelectionType::Semantic),
+                3 => Some(SelectionType::Lines),
+                _ => None,
+            };
 
-            // Selections
-            {
-                let point = grid_point(
-                    position,
-                    self.last_content.size,
-                    self.last_content.display_offset,
-                );
-                let side = mouse_side(position, self.last_content.size);
+            let selection =
+                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-                let selection_type = match e.click_count {
-                    0 => return, //This is a release
-                    1 => Some(SelectionType::Simple),
-                    2 => Some(SelectionType::Semantic),
-                    3 => Some(SelectionType::Lines),
-                    _ => None,
-                };
-
-                let selection = selection_type
-                    .map(|selection_type| Selection::new(selection_type, point, side));
-
-                if let Some(sel) = selection {
-                    self.events
-                        .push_back(InternalEvent::SetSelection(Some((sel, point))));
-                }
+            if let Some(sel) = selection {
+                self.events
+                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
             }
         }
     }
 
-    pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F, cx: &mut ModelContext<Self>) {
+    pub fn mouse_up(&mut self, e: &MouseUp, origin: Vector2F, cx: &mut ModelContext<Self>) {
         let settings = cx.global::<Settings>();
         let copy_on_select = settings
             .terminal_overrides
@@ -1094,8 +1073,21 @@ impl Terminal {
             if let Some(bytes) = mouse_button_report(point, e, false, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
-        } else if e.button == MouseButton::Left && copy_on_select {
-            self.copy();
+        } else {
+            if e.button == MouseButton::Left && copy_on_select {
+                self.copy();
+            }
+
+            //Hyperlinks
+            if self.selection_phase == SelectionPhase::Ended {
+                let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
+                if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
+                    open_uri(link.uri()).log_err();
+                } else {
+                    self.events
+                        .push_back(InternalEvent::FindHyperlink(position, true));
+                }
+            }
         }
 
         self.selection_phase = SelectionPhase::Ended;
@@ -1103,7 +1095,7 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: ScrollWheelRegionEvent, origin: Vector2F) {
+    pub fn scroll_wheel(&mut self, e: MouseScrollWheel, origin: Vector2F) {
         let mouse_mode = self.mouse_mode(e.shift);
 
         if let Some(scroll_lines) = self.determine_scroll_lines(&e, mouse_mode) {
@@ -1142,11 +1134,7 @@ impl Terminal {
         self.hyperlink_from_position(self.last_mouse_position);
     }
 
-    fn determine_scroll_lines(
-        &mut self,
-        e: &ScrollWheelRegionEvent,
-        mouse_mode: bool,
-    ) -> Option<i32> {
+    fn determine_scroll_lines(&mut self, e: &MouseScrollWheel, mouse_mode: bool) -> Option<i32> {
         let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
 
         match e.phase {

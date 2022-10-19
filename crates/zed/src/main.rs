@@ -23,7 +23,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Fs, ProjectStore};
+use project::{Fs, HomeDir, ProjectStore};
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -52,11 +52,9 @@ fn main() {
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
     init_panic_hook(app_version, http.clone(), app.background());
-    let db = app.background().spawn(async move {
-        project::Db::open(&*zed::paths::DB)
-            .log_err()
-            .unwrap_or_else(project::Db::null)
-    });
+    let db = app
+        .background()
+        .spawn(async move { project::Db::open(&*zed::paths::DB_DIR) });
 
     load_embedded_fonts(&app);
 
@@ -98,6 +96,8 @@ fn main() {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
+
+        cx.set_global(HomeDir(zed::paths::HOME.to_path_buf()));
 
         //Setup settings global before binding actions
         cx.set_global(SettingsFile::new(

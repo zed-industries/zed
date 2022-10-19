@@ -9,7 +9,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     presenter::MeasurementContext,
-    scene, DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    scene, DebugContext, Element, LayoutContext, PaintContext, SizeConstraint,
 };
 
 pub struct Svg {
@@ -71,18 +71,6 @@ impl Element for Svg {
                 color: self.color,
             });
         }
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut EventContext,
-    ) -> bool {
-        false
     }
 
     fn rect_for_text_range(
