@@ -10,8 +10,8 @@ use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::watch;
 use project::Project;
-use std::{os::unix::prelude::OsStrExt, sync::Arc};
-use util::ResultExt;
+use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
+use util::{post_inc, ResultExt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -100,7 +100,8 @@ impl Room {
                 .detach_and_log_err(cx);
             Some(LiveKitRoom {
                 room,
-                screen_track: None,
+                screen_track: ScreenTrack::None,
+                next_publish_id: 0,
                 _maintain_room,
             })
         } else {
@@ -607,9 +608,9 @@ impl Room {
     }
 
     pub fn is_screen_sharing(&self) -> bool {
-        self.live_kit
-            .as_ref()
-            .map_or(false, |live_kit| live_kit.screen_track.is_some())
+        self.live_kit.as_ref().map_or(false, |live_kit| {
+            !matches!(live_kit.screen_track, ScreenTrack::None)
+        })
     }
 
     pub fn share_screen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -619,23 +620,34 @@ impl Room {
             return Task::ready(Err(anyhow!("screen was already shared")));
         }
 
-        cx.spawn_weak(|this, mut cx| async move {
-            let displays = live_kit_client::display_sources().await?;
-            let display = displays
-                .first()
-                .ok_or_else(|| anyhow!("no display found"))?;
-            let track = LocalVideoTrack::screen_share_for_display(&display);
-            let publication = this
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("room was dropped"))?
-                .read_with(&cx, |this, _| {
-                    this.live_kit
-                        .as_ref()
-                        .map(|live_kit| live_kit.room.publish_video_track(&track))
-                })
-                .ok_or_else(|| anyhow!("live-kit was not initialized"))?
-                .await?;
+        let publish_id = if let Some(live_kit) = self.live_kit.as_mut() {
+            let publish_id = post_inc(&mut live_kit.next_publish_id);
+            live_kit.screen_track = ScreenTrack::Pending { publish_id };
+            cx.notify();
+            publish_id
+        } else {
+            return Task::ready(Err(anyhow!("live-kit was not initialized")));
+        };
 
+        cx.spawn_weak(|this, mut cx| async move {
+            let publish_track = async {
+                let displays = live_kit_client::display_sources().await?;
+                let display = displays
+                    .first()
+                    .ok_or_else(|| anyhow!("no display found"))?;
+                let track = LocalVideoTrack::screen_share_for_display(&display);
+                this.upgrade(&cx)
+                    .ok_or_else(|| anyhow!("room was dropped"))?
+                    .read_with(&cx, |this, _| {
+                        this.live_kit
+                            .as_ref()
+                            .map(|live_kit| live_kit.room.publish_video_track(&track))
+                    })
+                    .ok_or_else(|| anyhow!("live-kit was not initialized"))?
+                    .await
+            };
+
+            let publication = publish_track.await;
             this.upgrade(&cx)
                 .ok_or_else(|| anyhow!("room was dropped"))?
                 .update(&mut cx, |this, cx| {
@@ -643,9 +655,36 @@ impl Room {
                         .live_kit
                         .as_mut()
                         .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
-                    live_kit.screen_track = Some(publication);
-                    cx.notify();
-                    Ok(())
+
+                    let canceled = if let ScreenTrack::Pending {
+                        publish_id: cur_publish_id,
+                    } = &live_kit.screen_track
+                    {
+                        *cur_publish_id != publish_id
+                    } else {
+                        true
+                    };
+
+                    match publication {
+                        Ok(publication) => {
+                            if canceled {
+                                live_kit.room.unpublish_track(publication);
+                            } else {
+                                live_kit.screen_track = ScreenTrack::Published(publication);
+                                cx.notify();
+                            }
+                            Ok(())
+                        }
+                        Err(error) => {
+                            if canceled {
+                                Ok(())
+                            } else {
+                                live_kit.screen_track = ScreenTrack::None;
+                                cx.notify();
+                                Err(error)
+                            }
+                        }
+                    }
                 })
         })
     }
@@ -659,21 +698,38 @@ impl Room {
             .live_kit
             .as_mut()
             .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
-        let track = live_kit
-            .screen_track
-            .take()
-            .ok_or_else(|| anyhow!("screen was not shared"))?;
-        live_kit.room.unpublish_track(track);
-        cx.notify();
-
-        Ok(())
+        match mem::take(&mut live_kit.screen_track) {
+            ScreenTrack::None => Err(anyhow!("screen was not shared")),
+            ScreenTrack::Pending { .. } => {
+                cx.notify();
+                Ok(())
+            }
+            ScreenTrack::Published(track) => {
+                live_kit.room.unpublish_track(track);
+                cx.notify();
+                Ok(())
+            }
+        }
     }
 }
 
 struct LiveKitRoom {
     room: Arc<live_kit_client::Room>,
-    screen_track: Option<LocalTrackPublication>,
+    screen_track: ScreenTrack,
+    next_publish_id: usize,
     _maintain_room: Task<()>,
+}
+
+pub enum ScreenTrack {
+    None,
+    Pending { publish_id: usize },
+    Published(LocalTrackPublication),
+}
+
+impl Default for ScreenTrack {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
