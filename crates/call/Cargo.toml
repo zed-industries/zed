@@ -12,6 +12,7 @@ test-support = [
     "client/test-support",
     "collections/test-support",
     "gpui/test-support",
+    "live_kit_client/test-support",
     "project/test-support",
     "util/test-support"
 ]
@@ -33,5 +34,6 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

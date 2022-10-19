@@ -35,14 +35,16 @@ pub struct SwiftTarget {
 const MACOS_TARGET_VERSION: &str = "10.15";
 
 fn main() {
-    let swift_target = get_swift_target();
+    if cfg!(not(any(test, feature = "test-support"))) {
+        let swift_target = get_swift_target();
 
-    build_bridge(&swift_target);
-    link_swift_stdlib(&swift_target);
-    link_webrtc_framework(&swift_target);
+        build_bridge(&swift_target);
+        link_swift_stdlib(&swift_target);
+        link_webrtc_framework(&swift_target);
 
-    // Register exported Objective-C selectors, protocols, etc when building example binaries.
-    println!("cargo:rustc-link-arg=-Wl,-ObjC");
+        // Register exported Objective-C selectors, protocols, etc when building example binaries.
+        println!("cargo:rustc-link-arg=-Wl,-ObjC");
+    }
 }
 
 fn build_bridge(swift_target: &SwiftTarget) {

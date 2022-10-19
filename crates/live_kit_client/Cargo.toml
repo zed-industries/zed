@@ -11,6 +11,9 @@ doctest = false
 [[example]]
 name = "test_app"
 
+[features]
+test-support = []
+
 [dependencies]
 media = { path = "../media" }
 
