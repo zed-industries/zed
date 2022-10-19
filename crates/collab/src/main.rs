@@ -9,7 +9,7 @@ mod db_tests;
 #[cfg(test)]
 mod integration_tests;
 
-use axum::{body::Body, Router};
+use axum::{routing::get, Router};
 use collab::{Error, Result};
 use db::{Db, PostgresDb};
 use serde::Deserialize;
@@ -21,6 +21,8 @@ use std::{
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
+
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default, Deserialize)]
 pub struct Config {
@@ -67,15 +69,19 @@ async fn main() -> Result<()> {
 
     rpc_server.start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
 
-    let app = Router::<Body>::new()
-        .merge(api::routes(&rpc_server, state.clone()))
-        .merge(rpc::routes(rpc_server));
+    let app = api::routes(&rpc_server, state.clone())
+        .merge(rpc::routes(rpc_server))
+        .merge(Router::new().route("/", get(handle_root)));
 
     axum::Server::from_tcp(listener)?
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await?;
 
     Ok(())
+}
+
+async fn handle_root() -> String {
+    format!("collab v{VERSION}")
 }
 
 pub fn init_tracing(config: &Config) -> Option<()> {

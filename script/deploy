@@ -2,36 +2,41 @@
 
 # Prerequisites:
 #
-# - Log in to the DigitalOcean docker registry
-#   doctl registry login
-#
-# - Target the `zed-1` kubernetes cluster
-#   doctl kubernetes cluster kubeconfig save zed-1
+# - Log in to the DigitalOcean API, either interactively, by running
+#   `doctl auth init`, or by setting the `DIGITALOCEAN_ACCESS_TOKEN`
+#   environment variable.
 
 set -eu
 
-if [[ $# < 1 ]]; then
-  echo "Usage: $0 [production|staging|...]"
+if [[ $# < 2 ]]; then
+  echo "Usage: $0 <production|staging|preview> <tag-name>"
   exit 1
 fi
-
 export ZED_KUBE_NAMESPACE=$1
+COLLAB_VERSION=$2
+
 ENV_FILE="crates/collab/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
 if [[ ! -f $ENV_FILE ]]; then
   echo "Invalid environment name '${ZED_KUBE_NAMESPACE}'"
   exit 1
 fi
-
-if [[ $ZED_KUBE_NAMESPACE == "production" && -n $(git status --short) ]]; then
-  echo "Cannot deploy uncommited changes to production"
-  exit 1
-fi
-
-git_sha=$(git rev-parse HEAD)
-export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${ZED_KUBE_NAMESPACE}-${git_sha}"
 export $(cat $ENV_FILE)
 
-docker build . --tag "$ZED_IMAGE_ID"
-docker push "$ZED_IMAGE_ID"
+if [[ ! $COLLAB_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Invalid version number '$COLLAB_VERSION'"
+  exit 1
+fi
+TAG_NAMES=$(doctl registry repository list-tags collab --no-header --format Tag)
+if ! $(echo "${TAG_NAMES}" | grep -Fqx v${COLLAB_VERSION}); then
+  echo "No such image tag: 'zed/collab:v${COLLAB_VERSION}'"
+  echo "Found tags"
+  echo "${TAG_NAMES}"
+  exit 1
+fi
+export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}"
+
+if [[ $(kubectl config current-context 2> /dev/null) != do-nyc1-zed-1 ]]; then
+  doctl kubernetes cluster kubeconfig save zed-1
+fi
 
 envsubst < crates/collab/k8s/manifest.template.yml | kubectl apply -f -
