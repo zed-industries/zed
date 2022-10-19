@@ -615,6 +615,8 @@ impl Room {
     pub fn share_screen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
+        } else if self.is_screen_sharing() {
+            return Task::ready(Err(anyhow!("screen was already shared")));
         }
 
         cx.spawn_weak(|this, mut cx| async move {
