@@ -65,31 +65,6 @@ spec:
                 secretKeyRef:
                   name: database
                   key: url
-            - name: SESSION_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: session
-                  key: secret
-            - name: GITHUB_APP_ID
-              valueFrom:
-                secretKeyRef:
-                  name: github
-                  key: appId
-            - name: GITHUB_CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: github
-                  key: clientId
-            - name: GITHUB_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: github
-                  key: clientSecret
-            - name: GITHUB_PRIVATE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: github
-                  key: privateKey
             - name: API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -101,13 +76,6 @@ spec:
               value: ${RUST_LOG}
             - name: LOG_JSON
               value: "true"
-            - name: HONEYCOMB_DATASET
-              value: "collab"
-            - name: HONEYCOMB_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: honeycomb
-                  key: apiKey
           securityContext:
             capabilities:
               # FIXME - Switch to the more restrictive `PERFMON` capability.

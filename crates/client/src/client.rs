@@ -13,11 +13,13 @@ use async_tungstenite::tungstenite::{
     http::{Request, StatusCode},
 };
 use db::Db;
-use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use futures::{future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
-    actions, serde_json::Value, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle,
-    AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, Task, View, ViewContext, ViewHandle,
+    actions,
+    serde_json::{self, Value},
+    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
+    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use http::HttpClient;
 use lazy_static::lazy_static;
@@ -25,6 +27,7 @@ use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage};
+use serde::Deserialize;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -48,6 +51,9 @@ lazy_static! {
     pub static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
     pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
+        .ok()
+        .and_then(|s| if s.is_empty() { None } else { Some(s) });
+    pub static ref ADMIN_API_TOKEN: Option<String> = std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
 }
@@ -919,6 +925,37 @@ impl Client {
         self.establish_websocket_connection(credentials, cx)
     }
 
+    async fn get_rpc_url(http: Arc<dyn HttpClient>) -> Result<Url> {
+        let url = format!("{}/rpc", *ZED_SERVER_URL);
+        let response = http.get(&url, Default::default(), false).await?;
+
+        // Normally, ZED_SERVER_URL is set to the URL of zed.dev website.
+        // The website's /rpc endpoint redirects to a collab server's /rpc endpoint,
+        // which requires authorization via an HTTP header.
+        //
+        // For testing purposes, ZED_SERVER_URL can also set to the direct URL of
+        // of a collab server. In that case, a request to the /rpc endpoint will
+        // return an 'unauthorized' response.
+        let collab_url = if response.status().is_redirection() {
+            response
+                .headers()
+                .get("Location")
+                .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
+                .to_str()
+                .map_err(EstablishConnectionError::other)?
+                .to_string()
+        } else if response.status() == StatusCode::UNAUTHORIZED {
+            url
+        } else {
+            Err(anyhow!(
+                "unexpected /rpc response status {}",
+                response.status()
+            ))?
+        };
+
+        Url::parse(&collab_url).context("invalid rpc url")
+    }
+
     fn establish_websocket_connection(
         self: &Arc<Self>,
         credentials: &Credentials,
@@ -933,28 +970,7 @@ impl Client {
 
         let http = self.http.clone();
         cx.background().spawn(async move {
-            let mut rpc_url = format!("{}/rpc", *ZED_SERVER_URL);
-            let rpc_response = http.get(&rpc_url, Default::default(), false).await?;
-            if rpc_response.status().is_redirection() {
-                rpc_url = rpc_response
-                    .headers()
-                    .get("Location")
-                    .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
-                    .to_str()
-                    .map_err(EstablishConnectionError::other)?
-                    .to_string();
-            }
-            // Until we switch the zed.dev domain to point to the new Next.js app, there
-            // will be no redirect required, and the app will connect directly to
-            // wss://zed.dev/rpc.
-            else if rpc_response.status() != StatusCode::UPGRADE_REQUIRED {
-                Err(anyhow!(
-                    "unexpected /rpc response status {}",
-                    rpc_response.status()
-                ))?
-            }
-
-            let mut rpc_url = Url::parse(&rpc_url).context("invalid rpc url")?;
+            let mut rpc_url = Self::get_rpc_url(http).await?;
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
@@ -997,6 +1013,7 @@ impl Client {
         let platform = cx.platform();
         let executor = cx.background();
         let telemetry = self.telemetry.clone();
+        let http = self.http.clone();
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
             // zed server to encrypt the user's access token, so that it can'be intercepted by
@@ -1005,6 +1022,10 @@ impl Client {
                 rpc::auth::keypair().expect("failed to generate keypair for auth");
             let public_key_string =
                 String::try_from(public_key).expect("failed to serialize public key for auth");
+
+            if let Some((login, token)) = IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref()) {
+                return Self::authenticate_as_admin(http, login.clone(), token.clone()).await;
+            }
 
             // Start an HTTP server to receive the redirect from Zed's sign-in page.
             let server = tiny_http::Server::http("127.0.0.1:0").expect("failed to find open port");
@@ -1081,6 +1102,50 @@ impl Client {
                 user_id: user_id.parse()?,
                 access_token,
             })
+        })
+    }
+
+    async fn authenticate_as_admin(
+        http: Arc<dyn HttpClient>,
+        login: String,
+        mut api_token: String,
+    ) -> Result<Credentials> {
+        #[derive(Deserialize)]
+        struct AuthenticatedUserResponse {
+            user: User,
+        }
+
+        #[derive(Deserialize)]
+        struct User {
+            id: u64,
+        }
+
+        // Use the collab server's admin API to retrieve the id
+        // of the impersonated user.
+        let mut url = Self::get_rpc_url(http.clone()).await?;
+        url.set_path("/user");
+        url.set_query(Some(&format!("github_login={login}")));
+        let request = Request::get(url.as_str())
+            .header("Authorization", format!("token {api_token}"))
+            .body("".into())?;
+
+        let mut response = http.send(request).await?;
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        if !response.status().is_success() {
+            Err(anyhow!(
+                "admin user request failed {} - {}",
+                response.status().as_u16(),
+                body,
+            ))?;
+        }
+        let response: AuthenticatedUserResponse = serde_json::from_str(&body)?;
+
+        // Use the admin API token to authenticate as the impersonated user.
+        api_token.insert_str(0, "ADMIN_TOKEN:");
+        Ok(Credentials {
+            user_id: response.user.id,
+            access_token: api_token,
         })
     }
 
