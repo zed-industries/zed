@@ -14,6 +14,7 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 
 use migrations::MIGRATIONS;
+pub use workspace::*;
 
 #[derive(Clone)]
 pub enum Db {

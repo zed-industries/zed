@@ -36,7 +36,6 @@ CREATE TABLE worktree_roots(
 pub struct WorkspaceId(usize);
 
 struct WorkspaceRow {
-    pub workspace_id: WorkspaceId,
     pub center_group_id: PaneGroupId,
     pub dock_pane_id: PaneId,
 }
@@ -67,15 +66,10 @@ impl Db {
             }
         } else {
             let workspace_id = self.get_next_workspace_id();
-            let center_group = SerializedPaneGroup {
-                group_id: PaneGroupId::root(workspace_id),
-                axis: Default::default(),
-                children: Default::default(),
-            };
 
             SerializedWorkspace {
                 workspace_id,
-                center_group,
+                center_group: SerializedPaneGroup::empty_root(workspace_id),
                 dock_pane: None,
             }
         }

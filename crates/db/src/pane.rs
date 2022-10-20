@@ -30,13 +30,13 @@ CREATE TABLE pane_items(
 ) STRICT;
 ";
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct PaneId {
     workspace_id: WorkspaceId,
     pane_id: usize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct PaneGroupId {
     workspace_id: WorkspaceId,
     group_id: usize,
@@ -56,6 +56,16 @@ pub struct SerializedPaneGroup {
     group_id: PaneGroupId,
     axis: Axis,
     children: Vec<PaneGroupChild>,
+}
+
+impl SerializedPaneGroup {
+    pub(crate) fn empty_root(workspace_id: WorkspaceId) -> Self {
+        Self {
+            group_id: PaneGroupId::root(workspace_id),
+            axis: Default::default(),
+            children: Default::default(),
+        }
+    }
 }
 
 struct PaneGroupChildRow {
@@ -99,7 +109,7 @@ impl Db {
                 ));
             }
         }
-        children.sort_by_key(|(index, _)| index);
+        children.sort_by_key(|(index, _)| *index);
 
         SerializedPaneGroup {
             group_id: pane_group_id,
@@ -108,18 +118,18 @@ impl Db {
         }
     }
 
-    pub fn get_pane_group_children(
+    fn get_pane_group_children(
         &self,
         pane_group_id: PaneGroupId,
     ) -> impl Iterator<Item = PaneGroupChildRow> {
-        unimplemented!()
+        Vec::new().into_iter()
     }
 
-    pub fn get_pane_group_axis(&self, pane_group_id: PaneGroupId) -> Axis {
+    fn get_pane_group_axis(&self, pane_group_id: PaneGroupId) -> Axis {
         unimplemented!();
     }
 
-    pub fn save_center_pane_group(&self, center_pane_group: SerializedPaneGroup) {
+    pub fn save_pane_splits(&self, center_pane_group: SerializedPaneGroup) {
         // Delete the center pane group for this workspace and any of its children
         // Generate new pane group IDs as we go through
         // insert them
