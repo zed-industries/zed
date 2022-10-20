@@ -1,64 +1,58 @@
-import Theme from "../themes/common/theme";
+import { ColorScheme } from "../themes/common/colorScheme";
 import { withOpacity } from "../utils/color";
 import {
-  backgroundColor,
+  background,
   border,
-  iconColor,
-  modalShadow,
+  borderColor,
+  foreground,
   text,
 } from "./components";
 import statusBar from "./statusBar";
 import tabBar from "./tabBar";
 
-export function workspaceBackground(theme: Theme) {
-  return backgroundColor(theme, 300);
-}
-
-export default function workspace(theme: Theme) {
+export default function workspace(colorScheme: ColorScheme) {
+  const layer = colorScheme.lowest;
   const titlebarPadding = 6;
   const titlebarButton = {
-    background: backgroundColor(theme, 100),
-    border: border(theme, "secondary"),
     cornerRadius: 6,
-    margin: {
-      top: 1,
-    },
     padding: {
       top: 1,
       bottom: 1,
-      left: 7,
-      right: 7,
+      left: 8,
+      right: 8,
     },
-    ...text(theme, "sans", "secondary", { size: "xs" }),
+    ...text(layer, "sans", "variant", { size: "xs" }),
+    background: background(layer, "variant"),
+    border: border(layer),
     hover: {
-      ...text(theme, "sans", "active", { size: "xs" }),
-      background: backgroundColor(theme, "on300", "hovered"),
-      border: border(theme, "primary"),
+      ...text(layer, "sans", "variant", "hovered", { size: "xs" }),
+      background: background(layer, "variant", "hovered"),
+      border: border(layer, "variant", "hovered"),
     },
   };
   const avatarWidth = 18;
 
   return {
-    background: backgroundColor(theme, 300),
+    background: background(layer),
     joiningProjectAvatar: {
       cornerRadius: 40,
       width: 80,
     },
     joiningProjectMessage: {
       padding: 12,
-      ...text(theme, "sans", "primary", { size: "lg" }),
+      ...text(layer, "sans", { size: "lg" }),
     },
     externalLocationMessage: {
-      background: backgroundColor(theme, "info"),
-      border: border(theme, "secondary"),
+      background: background(colorScheme.middle, "accent"),
+      border: border(colorScheme.middle, "accent"),
       cornerRadius: 6,
       padding: 12,
       margin: { bottom: 8, right: 8 },
-      ...text(theme, "sans", "secondary", { size: "xs" }),
+      ...text(colorScheme.middle, "sans", "accent", { size: "xs" }),
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
-    tabBar: tabBar(theme),
+    tabBar: tabBar(colorScheme),
     modal: {
       margin: {
         bottom: 52,
@@ -68,28 +62,28 @@ export default function workspace(theme: Theme) {
     },
     sidebar: {
       initialSize: 240,
-      border: {
-        color: border(theme, "primary").color,
-        width: 1,
-        left: true,
-        right: true,
-      }
+      border: border(layer, { left: true, right: true }),
     },
     paneDivider: {
-      color: border(theme, "secondary").color,
+      color: borderColor(layer),
       width: 1,
     },
-    statusBar: statusBar(theme),
+    statusBar: statusBar(colorScheme),
     titlebar: {
       avatarWidth,
       avatarMargin: 8,
-      height: 33,
-      background: backgroundColor(theme, 100),
+      height: 33, // 32px + 1px for overlaid border
+      background: background(layer),
+      border: border(layer, { bottom: true, overlay: true }),
       padding: {
         left: 80,
         right: titlebarPadding,
       },
-      title: text(theme, "sans", "primary"),
+
+      // Project
+      title: text(layer, "sans", "variant"),
+
+      // Collaborators
       avatar: {
         cornerRadius: avatarWidth / 2,
         border: {
@@ -108,15 +102,18 @@ export default function workspace(theme: Theme) {
       avatarRibbon: {
         height: 3,
         width: 12,
-        // TODO: The background for this ideally should be
-        // set with a token, not hardcoded in rust
+        // TODO: Chore: Make avatarRibbon colors driven by the theme rather than being hard coded.
       },
-      border: border(theme, "primary", { bottom: true, overlay: true }),
+
+      // Sign in buttom
+      // FlatButton, Variant
       signInPrompt: {
         ...titlebarButton
       },
+
+      // Offline Indicator
       offlineIcon: {
-        color: iconColor(theme, "secondary"),
+        color: foreground(layer, "variant"),
         width: 16,
         margin: {
           left: titlebarPadding,
@@ -125,79 +122,82 @@ export default function workspace(theme: Theme) {
           right: 4,
         },
       },
+
+      // Notice that the collaboration server is out of date
       outdatedWarning: {
-        ...text(theme, "sans", "warning", { size: "xs" }),
-        background: backgroundColor(theme, "warning"),
-        border: border(theme, "warning"),
+        ...text(layer, "sans", "warning", { size: "xs" }),
+        background: withOpacity(background(layer, "warning"), 0.3),
+        border: border(layer, "warning"),
         margin: {
           left: titlebarPadding,
         },
         padding: {
-          left: 6,
-          right: 6,
+          left: 8,
+          right: 8,
         },
         cornerRadius: 6,
       },
       toggleContactsButton: {
         cornerRadius: 6,
-        color: iconColor(theme, "secondary"),
+        color: foreground(layer, "variant"),
         iconWidth: 8,
         buttonWidth: 20,
         active: {
-          background: backgroundColor(theme, "on300", "active"),
-          color: iconColor(theme, "active"),
+          background: background(layer, "variant", "active"),
+          color: foreground(layer, "variant", "active"),
         },
         hover: {
-          background: backgroundColor(theme, "on300", "hovered"),
-          color: iconColor(theme, "active"),
+          background: background(layer, "variant", "hovered"),
+          color: foreground(layer, "variant", "hovered"),
         },
       },
       toggleContactsBadge: {
         cornerRadius: 3,
         padding: 2,
         margin: { top: 3, left: 3 },
-        border: { width: 1, color: workspaceBackground(theme) },
-        background: iconColor(theme, "feature"),
+        border: border(layer),
+        background: foreground(layer, "accent"),
       },
       shareButton: {
         ...titlebarButton
       }
     },
+
     toolbar: {
       height: 34,
-      background: backgroundColor(theme, 500),
-      border: border(theme, "secondary", { bottom: true }),
+      background: background(colorScheme.highest),
+      border: border(colorScheme.highest, { bottom: true }),
       itemSpacing: 8,
       navButton: {
-        color: iconColor(theme, "primary"),
+        color: foreground(colorScheme.highest, "on"),
         iconWidth: 12,
         buttonWidth: 24,
         cornerRadius: 6,
         hover: {
-          color: iconColor(theme, "active"),
-          background: backgroundColor(theme, "on500", "hovered"),
+          color: foreground(colorScheme.highest, "on", "hovered"),
+          background: background(colorScheme.highest, "on", "hovered"),
         },
         disabled: {
-          color: withOpacity(iconColor(theme, "muted"), 0.6),
+          color: foreground(colorScheme.highest, "on", "disabled"),
         },
       },
       padding: { left: 8, right: 8, top: 4, bottom: 4 },
     },
     breadcrumbs: {
-      ...text(theme, "mono", "secondary"),
+      ...text(layer, "mono", "variant"),
       padding: { left: 6 },
     },
     disconnectedOverlay: {
-      ...text(theme, "sans", "active"),
-      background: withOpacity(theme.backgroundColor[500].base, 0.8),
+      ...text(layer, "sans"),
+      background: withOpacity(background(layer), 0.8),
     },
     notification: {
       margin: { top: 10 },
-      background: backgroundColor(theme, 300),
+      background: background(colorScheme.middle),
       cornerRadius: 6,
       padding: 12,
-      border: border(theme, "primary"),
-      shadow: modalShadow(theme),
+      border: border(colorScheme.middle),
+      shadow: colorScheme.popoverShadow,
     },
     notifications: {
       width: 400,
@@ -206,18 +206,15 @@ export default function workspace(theme: Theme) {
     dock: {
       initialSizeRight: 640,
       initialSizeBottom: 480,
-      wash_color: withOpacity(theme.backgroundColor[500].base, 0.5),
+      wash_color: withOpacity(background(colorScheme.highest), 0.5),
       panel: {
-        border: {
-          ...border(theme, "secondary"),
-          width: 1
-        },
+        border: border(colorScheme.highest),
       },
       maximized: {
-        margin: 24,
-        border: border(theme, "secondary", { "overlay": true }),
-        shadow: modalShadow(theme),
-      }
-    }
+        margin: 32,
+        border: border(colorScheme.highest, { overlay: true }),
+        shadow: colorScheme.modalShadow,
+      },
+    },
   };
 }

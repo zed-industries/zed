@@ -1,18 +1,19 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor, border, popoverShadow, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, text } from "./components";
 
-export default function HoverPopover(theme: Theme) {
+export default function HoverPopover(colorScheme: ColorScheme) {
+  let layer = colorScheme.middle;
   let baseContainer = {
-    background: backgroundColor(theme, "on500"),
+    background: background(layer),
     cornerRadius: 8,
     padding: {
       left: 8,
       right: 8,
       top: 4,
-      bottom: 4
+      bottom: 4,
     },
-    shadow: popoverShadow(theme),
-    border: border(theme, "secondary"),
+    shadow: colorScheme.popoverShadow,
+    border: border(layer),
     margin: {
       left: -8,
     },
@@ -22,32 +23,23 @@ export default function HoverPopover(theme: Theme) {
     container: baseContainer,
     infoContainer: {
       ...baseContainer,
-      background: backgroundColor(theme, "on500Info"),
-      border: {
-        color: theme.ramps.blue(0).hex(),
-        width: 1,
-      },
+      background: background(layer, "accent"),
+      border: border(layer, "accent"),
     },
     warningContainer: {
       ...baseContainer,
-      background: backgroundColor(theme, "on500Warning"),
-      border: {
-        color: theme.ramps.yellow(0).hex(),
-        width: 1,
-      },
+      background: background(layer, "warning"),
+      border: border(layer, "warning"),
     },
     errorContainer: {
       ...baseContainer,
-      background: backgroundColor(theme, "on500Error"),
-      border: {
-        color: theme.ramps.red(0).hex(),
-        width: 1,
-      }
+      background: background(layer, "negative"),
+      border: border(layer, "negative"),
     },
     block_style: {
       padding: { top: 4 },
     },
-    prose: text(theme, "sans", "primary", { size: "sm" }),
-    highlight: theme.editor.highlight.occurrence,
+    prose: text(layer, "sans", { size: "sm" }),
+    highlight: colorScheme.ramps.neutral(0.5).alpha(0.2).hex(), // TODO: blend was used here. Replace with something better
   };
 }

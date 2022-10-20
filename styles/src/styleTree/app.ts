@@ -1,5 +1,3 @@
-import Theme from "../themes/common/theme";
-import chatPanel from "./chatPanel";
 import { text } from "./components";
 import contactFinder from "./contactFinder";
 import contactsPopover from "./contactsPopover";
@@ -18,40 +16,51 @@ import tooltip from "./tooltip";
 import terminal from "./terminal";
 import contactList from "./contactList";
 import incomingCallNotification from "./incomingCallNotification";
+import { ColorScheme } from "../themes/common/colorScheme";
 
-export const panel = {
-  padding: { top: 12, bottom: 12 },
-};
-
-export default function app(theme: Theme): Object {
+export default function app(colorScheme: ColorScheme): Object {
   return {
     meta: {
-      name: theme.name,
-      isLight: theme.isLight
+      name: colorScheme.name,
+      isLight: colorScheme.isLight,
     },
-    picker: picker(theme),
-    workspace: workspace(theme),
-    contextMenu: contextMenu(theme),
-    editor: editor(theme),
-    projectDiagnostics: projectDiagnostics(theme),
-    commandPalette: commandPalette(theme),
-    projectPanel: projectPanel(theme),
-    chatPanel: chatPanel(theme),
-    contactsPopover: contactsPopover(theme),
-    contactList: contactList(theme),
-    contactFinder: contactFinder(theme),
-    search: search(theme),
+    commandPalette: commandPalette(colorScheme),
+    contactNotification: contactNotification(colorScheme),
+    projectSharedNotification: projectSharedNotification(colorScheme),
+    incomingCallNotification: incomingCallNotification(colorScheme),
+    picker: picker(colorScheme),
+    workspace: workspace(colorScheme),
+    contextMenu: contextMenu(colorScheme),
+    editor: editor(colorScheme),
+    projectDiagnostics: projectDiagnostics(colorScheme),
+    projectPanel: projectPanel(colorScheme),
+    contactsPopover: contactsPopover(colorScheme),
+    contactFinder: contactFinder(colorScheme),
+    contactList: contactList(colorScheme),
+    search: search(colorScheme),
     breadcrumbs: {
-      ...text(theme, "sans", "secondary"),
+      ...text(colorScheme.highest, "sans", "variant"),
       padding: {
         left: 6,
       },
     },
-    contactNotification: contactNotification(theme),
-    updateNotification: updateNotification(theme),
-    projectSharedNotification: projectSharedNotification(theme),
-    incomingCallNotification: incomingCallNotification(theme),
-    tooltip: tooltip(theme),
-    terminal: terminal(theme),
+    updateNotification: updateNotification(colorScheme),
+    tooltip: tooltip(colorScheme),
+    terminal: terminal(colorScheme),
+    colorScheme: {
+      ...colorScheme,
+      players: Object.values(colorScheme.players),
+      ramps: {
+        neutral: colorScheme.ramps.neutral.colors(100, "hex"),
+        red: colorScheme.ramps.red.colors(100, "hex"),
+        orange: colorScheme.ramps.orange.colors(100, "hex"),
+        yellow: colorScheme.ramps.yellow.colors(100, "hex"),
+        green: colorScheme.ramps.green.colors(100, "hex"),
+        cyan: colorScheme.ramps.cyan.colors(100, "hex"),
+        blue: colorScheme.ramps.blue.colors(100, "hex"),
+        violet: colorScheme.ramps.violet.colors(100, "hex"),
+        magenta: colorScheme.ramps.magenta.colors(100, "hex"),
+      },
+    },
   };
 }

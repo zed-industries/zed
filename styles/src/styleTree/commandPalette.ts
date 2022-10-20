@@ -1,25 +1,29 @@
-import Theme from "../themes/common/theme";
-import { text, backgroundColor, border } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { withOpacity } from "../utils/color";
+import { text, background } from "./components";
 
-export default function commandPalette(theme: Theme) {
+export default function commandPalette(colorScheme: ColorScheme) {
+  let layer = colorScheme.highest;
   return {
     keystrokeSpacing: 8,
     key: {
-      text: text(theme, "mono", "secondary", { size: "xs" }),
-      cornerRadius: 4,
-      background: backgroundColor(theme, "on300"),
-      border: border(theme, "secondary"),
+      text: text(layer, "mono", "variant", "default", { size: "xs" }),
+      cornerRadius: 2,
+      background: background(layer, "on"),
       padding: {
-        top: 2,
-        bottom: 2,
-        left: 8,
-        right: 8,
+        top: 1,
+        bottom: 1,
+        left: 6,
+        right: 6,
       },
       margin: {
+        top: 1,
+        bottom: 1,
         left: 2,
       },
       active: {
-        text: text(theme, "mono", "active", { size: "xs" }),
+        text: text(layer, "mono", "on", "default", { size: "xs" }),
+        background: withOpacity(background(layer, "on"), 0.2),
       },
     },
   };

@@ -1,76 +1,84 @@
-import Theme from "../themes/common/theme";
+import { ColorScheme } from "../themes/common/colorScheme";
 import { withOpacity } from "../utils/color";
-import { iconColor, text, border, backgroundColor, draggedShadow } from "./components";
+import { text, border, background, foreground } from "./components";
 
-export default function tabBar(theme: Theme) {
+export default function tabBar(colorScheme: ColorScheme) {
   const height = 32;
+
+  let activeLayer = colorScheme.highest;
+  let layer = colorScheme.middle;
 
   const tab = {
     height,
-    background: backgroundColor(theme, 300),
-    border: border(theme, "primary", {
-      left: true,
+    text: text(layer, "sans", "variant", { size: "sm" }),
+    background: background(layer),
+    border: border(layer, {
+      right: true,
       bottom: true,
       overlay: true,
     }),
-    iconClose: iconColor(theme, "muted"),
-    iconCloseActive: iconColor(theme, "active"),
-    iconConflict: iconColor(theme, "warning"),
-    iconDirty: iconColor(theme, "info"),
-    iconWidth: 8,
-    spacing: 8,
-    text: text(theme, "sans", "secondary", { size: "sm" }),
     padding: {
       left: 8,
-      right: 8,
+      right: 12,
     },
+    spacing: 8,
+
+    // Close icons
+    iconWidth: 8,
+    iconClose: foreground(layer, "variant"),
+    iconCloseActive: foreground(layer),
+
+    // Indicators
+    iconConflict: foreground(layer, "warning"),
+    iconDirty: foreground(layer, "accent"),
+
+    // When two tabs of the same name are open, a label appears next to them
     description: {
-      margin: { left: 6, top: 1 },
-      ...text(theme, "sans", "muted", { size: "2xs" })
-    }
+      margin: { left: 8 },
+      ...text(layer, "sans", "disabled", { size: "2xs" }),
+    },
   };
 
   const activePaneActiveTab = {
     ...tab,
-    background: backgroundColor(theme, 500),
-    text: text(theme, "sans", "active", { size: "sm" }),
+    background: background(activeLayer),
+    text: text(activeLayer, "sans", "active", { size: "sm" }),
     border: {
       ...tab.border,
-      bottom: false
+      bottom: false,
     },
   };
 
   const inactivePaneInactiveTab = {
     ...tab,
-    background: backgroundColor(theme, 300),
-    text: text(theme, "sans", "muted", { size: "sm" }),
+    background: background(layer),
+    text: text(layer, "sans", "variant", { size: "sm" }),
   };
 
   const inactivePaneActiveTab = {
     ...tab,
-    background: backgroundColor(theme, 500),
-    text: text(theme, "sans", "secondary", { size: "sm" }),
+    background: background(activeLayer),
+    text: text(layer, "sans", "variant", { size: "sm" }),
     border: {
       ...tab.border,
-      bottom: false
+      bottom: false,
     },
-  }
+  };
 
   const draggedTab = {
     ...activePaneActiveTab,
-    background: withOpacity(tab.background, 0.8),
-    border: undefined as any, // Remove border
-    shadow: draggedShadow(theme),
-  }
+    background: withOpacity(tab.background, 0.95),
+    border: undefined as any,
+    shadow: colorScheme.popoverShadow,
+  };
 
   return {
     height,
-    background: backgroundColor(theme, 300),
-    dropTargetOverlayColor: withOpacity(theme.textColor.muted, 0.6),
-    border: border(theme, "primary", {
-      bottom: true,
-      overlay: true,
-    }),
+    background: background(layer),
+    dropTargetOverlayColor: withOpacity(
+      foreground(layer),
+      0.6
+    ),
     activePane: {
       activeTab: activePaneActiveTab,
       inactiveTab: tab,
@@ -81,11 +89,11 @@ export default function tabBar(theme: Theme) {
     },
     draggedTab,
     paneButton: {
-      color: iconColor(theme, "secondary"),
+      color: foreground(layer, "variant"),
       iconWidth: 12,
       buttonWidth: activePaneActiveTab.height,
       hover: {
-        color: iconColor(theme, "active"),
+        color: foreground(layer, "hovered"),
       },
     },
     paneButtonContainer: {
@@ -93,7 +101,7 @@ export default function tabBar(theme: Theme) {
       border: {
         ...tab.border,
         right: false,
-      }
-    }
-  }
+      },
+    },
+  };
 }

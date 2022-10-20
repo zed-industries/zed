@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./common/base16";
+import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "one";
 const author = "Daniel Pfeifer (http://github.com/purpleKarrot)";
@@ -24,16 +24,9 @@ const base0E = "#a626a4";
 const base0F = "#986801";
 
 const ramps = {
-  neutral: chroma.scale([
-    base00,
-    base01,
-    base02,
-    base03,
-    base04,
-    base05,
-    base06,
-    base07,
-  ]),
+  neutral: chroma
+    .scale([base00, base01, base02, base03, base04, base05, base06, base07])
+    .domain([0, 0.05, 0.77, 1]),
   red: colorRamp(chroma(base08)),
   orange: colorRamp(chroma(base09)),
   yellow: colorRamp(chroma(base0A)),
@@ -44,4 +37,4 @@ const ramps = {
   magenta: colorRamp(chroma(base0F)),
 };
 
-export const light = createTheme(`${name}-light`, true, ramps);
+export const light = createColorScheme(`${name}-light`, true, ramps);

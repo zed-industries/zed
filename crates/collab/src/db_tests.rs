@@ -852,6 +852,7 @@ async fn test_invite_codes() {
             },
         )
         .await
+        .unwrap()
         .unwrap();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 1);
@@ -897,6 +898,7 @@ async fn test_invite_codes() {
             },
         )
         .await
+        .unwrap()
         .unwrap();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 0);
@@ -953,6 +955,7 @@ async fn test_invite_codes() {
             },
         )
         .await
+        .unwrap()
         .unwrap()
         .user_id;
 
@@ -1099,6 +1102,7 @@ async fn test_signups() {
             },
         )
         .await
+        .unwrap()
         .unwrap();
     let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
     assert!(inviting_user_id.is_none());
@@ -1108,19 +1112,21 @@ async fn test_signups() {
     assert_eq!(signup_device_id.unwrap(), "device_id_0");
 
     // cannot redeem the same signup again.
-    db.create_user_from_invite(
-        &Invite {
-            email_address: signups_batch1[0].email_address.clone(),
-            email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
-        },
-        NewUserParams {
-            github_login: "some-other-github_account".into(),
-            github_user_id: 1,
-            invite_count: 5,
-        },
-    )
-    .await
-    .unwrap_err();
+    assert!(db
+        .create_user_from_invite(
+            &Invite {
+                email_address: signups_batch1[0].email_address.clone(),
+                email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
+            },
+            NewUserParams {
+                github_login: "some-other-github_account".into(),
+                github_user_id: 1,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap()
+        .is_none());
 
     // cannot redeem a signup with the wrong confirmation code.
     db.create_user_from_invite(

@@ -1,19 +1,22 @@
-import Theme from "../themes/common/theme";
+import { fontWeights } from "../common";
 import { withOpacity } from "../utils/color";
 import {
-  backgroundColor,
+  ColorScheme,
+  Layer,
+  StyleSets,
+} from "../themes/common/colorScheme";
+import {
+  background,
   border,
   borderColor,
-  iconColor,
-  player,
-  popoverShadow,
+  foreground,
   text,
-  textColor,
-  TextColor,
 } from "./components";
 import hoverPopover from "./hoverPopover";
 
-export default function editor(theme: Theme) {
+export default function editor(colorScheme: ColorScheme) {
+  let layer = colorScheme.highest;
+
   const autocompleteItem = {
     cornerRadius: 6,
     padding: {
@@ -24,17 +27,17 @@ export default function editor(theme: Theme) {
     },
   };
 
-  function diagnostic(theme: Theme, color: TextColor) {
+  function diagnostic(layer: Layer, styleSet: StyleSets) {
     return {
       textScaleFactor: 0.857,
       header: {
-        border: border(theme, "primary", {
+        border: border(layer, {
           top: true,
         }),
       },
       message: {
-        text: text(theme, "sans", color, { size: "sm" }),
-        highlightText: text(theme, "sans", color, {
+        text: text(layer, "sans", styleSet, "inverted", { size: "sm" }),
+        highlightText: text(layer, "sans", styleSet, "inverted", {
           size: "sm",
           weight: "bold",
         }),
@@ -42,121 +45,207 @@ export default function editor(theme: Theme) {
     };
   }
 
-  const syntax: any = {};
-  for (const syntaxKey in theme.syntax) {
-    const style = theme.syntax[syntaxKey];
-    syntax[syntaxKey] = {
-      color: style.color,
-      weight: style.weight,
-      underline: style.underline,
-      italic: style.italic,
-    };
-  }
+  const syntax = {
+    primary: {
+      color: colorScheme.ramps.neutral(1).hex(),
+      weight: fontWeights.normal,
+    },
+    comment: {
+      color: colorScheme.ramps.neutral(0.71).hex(),
+      weight: fontWeights.normal,
+    },
+    punctuation: {
+      color: colorScheme.ramps.neutral(0.86).hex(),
+      weight: fontWeights.normal,
+    },
+    constant: {
+      color: colorScheme.ramps.green(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    keyword: {
+      color: colorScheme.ramps.blue(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    function: {
+      color: colorScheme.ramps.yellow(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    type: {
+      color: colorScheme.ramps.cyan(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    constructor: {
+      color: colorScheme.ramps.blue(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    variant: {
+      color: colorScheme.ramps.blue(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    property: {
+      color: colorScheme.ramps.blue(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    enum: {
+      color: colorScheme.ramps.orange(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    operator: {
+      color: colorScheme.ramps.orange(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    string: {
+      color: colorScheme.ramps.orange(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    number: {
+      color: colorScheme.ramps.green(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    boolean: {
+      color: colorScheme.ramps.green(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    predictive: {
+      color: colorScheme.ramps.neutral(0.57).hex(),
+      weight: fontWeights.normal,
+    },
+    title: {
+      color: colorScheme.ramps.yellow(0.5).hex(),
+      weight: fontWeights.bold,
+    },
+    emphasis: {
+      color: colorScheme.ramps.blue(0.5).hex(),
+      weight: fontWeights.normal,
+    },
+    "emphasis.strong": {
+      color: colorScheme.ramps.blue(0.5).hex(),
+      weight: fontWeights.bold,
+    },
+    linkUri: {
+      color: colorScheme.ramps.green(0.5).hex(),
+      weight: fontWeights.normal,
+      underline: true,
+    },
+    linkText: {
+      color: colorScheme.ramps.orange(0.5).hex(),
+      weight: fontWeights.normal,
+      italic: true,
+    },
+  };
 
   return {
-    textColor: theme.syntax.primary.color,
-    background: backgroundColor(theme, 500),
-    activeLineBackground: theme.editor.line.active,
+    textColor: syntax.primary.color,
+    background: background(layer),
+    activeLineBackground: background(layer, "on"),
+    highlightedLineBackground: background(layer, "on"),
     codeActions: {
-      indicator: iconColor(theme, "secondary"),
-      verticalScale: 0.618
+      indicator: foreground(layer, "variant"),
+      verticalScale: 0.55,
     },
     diff: {
-      deleted: theme.iconColor.error,
-      inserted: theme.iconColor.ok,
-      modified: theme.iconColor.warning,
+      deleted: foreground(layer, "negative"),
+      modified: foreground(layer, "warning"),
+      inserted: foreground(layer, "positive"),
       removedWidthEm: 0.275,
       widthEm: 0.16,
       cornerRadius: 0.05,
     },
-    documentHighlightReadBackground: theme.editor.highlight.occurrence,
-    documentHighlightWriteBackground: theme.editor.highlight.activeOccurrence,
-    errorColor: theme.textColor.error,
-    gutterBackground: backgroundColor(theme, 500),
+    documentHighlightReadBackground: colorScheme.ramps
+      .neutral(0.5)
+      .alpha(0.2)
+      .hex(), // TODO: This was blend
+    documentHighlightWriteBackground: colorScheme.ramps
+      .neutral(0.5)
+      .alpha(0.4)
+      .hex(), // TODO: This was blend * 2
+    errorColor: background(layer, "negative"),
+    gutterBackground: background(layer),
     gutterPaddingFactor: 3.5,
-    highlightedLineBackground: theme.editor.line.highlighted,
-    lineNumber: theme.editor.gutter.primary,
-    lineNumberActive: theme.editor.gutter.active,
+    lineNumber: foreground(layer, "disabled"),
+    lineNumberActive: foreground(layer),
     renameFade: 0.6,
     unnecessaryCodeFade: 0.5,
-    selection: player(theme, 1).selection,
+    selection: colorScheme.players[0],
     guestSelections: [
-      player(theme, 2).selection,
-      player(theme, 3).selection,
-      player(theme, 4).selection,
-      player(theme, 5).selection,
-      player(theme, 6).selection,
-      player(theme, 7).selection,
-      player(theme, 8).selection,
+      colorScheme.players[1],
+      colorScheme.players[2],
+      colorScheme.players[3],
+      colorScheme.players[4],
+      colorScheme.players[5],
+      colorScheme.players[6],
+      colorScheme.players[7],
     ],
     autocomplete: {
-      background: backgroundColor(theme, 500),
+      background: background(colorScheme.middle),
       cornerRadius: 8,
       padding: 4,
-      border: border(theme, "secondary"),
-      shadow: popoverShadow(theme),
-      item: autocompleteItem,
-      hoveredItem: {
-        ...autocompleteItem,
-        background: backgroundColor(theme, 500, "hovered"),
-      },
       margin: {
         left: -14,
       },
-      matchHighlight: text(theme, "mono", "feature"),
+      border: border(colorScheme.middle),
+      shadow: colorScheme.popoverShadow,
+      matchHighlight: foreground(colorScheme.middle, "accent"),
+      item: autocompleteItem,
+      hoveredItem: {
+        ...autocompleteItem,
+        matchHighlight: foreground(colorScheme.middle, "accent", "hovered"),
+        background: background(colorScheme.middle, "hovered"),
+      },
       selectedItem: {
         ...autocompleteItem,
-        background: backgroundColor(theme, 500, "active"),
+        matchHighlight: foreground(colorScheme.middle, "accent", "active"),
+        background: background(colorScheme.middle, "active"),
       },
     },
     diagnosticHeader: {
-      background: backgroundColor(theme, 300),
+      background: background(colorScheme.middle),
       iconWidthFactor: 1.5,
-      textScaleFactor: 0.857, // NateQ: Will we need dynamic sizing for text? If so let's create tokens for these.
-      border: border(theme, "secondary", {
+      textScaleFactor: 0.857,
+      border: border(colorScheme.middle, {
         bottom: true,
         top: true,
       }),
       code: {
-        ...text(theme, "mono", "secondary", { size: "sm" }),
+        ...text(colorScheme.middle, "mono", { size: "sm" }),
         margin: {
           left: 10,
         },
       },
       message: {
-        highlightText: text(theme, "sans", "primary", {
+        highlightText: text(colorScheme.middle, "sans", {
           size: "sm",
           weight: "bold",
         }),
-        text: text(theme, "sans", "secondary", { size: "sm" }),
+        text: text(colorScheme.middle, "sans", { size: "sm" }),
       },
     },
     diagnosticPathHeader: {
-      background: theme.editor.line.active,
+      background: background(colorScheme.middle),
       textScaleFactor: 0.857,
-      filename: text(theme, "mono", "primary", { size: "sm" }),
+      filename: text(colorScheme.middle, "mono", { size: "sm" }),
       path: {
-        ...text(theme, "mono", "muted", { size: "sm" }),
+        ...text(colorScheme.middle, "mono", { size: "sm" }),
         margin: {
           left: 12,
         },
       },
     },
-    errorDiagnostic: diagnostic(theme, "error"),
-    warningDiagnostic: diagnostic(theme, "warning"),
-    informationDiagnostic: diagnostic(theme, "info"),
-    hintDiagnostic: diagnostic(theme, "info"),
-    invalidErrorDiagnostic: diagnostic(theme, "secondary"),
-    invalidHintDiagnostic: diagnostic(theme, "secondary"),
-    invalidInformationDiagnostic: diagnostic(theme, "secondary"),
-    invalidWarningDiagnostic: diagnostic(theme, "secondary"),
-    hoverPopover: hoverPopover(theme),
+    errorDiagnostic: diagnostic(colorScheme.middle, "negative"),
+    warningDiagnostic: diagnostic(colorScheme.middle, "warning"),
+    informationDiagnostic: diagnostic(colorScheme.middle, "accent"),
+    hintDiagnostic: diagnostic(colorScheme.middle, "warning"),
+    invalidErrorDiagnostic: diagnostic(colorScheme.middle, "base"),
+    invalidHintDiagnostic: diagnostic(colorScheme.middle, "base"),
+    invalidInformationDiagnostic: diagnostic(colorScheme.middle, "base"),
+    invalidWarningDiagnostic: diagnostic(colorScheme.middle, "base"),
+    hoverPopover: hoverPopover(colorScheme),
     linkDefinition: {
-      color: theme.syntax.linkUri.color,
-      underline: theme.syntax.linkUri.underline,
+      color: syntax.linkUri.color,
+      underline: syntax.linkUri.underline,
     },
     jumpIcon: {
-      color: iconColor(theme, "secondary"),
+      color: foreground(layer, "on"),
       iconWidth: 20,
       buttonWidth: 20,
       cornerRadius: 6,
@@ -167,32 +256,28 @@ export default function editor(theme: Theme) {
         right: 6,
       },
       hover: {
-        color: iconColor(theme, "active"),
-        background: backgroundColor(theme, "on500"),
+        color: foreground(layer, "on", "hovered"),
+        background: background(layer, "on", "hovered"),
       },
     },
     scrollbar: {
       width: 12,
       minHeightFactor: 1.0,
       track: {
-        border: {
-          left: true,
-          width: 1,
-          color: borderColor(theme, "secondary"),
-        },
+        border: border(layer, "variant", { left: true }),
       },
       thumb: {
-        background: withOpacity(borderColor(theme, "secondary"), 0.5),
+        background: withOpacity(borderColor(layer, "variant"), 0.5),
         border: {
           width: 1,
-          color: withOpacity(borderColor(theme, 'muted'), 0.5),
+          color: withOpacity(borderColor(layer, 'variant'), 0.5),
         }
       }
     },
     compositionMark: {
       underline: {
         thickness: 1.0,
-        color: borderColor(theme, "active")
+        color: borderColor(layer),
       },
     },
     syntax,

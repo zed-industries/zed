@@ -21,12 +21,12 @@ fn main() {
 
     let output = Command::new("npm")
         .current_dir("../../styles")
-        .args(["run", "build-themes"])
+        .args(["run", "build"])
         .output()
         .expect("failed to run npm");
     if !output.status.success() {
         panic!(
-            "build-themes script failed {}",
+            "build script failed {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }

@@ -116,7 +116,6 @@ fn main() {
         editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
-        chat_panel::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);
@@ -124,6 +123,7 @@ fn main() {
         search::init(cx);
         vim::init(cx);
         terminal::init(cx);
+        theme_testbench::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
@@ -441,7 +441,7 @@ async fn watch_themes(
     while (events.next().await).is_some() {
         let output = Command::new("npm")
             .current_dir("styles")
-            .args(["run", "build-themes"])
+            .args(["run", "build"])
             .output()
             .await
             .log_err()?;
@@ -449,7 +449,7 @@ async fn watch_themes(
             cx.update(|cx| theme_selector::ThemeSelector::reload(themes.clone(), cx))
         } else {
             eprintln!(
-                "build-themes script failed {}",
+                "build script failed {}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }

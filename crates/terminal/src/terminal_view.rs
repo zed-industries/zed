@@ -321,7 +321,6 @@ impl View for TerminalView {
                 TerminalElement::new(
                     cx.handle(),
                     terminal_handle,
-                    self.modal,
                     focused,
                     self.should_show_cursor(focused, cx),
                 )

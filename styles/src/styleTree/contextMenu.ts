@@ -1,45 +1,40 @@
-import Theme from "../themes/common/theme";
-import {
-  backgroundColor,
-  border,
-  borderColor,
-  popoverShadow,
-  text,
-} from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, borderColor, text } from "./components";
 
-export default function contextMenu(theme: Theme) {
+export default function contextMenu(colorScheme: ColorScheme) {
+  let layer = colorScheme.middle;
   return {
-    background: backgroundColor(theme, 300, "base"),
-    cornerRadius: 6,
-    padding: 6,
-    shadow: popoverShadow(theme),
-    border: border(theme, "primary"),
+    background: background(layer),
+    cornerRadius: 10,
+    padding: 4,
+    shadow: colorScheme.popoverShadow,
+    border: border(layer),
     keystrokeMargin: 30,
     item: {
       iconSpacing: 8,
       iconWidth: 14,
-      padding: { left: 4, right: 4, top: 2, bottom: 2 },
+      padding: { left: 6, right: 6, top: 2, bottom: 2 },
       cornerRadius: 6,
-      label: text(theme, "sans", "primary", { size: "sm" }),
+      label: text(layer, "sans", { size: "sm" }),
       keystroke: {
-        ...text(theme, "sans", "muted", { size: "sm", weight: "bold" }),
+        ...text(layer, "sans", "variant", { size: "sm", weight: "bold" }),
         padding: { left: 3, right: 3 },
       },
       hover: {
-        background: backgroundColor(theme, 300, "hovered"),
-        text: text(theme, "sans", "primary", { size: "sm" }),
+        background: background(layer, "hovered"),
+        label: text(layer, "sans", "hovered", { size: "sm" }),
       },
       active: {
-        background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "sans", "active", { size: "sm" }),
+        background: background(layer, "active"),
+        label: text(layer, "sans", "active", { size: "sm" }),
       },
       activeHover: {
-        background: backgroundColor(theme, 300, "hovered"),
-        text: text(theme, "sans", "active", { size: "sm" }),
+        background: background(layer, "active"),
+        label: text(layer, "sans", "active", { size: "sm" }),
       },
     },
     separator: {
-      background: borderColor(theme, "primary"),
+      background: borderColor(layer),
       margin: { top: 2, bottom: 2 },
     },
   };

@@ -1,10 +1,8 @@
-use std::{ffi::OsStr, os::unix::prelude::OsStrExt, path::PathBuf, sync::Arc};
+use std::{ffi::OsStr, fmt::Display, hash::Hash, os::unix::prelude::OsStrExt, path::PathBuf};
 
 use anyhow::Result;
-use rusqlite::{
-    named_params, params,
-    types::{FromSql, FromSqlError, FromSqlResult, ValueRef},
-};
+use collections::HashSet;
+use rusqlite::{named_params, params};
 
 use super::Db;
 
@@ -31,33 +29,18 @@ pub enum SerializedItemKind {
     Diagnostics,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl Display for SerializedItemKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("{:?}", self))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SerializedItem {
     Editor(usize, PathBuf),
     Terminal(usize),
     ProjectSearch(usize, String),
     Diagnostics(usize),
-}
-
-impl FromSql for SerializedItemKind {
-    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        match value {
-            ValueRef::Null => Err(FromSqlError::InvalidType),
-            ValueRef::Integer(_) => Err(FromSqlError::InvalidType),
-            ValueRef::Real(_) => Err(FromSqlError::InvalidType),
-            ValueRef::Text(bytes) => {
-                let str = std::str::from_utf8(bytes).map_err(|_| FromSqlError::InvalidType)?;
-                match str {
-                    "Editor" => Ok(SerializedItemKind::Editor),
-                    "Terminal" => Ok(SerializedItemKind::Terminal),
-                    "ProjectSearch" => Ok(SerializedItemKind::ProjectSearch),
-                    "Diagnostics" => Ok(SerializedItemKind::Diagnostics),
-                    _ => Err(FromSqlError::InvalidType),
-                }
-            }
-            ValueRef::Blob(_) => Err(FromSqlError::InvalidType),
-        }
-    }
 }
 
 impl SerializedItem {
@@ -82,117 +65,206 @@ impl SerializedItem {
 
 impl Db {
     fn write_item(&self, serialized_item: SerializedItem) -> Result<()> {
-        let mut lock = self.connection.lock();
-        let tx = lock.transaction()?;
+        self.real()
+            .map(|db| {
+                let mut lock = db.connection.lock();
+                let tx = lock.transaction()?;
 
-        // Serialize the item
-        let id = serialized_item.id();
-        {
-            let kind = format!("{:?}", serialized_item.kind());
+                // Serialize the item
+                let id = serialized_item.id();
+                {
+                    let mut stmt = tx.prepare_cached(
+                        "INSERT OR REPLACE INTO items(id, kind) VALUES ((?), (?))",
+                    )?;
 
-            let mut stmt =
-                tx.prepare_cached("INSERT OR REPLACE INTO items(id, kind) VALUES ((?), (?))")?;
+                    dbg!("inserting item");
+                    stmt.execute(params![id, serialized_item.kind().to_string()])?;
+                }
 
-            stmt.execute(params![id, kind])?;
-        }
+                // Serialize item data
+                match &serialized_item {
+                    SerializedItem::Editor(_, path) => {
+                        dbg!("inserting path");
+                        let mut stmt = tx.prepare_cached(
+                            "INSERT OR REPLACE INTO item_path(item_id, path) VALUES ((?), (?))",
+                        )?;
 
-        // Serialize item data
-        match &serialized_item {
-            SerializedItem::Editor(_, path) => {
-                let mut stmt = tx.prepare_cached(
-                    "INSERT OR REPLACE INTO item_path(item_id, path) VALUES ((?), (?))",
-                )?;
+                        let path_bytes = path.as_os_str().as_bytes();
+                        stmt.execute(params![id, path_bytes])?;
+                    }
+                    SerializedItem::ProjectSearch(_, query) => {
+                        dbg!("inserting query");
+                        let mut stmt = tx.prepare_cached(
+                            "INSERT OR REPLACE INTO item_query(item_id, query) VALUES ((?), (?))",
+                        )?;
 
-                let path_bytes = path.as_os_str().as_bytes();
-                stmt.execute(params![id, path_bytes])?;
-            }
-            SerializedItem::ProjectSearch(_, query) => {
-                let mut stmt = tx.prepare_cached(
-                    "INSERT OR REPLACE INTO item_query(item_id, query) VALUES ((?), (?))",
-                )?;
+                        stmt.execute(params![id, query])?;
+                    }
+                    _ => {}
+                }
 
-                stmt.execute(params![id, query])?;
-            }
-            _ => {}
-        }
+                tx.commit()?;
 
-        tx.commit()?;
+                let mut stmt = lock.prepare_cached("SELECT id, kind FROM items")?;
+                let _ = stmt
+                    .query_map([], |row| {
+                        let zero: usize = row.get(0)?;
+                        let one: String = row.get(1)?;
 
-        Ok(())
+                        dbg!(zero, one);
+                        Ok(())
+                    })?
+                    .collect::<Vec<Result<(), _>>>();
+
+                Ok(())
+            })
+            .unwrap_or(Ok(()))
     }
 
     fn delete_item(&self, item_id: usize) -> Result<()> {
-        let lock = self.connection.lock();
+        self.real()
+            .map(|db| {
+                let lock = db.connection.lock();
 
-        let mut stmt = lock.prepare_cached(
-            "
-            DELETE FROM items WHERE id = (:id);
-            DELETE FROM item_path WHERE id = (:id);
-            DELETE FROM item_query WHERE id = (:id);
-        ",
-        )?;
+                let mut stmt = lock.prepare_cached(
+                    r#"
+                    DELETE FROM items WHERE id = (:id);
+                    DELETE FROM item_path WHERE id = (:id);
+                    DELETE FROM item_query WHERE id = (:id);
+                    "#,
+                )?;
 
-        stmt.execute(named_params! {":id": item_id})?;
+                stmt.execute(named_params! {":id": item_id})?;
 
-        Ok(())
+                Ok(())
+            })
+            .unwrap_or(Ok(()))
     }
 
-    fn take_items(&self) -> Result<Vec<SerializedItem>> {
-        let mut lock = self.connection.lock();
+    fn take_items(&self) -> Result<HashSet<SerializedItem>> {
+        self.real()
+            .map(|db| {
+                let mut lock = db.connection.lock();
 
-        let tx = lock.transaction()?;
+                let tx = lock.transaction()?;
 
-        // When working with transactions in rusqlite, need to make this kind of scope
-        // To make the borrow stuff work correctly. Don't know why, rust is wild.
-        let result = {
-            let mut read_stmt = tx.prepare_cached(
-                "
-                    SELECT items.id, items.kind, item_path.path, item_query.query
-                    FROM items
-                    LEFT JOIN item_path
-                        ON items.id = item_path.item_id
-                    LEFT JOIN item_query
-                        ON items.id = item_query.item_id
-                    ORDER BY items.id
-            ",
-            )?;
+                // When working with transactions in rusqlite, need to make this kind of scope
+                // To make the borrow stuff work correctly. Don't know why, rust is wild.
+                let result = {
+                    let mut editors_stmt = tx.prepare_cached(
+                        r#"
+                        SELECT items.id, item_path.path
+                        FROM items
+                        LEFT JOIN item_path
+                            ON items.id = item_path.item_id
+                        WHERE items.kind = ?;
+                        "#,
+                    )?;
 
-            let result = read_stmt
-                .query_map([], |row| {
-                    let id: usize = row.get(0)?;
-                    let kind: SerializedItemKind = row.get(1)?;
+                    let editors_iter = editors_stmt.query_map(
+                        [SerializedItemKind::Editor.to_string()],
+                        |row| {
+                            let id: usize = row.get(0)?;
 
-                    match kind {
-                        SerializedItemKind::Editor => {
-                            let buf: Vec<u8> = row.get(2)?;
+                            let buf: Vec<u8> = row.get(1)?;
                             let path: PathBuf = OsStr::from_bytes(&buf).into();
 
                             Ok(SerializedItem::Editor(id, path))
-                        }
-                        SerializedItemKind::Terminal => Ok(SerializedItem::Terminal(id)),
-                        SerializedItemKind::ProjectSearch => {
-                            let query: Arc<str> = row.get(3)?;
-                            Ok(SerializedItem::ProjectSearch(id, query.to_string()))
-                        }
-                        SerializedItemKind::Diagnostics => Ok(SerializedItem::Diagnostics(id)),
-                    }
-                })?
-                .collect::<Result<Vec<SerializedItem>, rusqlite::Error>>()?;
+                        },
+                    )?;
 
-            let mut delete_stmt = tx.prepare_cached(
-                "DELETE FROM items;
-                DELETE FROM item_path;
-                DELETE FROM item_query;",
-            )?;
+                    let mut terminals_stmt = tx.prepare_cached(
+                        r#"
+                        SELECT items.id
+                        FROM items
+                        WHERE items.kind = ?;
+                        "#,
+                    )?;
+                    let terminals_iter = terminals_stmt.query_map(
+                        [SerializedItemKind::Terminal.to_string()],
+                        |row| {
+                            let id: usize = row.get(0)?;
 
-            delete_stmt.execute([])?;
+                            Ok(SerializedItem::Terminal(id))
+                        },
+                    )?;
 
-            result
-        };
+                    let mut search_stmt = tx.prepare_cached(
+                        r#"
+                        SELECT items.id, item_query.query
+                        FROM items
+                        LEFT JOIN item_query
+                            ON items.id = item_query.item_id
+                        WHERE items.kind = ?;
+                        "#,
+                    )?;
+                    let searches_iter = search_stmt.query_map(
+                        [SerializedItemKind::ProjectSearch.to_string()],
+                        |row| {
+                            let id: usize = row.get(0)?;
+                            let query = row.get(1)?;
 
-        tx.commit()?;
+                            Ok(SerializedItem::ProjectSearch(id, query))
+                        },
+                    )?;
 
-        Ok(result)
+                    #[cfg(debug_assertions)]
+                    let tmp =
+                        searches_iter.collect::<Vec<Result<SerializedItem, rusqlite::Error>>>();
+                    #[cfg(debug_assertions)]
+                    debug_assert!(tmp.len() == 0 || tmp.len() == 1);
+                    #[cfg(debug_assertions)]
+                    let searches_iter = tmp.into_iter();
+
+                    let mut diagnostic_stmt = tx.prepare_cached(
+                        r#"
+                        SELECT items.id
+                        FROM items
+                        WHERE items.kind = ?;
+                        "#,
+                    )?;
+
+                    let diagnostics_iter = diagnostic_stmt.query_map(
+                        [SerializedItemKind::Diagnostics.to_string()],
+                        |row| {
+                            let id: usize = row.get(0)?;
+
+                            Ok(SerializedItem::Diagnostics(id))
+                        },
+                    )?;
+
+                    #[cfg(debug_assertions)]
+                    let tmp =
+                        diagnostics_iter.collect::<Vec<Result<SerializedItem, rusqlite::Error>>>();
+                    #[cfg(debug_assertions)]
+                    debug_assert!(tmp.len() == 0 || tmp.len() == 1);
+                    #[cfg(debug_assertions)]
+                    let diagnostics_iter = tmp.into_iter();
+
+                    let res = editors_iter
+                        .chain(terminals_iter)
+                        .chain(diagnostics_iter)
+                        .chain(searches_iter)
+                        .collect::<Result<HashSet<SerializedItem>, rusqlite::Error>>()?;
+
+                    let mut delete_stmt = tx.prepare_cached(
+                        r#"
+                        DELETE FROM items;
+                        DELETE FROM item_path;
+                        DELETE FROM item_query;
+                        "#,
+                    )?;
+
+                    delete_stmt.execute([])?;
+
+                    res
+                };
+
+                tx.commit()?;
+
+                Ok(result)
+            })
+            .unwrap_or(Ok(HashSet::default()))
     }
 }
 
@@ -204,29 +276,32 @@ mod test {
 
     #[test]
     fn test_items_round_trip() -> Result<()> {
-        let db = Db::open_in_memory()?;
+        let db = Db::open_in_memory();
 
         let mut items = vec![
             SerializedItem::Editor(0, PathBuf::from("/tmp/test.txt")),
             SerializedItem::Terminal(1),
             SerializedItem::ProjectSearch(2, "Test query!".to_string()),
             SerializedItem::Diagnostics(3),
-        ];
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
 
         for item in items.iter() {
+            dbg!("Inserting... ");
             db.write_item(item.clone())?;
         }
 
         assert_eq!(items, db.take_items()?);
 
         // Check that it's empty, as expected
-        assert_eq!(Vec::<SerializedItem>::new(), db.take_items()?);
+        assert_eq!(HashSet::default(), db.take_items()?);
 
         for item in items.iter() {
             db.write_item(item.clone())?;
         }
 
-        items.remove(2);
+        items.remove(&SerializedItem::ProjectSearch(2, "Test query!".to_string()));
         db.delete_item(2)?;
 
         assert_eq!(items, db.take_items()?);
