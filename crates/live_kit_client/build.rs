@@ -129,8 +129,19 @@ fn swift_package_root() -> PathBuf {
 
 fn copy_dir(source: &Path, destination: &Path) {
     assert!(
+        Command::new("rm")
+            .arg("-rf")
+            .arg(destination)
+            .status()
+            .unwrap()
+            .success(),
+        "could not remove {:?} before copying",
+        destination
+    );
+
+    assert!(
         Command::new("cp")
-            .arg("-r")
+            .arg("-R")
             .args(&[source, destination])
             .status()
             .unwrap()
