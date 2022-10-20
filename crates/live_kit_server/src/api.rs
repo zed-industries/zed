@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use prost::Message;
 use reqwest::header::CONTENT_TYPE;
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, time::Duration};
 
 #[async_trait]
 pub trait Client: Send + Sync {
@@ -29,7 +29,10 @@ impl LiveKitClient {
         }
 
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::ClientBuilder::new()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
             url: url.into(),
             key: key.into(),
             secret: secret.into(),
