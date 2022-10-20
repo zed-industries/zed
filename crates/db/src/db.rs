@@ -1,6 +1,7 @@
 mod items;
 mod kvp;
 mod migrations;
+mod workspace;
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -1,7 +1,7 @@
 use rusqlite_migration::{Migrations, M};
 
 // use crate::items::ITEMS_M_1;
-use crate::{items::ITEMS_M_1, kvp::KVP_M_1_UP};
+use crate::kvp::KVP_M_1;
 
 // This must be ordered by development time! Only ever add new migrations to the end!!
 // Bad things will probably happen if you don't monotonically edit this vec!!!!
@@ -9,7 +9,6 @@ use crate::{items::ITEMS_M_1, kvp::KVP_M_1_UP};
 // file system and so everything we do here is locked in _f_o_r_e_v_e_r_.
 lazy_static::lazy_static! {
     pub static ref MIGRATIONS: Migrations<'static> = Migrations::new(vec![
-        M::up(KVP_M_1_UP),
-        M::up(ITEMS_M_1),
+        M::up(KVP_M_1),
     ]);
 }
