@@ -4,6 +4,10 @@ import { colorRamp, createColorScheme } from "../common/ramps";
 const name = "Tokyo";
 const author = "Michaël Ball";
 const url = "https://github.com/folke/tokyonight.nvim";
+const license = {
+  type: "Apache License 2.0",
+  url: "https://github.com/folke/tokyonight.nvim/blob/main/LICENSE",
+};
 
 // `name-[light|dark]`, isLight, color ramps
 export const dark = createColorScheme(`${name} Night`, false, {

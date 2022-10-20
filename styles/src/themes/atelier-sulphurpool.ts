@@ -1,9 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "Sulphurpool";
-const author = "";
-const url = "";
+const name = "Atelier Sulphurpool";
+const author = "atelierbram";
+const url = "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/";
+const license = {
+  type: "MIT",
+  url: "https://github.com/atelierbram/syntax-highlighting/blob/master/LICENSE",
+};
 
 const ramps = {
   neutral: chroma

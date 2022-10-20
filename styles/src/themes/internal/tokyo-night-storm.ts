@@ -4,6 +4,10 @@ import { colorRamp, createColorScheme } from "../common/ramps";
 const name = "Tokyo Night Storm";
 const author = "ghifarit53";
 const url = "https://github.com/ghifarit53/tokyonight-vim";
+const license = {
+  type: "MIT",
+  url: "https://github.com/ghifarit53/tokyonight-vim/blob/master/LICENSE",
+};
 
 // `name-[light|dark]`, isLight, color ramps
 export const dark = createColorScheme(`${name}`, false, {

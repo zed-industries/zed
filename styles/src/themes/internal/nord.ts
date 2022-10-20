@@ -3,7 +3,11 @@ import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Nord";
 const author = "arcticicestudio";
-const url = "";
+const url = "https://www.nordtheme.com/";
+const license = {
+  type: "MIT",
+  url: "https://github.com/arcticicestudio/nord/blob/develop/LICENSE.md",
+};
 
 // `name-[light|dark]`, isLight, color ramps
 export const dark = createColorScheme(`${name}`, false, {

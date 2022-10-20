@@ -3,7 +3,11 @@ import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Zenburn";
 const author = "elnawe";
-const url = "";
+const url = "https://github.com/elnawe/base16-zenburn-scheme";
+const license = {
+  type: "?",
+  url: "https://github.com/elnawe/base16-zenburn-scheme/blob/master/zenburn.yaml",
+};
 
 // `name-[light|dark]`, isLight, color ramps
 export const dark = createColorScheme(`${name}`, false, {

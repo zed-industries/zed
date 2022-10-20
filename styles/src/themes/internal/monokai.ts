@@ -3,7 +3,11 @@ import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Monokai";
 const author = "Wimer Hazenberg (http://www.monokai.nl)";
-const url = "";
+const url = "https://base16.netlify.app/previews/base16-monokai.html";
+const license = {
+  type: "?",
+  url: "?",
+};
 
 // `name-[light|dark]`, isLight, color ramps
 export const dark = createColorScheme(`${name}`, false, {

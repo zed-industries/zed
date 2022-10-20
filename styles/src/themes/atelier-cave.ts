@@ -1,13 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "Cave";
-const author = "";
-const url = "";
+const name = "Atelier Cave";
+const author = "atelierbram";
+const url = "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/cave/";
 const license = {
-  type: "",
-  url: ""
-}
+  type: "MIT",
+  url: "https://github.com/atelierbram/syntax-highlighting/blob/master/LICENSE",
+};
 
 export const dark = createColorScheme(`${name} Dark`, false, {
   neutral: chroma

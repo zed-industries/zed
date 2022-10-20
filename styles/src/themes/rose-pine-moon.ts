@@ -2,8 +2,12 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Rosé Pine Moon";
-const author = "";
-const url = "";
+const author = "edunfelt";
+const url = "https://github.com/edunfelt/base16-rose-pine-scheme";
+const license = {
+  type: "MIT",
+  url: "https://github.com/edunfelt/base16-rose-pine-scheme/blob/main/rose-pine-moon.yaml",
+};
 
 const ramps = {
   neutral: chroma

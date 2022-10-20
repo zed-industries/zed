@@ -4,6 +4,10 @@ import { colorRamp, createColorScheme } from "../common/ramps";
 const name = "Zed Pro";
 const author = "Nate Butler"
 const url = "https://github.com/iamnbutler"
+const license = {
+  type: "?",
+  url: "?",
+};
 
 const ramps = {
   neutral: chroma

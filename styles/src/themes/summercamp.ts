@@ -2,8 +2,12 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Summercamp";
-const author = "";
-const url = "";
+const author = "zoefiri";
+const url = "https://github.com/zoefiri/base16-sc";
+const license = {
+  type: "MIT",
+  url: "https://github.com/zoefiri/base16-sc/blob/master/summercamp.yaml",
+};
 
 const ramps = {
   neutral: chroma

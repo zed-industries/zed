@@ -2,8 +2,12 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Atelier Seaside";
-const author = "Bram de Haan (http://atelierbramdehaan.nl)";
-const url = "";
+const author = "atelierbram";
+const url = "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/seaside/";
+const license = {
+  type: "MIT",
+  url: "https://github.com/atelierbram/syntax-highlighting/blob/master/LICENSE",
+};
 
 const ramps = {
   neutral: chroma.scale([

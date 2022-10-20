@@ -2,8 +2,12 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Solarized";
-const author = "";
-const url = "";
+const author = "Ethan Schoonover";
+const url = "https://github.com/altercation/solarized";
+const license = {
+  type: "MIT",
+  url: "https://github.com/altercation/solarized/blob/master/README.md",
+};
 
 const ramps = {
   neutral: chroma

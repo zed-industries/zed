@@ -2,11 +2,11 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Andromeda";
-const author = "";
-const url = "";
+const author = "EliverLara";
+const url = "https://github.com/EliverLara/Andromeda";
 const license = {
-  type: "",
-  url: "",
+  type: "MIT",
+  url: "https://github.com/EliverLara/Andromeda/blob/master/LICENSE.md",
 };
 
 const ramps = {

@@ -2,8 +2,12 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Sandcastle";
-const author = "";
-const url = "";
+const author = "gessig";
+const url = "https://github.com/gessig/base16-sandcastle-scheme";
+const license = {
+  type: "MIT",
+  url: "https://github.com/gessig/base16-sandcastle-scheme/blob/master/LICENSE",
+};
 
 const ramps = {
   neutral: chroma.scale([

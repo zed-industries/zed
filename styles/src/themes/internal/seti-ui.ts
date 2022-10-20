@@ -3,7 +3,11 @@ import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Seti UI";
 const author = "jesseweed";
-const url = "";
+const url = "https://github.com/jesseweed/seti-ui";
+const license = {
+  type: "MIT",
+  url: "https://github.com/jesseweed/seti-ui/blob/master/LICENSE.md",
+};
 
 // `name-[light|dark]`, isLight, color ramps
 export const dark = createColorScheme(`${name}`, false, {
