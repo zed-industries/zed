@@ -51,7 +51,7 @@ pub trait Db: Send + Sync {
         &self,
         invite: &Invite,
         user: NewUserParams,
-    ) -> Result<NewUserResult>;
+    ) -> Result<Option<NewUserResult>>;
 
     /// Registers a new project for the given user.
     async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId>;
@@ -482,7 +482,7 @@ impl Db for PostgresDb {
         &self,
         invite: &Invite,
         user: NewUserParams,
-    ) -> Result<NewUserResult> {
+    ) -> Result<Option<NewUserResult>> {
         let mut tx = self.pool.begin().await?;
 
         let (signup_id, existing_user_id, inviting_user_id, signup_device_id): (
@@ -506,10 +506,7 @@ impl Db for PostgresDb {
         .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "no such invite".to_string()))?;
 
         if existing_user_id.is_some() {
-            Err(Error::Http(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invitation already redeemed".to_string(),
-            ))?;
+            return Ok(None);
         }
 
         let (user_id, metrics_id): (UserId, String) = sqlx::query_as(
@@ -576,12 +573,12 @@ impl Db for PostgresDb {
         }
 
         tx.commit().await?;
-        Ok(NewUserResult {
+        Ok(Some(NewUserResult {
             user_id,
             metrics_id,
             inviting_user_id,
             signup_device_id,
-        })
+        }))
     }
 
     // invite codes
@@ -1958,7 +1955,7 @@ mod test {
             &self,
             _invite: &Invite,
             _user: NewUserParams,
-        ) -> Result<NewUserResult> {
+        ) -> Result<Option<NewUserResult>> {
             unimplemented!()
         }
 
