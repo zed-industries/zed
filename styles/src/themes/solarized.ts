@@ -28,5 +28,5 @@ const ramps = {
   magenta: colorRamp(chroma("#d33682")),
 };
 
-export const dark = createColorScheme(`${name}-dark`, false, ramps);
-export const light = createColorScheme(`${name}-light`, true, ramps);
+export const dark = createColorScheme(`${name} Dark`, false, ramps);
+export const light = createColorScheme(`${name} Light`, true, ramps);

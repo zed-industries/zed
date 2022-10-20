@@ -9,7 +9,7 @@ const license = {
   url: ""
 }
 
-export const dark = createColorScheme(`${name}-dark`, false, {
+export const dark = createColorScheme(`${name} Dark`, false, {
   neutral: chroma
     .scale([
       "#19171c",
@@ -32,7 +32,7 @@ export const dark = createColorScheme(`${name}-dark`, false, {
   magenta: colorRamp(chroma("#bf40bf")),
 });
 
-export const light = createColorScheme(`${name}-light`, true, {
+export const light = createColorScheme(`${name} Light`, true, {
   neutral: chroma
     .scale([
       "#19171c",
