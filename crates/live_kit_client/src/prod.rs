@@ -62,6 +62,7 @@ extern "C" {
     fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
     fn LKRemoteVideoTrackGetSid(track: *const c_void) -> CFStringRef;
 
+    fn LKDisplays();
     fn LKDisplaySources(
         callback_data: *mut c_void,
         callback: extern "C" fn(
@@ -71,6 +72,12 @@ extern "C" {
         ),
     );
     fn LKCreateScreenShareTrackForDisplay(display: *const c_void) -> *const c_void;
+}
+
+pub fn displays() {
+    unsafe {
+        LKDisplays();
+    }
 }
 
 pub type Sid = String;

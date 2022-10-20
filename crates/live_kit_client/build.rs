@@ -81,6 +81,7 @@ fn build_bridge(swift_target: &SwiftTarget) {
 }
 
 fn link_swift_stdlib(swift_target: &SwiftTarget) {
+    panic!("{:?}", swift_target.paths.runtime_library_paths);
     for path in &swift_target.paths.runtime_library_paths {
         println!("cargo:rustc-link-search=native={}", path);
     }
