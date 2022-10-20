@@ -1,7 +1,9 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "summercamp";
+const name = "Summercamp";
+const author = "";
+const url = "";
 
 const ramps = {
   neutral: chroma

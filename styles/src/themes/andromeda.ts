@@ -1,7 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "andromeda";
+const name = "Andromeda";
+const author = "";
+const url = "";
+const license = {
+  type: "",
+  url: "",
+};
 
 const ramps = {
   neutral: chroma

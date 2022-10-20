@@ -1,7 +1,9 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "sulphurpool";
+const name = "Sulphurpool";
+const author = "";
+const url = "";
 
 const ramps = {
   neutral: chroma

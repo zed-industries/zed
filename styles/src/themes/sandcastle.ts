@@ -1,7 +1,9 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "sandcastle";
+const name = "Sandcastle";
+const author = "";
+const url = "";
 
 const ramps = {
   neutral: chroma.scale([

@@ -1,7 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "cave";
+const name = "Cave";
+const author = "";
+const url = "";
+const license = {
+  type: "",
+  url: ""
+}
 
 export const dark = createColorScheme(`${name}-dark`, false, {
   neutral: chroma
@@ -37,7 +43,8 @@ export const light = createColorScheme(`${name}-light`, true, {
       "#8b8792",
       "#e2dfe7",
       "#efecf4",
-    ]).correctLightness(),
+    ])
+    .correctLightness(),
   red: colorRamp(chroma("#be4678")),
   orange: colorRamp(chroma("#aa573c")),
   yellow: colorRamp(chroma("#a06e3b")),
