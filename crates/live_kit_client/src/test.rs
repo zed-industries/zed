@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt};
-use gpui::executor::{self, Background};
+use futures::Stream;
+use gpui::executor::Background;
 use lazy_static::lazy_static;
 use live_kit_server::token;
 use media::core_video::CVImageBuffer;
@@ -160,7 +160,6 @@ impl TestServer {
             sid: nanoid::nanoid!(17),
             publisher_id: identity.clone(),
             frames_rx: local_track.frames_rx.clone(),
-            background: self.background.clone(),
         }));
 
         for (id, client_room) in &room.client_rooms {
@@ -353,7 +352,6 @@ pub struct RemoteVideoTrack {
     sid: Sid,
     publisher_id: Sid,
     frames_rx: async_broadcast::Receiver<Frame>,
-    background: Arc<executor::Background>,
 }
 
 impl RemoteVideoTrack {
@@ -365,18 +363,8 @@ impl RemoteVideoTrack {
         &self.publisher_id
     }
 
-    pub fn add_renderer<F>(&self, mut callback: F)
-    where
-        F: 'static + Send + Sync + FnMut(Frame),
-    {
-        let mut frames_rx = self.frames_rx.clone();
-        self.background
-            .spawn(async move {
-                while let Some(frame) = frames_rx.next().await {
-                    callback(frame)
-                }
-            })
-            .detach();
+    pub fn frames(&self) -> async_broadcast::Receiver<Frame> {
+        self.frames_rx.clone()
     }
 }
 

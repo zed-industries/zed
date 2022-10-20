@@ -28,12 +28,13 @@ class LKRoomDelegate: RoomDelegate {
 
 class LKVideoRenderer: NSObject, VideoRenderer {
     var data: UnsafeRawPointer
-    var onFrame: @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Void
+    var onFrame: @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Bool
     var onDrop: @convention(c) (UnsafeRawPointer) -> Void
     var adaptiveStreamIsEnabled: Bool = false
     var adaptiveStreamSize: CGSize = .zero
+    weak var track: VideoTrack?
 
-    init(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Void, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) {
+    init(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Bool, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) {
         self.data = data
         self.onFrame = onFrame
         self.onDrop = onDrop
@@ -50,7 +51,11 @@ class LKVideoRenderer: NSObject, VideoRenderer {
     func renderFrame(_ frame: RTCVideoFrame?) {
         let buffer = frame?.buffer as? RTCCVPixelBuffer
         if let pixelBuffer = buffer?.pixelBuffer {
-            self.onFrame(self.data, pixelBuffer)
+            if !self.onFrame(self.data, pixelBuffer) {
+                DispatchQueue.main.async {
+                    self.track?.remove(videoRenderer: self)
+                }
+            }
         }
     }
 }
@@ -99,7 +104,7 @@ public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPoin
 public func LKRoomUnpublishTrack(room: UnsafeRawPointer, publication: UnsafeRawPointer) {
     let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue()
     let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
-    room.localParticipant?.unpublish(publication: publication)
+    let _ = room.localParticipant?.unpublish(publication: publication)
 }
 
 @_cdecl("LKRoomVideoTracksForRemoteParticipant")
@@ -123,7 +128,7 @@ public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer)
 }
 
 @_cdecl("LKVideoRendererCreate")
-public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Void, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
+public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Bool, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(LKVideoRenderer(data: data, onFrame: onFrame, onDrop: onDrop)).toOpaque()
 }
 
@@ -131,6 +136,7 @@ public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @co
 public func LKVideoTrackAddRenderer(track: UnsafeRawPointer, renderer: UnsafeRawPointer) {
     let track = Unmanaged<Track>.fromOpaque(track).takeUnretainedValue() as! VideoTrack
     let renderer = Unmanaged<LKVideoRenderer>.fromOpaque(renderer).takeRetainedValue()
+    renderer.track = track
     track.add(videoRenderer: renderer)
 }
 

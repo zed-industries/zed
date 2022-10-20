@@ -55,7 +55,7 @@ extern "C" {
 
     fn LKVideoRendererCreate(
         callback_data: *mut c_void,
-        on_frame: extern "C" fn(callback_data: *mut c_void, frame: CVImageBufferRef),
+        on_frame: extern "C" fn(callback_data: *mut c_void, frame: CVImageBufferRef) -> bool,
         on_drop: extern "C" fn(callback_data: *mut c_void),
     ) -> *const c_void;
 
@@ -364,32 +364,43 @@ impl RemoteVideoTrack {
         &self.publisher_id
     }
 
-    pub fn add_renderer<F>(&self, callback: F)
-    where
-        F: 'static + Send + Sync + FnMut(Frame),
-    {
-        extern "C" fn on_frame<F>(callback_data: *mut c_void, frame: CVImageBufferRef)
-        where
-            F: FnMut(Frame),
-        {
+    pub fn frames(&self) -> async_broadcast::Receiver<Frame> {
+        extern "C" fn on_frame(callback_data: *mut c_void, frame: CVImageBufferRef) -> bool {
             unsafe {
+                let tx = Box::from_raw(callback_data as *mut async_broadcast::Sender<Frame>);
                 let buffer = CVImageBuffer::wrap_under_get_rule(frame);
-                let callback = &mut *(callback_data as *mut F);
-                callback(Frame(buffer));
+                let result = tx.try_broadcast(Frame(buffer));
+                let _ = Box::into_raw(tx);
+                match result {
+                    Ok(_) => true,
+                    Err(async_broadcast::TrySendError::Closed(_))
+                    | Err(async_broadcast::TrySendError::Inactive(_)) => {
+                        log::warn!("no active receiver for frame");
+                        false
+                    }
+                    Err(async_broadcast::TrySendError::Full(_)) => {
+                        log::warn!("skipping frame as receiver is not keeping up");
+                        true
+                    }
+                }
             }
         }
 
-        extern "C" fn on_drop<F>(callback_data: *mut c_void) {
+        extern "C" fn on_drop(callback_data: *mut c_void) {
             unsafe {
-                let _ = Box::from_raw(callback_data as *mut F);
+                let _ = Box::from_raw(callback_data as *mut async_broadcast::Sender<Frame>);
             }
         }
 
-        let callback_data = Box::into_raw(Box::new(callback));
+        let (tx, rx) = async_broadcast::broadcast(64);
         unsafe {
-            let renderer =
-                LKVideoRendererCreate(callback_data as *mut c_void, on_frame::<F>, on_drop::<F>);
+            let renderer = LKVideoRendererCreate(
+                Box::into_raw(Box::new(tx)) as *mut c_void,
+                on_frame,
+                on_drop,
+            );
             LKVideoTrackAddRenderer(self.native_track, renderer);
+            rx
         }
     }
 }
@@ -422,6 +433,7 @@ impl Drop for MacOSDisplay {
     }
 }
 
+#[derive(Clone)]
 pub struct Frame(CVImageBuffer);
 
 impl Frame {

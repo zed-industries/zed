@@ -8,7 +8,6 @@ use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
-use postage::watch;
 use project::Project;
 use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
 use util::{post_inc, ResultExt};
@@ -409,42 +408,39 @@ impl Room {
                     .remote_participants
                     .get_mut(&peer_id)
                     .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
-                let (mut tx, mut rx) = watch::channel();
-                track.add_renderer(move |frame| *tx.borrow_mut() = Some(frame));
+                let mut frames = track.frames();
                 participant.tracks.insert(
                     track_id.clone(),
                     RemoteVideoTrack {
                         frame: None,
                         _live_kit_track: track,
                         _maintain_frame: Arc::new(cx.spawn_weak(|this, mut cx| async move {
-                            while let Some(frame) = rx.next().await {
-                                if let Some(frame) = frame {
-                                    let this = if let Some(this) = this.upgrade(&cx) {
-                                        this
+                            while let Some(frame) = frames.next().await {
+                                let this = if let Some(this) = this.upgrade(&cx) {
+                                    this
+                                } else {
+                                    break;
+                                };
+
+                                let done = this.update(&mut cx, |this, cx| {
+                                    if let Some(track) =
+                                        this.remote_participants.get_mut(&peer_id).and_then(
+                                            |participant| participant.tracks.get_mut(&track_id),
+                                        )
+                                    {
+                                        track.frame = Some(frame);
+                                        cx.emit(Event::Frame {
+                                            participant_id: peer_id,
+                                            track_id: track_id.clone(),
+                                        });
+                                        false
                                     } else {
-                                        break;
-                                    };
-
-                                    let done = this.update(&mut cx, |this, cx| {
-                                        if let Some(track) =
-                                            this.remote_participants.get_mut(&peer_id).and_then(
-                                                |participant| participant.tracks.get_mut(&track_id),
-                                            )
-                                        {
-                                            track.frame = Some(frame);
-                                            cx.emit(Event::Frame {
-                                                participant_id: peer_id,
-                                                track_id: track_id.clone(),
-                                            });
-                                            false
-                                        } else {
-                                            true
-                                        }
-                                    });
-
-                                    if done {
-                                        break;
+                                        true
                                     }
+                                });
+
+                                if done {
+                                    break;
                                 }
                             }
                         })),

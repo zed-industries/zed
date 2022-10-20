@@ -60,7 +60,6 @@ fn main() {
                 let remote_tracks = room_b.remote_video_tracks("test-participant-1");
                 assert_eq!(remote_tracks.len(), 1);
                 assert_eq!(remote_tracks[0].publisher_id(), "test-participant-1");
-                dbg!(track.sid());
                 assert_eq!(track.publisher_id(), "test-participant-1");
             } else {
                 panic!("unexpected message");
