@@ -2,8 +2,8 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Tokyo Night Storm";
-const author = "ghifarit53";
-const url = "https://github.com/ghifarit53/tokyonight-vim";
+const author = "folke";
+const url = "https://github.com/folke/tokyonight.nvim";
 const license = {
   type: "MIT",
   url: "https://github.com/ghifarit53/tokyonight-vim/blob/master/LICENSE",

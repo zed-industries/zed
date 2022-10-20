@@ -2,7 +2,7 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Tokyo";
-const author = "Michaël Ball";
+const author = "folke";
 const url = "https://github.com/folke/tokyonight.nvim";
 const license = {
   type: "Apache License 2.0",
