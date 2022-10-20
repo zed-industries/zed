@@ -6,6 +6,9 @@ fn main() {
     if let Ok(api_key) = std::env::var("ZED_MIXPANEL_TOKEN") {
         println!("cargo:rustc-env=ZED_MIXPANEL_TOKEN={api_key}");
     }
+    if let Ok(api_key) = std::env::var("ZED_AMPLITUDE_API_KEY") {
+        println!("cargo:rustc-env=ZED_AMPLITUDE_API_KEY={api_key}");
+    }
 
     let output = Command::new("npm")
         .current_dir("../../styles")
