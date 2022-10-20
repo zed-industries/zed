@@ -7,8 +7,13 @@ fn main() {
         println!("cargo:rustc-env=ZED_AMPLITUDE_API_KEY={api_key}");
     }
 
-    // Find WebRTC.framework as a sibling of the executable when running outside of an application bundle
-    println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+    if std::env::var("ZED_BUNDLE").ok().as_deref() == Some("true") {
+        // Find WebRTC.framework in the Frameworks folder when running as part of an application bundle.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+    } else {
+        // Find WebRTC.framework as a sibling of the executable when running outside of an application bundle.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+    }
 
     // Register exported Objective-C selectors, protocols, etc
     println!("cargo:rustc-link-arg=-Wl,-ObjC");

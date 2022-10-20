@@ -33,6 +33,11 @@ lipo \
     -output \
     target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/cli
 
+echo "Copying WebRTC.framework into the frameworks folder"
+mkdir target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Frameworks
+cp -R target/x86_64-apple-darwin/release/WebRTC.framework target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Frameworks/
+rm -rf target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Frameworks/WebRTC.framework/Versions
+
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
     security create-keychain -p $MACOS_CERTIFICATE_PASSWORD zed.keychain || echo ""
