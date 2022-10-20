@@ -2,7 +2,12 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "../common/ramps";
 
 const name = "Ayu";
-const author = "Khue Nguyen <Z5483Y@gmail.com>";
+const author = "Konstantin Pschera <me@kons.ch>";
+const url = "https://github.com/ayu-theme/ayu-colors";
+const license = {
+  type: "MIT",
+  url: "https://github.com/ayu-theme/ayu-colors/blob/master/license"
+}
 
 export const dark = createColorScheme(`${name} Dark`, false, {
   neutral: chroma.scale([

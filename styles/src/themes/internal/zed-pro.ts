@@ -1,7 +1,9 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "../common/ramps";
 
-const name = "zed-pro";
+const name = "Zed Pro";
+const author = "Nate Butler"
+const url = "https://github.com/iamnbutler"
 
 const ramps = {
   neutral: chroma
@@ -26,5 +28,5 @@ const ramps = {
   magenta: colorRamp(chroma("#DE9AB8")),
 };
 
-export const dark = createColorScheme(`${name}-dark`, false, ramps);
-export const light = createColorScheme(`${name}-light`, true, ramps);
+export const dark = createColorScheme(`${name} Dark`, false, ramps);
+export const light = createColorScheme(`${name} Light`, true, ramps);
