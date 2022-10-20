@@ -519,6 +519,10 @@ impl Store {
         self.rooms.get(&room_id)
     }
 
+    pub fn rooms(&self) -> &BTreeMap<RoomId, proto::Room> {
+        &self.rooms
+    }
+
     pub fn call(
         &mut self,
         room_id: RoomId,

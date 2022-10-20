@@ -22,7 +22,7 @@ use time::OffsetDateTime;
 use tower::ServiceBuilder;
 use tracing::instrument;
 
-pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
+pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users", get(get_users).post(create_user))
@@ -50,7 +50,7 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
-                .layer(Extension(rpc_server.clone()))
+                .layer(Extension(rpc_server))
                 .layer(middleware::from_fn(validate_api_token)),
         )
 }
