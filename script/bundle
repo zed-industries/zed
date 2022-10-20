@@ -3,7 +3,7 @@
 set -e
 
 export ZED_BUNDLE=true
-export MACOSX_DEPLOYMENT_TARGET=10.14
+export MACOSX_DEPLOYMENT_TARGET=10.15.7
 
 echo "Installing cargo bundle"
 cargo install cargo-bundle --version 0.5.0
@@ -12,10 +12,13 @@ rustup target add wasm32-wasi
 # Deal with versions of macOS that don't include libstdc++ headers
 export CXXFLAGS="-stdlib=libc++"
 
-echo "Compiling binaries"
+echo "Compiling zed binary for aarch64-apple-darwin"
 cargo build --release --package zed --target aarch64-apple-darwin
+echo "Compiling zed binary for x86_64-apple-darwin"
 cargo build --release --package zed --target x86_64-apple-darwin
+echo "Compiling cli binary for aarch64-apple-darwin"
 cargo build --release --package cli --target aarch64-apple-darwin
+echo "Compiling cli binary for x86_64-apple-darwin"
 cargo build --release --package cli --target x86_64-apple-darwin
 
 echo "Creating application bundle"

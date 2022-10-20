@@ -32,7 +32,7 @@ pub struct SwiftTarget {
     pub paths: SwiftPaths,
 }
 
-const MACOS_TARGET_VERSION: &str = "10.15";
+const MACOS_TARGET_VERSION: &str = "10.15.7";
 
 fn main() {
     if cfg!(not(any(test, feature = "test-support"))) {
@@ -81,13 +81,9 @@ fn build_bridge(swift_target: &SwiftTarget) {
 }
 
 fn link_swift_stdlib(swift_target: &SwiftTarget) {
-    swift_target
-        .paths
-        .runtime_library_paths
-        .iter()
-        .for_each(|path| {
-            println!("cargo:rustc-link-search=native={}", path);
-        });
+    for path in &swift_target.paths.runtime_library_paths {
+        println!("cargo:rustc-link-search=native={}", path);
+    }
 }
 
 fn link_webrtc_framework(swift_target: &SwiftTarget) {

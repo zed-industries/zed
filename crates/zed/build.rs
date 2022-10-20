@@ -1,7 +1,7 @@
 use std::process::Command;
 
 fn main() {
-    println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.14");
+    println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
 
     if let Ok(api_key) = std::env::var("ZED_AMPLITUDE_API_KEY") {
         println!("cargo:rustc-env=ZED_AMPLITUDE_API_KEY={api_key}");
