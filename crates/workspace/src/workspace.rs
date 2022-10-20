@@ -1110,6 +1110,7 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(
+        serialized_workspace: SerializedWorkspace,
         project: ModelHandle<Project>,
         dock_default_factory: DefaultItemFactory,
         cx: &mut ViewContext<Self>,

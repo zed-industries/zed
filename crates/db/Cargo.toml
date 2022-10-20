@@ -12,6 +12,7 @@ test-support = []
 
 [dependencies]
 collections = { path = "../collections" }
+gpui = { path = "../gpui" }
 anyhow = "1.0.57"
 async-trait = "0.1"
 lazy_static = "1.4.0"

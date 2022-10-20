@@ -1,8 +1,17 @@
-use std::{ffi::OsStr, fmt::Display, hash::Hash, os::unix::prelude::OsStrExt, path::PathBuf};
+use std::{
+    ffi::OsStr,
+    fmt::Display,
+    hash::Hash,
+    os::unix::prelude::OsStrExt,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use collections::HashSet;
-use rusqlite::{named_params, params};
+use rusqlite::{named_params, params, types::FromSql};
+
+use crate::workspace::WorkspaceId;
 
 use super::Db;
 
@@ -62,3 +71,52 @@ CREATE TABLE editors(
     FOREIGN KEY(workspace_id) REFERENCES workspace_ids(workspace_id)
 ) STRICT;
 ";
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ItemId {
+    workspace_id: usize,
+    item_id: usize,
+}
+
+enum SerializedItemKind {
+    Editor,
+    Diagnostics,
+    ProjectSearch,
+    Terminal,
+}
+
+struct SerializedItemRow {
+    kind: SerializedItemKind,
+    item_id: usize,
+    path: Option<Arc<Path>>,
+    query: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SerializedItem {
+    Editor { item_id: usize, path: Arc<Path> },
+    Diagnostics { item_id: usize },
+    ProjectSearch { item_id: usize, query: String },
+    Terminal { item_id: usize },
+}
+
+impl SerializedItem {
+    pub fn item_id(&self) -> usize {
+        match self {
+            SerializedItem::Editor { item_id, .. } => *item_id,
+            SerializedItem::Diagnostics { item_id } => *item_id,
+            SerializedItem::ProjectSearch { item_id, .. } => *item_id,
+            SerializedItem::Terminal { item_id } => *item_id,
+        }
+    }
+}
+
+impl Db {
+    pub fn get_item(&self, item_id: ItemId) -> SerializedItem {
+        unimplemented!()
+    }
+
+    pub fn save_item(&self, workspace_id: WorkspaceId, item: &SerializedItem) {}
+
+    pub fn close_item(&self, item_id: ItemId) {}
+}

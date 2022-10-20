@@ -137,7 +137,11 @@ pub struct Dock {
 }
 
 impl Dock {
-    pub fn new(cx: &mut ViewContext<Workspace>, default_item_factory: DefaultItemFactory) -> Self {
+    pub fn new(
+        serialized_pane: SerializedPane,
+        default_item_factory: DefaultItemFactory,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Self {
         let anchor = cx.global::<Settings>().default_dock_anchor;
         let pane = cx.add_view(|cx| Pane::new(Some(anchor), cx));
         pane.update(cx, |pane, cx| {

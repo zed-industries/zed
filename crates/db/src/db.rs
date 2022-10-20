@@ -1,6 +1,7 @@
 mod items;
 mod kvp;
 mod migrations;
+mod pane;
 mod workspace;
 
 use std::fs;
