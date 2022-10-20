@@ -228,6 +228,10 @@ async fn test_basic_calls(
         panic!("unexpected event")
     }
 
+    display.send_frame(frame.clone());
+    deterministic.run_until_parked();
+    assert_eq!(events_b.borrow().len(), 2);
+
     // User A leaves the room.
     active_call_a.update(cx_a, |call, cx| {
         call.hang_up(cx).unwrap();
