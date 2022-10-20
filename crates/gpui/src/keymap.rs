@@ -301,6 +301,10 @@ impl Keystroke {
             }
         }
 
+        if key.is_none() {
+            return Err(anyhow!("Invalid keystroke `{}`", source));
+        }
+
         Ok(Keystroke {
             ctrl,
             alt,
