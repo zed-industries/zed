@@ -708,6 +708,16 @@ impl<'a> PaintContext<'a> {
     }
 
     #[inline]
+    pub fn paint_stacking_context<F>(&mut self, clip_bounds: Option<RectF>, f: F)
+    where
+        F: FnOnce(&mut Self),
+    {
+        self.scene.push_stacking_context(clip_bounds);
+        f(self);
+        self.scene.pop_stacking_context();
+    }
+
+    #[inline]
     pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
     where
         F: FnOnce(&mut Self),

@@ -1373,10 +1373,12 @@ impl View for Pane {
             .with_child(
                 MouseEventHandler::<MouseNavigationHandler>::new(0, cx, |_, cx| {
                     if let Some(active_item) = self.active_item() {
+                        enum PaneContentTabDropTarget {}
+
                         Flex::column()
                             .with_child({
                                 let mut tab_row = Flex::row()
-                                    .with_child(self.render_tabs(cx).flex(1.0, true).named("tabs"));
+                                    .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
 
                                 // Render pane buttons
                                 let theme = cx.global::<Settings>().theme.clone();
@@ -1440,8 +1442,35 @@ impl View for Pane {
                                     .flex(1., false)
                                     .named("tab bar")
                             })
-                            .with_child(ChildView::new(&self.toolbar, cx).expanded().boxed())
-                            .with_child(ChildView::new(active_item, cx).flex(1., true).boxed())
+                            .with_child({
+                                let drop_index = self.active_item_index + 1;
+                                MouseEventHandler::<PaneContentTabDropTarget>::new(
+                                    0,
+                                    cx,
+                                    |_, cx| {
+                                        Flex::column()
+                                            .with_child(
+                                                ChildView::new(&self.toolbar, cx)
+                                                    .expanded()
+                                                    .boxed(),
+                                            )
+                                            .with_child(
+                                                ChildView::new(active_item, cx)
+                                                    .flex(1., true)
+                                                    .boxed(),
+                                            )
+                                            .boxed()
+                                    },
+                                )
+                                .on_up(MouseButton::Left, {
+                                    let pane = cx.handle();
+                                    move |_, cx: &mut EventContext| {
+                                        Pane::handle_dropped_item(&pane, drop_index, cx)
+                                    }
+                                })
+                                .flex(1., true)
+                                .boxed()
+                            })
                             .boxed()
                     } else {
                         enum EmptyPane {}

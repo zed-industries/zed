@@ -172,26 +172,28 @@ impl<Tag> Element for MouseEventHandler<Tag> {
     ) -> Self::PaintState {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
         let hit_bounds = self.hit_bounds(visible_bounds);
-        if let Some(style) = self.cursor_style {
-            cx.scene.push_cursor_region(CursorRegion {
-                bounds: hit_bounds,
-                style,
-            });
-        }
-
-        cx.scene.push_mouse_region(
-            MouseRegion::from_handlers::<Tag>(
-                cx.current_view_id(),
-                self.region_id,
-                hit_bounds,
-                self.handlers.clone(),
-            )
-            .with_hoverable(self.hoverable)
-            .with_notify_on_hover(self.notify_on_hover)
-            .with_notify_on_click(self.notify_on_click),
-        );
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
+
+        cx.paint_stacking_context(None, |cx| {
+            if let Some(style) = self.cursor_style {
+                cx.scene.push_cursor_region(CursorRegion {
+                    bounds: hit_bounds,
+                    style,
+                });
+            }
+            cx.scene.push_mouse_region(
+                MouseRegion::from_handlers::<Tag>(
+                    cx.current_view_id(),
+                    self.region_id,
+                    hit_bounds,
+                    self.handlers.clone(),
+                )
+                .with_hoverable(self.hoverable)
+                .with_notify_on_hover(self.notify_on_hover)
+                .with_notify_on_click(self.notify_on_click),
+            );
+        });
     }
 
     fn rect_for_text_range(

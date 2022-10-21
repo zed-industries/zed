@@ -362,6 +362,7 @@ impl View for ToggleDockButton {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand);
+        .on_
 
         if dock_position.is_visible() {
             button
