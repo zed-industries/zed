@@ -7,6 +7,6 @@
 /crates/collab/static/styles.css
 /vendor/bin
 /assets/themes/*.json
-/assets/themes/Internal-case-breaker/*.json
-/assets/themes/Experiments-case-breaker/*.json
+/assets/themes/Internal/*.json
+/assets/themes/Experiments/*.json
 **/venv
