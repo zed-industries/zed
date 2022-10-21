@@ -5,8 +5,8 @@ const name = "Zenburn";
 const author = "elnawe";
 const url = "https://github.com/elnawe/base16-zenburn-scheme";
 const license = {
-  type: "?",
-  url: "https://github.com/elnawe/base16-zenburn-scheme/blob/master/zenburn.yaml",
+  type: "None",
+  url: "",
 };
 
 // `name-[light|dark]`, isLight, color ramps
