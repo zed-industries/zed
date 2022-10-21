@@ -432,6 +432,12 @@
         }
     },
     {
+        "context": "Pane",
+        "bindings": {
+            "cmd-escape": "dock::MoveActiveItemToDock"
+        }
+    },
+    {
         "context": "ProjectPanel",
         "bindings": {
             "left": "project_panel::CollapseSelectedEntry",

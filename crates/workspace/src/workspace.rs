@@ -3175,7 +3175,7 @@ mod tests {
 
         cx.foreground().run_until_parked();
         pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items().count(), 4);
+            assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
 
@@ -3185,7 +3185,7 @@ mod tests {
             assert_eq!(item1.read(cx).save_count, 1);
             assert_eq!(item1.read(cx).save_as_count, 0);
             assert_eq!(item1.read(cx).reload_count, 0);
-            assert_eq!(pane.items().count(), 3);
+            assert_eq!(pane.items_len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
 
@@ -3195,7 +3195,7 @@ mod tests {
             assert_eq!(item3.read(cx).save_count, 0);
             assert_eq!(item3.read(cx).save_as_count, 0);
             assert_eq!(item3.read(cx).reload_count, 1);
-            assert_eq!(pane.items().count(), 2);
+            assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
 
@@ -3207,7 +3207,7 @@ mod tests {
             assert_eq!(item4.read(cx).save_count, 0);
             assert_eq!(item4.read(cx).save_as_count, 1);
             assert_eq!(item4.read(cx).reload_count, 0);
-            assert_eq!(pane.items().count(), 1);
+            assert_eq!(pane.items_len(), 1);
             assert_eq!(pane.active_item().unwrap().id(), item2.id());
         });
     }
@@ -3309,7 +3309,7 @@ mod tests {
         cx.foreground().run_until_parked();
         close.await.unwrap();
         left_pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items().count(), 0);
+            assert_eq!(pane.items_len(), 0);
         });
     }
 

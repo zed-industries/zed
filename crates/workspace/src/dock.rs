@@ -24,7 +24,8 @@ actions!(
         HideDock,
         AnchorDockRight,
         AnchorDockBottom,
-        ExpandDock
+        ExpandDock,
+        MoveActiveItemToDock,
     ]
 );
 impl_internal_actions!(dock, [MoveDock, AddDefaultItemToDock]);
@@ -46,6 +47,30 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(
         |workspace: &mut Workspace, _: &ExpandDock, cx: &mut ViewContext<Workspace>| {
             Dock::move_dock(workspace, &MoveDock(DockAnchor::Expanded), cx)
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &MoveActiveItemToDock, cx: &mut ViewContext<Workspace>| {
+            if let Some(active_item) = workspace.active_item(cx) {
+                let item_id = active_item.id();
+
+                let from = workspace.active_pane();
+                let to = workspace.dock_pane();
+                if from.id() == to.id() {
+                    return;
+                }
+
+                let destination_index = to.read(cx).items_len() + 1;
+
+                Pane::move_item(
+                    workspace,
+                    from.clone(),
+                    to.clone(),
+                    item_id,
+                    destination_index,
+                    cx,
+                );
+            }
         },
     );
 }
@@ -338,7 +363,8 @@ impl View for ToggleDockButton {
             return Empty::new().boxed();
         }
 
-        let dock_position = workspace.unwrap().read(cx).dock.position;
+        let workspace = workspace.unwrap();
+        let dock_position = workspace.read(cx).dock.position;
 
         let theme = cx.global::<Settings>().theme.clone();
         let button = MouseEventHandler::<Self>::new(0, cx, {
@@ -361,8 +387,12 @@ impl View for ToggleDockButton {
                     .boxed()
             }
         })
-        .with_cursor_style(CursorStyle::PointingHand);
-        .on_
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_up(MouseButton::Left, move |_, cx| {
+            let dock_pane = workspace.read(cx.app).dock_pane();
+            let drop_index = dock_pane.read(cx.app).items_len() + 1;
+            Pane::handle_dropped_item(&dock_pane.downgrade(), drop_index, cx);
+        });
 
         if dock_position.is_visible() {
             button

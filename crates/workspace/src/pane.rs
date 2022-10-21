@@ -575,6 +575,10 @@ impl Pane {
         }
     }
 
+    pub fn items_len(&self) -> usize {
+        self.items.len()
+    }
+
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
         self.items.iter()
     }
@@ -943,11 +947,11 @@ impl Pane {
         }
     }
 
-    fn move_item(
+    pub fn move_item(
         workspace: &mut Workspace,
         from: ViewHandle<Pane>,
         to: ViewHandle<Pane>,
-        item_to_move: usize,
+        item_id_to_move: usize,
         destination_index: usize,
         cx: &mut ViewContext<Workspace>,
     ) {
@@ -955,7 +959,7 @@ impl Pane {
             .read(cx)
             .items()
             .enumerate()
-            .find(|(_, item_handle)| item_handle.id() == item_to_move);
+            .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
 
         if item_to_move.is_none() {
             log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
@@ -1321,7 +1325,7 @@ impl Pane {
         tab.constrained().with_height(tab_style.height).boxed()
     }
 
-    fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
+    pub fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
         if let Some((_, dragged_item)) = cx
             .global::<DragAndDrop<Workspace>>()
             .currently_dragged::<DraggedItem>(cx.window_id)
