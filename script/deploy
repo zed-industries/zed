@@ -1,12 +1,7 @@
 #!/bin/bash
 
-# Prerequisites:
-#
-# - Log in to the DigitalOcean API, either interactively, by running
-#   `doctl auth init`, or by setting the `DIGITALOCEAN_ACCESS_TOKEN`
-#   environment variable.
-
 set -eu
+source script/lib/deploy-helpers.sh
 
 if [[ $# < 2 ]]; then
   echo "Usage: $0 <production|staging|preview> <tag-name>"
@@ -15,28 +10,8 @@ fi
 export ZED_KUBE_NAMESPACE=$1
 COLLAB_VERSION=$2
 
-ENV_FILE="crates/collab/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
-if [[ ! -f $ENV_FILE ]]; then
-  echo "Invalid environment name '${ZED_KUBE_NAMESPACE}'"
-  exit 1
-fi
-export $(cat $ENV_FILE)
-
-if [[ ! $COLLAB_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Invalid version number '$COLLAB_VERSION'"
-  exit 1
-fi
-TAG_NAMES=$(doctl registry repository list-tags collab --no-header --format Tag)
-if ! $(echo "${TAG_NAMES}" | grep -Fqx v${COLLAB_VERSION}); then
-  echo "No such image tag: 'zed/collab:v${COLLAB_VERSION}'"
-  echo "Found tags"
-  echo "${TAG_NAMES}"
-  exit 1
-fi
-export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}"
-
-if [[ $(kubectl config current-context 2> /dev/null) != do-nyc1-zed-1 ]]; then
-  doctl kubernetes cluster kubeconfig save zed-1
-fi
+export_vars_for_environment $ZED_KUBE_NAMESPACE
+export ZED_IMAGE_ID=$(image_id_for_version $COLLAB_VERSION)
+target_zed_kube_cluster
 
 envsubst < crates/collab/k8s/manifest.template.yml | kubectl apply -f -

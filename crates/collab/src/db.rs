@@ -6,8 +6,12 @@ use collections::HashMap;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
-use sqlx::{types::Uuid, FromRow, QueryBuilder};
-use std::{cmp, ops::Range, time::Duration};
+use sqlx::{
+    migrate::{Migrate as _, Migration, MigrationSource},
+    types::Uuid,
+    FromRow, QueryBuilder,
+};
+use std::{cmp, ops::Range, path::Path, time::Duration};
 use time::{OffsetDateTime, PrimitiveDateTime};
 
 #[async_trait]
@@ -173,6 +177,13 @@ pub trait Db: Send + Sync {
     fn as_fake(&self) -> Option<&FakeDb>;
 }
 
+#[cfg(any(test, debug_assertions))]
+pub const DEFAULT_MIGRATIONS_PATH: Option<&'static str> =
+    Some(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
+
+#[cfg(not(any(test, debug_assertions)))]
+pub const DEFAULT_MIGRATIONS_PATH: Option<&'static str> = None;
+
 pub struct PostgresDb {
     pool: sqlx::PgPool,
 }
@@ -185,6 +196,47 @@ impl PostgresDb {
             .await
             .context("failed to connect to postgres database")?;
         Ok(Self { pool })
+    }
+
+    pub async fn migrate(
+        &self,
+        migrations_path: &Path,
+        ignore_checksum_mismatch: bool,
+    ) -> anyhow::Result<Vec<(Migration, Duration)>> {
+        let migrations = MigrationSource::resolve(migrations_path)
+            .await
+            .map_err(|err| anyhow!("failed to load migrations: {err:?}"))?;
+
+        let mut conn = self.pool.acquire().await?;
+
+        conn.ensure_migrations_table().await?;
+        let applied_migrations: HashMap<_, _> = conn
+            .list_applied_migrations()
+            .await?
+            .into_iter()
+            .map(|m| (m.version, m))
+            .collect();
+
+        let mut new_migrations = Vec::new();
+        for migration in migrations {
+            match applied_migrations.get(&migration.version) {
+                Some(applied_migration) => {
+                    if migration.checksum != applied_migration.checksum && !ignore_checksum_mismatch
+                    {
+                        Err(anyhow!(
+                            "checksum mismatch for applied migration {}",
+                            migration.description
+                        ))?;
+                    }
+                }
+                None => {
+                    let elapsed = conn.apply(&migration).await?;
+                    new_migrations.push((migration, elapsed));
+                }
+            }
+        }
+
+        Ok(new_migrations)
     }
 
     pub fn fuzzy_like_string(string: &str) -> String {
@@ -1763,11 +1815,8 @@ mod test {
     use lazy_static::lazy_static;
     use parking_lot::Mutex;
     use rand::prelude::*;
-    use sqlx::{
-        migrate::{MigrateDatabase, Migrator},
-        Postgres,
-    };
-    use std::{path::Path, sync::Arc};
+    use sqlx::{migrate::MigrateDatabase, Postgres};
+    use std::sync::Arc;
     use util::post_inc;
 
     pub struct FakeDb {
@@ -2430,13 +2479,13 @@ mod test {
             let mut rng = StdRng::from_entropy();
             let name = format!("zed-test-{}", rng.gen::<u128>());
             let url = format!("postgres://postgres@localhost/{}", name);
-            let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
             Postgres::create_database(&url)
                 .await
                 .expect("failed to create test db");
             let db = PostgresDb::new(&url, 5).await.unwrap();
-            let migrator = Migrator::new(migrations_path).await.unwrap();
-            migrator.run(&db.pool).await.unwrap();
+            db.migrate(Path::new(DEFAULT_MIGRATIONS_PATH.unwrap()), false)
+                .await
+                .unwrap();
             Self {
                 db: Some(Arc::new(db)),
                 url,

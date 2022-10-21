@@ -9,12 +9,15 @@ mod db_tests;
 #[cfg(test)]
 mod integration_tests;
 
+use anyhow::anyhow;
 use axum::{routing::get, Router};
 use collab::{Error, Result};
 use db::{Db, PostgresDb};
 use serde::Deserialize;
 use std::{
+    env::args,
     net::{SocketAddr, TcpListener},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -34,20 +37,15 @@ pub struct Config {
     pub log_json: Option<bool>,
 }
 
+#[derive(Default, Deserialize)]
+pub struct MigrateConfig {
+    pub database_url: String,
+    pub migrations_path: Option<PathBuf>,
+}
+
 pub struct AppState {
     db: Arc<dyn Db>,
     config: Config,
-}
-
-impl AppState {
-    async fn new(config: Config) -> Result<Arc<Self>> {
-        let db = PostgresDb::new(&config.database_url, 5).await?;
-        let this = Self {
-            db: Arc::new(db),
-            config,
-        };
-        Ok(Arc::new(this))
-    }
 }
 
 #[tokio::main]
@@ -59,24 +57,59 @@ async fn main() -> Result<()> {
         );
     }
 
-    let config = envy::from_env::<Config>().expect("error loading config");
-    init_tracing(&config);
-    let state = AppState::new(config).await?;
+    match args().skip(1).next().as_deref() {
+        Some("version") => {
+            println!("collab v{VERSION}");
+        }
+        Some("migrate") => {
+            let config = envy::from_env::<MigrateConfig>().expect("error loading config");
+            let db = PostgresDb::new(&config.database_url, 5).await?;
 
-    let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
-        .expect("failed to bind TCP listener");
-    let rpc_server = rpc::Server::new(state.clone(), None);
+            let migrations_path = config
+                .migrations_path
+                .as_deref()
+                .or(db::DEFAULT_MIGRATIONS_PATH.map(|s| s.as_ref()))
+                .ok_or_else(|| anyhow!("missing MIGRATIONS_PATH environment variable"))?;
 
-    rpc_server.start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
+            let migrations = db.migrate(&migrations_path, false).await?;
+            for (migration, duration) in migrations {
+                println!(
+                    "Ran {} {} {:?}",
+                    migration.version, migration.description, duration
+                );
+            }
 
-    let app = api::routes(&rpc_server, state.clone())
-        .merge(rpc::routes(rpc_server))
-        .merge(Router::new().route("/", get(handle_root)));
+            return Ok(());
+        }
+        Some("serve") => {
+            let config = envy::from_env::<Config>().expect("error loading config");
+            let db = PostgresDb::new(&config.database_url, 5).await?;
 
-    axum::Server::from_tcp(listener)?
-        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-        .await?;
+            init_tracing(&config);
+            let state = Arc::new(AppState {
+                db: Arc::new(db),
+                config,
+            });
 
+            let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
+                .expect("failed to bind TCP listener");
+
+            let rpc_server = rpc::Server::new(state.clone(), None);
+            rpc_server
+                .start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
+
+            let app = api::routes(&rpc_server, state.clone())
+                .merge(rpc::routes(rpc_server))
+                .merge(Router::new().route("/", get(handle_root)));
+
+            axum::Server::from_tcp(listener)?
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .await?;
+        }
+        _ => {
+            Err(anyhow!("usage: collab <version | migrate | serve>"))?;
+        }
+    }
     Ok(())
 }
 

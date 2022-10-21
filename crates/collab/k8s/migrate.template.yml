@@ -10,6 +10,8 @@ spec:
       containers:
         - name: migrator
           image: ${ZED_IMAGE_ID}
+          args:
+            - migrate
           env:
             - name: DATABASE_URL
               valueFrom:

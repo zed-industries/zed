@@ -19,5 +19,7 @@ FROM debian:bullseye-slim as runtime
 RUN apt-get update; \
     apt-get install -y --no-install-recommends libcurl4-openssl-dev ca-certificates
 WORKDIR app
-COPY --from=builder /app/collab /app
+COPY --from=builder /app/collab /app/collab
+COPY --from=builder /app/crates/collab/migrations /app/migrations
+ENV MIGRATIONS_PATH=/app/migrations
 ENTRYPOINT ["/app/collab"]

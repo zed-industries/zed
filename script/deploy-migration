@@ -1,42 +1,20 @@
 #!/bin/bash
 
-# Prerequisites:
-#
-# - Log in to the DigitalOcean docker registry
-#   doctl registry login
-#
-# - Target the `zed-1` kubernetes cluster
-#   doctl kubernetes cluster kubeconfig save zed-1
-
 set -eu
+source script/lib/deploy-helpers.sh
 
-if [[ $# < 1 ]]; then
-  echo "Usage: $0 [production|staging|...]"
+if [[ $# < 2 ]]; then
+  echo "Usage: $0 <production|staging|preview> <tag-name>"
   exit 1
 fi
-
 export ZED_KUBE_NAMESPACE=$1
-ENV_FILE="crates/collab/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
-if [[ ! -f $ENV_FILE ]]; then
-  echo "Invalid environment name '${ZED_KUBE_NAMESPACE}'"
-  exit 1
-fi
+COLLAB_VERSION=$2
 
-if [[ -n $(git status --short) ]]; then
-  echo "Cannot deploy with uncommited changes"
-  exit 1
-fi
-
-git_sha=$(git rev-parse HEAD)
-export ZED_IMAGE_ID=registry.digitalocean.com/zed/zed-migrator:${ZED_KUBE_NAMESPACE}-${git_sha}
-export ZED_MIGRATE_JOB_NAME=zed-migrate-${git_sha}
-
-docker build . \
-  --file ./Dockerfile.migrator \
-  --tag $ZED_IMAGE_ID
-docker push $ZED_IMAGE_ID
+export_vars_for_environment $ZED_KUBE_NAMESPACE
+export ZED_IMAGE_ID=$(image_id_for_version ${COLLAB_VERSION})
+export ZED_MIGRATE_JOB_NAME=zed-migrate-${COLLAB_VERSION}
+target_zed_kube_cluster
 
 envsubst < crates/collab/k8s/migrate.template.yml | kubectl apply -f -
-
 pod=$(kubectl --namespace=${ZED_KUBE_NAMESPACE} get pods --selector=job-name=${ZED_MIGRATE_JOB_NAME} --output=jsonpath='{.items[*].metadata.name}')
 echo "pod:" $pod
