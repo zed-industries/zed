@@ -7,14 +7,20 @@ if [[ $# < 2 ]]; then
   echo "Usage: $0 <production|staging|preview> <tag-name>"
   exit 1
 fi
-export ZED_KUBE_NAMESPACE=$1
-COLLAB_VERSION=$2
+environment=$1
+version=$2
 
-export_vars_for_environment $ZED_KUBE_NAMESPACE
-export ZED_IMAGE_ID=$(image_id_for_version ${COLLAB_VERSION})
-export ZED_MIGRATE_JOB_NAME=zed-migrate-${COLLAB_VERSION}
+export_vars_for_environment ${environment}
+image_id=$(image_id_for_version ${version})
+
+export ZED_KUBE_NAMESPACE=${environment}
+export ZED_IMAGE_ID=${image_id}
+export ZED_MIGRATE_JOB_NAME=zed-migrate-${version}
+
 target_zed_kube_cluster
-
 envsubst < crates/collab/k8s/migrate.template.yml | kubectl apply -f -
-pod=$(kubectl --namespace=${ZED_KUBE_NAMESPACE} get pods --selector=job-name=${ZED_MIGRATE_JOB_NAME} --output=jsonpath='{.items[*].metadata.name}')
-echo "pod:" $pod
+
+pod=$(kubectl --namespace=${environment} get pods --selector=job-name=${ZED_MIGRATE_JOB_NAME} --output=jsonpath='{.items[0].metadata.name}')
+
+echo "Job pod:" $pod
+kubectl --namespace=${environment} logs -f ${pod}

@@ -1,14 +1,8 @@
-# Prerequisites:
-#
-# - Log in to the DigitalOcean API, either interactively, by running
-#   `doctl auth init`, or by setting the `DIGITALOCEAN_ACCESS_TOKEN`
-#   environment variable.
-
 function export_vars_for_environment {
   local environment=$1
   local env_file="crates/collab/k8s/environments/${environment}.sh"
   if [[ ! -f $env_file ]]; then
-    echo "Invalid environment name '${environment}'"
+    echo "Invalid environment name '${environment}'" >&2
     exit 1
   fi
   export $(cat $env_file)
@@ -16,15 +10,18 @@ function export_vars_for_environment {
 
 function image_id_for_version {
   local version=$1
+
+  # Check that version is valid
   if [[ ! ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Invalid version number '${version}'"
+    echo "Invalid version number '${version}'" >&2
     exit 1
   fi
-  TAG_NAMES=$(doctl registry repository list-tags collab --no-header --format Tag)
-  if ! $(echo "${TAG_NAMES}" | grep -Fqx v${version}); then
-    echo "No such image tag: 'zed/collab:v${version}'"
-    echo "Found tags"
-    echo "${TAG_NAMES}"
+
+  # Check that image exists for version
+  tag_names=$(doctl registry repository list-tags collab --no-header --format Tag)
+  if ! $(echo "${tag_names}" | grep -Fqx v${version}); then
+    echo "No docker image tagged for version '${version}'" >&2
+    echo "Found images with these tags:" ${tag_names} >&2
     exit 1
   fi
   
