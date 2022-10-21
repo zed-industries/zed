@@ -301,9 +301,7 @@ impl Keystroke {
             }
         }
 
-        if key.is_none() {
-            return Err(anyhow!("Invalid keystroke `{}`", source));
-        }
+        let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
 
         Ok(Keystroke {
             ctrl,
@@ -311,7 +309,7 @@ impl Keystroke {
             shift,
             cmd,
             function,
-            key: key.unwrap(),
+            key,
         })
     }
 
