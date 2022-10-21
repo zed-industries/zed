@@ -20,7 +20,6 @@ assets = { path = "../assets" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }
-chat_panel = { path = "../chat_panel" }
 cli = { path = "../cli" }
 collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
@@ -52,6 +51,7 @@ text = { path = "../text" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
+theme_testbench = { path = "../theme_testbench" }
 util = { path = "../util" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }

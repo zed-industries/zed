@@ -1,12 +1,14 @@
-import Theme from "../themes/common/theme";
 import picker from "./picker";
-import { backgroundColor, border, iconColor, player, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, foreground, text } from "./components";
 
-export default function contactFinder(theme: Theme) {
+export default function contactFinder(colorScheme: ColorScheme) {
+  let layer = colorScheme.highest;
+
   const sideMargin = 6;
   const contactButton = {
-    background: backgroundColor(theme, 100),
-    color: iconColor(theme, "primary"),
+    background: background(layer, "variant"),
+    color: foreground(layer, "variant"),
     iconWidth: 8,
     buttonWidth: 16,
     cornerRadius: 8,
@@ -15,17 +17,17 @@ export default function contactFinder(theme: Theme) {
   return {
     picker: {
       item: {
-        ...picker(theme).item,
+        ...picker(colorScheme).item,
         margin: { left: sideMargin, right: sideMargin }
       },
-      empty: picker(theme).empty,
+      empty: picker(colorScheme).empty,
       inputEditor: {
-        background: backgroundColor(theme, 500),
+        background: background(layer, "on"),
         cornerRadius: 6,
-        text: text(theme, "mono", "primary"),
-        placeholderText: text(theme, "mono", "placeholder", { size: "sm" }),
-        selection: player(theme, 1).selection,
-        border: border(theme, "secondary"),
+        text: text(layer, "mono",),
+        placeholderText: text(layer, "mono", "variant", { size: "sm" }),
+        selection: colorScheme.players[0],
+        border: border(layer),
         padding: {
           bottom: 4,
           left: 8,
@@ -51,13 +53,13 @@ export default function contactFinder(theme: Theme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: backgroundColor(theme, 100, "hovered"),
+        background: background(layer, "variant", "hovered"),
       },
     },
     disabledContactButton: {
       ...contactButton,
-      background: backgroundColor(theme, 100),
-      color: iconColor(theme, "muted"),
+      background: background(layer, "disabled"),
+      color: foreground(layer, "disabled"),
     },
   };
 }

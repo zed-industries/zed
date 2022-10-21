@@ -30,8 +30,6 @@ pub struct Config {
     pub database_url: String,
     pub api_token: String,
     pub invite_link_prefix: String,
-    pub honeycomb_api_key: Option<String>,
-    pub honeycomb_dataset: Option<String>,
     pub live_kit_server: Option<String>,
     pub live_kit_key: Option<String>,
     pub live_kit_secret: Option<String>,
@@ -41,13 +39,12 @@ pub struct Config {
 
 pub struct AppState {
     db: Arc<dyn Db>,
-    api_token: String,
-    invite_link_prefix: String,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+    config: Config,
 }
 
 impl AppState {
-    async fn new(config: &Config) -> Result<Arc<Self>> {
+    async fn new(config: Config) -> Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server
@@ -67,8 +64,7 @@ impl AppState {
         let this = Self {
             db: Arc::new(db),
             live_kit_client,
-            api_token: config.api_token.clone(),
-            invite_link_prefix: config.invite_link_prefix.clone(),
+            config,
         };
         Ok(Arc::new(this))
     }
@@ -85,9 +81,9 @@ async fn main() -> Result<()> {
 
     let config = envy::from_env::<Config>().expect("error loading config");
     init_tracing(&config);
-    let state = AppState::new(&config).await?;
+    let state = AppState::new(config).await?;
 
-    let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
+    let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
         .expect("failed to bind TCP listener");
     let rpc_server = rpc::Server::new(state.clone(), None);
 

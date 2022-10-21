@@ -1,13 +1,21 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor, border, borderColor, iconColor, player, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import {
+  background,
+  border,
+  borderColor,
+  foreground,
+  text,
+} from "./components";
 
-export default function contactList(theme: Theme) {
+export default function contactsPanel(colorScheme: ColorScheme) {
   const nameMargin = 8;
   const sidePadding = 12;
 
+  let layer = colorScheme.middle;
+
   const contactButton = {
-    background: backgroundColor(theme, 100),
-    color: iconColor(theme, "primary"),
+    background: background(layer, "on"),
+    color: foreground(layer, "on"),
     iconWidth: 8,
     buttonWidth: 16,
     cornerRadius: 8,
@@ -20,7 +28,7 @@ export default function contactList(theme: Theme) {
       width: 14,
     },
     name: {
-      ...text(theme, "mono", "placeholder", { size: "sm" }),
+      ...text(layer, "mono", { size: "sm" }),
       margin: {
         left: nameMargin,
         right: 6,
@@ -39,13 +47,15 @@ export default function contactList(theme: Theme) {
   };
 
   return {
+    background: background(layer),
+    padding: { top: 12, bottom: 0 },
     userQueryEditor: {
-      background: backgroundColor(theme, 500),
+      background: background(layer, "on"),
       cornerRadius: 6,
-      text: text(theme, "mono", "primary"),
-      placeholderText: text(theme, "mono", "placeholder", { size: "sm" }),
-      selection: player(theme, 1).selection,
-      border: border(theme, "secondary"),
+      text: text(layer, "mono", "on"),
+      placeholderText: text(layer, "mono", "on", "disabled", { size: "sm" }),
+      selection: colorScheme.players[0],
+      border: border(layer, "on"),
       padding: {
         bottom: 4,
         left: 8,
@@ -58,27 +68,28 @@ export default function contactList(theme: Theme) {
     },
     userQueryEditorHeight: 33,
     addContactButton: {
-      color: iconColor(theme, "primary"),
+      margin: { left: 6, right: 12 },
+      color: foreground(layer, "on"),
       buttonWidth: 28,
       iconWidth: 16,
     },
     rowHeight: 28,
     sectionIconSize: 8,
     headerRow: {
-      ...text(theme, "mono", "secondary", { size: "sm" }),
-      margin: { top: 6 },
+      ...text(layer, "mono", { size: "sm" }),
+      margin: { top: 14 },
       padding: {
         left: sidePadding,
         right: sidePadding,
       },
       active: {
-        ...text(theme, "mono", "primary", { size: "sm" }),
-        background: backgroundColor(theme, 100, "active"),
+        ...text(layer, "mono", "active", { size: "sm" }),
+        background: background(layer, "active"),
       },
     },
     leaveCall: {
-      background: backgroundColor(theme, 100),
-      border: border(theme, "secondary"),
+      background: background(layer),
+      border: border(layer),
       cornerRadius: 6,
       margin: {
         top: 1,
@@ -89,11 +100,11 @@ export default function contactList(theme: Theme) {
         left: 7,
         right: 7,
       },
-      ...text(theme, "sans", "secondary", { size: "xs" }),
+      ...text(layer, "sans", "variant", { size: "xs" }),
       hover: {
-        ...text(theme, "sans", "active", { size: "xs" }),
-        background: backgroundColor(theme, "on300", "hovered"),
-        border: border(theme, "primary"),
+        ...text(layer, "sans", "hovered", { size: "xs" }),
+        background: background(layer, "hovered"),
+        border: border(layer, "hovered"),
       },
     },
     contactRow: {
@@ -102,7 +113,7 @@ export default function contactList(theme: Theme) {
         right: sidePadding,
       },
       active: {
-        background: backgroundColor(theme, 100, "active"),
+        background: background(layer, "active"),
       },
     },
     contactAvatar: {
@@ -113,16 +124,16 @@ export default function contactList(theme: Theme) {
       cornerRadius: 4,
       padding: 4,
       margin: { top: 12, left: 12 },
-      background: iconColor(theme, "ok"),
+      background: foreground(layer, "positive"),
     },
     contactStatusBusy: {
       cornerRadius: 4,
       padding: 4,
       margin: { top: 12, left: 12 },
-      background: iconColor(theme, "error"),
+      background: foreground(layer, "negative"),
     },
     contactUsername: {
-      ...text(theme, "mono", "primary", { size: "sm" }),
+      ...text(layer, "mono", { size: "sm" }),
       margin: {
         left: nameMargin,
       },
@@ -131,39 +142,39 @@ export default function contactList(theme: Theme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: backgroundColor(theme, "on300", "hovered"),
+        background: background(layer, "hovered"),
       },
     },
     disabledButton: {
       ...contactButton,
-      background: backgroundColor(theme, 100),
-      color: iconColor(theme, "muted"),
+      background: background(layer, "on"),
+      color: foreground(layer, "on"),
     },
     callingIndicator: {
-      ...text(theme, "mono", "muted", { size: "xs" })
+      ...text(layer, "mono", "variant", { size: "xs" })
     },
     treeBranch: {
-      color: borderColor(theme, "active"),
+      color: borderColor(layer),
       width: 1,
       hover: {
-        color: borderColor(theme, "active"),
+        color: borderColor(layer),
       },
       active: {
-        color: borderColor(theme, "active"),
+        color: borderColor(layer),
       },
     },
     projectRow: {
       ...projectRow,
-      background: backgroundColor(theme, 300),
+      background: background(layer, "on"),
       name: {
         ...projectRow.name,
-        ...text(theme, "mono", "secondary", { size: "sm" }),
+        ...text(layer, "mono", { size: "sm" }),
       },
       hover: {
-        background: backgroundColor(theme, 300, "hovered"),
+        background: background(layer, "on", "hovered"),
       },
       active: {
-        background: backgroundColor(theme, 300, "active"),
+        background: background(layer, "on", "active"),
       },
     },
   }

@@ -44,7 +44,6 @@ impl TerminalContainerContent {
 }
 
 pub struct TerminalContainer {
-    modal: bool,
     pub content: TerminalContainerContent,
     associated_directory: Option<PathBuf>,
 }
@@ -128,7 +127,6 @@ impl TerminalContainer {
         cx.focus(content.handle());
 
         TerminalContainer {
-            modal,
             content,
             associated_directory: working_directory,
         }
@@ -141,7 +139,6 @@ impl TerminalContainer {
     ) -> Self {
         let connected_view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
         TerminalContainer {
-            modal,
             content: TerminalContainerContent::Connected(connected_view),
             associated_directory: None,
         }
@@ -161,31 +158,17 @@ impl View for TerminalContainer {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let child_view = match &self.content {
+        match &self.content {
             TerminalContainerContent::Connected(connected) => ChildView::new(connected, cx),
             TerminalContainerContent::Error(error) => ChildView::new(error, cx),
-        };
-        if self.modal {
-            let settings = cx.global::<Settings>();
-            let container_style = settings.theme.terminal.modal_container;
-            child_view.contained().with_style(container_style).boxed()
-        } else {
-            child_view.boxed()
         }
+        .boxed()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             cx.focus(self.content.handle());
         }
-    }
-
-    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
-        let mut context = Self::default_keymap_context();
-        if self.modal {
-            context.set.insert("ModalTerminal".into());
-        }
-        context
     }
 }
 

@@ -6478,8 +6478,7 @@ impl TestServer {
         Arc::new(AppState {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
-            api_token: Default::default(),
-            invite_link_prefix: Default::default(),
+            config: Default::default(),
         })
     }
 

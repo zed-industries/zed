@@ -1,10 +1,11 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor, iconColor, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, foreground, text } from "./components";
 
 const avatarSize = 12;
 const headerPadding = 8;
 
-export default function contactNotification(theme: Theme): Object {
+export default function contactNotification(colorScheme: ColorScheme): Object {
+  let layer = colorScheme.lowest;
   return {
     headerAvatar: {
       height: avatarSize,
@@ -12,32 +13,32 @@ export default function contactNotification(theme: Theme): Object {
       cornerRadius: 6,
     },
     headerMessage: {
-      ...text(theme, "sans", "primary", { size: "xs" }),
+      ...text(layer, "sans", { size: "xs" }),
       margin: { left: headerPadding, right: headerPadding },
     },
     headerHeight: 18,
     bodyMessage: {
-      ...text(theme, "sans", "secondary", { size: "xs" }),
+      ...text(layer, "sans", { size: "xs" }),
       margin: { left: avatarSize + headerPadding, top: 6, bottom: 6 },
     },
     button: {
-      ...text(theme, "sans", "primary", { size: "xs" }),
-      background: backgroundColor(theme, "on300"),
+      ...text(layer, "sans", "on", { size: "xs" }),
+      background: background(layer, "on"),
       padding: 4,
       cornerRadius: 6,
       margin: { left: 6 },
       hover: {
-        background: backgroundColor(theme, "on300", "hovered"),
+        background: background(layer, "on", "hovered"),
       },
     },
     dismissButton: {
-      color: iconColor(theme, "secondary"),
+      color: foreground(layer, "on"),
       iconWidth: 8,
       iconHeight: 8,
       buttonWidth: 8,
       buttonHeight: 8,
       hover: {
-        color: iconColor(theme, "primary"),
+        color: foreground(layer, "on", "hovered"),
       },
     },
   };

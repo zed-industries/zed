@@ -76,7 +76,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
     let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
-    if token != state.api_token {
+    if token != state.config.api_token {
         Err(Error::Http(
             StatusCode::UNAUTHORIZED,
             "invalid authorization token".to_string(),
@@ -88,7 +88,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
 #[derive(Debug, Deserialize)]
 struct AuthenticatedUserParams {
-    github_user_id: i32,
+    github_user_id: Option<i32>,
     github_login: String,
 }
 
@@ -104,7 +104,7 @@ async fn get_authenticated_user(
 ) -> Result<Json<AuthenticatedUserResponse>> {
     let user = app
         .db
-        .get_user_by_github_account(&params.github_login, Some(params.github_user_id))
+        .get_user_by_github_account(&params.github_login, params.github_user_id)
         .await?
         .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "user not found".into()))?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
@@ -156,7 +156,7 @@ async fn create_user(
     Json(params): Json<CreateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
-) -> Result<Json<CreateUserResponse>> {
+) -> Result<Json<Option<CreateUserResponse>>> {
     let user = NewUserParams {
         github_login: params.github_login,
         github_user_id: params.github_user_id,
@@ -165,7 +165,8 @@ async fn create_user(
 
     // Creating a user via the normal signup process
     let result = if let Some(email_confirmation_code) = params.email_confirmation_code {
-        app.db
+        if let Some(result) = app
+            .db
             .create_user_from_invite(
                 &Invite {
                     email_address: params.email_address,
@@ -174,6 +175,11 @@ async fn create_user(
                 user,
             )
             .await?
+        {
+            result
+        } else {
+            return Ok(Json(None));
+        }
     }
     // Creating a user as an admin
     else if params.admin {
@@ -200,11 +206,11 @@ async fn create_user(
         .await?
         .ok_or_else(|| anyhow!("couldn't find the user we just created"))?;
 
-    Ok(Json(CreateUserResponse {
+    Ok(Json(Some(CreateUserResponse {
         user,
         metrics_id: result.metrics_id,
         signup_device_id: result.signup_device_id,
-    }))
+    })))
 }
 
 #[derive(Deserialize)]

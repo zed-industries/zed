@@ -35,9 +35,9 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     serde_json::json,
-    text_layout, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox,
-    Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    text_layout, AnyViewHandle, AppContext, AsyncAppContext, Axis, ClipboardItem, Element,
+    ElementBox, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -84,6 +84,7 @@ const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -94,7 +95,10 @@ pub struct SelectNext {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Scroll(pub Vector2F);
+pub struct Scroll {
+    pub scroll_position: Vector2F,
+    pub axis: Option<Axis>,
+}
 
 #[derive(Clone, PartialEq)]
 pub struct Select(pub SelectPhase);
@@ -263,7 +267,7 @@ struct ScrollbarAutoHide(bool);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::new_file);
-    cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
+    cx.add_action(Editor::scroll);
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
@@ -429,6 +433,69 @@ pub type GetFieldEditorTheme = fn(&theme::Theme) -> theme::FieldEditor;
 
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
+#[derive(Clone, Copy)]
+pub struct OngoingScroll {
+    last_timestamp: Instant,
+    axis: Option<Axis>,
+}
+
+impl OngoingScroll {
+    fn initial() -> OngoingScroll {
+        OngoingScroll {
+            last_timestamp: Instant::now() - SCROLL_EVENT_SEPARATION,
+            axis: None,
+        }
+    }
+
+    fn update(&mut self, axis: Option<Axis>) {
+        self.last_timestamp = Instant::now();
+        self.axis = axis;
+    }
+
+    pub fn filter(&self, delta: &mut Vector2F) -> Option<Axis> {
+        const UNLOCK_PERCENT: f32 = 1.9;
+        const UNLOCK_LOWER_BOUND: f32 = 6.;
+        let mut axis = self.axis;
+
+        let x = delta.x().abs();
+        let y = delta.y().abs();
+        let duration = Instant::now().duration_since(self.last_timestamp);
+        if duration > SCROLL_EVENT_SEPARATION {
+            //New ongoing scroll will start, determine axis
+            axis = if x <= y {
+                Some(Axis::Vertical)
+            } else {
+                Some(Axis::Horizontal)
+            };
+        } else if x.max(y) >= UNLOCK_LOWER_BOUND {
+            //Check if the current ongoing will need to unlock
+            match axis {
+                Some(Axis::Vertical) => {
+                    if x > y && x >= y * UNLOCK_PERCENT {
+                        axis = None;
+                    }
+                }
+
+                Some(Axis::Horizontal) => {
+                    if y > x && y >= x * UNLOCK_PERCENT {
+                        axis = None;
+                    }
+                }
+
+                None => {}
+            }
+        }
+
+        match axis {
+            Some(Axis::Vertical) => *delta = vec2f(0., delta.y()),
+            Some(Axis::Horizontal) => *delta = vec2f(delta.x(), 0.),
+            None => {}
+        }
+
+        axis
+    }
+}
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -443,6 +510,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
+    ongoing_scroll: OngoingScroll,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_request: Option<(Autoscroll, bool)>,
@@ -486,6 +554,7 @@ pub struct EditorSnapshot {
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
+    ongoing_scroll: OngoingScroll,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
 }
@@ -1097,6 +1166,7 @@ impl Editor {
             soft_wrap_mode_override: None,
             get_field_editor_theme,
             project,
+            ongoing_scroll: OngoingScroll::initial(),
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
             autoscroll_request: None,
@@ -1189,6 +1259,7 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
+            ongoing_scroll: self.ongoing_scroll,
             scroll_position: self.scroll_position,
             scroll_top_anchor: self.scroll_top_anchor.clone(),
             placeholder_text: self.placeholder_text.clone(),
@@ -1590,6 +1661,11 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
         });
+    }
+
+    fn scroll(&mut self, action: &Scroll, cx: &mut ViewContext<Self>) {
+        self.ongoing_scroll.update(action.axis);
+        self.set_scroll_position(action.scroll_position, cx);
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {

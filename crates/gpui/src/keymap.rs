@@ -301,13 +301,15 @@ impl Keystroke {
             }
         }
 
+        let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
+
         Ok(Keystroke {
             ctrl,
             alt,
             shift,
             cmd,
             function,
-            key: key.unwrap(),
+            key,
         })
     }
 

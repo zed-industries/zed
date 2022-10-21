@@ -1,19 +1,21 @@
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./common/base16";
+import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "andromeda";
 
 const ramps = {
-  neutral: chroma.scale([
-    "#1E2025",
-    "#23262E",
-    "#292E38",
-    "#2E323C",
-    "#ACA8AE",
-    "#CBC9CF",
-    "#E1DDE4",
-    "#F7F7F8",
-  ]),
+  neutral: chroma
+    .scale([
+      "#1E2025",
+      "#23262E",
+      "#292E38",
+      "#2E323C",
+      "#ACA8AE",
+      "#CBC9CF",
+      "#E1DDE4",
+      "#F7F7F8",
+    ])
+    .domain([0, 0.15, 0.25, 0.35, 0.7, 0.8, 0.9, 1]),
   red: colorRamp(chroma("#F92672")),
   orange: colorRamp(chroma("#F39C12")),
   yellow: colorRamp(chroma("#FFE66D")),
@@ -24,4 +26,4 @@ const ramps = {
   magenta: colorRamp(chroma("#C74DED")),
 };
 
-export const dark = createTheme(`${name}`, false, ramps);
+export const dark = createColorScheme(`${name}`, false, ramps);
