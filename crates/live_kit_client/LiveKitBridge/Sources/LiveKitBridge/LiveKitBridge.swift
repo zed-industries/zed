@@ -5,13 +5,26 @@ import ScreenCaptureKit
 
 class LKRoomDelegate: RoomDelegate {
     var data: UnsafeRawPointer
+    var onDidDisconnect: @convention(c) (UnsafeRawPointer) -> Void
     var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
     
-    init(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void, onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void) {
+    init(
+        data: UnsafeRawPointer,
+        onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
+        onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
+        onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void)
+    {
         self.data = data
+        self.onDidDisconnect = onDidDisconnect
         self.onDidSubscribeToRemoteVideoTrack = onDidSubscribeToRemoteVideoTrack
         self.onDidUnsubscribeFromRemoteVideoTrack = onDidUnsubscribeFromRemoteVideoTrack
+    }
+
+    func room(_ room: Room, didUpdate connectionState: ConnectionState, oldValue: ConnectionState) {
+        if connectionState.isDisconnected {
+            self.onDidDisconnect(self.data)
+        }
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didSubscribe publication: RemoteTrackPublication, track: Track) {
@@ -62,8 +75,18 @@ class LKVideoRenderer: NSObject, VideoRenderer {
 }
 
 @_cdecl("LKRoomDelegateCreate")
-public func LKRoomDelegateCreate(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void, onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void) -> UnsafeMutableRawPointer {
-    let delegate = LKRoomDelegate(data: data, onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack, onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack)
+public func LKRoomDelegateCreate(
+    data: UnsafeRawPointer,
+    onDidDisconnect: @escaping @convention(c) (UnsafeRawPointer) -> Void,
+    onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
+    onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
+) -> UnsafeMutableRawPointer {
+    let delegate = LKRoomDelegate(
+        data: data,
+        onDidDisconnect: onDidDisconnect,
+        onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack,
+        onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack
+    )
     return Unmanaged.passRetained(delegate).toOpaque()
 }
 

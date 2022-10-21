@@ -11,6 +11,7 @@ use futures::{
 pub use media::core_video::CVImageBuffer;
 use media::core_video::CVImageBufferRef;
 use parking_lot::Mutex;
+use postage::watch;
 use std::{
     ffi::c_void,
     sync::{Arc, Weak},
@@ -19,6 +20,7 @@ use std::{
 extern "C" {
     fn LKRoomDelegateCreate(
         callback_data: *mut c_void,
+        on_did_disconnect: extern "C" fn(callback_data: *mut c_void),
         on_did_subscribe_to_remote_video_track: extern "C" fn(
             callback_data: *mut c_void,
             publisher_id: CFStringRef,
@@ -75,8 +77,18 @@ extern "C" {
 
 pub type Sid = String;
 
+#[derive(Clone, Eq, PartialEq)]
+pub enum ConnectionState {
+    Disconnected,
+    Connected { url: String, token: String },
+}
+
 pub struct Room {
     native_room: *const c_void,
+    connection: Mutex<(
+        watch::Sender<ConnectionState>,
+        watch::Receiver<ConnectionState>,
+    )>,
     remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteVideoTrackUpdate>>>,
     _delegate: RoomDelegate,
 }
@@ -87,13 +99,18 @@ impl Room {
             let delegate = RoomDelegate::new(weak_room.clone());
             Self {
                 native_room: unsafe { LKRoomCreate(delegate.native_delegate) },
+                connection: Mutex::new(watch::channel_with(ConnectionState::Disconnected)),
                 remote_video_track_subscribers: Default::default(),
                 _delegate: delegate,
             }
         })
     }
 
-    pub fn connect(&self, url: &str, token: &str) -> impl Future<Output = Result<()>> {
+    pub fn status(&self) -> watch::Receiver<ConnectionState> {
+        self.connection.lock().1.clone()
+    }
+
+    pub fn connect(self: &Arc<Self>, url: &str, token: &str) -> impl Future<Output = Result<()>> {
         let url = CFString::new(url);
         let token = CFString::new(token);
         let (did_connect, tx, rx) = Self::build_done_callback();
@@ -107,7 +124,23 @@ impl Room {
             )
         }
 
-        async { rx.await.unwrap().context("error connecting to room") }
+        let this = self.clone();
+        let url = url.to_string();
+        let token = token.to_string();
+        async move {
+            match rx.await.unwrap().context("error connecting to room") {
+                Ok(()) => {
+                    *this.connection.lock().0.borrow_mut() =
+                        ConnectionState::Connected { url, token };
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
+        }
+    }
+
+    fn did_disconnect(&self) {
+        *self.connection.lock().0.borrow_mut() = ConnectionState::Disconnected;
     }
 
     pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
@@ -265,6 +298,7 @@ impl RoomDelegate {
         let native_delegate = unsafe {
             LKRoomDelegateCreate(
                 weak_room as *mut c_void,
+                Self::on_did_disconnect,
                 Self::on_did_subscribe_to_remote_video_track,
                 Self::on_did_unsubscribe_from_remote_video_track,
             )
@@ -273,6 +307,14 @@ impl RoomDelegate {
             native_delegate,
             weak_room,
         }
+    }
+
+    extern "C" fn on_did_disconnect(room: *mut c_void) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        if let Some(room) = room.upgrade() {
+            room.did_disconnect();
+        }
+        let _ = Weak::into_raw(room);
     }
 
     extern "C" fn on_did_subscribe_to_remote_video_track(

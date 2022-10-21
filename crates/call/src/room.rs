@@ -8,6 +8,7 @@ use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
+use postage::stream::Stream;
 use project::Project;
 use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
 use util::{post_inc, ResultExt};
@@ -80,8 +81,26 @@ impl Room {
 
         let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
             let room = live_kit_client::Room::new();
-            let mut track_changes = room.remote_video_track_updates();
+            let mut status = room.status();
+            // Consume the initial status of the room.
+            let _ = status.try_recv();
             let _maintain_room = cx.spawn_weak(|this, mut cx| async move {
+                while let Some(status) = status.next().await {
+                    let this = if let Some(this) = this.upgrade(&cx) {
+                        this
+                    } else {
+                        break;
+                    };
+
+                    if status == live_kit_client::ConnectionState::Disconnected {
+                        this.update(&mut cx, |this, cx| this.leave(cx).log_err());
+                        break;
+                    }
+                }
+            });
+
+            let mut track_changes = room.remote_video_track_updates();
+            let _maintain_tracks = cx.spawn_weak(|this, mut cx| async move {
                 while let Some(track_change) = track_changes.next().await {
                     let this = if let Some(this) = this.upgrade(&cx) {
                         this
@@ -94,14 +113,17 @@ impl Room {
                     });
                 }
             });
+
             cx.foreground()
                 .spawn(room.connect(&connection_info.server_url, &connection_info.token))
                 .detach_and_log_err(cx);
+
             Some(LiveKitRoom {
                 room,
                 screen_track: ScreenTrack::None,
                 next_publish_id: 0,
                 _maintain_room,
+                _maintain_tracks,
             })
         } else {
             None
@@ -725,6 +747,7 @@ struct LiveKitRoom {
     screen_track: ScreenTrack,
     next_publish_id: usize,
     _maintain_room: Task<()>,
+    _maintain_tracks: Task<()>,
 }
 
 pub enum ScreenTrack {

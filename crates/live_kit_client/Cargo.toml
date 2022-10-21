@@ -34,6 +34,7 @@ core-graphics = "0.22.3"
 futures = "0.3"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
+postage = { version = "0.4.1", features = ["futures-traits"] }
 
 async-trait = { version = "0.1", optional = true }
 lazy_static = { version = "1.4", optional = true }
@@ -60,7 +61,6 @@ jwt = "0.16"
 lazy_static = "1.4"
 objc = "0.2"
 parking_lot = "0.11.1"
-postage = { version = "0.4.1", features = ["futures-traits"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 sha2 = "0.10"
 simplelog = "0.9"

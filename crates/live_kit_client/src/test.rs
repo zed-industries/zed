@@ -7,7 +7,8 @@ use lazy_static::lazy_static;
 use live_kit_server::token;
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
-use std::{future::Future, sync::Arc};
+use postage::watch;
+use std::{future::Future, mem, sync::Arc};
 
 lazy_static! {
     static ref SERVERS: Mutex<HashMap<String, Arc<TestServer>>> = Default::default();
@@ -145,6 +146,16 @@ impl TestServer {
         Ok(())
     }
 
+    pub async fn disconnect_client(&self, client_identity: String) {
+        self.background.simulate_random_delay().await;
+        let mut server_rooms = self.rooms.lock();
+        for room in server_rooms.values_mut() {
+            if let Some(room) = room.client_rooms.remove(&client_identity) {
+                *room.0.lock().connection.0.borrow_mut() = ConnectionState::Disconnected;
+            }
+        }
+    }
+
     async fn publish_video_track(&self, token: String, local_track: LocalVideoTrack) -> Result<()> {
         self.background.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
@@ -227,7 +238,10 @@ impl live_kit_server::api::Client for TestApiClient {
 pub type Sid = String;
 
 struct RoomState {
-    connection: Option<ConnectionState>,
+    connection: (
+        watch::Sender<ConnectionState>,
+        watch::Receiver<ConnectionState>,
+    ),
     display_sources: Vec<MacOSDisplay>,
     video_track_updates: (
         async_broadcast::Sender<RemoteVideoTrackUpdate>,
@@ -235,9 +249,10 @@ struct RoomState {
     ),
 }
 
-struct ConnectionState {
-    url: String,
-    token: String,
+#[derive(Clone, Eq, PartialEq)]
+pub enum ConnectionState {
+    Disconnected,
+    Connected { url: String, token: String },
 }
 
 pub struct Room(Mutex<RoomState>);
@@ -245,10 +260,14 @@ pub struct Room(Mutex<RoomState>);
 impl Room {
     pub fn new() -> Arc<Self> {
         Arc::new(Self(Mutex::new(RoomState {
-            connection: None,
+            connection: watch::channel_with(ConnectionState::Disconnected),
             display_sources: Default::default(),
             video_track_updates: async_broadcast::broadcast(128),
         })))
+    }
+
+    pub fn status(&self) -> watch::Receiver<ConnectionState> {
+        self.0.lock().connection.1.clone()
     }
 
     pub fn connect(self: &Arc<Self>, url: &str, token: &str) -> impl Future<Output = Result<()>> {
@@ -258,7 +277,7 @@ impl Room {
         async move {
             let server = TestServer::get(&url)?;
             server.join_room(token.clone(), this.clone()).await?;
-            this.0.lock().connection = Some(ConnectionState { url, token });
+            *this.0.lock().connection.0.borrow_mut() = ConnectionState::Connected { url, token };
             Ok(())
         }
     }
@@ -301,32 +320,30 @@ impl Room {
     }
 
     fn test_server(&self) -> Arc<TestServer> {
-        let this = self.0.lock();
-        let connection = this
-            .connection
-            .as_ref()
-            .expect("must be connected to call this method");
-        TestServer::get(&connection.url).unwrap()
+        match self.0.lock().connection.1.borrow().clone() {
+            ConnectionState::Disconnected => panic!("must be connected to call this method"),
+            ConnectionState::Connected { url, .. } => TestServer::get(&url).unwrap(),
+        }
     }
 
     fn token(&self) -> String {
-        self.0
-            .lock()
-            .connection
-            .as_ref()
-            .expect("must be connected to call this method")
-            .token
-            .clone()
+        match self.0.lock().connection.1.borrow().clone() {
+            ConnectionState::Disconnected => panic!("must be connected to call this method"),
+            ConnectionState::Connected { token, .. } => token,
+        }
     }
 }
 
 impl Drop for Room {
     fn drop(&mut self) {
-        if let Some(connection) = self.0.lock().connection.take() {
-            if let Ok(server) = TestServer::get(&connection.token) {
+        if let ConnectionState::Connected { token, .. } = mem::replace(
+            &mut *self.0.lock().connection.0.borrow_mut(),
+            ConnectionState::Disconnected,
+        ) {
+            if let Ok(server) = TestServer::get(&token) {
                 let background = server.background.clone();
                 background
-                    .spawn(async move { server.leave_room(connection.token).await.unwrap() })
+                    .spawn(async move { server.leave_room(token).await.unwrap() })
                     .detach();
             }
         }

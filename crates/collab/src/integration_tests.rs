@@ -253,12 +253,13 @@ async fn test_basic_calls(
         }
     );
 
-    // User B leaves the room.
-    active_call_b.update(cx_b, |call, cx| {
-        call.hang_up(cx).unwrap();
-        assert!(call.room().is_none());
-    });
-    deterministic.run_until_parked();
+    // User B gets disconnected from the LiveKit server, which causes them
+    // to automatically leave the room.
+    server
+        .test_live_kit_server
+        .disconnect_client(client_b.peer_id().unwrap().to_string())
+        .await;
+    active_call_b.update(cx_b, |call, _| assert!(call.room().is_none()));
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -438,6 +439,63 @@ async fn test_leaving_room_on_disconnection(
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
     active_call_b.read_with(cx_b, |call, _| assert!(call.room().is_none()));
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+
+    // Call user B again from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+
+    // User B receives the call and joins the room.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    incoming_call_b.next().await.unwrap().unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // User B gets disconnected from the LiveKit server, which causes it
+    // to automatically leave the room.
+    server
+        .test_live_kit_server
+        .disconnect_client(client_b.peer_id().unwrap().to_string())
+        .await;
+    deterministic.run_until_parked();
+    active_call_a.update(cx_a, |call, _| assert!(call.room().is_none()));
+    active_call_b.update(cx_b, |call, _| assert!(call.room().is_none()));
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {

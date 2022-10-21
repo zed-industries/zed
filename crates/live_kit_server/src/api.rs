@@ -86,7 +86,7 @@ impl Client for LiveKitClient {
     }
 
     async fn create_room(&self, name: String) -> Result<()> {
-        let x: proto::Room = self
+        let _: proto::Room = self
             .request(
                 "twirp/livekit.RoomService/CreateRoom",
                 token::VideoGrant {
@@ -99,7 +99,6 @@ impl Client for LiveKitClient {
                 },
             )
             .await?;
-        dbg!(x);
         Ok(())
     }
 
