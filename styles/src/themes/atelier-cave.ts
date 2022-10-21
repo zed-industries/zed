@@ -1,9 +1,15 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "cave";
+const name = "Atelier Cave";
+const author = "atelierbram";
+const url = "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/cave/";
+const license = {
+  type: "MIT",
+  url: "https://github.com/atelierbram/syntax-highlighting/blob/master/LICENSE",
+};
 
-export const dark = createColorScheme(`${name}-dark`, false, {
+export const dark = createColorScheme(`${name} Dark`, false, {
   neutral: chroma
     .scale([
       "#19171c",
@@ -26,7 +32,7 @@ export const dark = createColorScheme(`${name}-dark`, false, {
   magenta: colorRamp(chroma("#bf40bf")),
 });
 
-export const light = createColorScheme(`${name}-light`, true, {
+export const light = createColorScheme(`${name} Light`, true, {
   neutral: chroma
     .scale([
       "#19171c",
@@ -37,7 +43,8 @@ export const light = createColorScheme(`${name}-light`, true, {
       "#8b8792",
       "#e2dfe7",
       "#efecf4",
-    ]).correctLightness(),
+    ])
+    .correctLightness(),
   red: colorRamp(chroma("#be4678")),
   orange: colorRamp(chroma("#aa573c")),
   yellow: colorRamp(chroma("#a06e3b")),

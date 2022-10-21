@@ -665,7 +665,7 @@ mod tests {
     fn test_write_theme_into_settings_with_theme() {
         let settings = r#"
             {
-                "theme": "one-dark"
+                "theme": "One Dark"
             }
         "#
         .unindent();

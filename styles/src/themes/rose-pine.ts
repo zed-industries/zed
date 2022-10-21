@@ -1,7 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "rosé-pine";
+const name = "Rosé Pine";
+const author = "edunfelt";
+const url = "https://github.com/edunfelt/base16-rose-pine-scheme";
+const license = {
+  type: "MIT",
+  url: "https://github.com/edunfelt/base16-rose-pine-scheme",
+};
 
 const ramps = {
   neutral: chroma.scale([

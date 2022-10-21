@@ -1,7 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "sulphurpool";
+const name = "Atelier Sulphurpool";
+const author = "atelierbram";
+const url = "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/";
+const license = {
+  type: "MIT",
+  url: "https://github.com/atelierbram/syntax-highlighting/blob/master/LICENSE",
+};
 
 const ramps = {
   neutral: chroma
@@ -26,5 +32,5 @@ const ramps = {
   magenta: colorRamp(chroma("#9c637a")),
 };
 
-export const dark = createColorScheme(`${name}-dark`, false, ramps);
-export const light = createColorScheme(`${name}-light`, true, ramps);
+export const dark = createColorScheme(`${name} Dark`, false, ramps);
+export const light = createColorScheme(`${name} Light`, true, ramps);

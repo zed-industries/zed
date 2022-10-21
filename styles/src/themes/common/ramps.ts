@@ -142,9 +142,13 @@ function buildStyleSet(
   ramp: Scale,
   backgroundBase: number,
   foregroundBase: number,
-  step: number = 0.08,
+  step: number = 0.08
 ): StyleSet {
-  let styleDefinitions = buildStyleDefinition(backgroundBase, foregroundBase, step);
+  let styleDefinitions = buildStyleDefinition(
+    backgroundBase,
+    foregroundBase,
+    step
+  );
 
   function colorString(indexOrColor: number | Color): string {
     if (typeof indexOrColor === "number") {
@@ -172,7 +176,11 @@ function buildStyleSet(
   };
 }
 
-function buildStyleDefinition(bgBase: number, fgBase: number, step: number = 0.08) {
+function buildStyleDefinition(
+  bgBase: number,
+  fgBase: number,
+  step: number = 0.08
+) {
   return {
     background: {
       default: bgBase,

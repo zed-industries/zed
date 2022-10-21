@@ -1,7 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
-const name = "solarized";
+const name = "Solarized";
+const author = "Ethan Schoonover";
+const url = "https://github.com/altercation/solarized";
+const license = {
+  type: "MIT",
+  url: "https://github.com/altercation/solarized/blob/master/README.md",
+};
 
 const ramps = {
   neutral: chroma
@@ -26,5 +32,5 @@ const ramps = {
   magenta: colorRamp(chroma("#d33682")),
 };
 
-export const dark = createColorScheme(`${name}-dark`, false, ramps);
-export const light = createColorScheme(`${name}-light`, true, ramps);
+export const dark = createColorScheme(`${name} Dark`, false, ramps);
+export const light = createColorScheme(`${name} Light`, true, ramps);
