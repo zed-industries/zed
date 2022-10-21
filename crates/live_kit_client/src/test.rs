@@ -9,10 +9,6 @@ use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
 use std::{future::Future, sync::Arc};
 
-pub fn displays() {
-    panic!()
-}
-
 lazy_static! {
     static ref SERVERS: Mutex<HashMap<String, Arc<TestServer>>> = Default::default();
 }

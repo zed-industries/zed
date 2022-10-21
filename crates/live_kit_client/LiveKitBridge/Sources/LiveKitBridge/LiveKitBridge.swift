@@ -155,19 +155,3 @@ public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @conven
         callback(data, nil, error.localizedDescription as CFString)
     }
 }
-
-@_cdecl("LKDisplays")
-public func LKDisplays() {
-    if #available(macOS 12.3, *) {
-        Task.init {
-            let content = try await SCShareableContent.current
-            print(content.displays.count)
-        }
-        
-//        SCShareableContent.getWithCompletionHandler { content, error in
-//            print(content!.displays.count)
-//        }
-    } else {
-        print("OOOPS")
-    }
-}

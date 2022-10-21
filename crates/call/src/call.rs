@@ -14,7 +14,6 @@ pub use room::Room;
 use std::sync::Arc;
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
-    live_kit_client::displays();
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }
