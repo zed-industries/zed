@@ -48,6 +48,7 @@ fn main() {
 }
 
 fn build_bridge(swift_target: &SwiftTarget) {
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
     println!("cargo:rerun-if-changed={}/Sources", SWIFT_PACKAGE_NAME);
     println!(
         "cargo:rerun-if-changed={}/Package.swift",
