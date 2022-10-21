@@ -1,11 +1,13 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub mod amplitude_telemetry;
 pub mod channel;
 pub mod http;
 pub mod telemetry;
 pub mod user;
 
+use amplitude_telemetry::AmplitudeTelemetry;
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
@@ -82,6 +84,7 @@ pub struct Client {
     peer: Arc<Peer>,
     http: Arc<dyn HttpClient>,
     telemetry: Arc<Telemetry>,
+    amplitude_telemetry: Arc<AmplitudeTelemetry>,
     state: RwLock<ClientState>,
 
     #[allow(clippy::type_complexity)]
@@ -261,6 +264,7 @@ impl Client {
             id: 0,
             peer: Peer::new(),
             telemetry: Telemetry::new(http.clone(), cx),
+            amplitude_telemetry: AmplitudeTelemetry::new(http.clone(), cx),
             http,
             state: Default::default(),
 
@@ -373,6 +377,8 @@ impl Client {
             }
             Status::SignedOut | Status::UpgradeRequired => {
                 self.telemetry.set_authenticated_user_info(None, false);
+                self.amplitude_telemetry
+                    .set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
             }
             _ => {}
@@ -1013,6 +1019,7 @@ impl Client {
         let platform = cx.platform();
         let executor = cx.background();
         let telemetry = self.telemetry.clone();
+        let amplitude_telemetry = self.amplitude_telemetry.clone();
         let http = self.http.clone();
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
@@ -1097,6 +1104,7 @@ impl Client {
             platform.activate(true);
 
             telemetry.report_event("authenticate with browser", Default::default());
+            amplitude_telemetry.report_event("authenticate with browser", Default::default());
 
             Ok(Credentials {
                 user_id: user_id.parse()?,
@@ -1208,14 +1216,17 @@ impl Client {
     }
 
     pub fn start_telemetry(&self, db: Db) {
-        self.telemetry.start(db);
+        self.telemetry.start(db.clone());
+        self.amplitude_telemetry.start(db);
     }
 
     pub fn report_event(&self, kind: &str, properties: Value) {
-        self.telemetry.report_event(kind, properties)
+        self.telemetry.report_event(kind, properties.clone());
+        self.amplitude_telemetry.report_event(kind, properties);
     }
 
     pub fn telemetry_log_file_path(&self) -> Option<PathBuf> {
+        self.amplitude_telemetry.log_file_path();
         self.telemetry.log_file_path()
     }
 }

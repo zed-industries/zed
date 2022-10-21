@@ -21,67 +21,57 @@ use tempfile::NamedTempFile;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
-pub struct Telemetry {
+pub struct AmplitudeTelemetry {
     http_client: Arc<dyn HttpClient>,
     executor: Arc<Background>,
-    state: Mutex<TelemetryState>,
+    session_id: u128,
+    state: Mutex<AmplitudeTelemetryState>,
 }
 
 #[derive(Default)]
-struct TelemetryState {
+struct AmplitudeTelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
-    queue: Vec<MixpanelEvent>,
+    queue: Vec<AmplitudeEvent>,
     next_event_id: usize,
     flush_task: Option<Task<()>>,
     log_file: Option<NamedTempFile>,
 }
 
-const MIXPANEL_EVENTS_URL: &'static str = "https://api.mixpanel.com/track";
-const MIXPANEL_ENGAGE_URL: &'static str = "https://api.mixpanel.com/engage#profile-set";
+const AMPLITUDE_EVENTS_URL: &'static str = "https://api2.amplitude.com/batch";
 
 lazy_static! {
-    static ref MIXPANEL_TOKEN: Option<String> = std::env::var("ZED_MIXPANEL_TOKEN")
+    static ref AMPLITUDE_API_KEY: Option<String> = std::env::var("ZED_AMPLITUDE_API_KEY")
         .ok()
-        .or_else(|| option_env!("ZED_MIXPANEL_TOKEN").map(|key| key.to_string()));
-}
-
-#[derive(Serialize, Debug)]
-struct MixpanelEvent {
-    event: String,
-    properties: MixpanelEventProperties,
-}
-
-#[derive(Serialize, Debug)]
-struct MixpanelEventProperties {
-    // Mixpanel required fields
-    #[serde(skip_serializing_if = "str::is_empty")]
-    token: &'static str,
-    time: u128,
-    distinct_id: Option<Arc<str>>,
-    #[serde(rename = "$insert_id")]
-    insert_id: usize,
-    // Custom fields
-    #[serde(skip_serializing_if = "Option::is_none", flatten)]
-    event_properties: Option<Map<String, Value>>,
-    os_name: &'static str,
-    os_version: Option<Arc<str>>,
-    app_version: Option<Arc<str>>,
-    signed_in: bool,
-    platform: &'static str,
+        .or_else(|| option_env!("ZED_AMPLITUDE_API_KEY").map(|key| key.to_string()));
 }
 
 #[derive(Serialize)]
-struct MixpanelEngageRequest {
-    #[serde(rename = "$token")]
-    token: &'static str,
-    #[serde(rename = "$distinct_id")]
-    distinct_id: Arc<str>,
-    #[serde(rename = "$set")]
-    set: Value,
+struct AmplitudeEventBatch {
+    api_key: &'static str,
+    events: Vec<AmplitudeEvent>,
+}
+
+#[derive(Serialize)]
+struct AmplitudeEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_id: Option<Arc<str>>,
+    device_id: Option<Arc<str>>,
+    event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_properties: Option<Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_properties: Option<Map<String, Value>>,
+    os_name: &'static str,
+    os_version: Option<Arc<str>>,
+    app_version: Option<Arc<str>>,
+    platform: &'static str,
+    event_id: usize,
+    session_id: u128,
+    time: u128,
 }
 
 #[cfg(debug_assertions)]
@@ -96,13 +86,17 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(not(debug_assertions))]
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 
-impl Telemetry {
+impl AmplitudeTelemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
         let this = Arc::new(Self {
             http_client: client,
             executor: cx.background().clone(),
-            state: Mutex::new(TelemetryState {
+            session_id: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            state: Mutex::new(AmplitudeTelemetryState {
                 os_version: platform
                     .os_version()
                     .log_err()
@@ -113,15 +107,15 @@ impl Telemetry {
                     .log_err()
                     .map(|v| v.to_string().into()),
                 device_id: None,
-                metrics_id: None,
                 queue: Default::default(),
                 flush_task: Default::default(),
                 next_event_id: 0,
                 log_file: None,
+                metrics_id: None,
             }),
         });
 
-        if MIXPANEL_TOKEN.is_some() {
+        if AMPLITUDE_API_KEY.is_some() {
             this.executor
                 .spawn({
                     let this = this.clone();
@@ -154,14 +148,11 @@ impl Telemetry {
                         device_id
                     };
 
-                    let device_id: Arc<str> = device_id.into();
+                    let device_id = Some(Arc::from(device_id));
                     let mut state = this.state.lock();
-                    state.device_id = Some(device_id.clone());
+                    state.device_id = device_id.clone();
                     for event in &mut state.queue {
-                        event
-                            .properties
-                            .distinct_id
-                            .get_or_insert_with(|| device_id.clone());
+                        event.device_id = device_id.clone();
                     }
                     if !state.queue.is_empty() {
                         drop(state);
@@ -180,57 +171,56 @@ impl Telemetry {
         metrics_id: Option<String>,
         is_staff: bool,
     ) {
-        let this = self.clone();
-        let mut state = self.state.lock();
-        let device_id = state.device_id.clone();
-        let metrics_id: Option<Arc<str>> = metrics_id.map(|id| id.into());
-        state.metrics_id = metrics_id.clone();
-        drop(state);
-
-        if let Some((token, device_id)) = MIXPANEL_TOKEN.as_ref().zip(device_id) {
-            self.executor
-                .spawn(
-                    async move {
-                        let json_bytes = serde_json::to_vec(&[MixpanelEngageRequest {
-                            token,
-                            distinct_id: device_id,
-                            set: json!({ "staff": is_staff, "id": metrics_id }),
-                        }])?;
-                        let request = Request::post(MIXPANEL_ENGAGE_URL)
-                            .header("Content-Type", "application/json")
-                            .body(json_bytes.into())?;
-                        this.http_client.send(request).await?;
-                        Ok(())
-                    }
-                    .log_err(),
-                )
-                .detach();
+        let is_signed_in = metrics_id.is_some();
+        self.state.lock().metrics_id = metrics_id.map(|s| s.into());
+        if is_signed_in {
+            self.report_event_with_user_properties(
+                "$identify",
+                Default::default(),
+                json!({ "$set": { "staff": is_staff } }),
+            )
         }
     }
 
     pub fn report_event(self: &Arc<Self>, kind: &str, properties: Value) {
+        self.report_event_with_user_properties(kind, properties, Default::default());
+    }
+
+    fn report_event_with_user_properties(
+        self: &Arc<Self>,
+        kind: &str,
+        properties: Value,
+        user_properties: Value,
+    ) {
+        if AMPLITUDE_API_KEY.is_none() {
+            return;
+        }
+
         let mut state = self.state.lock();
-        let event = MixpanelEvent {
-            event: kind.to_string(),
-            properties: MixpanelEventProperties {
-                token: "",
-                time: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis(),
-                distinct_id: state.device_id.clone(),
-                insert_id: post_inc(&mut state.next_event_id),
-                event_properties: if let Value::Object(properties) = properties {
-                    Some(properties)
-                } else {
-                    None
-                },
-                os_name: state.os_name,
-                os_version: state.os_version.clone(),
-                app_version: state.app_version.clone(),
-                signed_in: state.metrics_id.is_some(),
-                platform: "Zed",
+        let event = AmplitudeEvent {
+            event_type: kind.to_string(),
+            time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            session_id: self.session_id,
+            event_properties: if let Value::Object(properties) = properties {
+                Some(properties)
+            } else {
+                None
             },
+            user_properties: if let Value::Object(user_properties) = user_properties {
+                Some(user_properties)
+            } else {
+                None
+            },
+            user_id: state.metrics_id.clone(),
+            device_id: state.device_id.clone(),
+            os_name: state.os_name,
+            platform: "Zed",
+            os_version: state.os_version.clone(),
+            app_version: state.app_version.clone(),
+            event_id: post_inc(&mut state.next_event_id),
         };
         state.queue.push(event);
         if state.device_id.is_some() {
@@ -250,11 +240,11 @@ impl Telemetry {
 
     fn flush(self: &Arc<Self>) {
         let mut state = self.state.lock();
-        let mut events = mem::take(&mut state.queue);
+        let events = mem::take(&mut state.queue);
         state.flush_task.take();
         drop(state);
 
-        if let Some(token) = MIXPANEL_TOKEN.as_ref() {
+        if let Some(api_key) = AMPLITUDE_API_KEY.as_ref() {
             let this = self.clone();
             self.executor
                 .spawn(
@@ -263,21 +253,19 @@ impl Telemetry {
 
                         if let Some(file) = &mut this.state.lock().log_file {
                             let file = file.as_file_mut();
-                            for event in &mut events {
+                            for event in &events {
                                 json_bytes.clear();
                                 serde_json::to_writer(&mut json_bytes, event)?;
                                 file.write_all(&json_bytes)?;
                                 file.write(b"\n")?;
-
-                                event.properties.token = token;
                             }
                         }
 
+                        let batch = AmplitudeEventBatch { api_key, events };
                         json_bytes.clear();
-                        serde_json::to_writer(&mut json_bytes, &events)?;
-                        let request = Request::post(MIXPANEL_EVENTS_URL)
-                            .header("Content-Type", "application/json")
-                            .body(json_bytes.into())?;
+                        serde_json::to_writer(&mut json_bytes, &batch)?;
+                        let request =
+                            Request::post(AMPLITUDE_EVENTS_URL).body(json_bytes.into())?;
                         this.http_client.send(request).await?;
                         Ok(())
                     }
