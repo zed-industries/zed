@@ -124,7 +124,7 @@ public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, partic
 @_cdecl("LKCreateScreenShareTrackForDisplay")
 public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
     let display = Unmanaged<MacOSDisplay>.fromOpaque(display).takeUnretainedValue()
-    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display)
+    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display, preferredMethod: .legacy)
     return Unmanaged.passRetained(track).toOpaque()
 }
 
@@ -149,7 +149,7 @@ public func LKRemoteVideoTrackGetSid(track: UnsafeRawPointer) -> CFString {
 
 @_cdecl("LKDisplaySources")
 public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer, CFArray?, CFString?) -> Void) {
-    MacOSScreenCapturer.displaySources().then { displaySources in
+    MacOSScreenCapturer.sources(for: .display, includeCurrentApplication: false, preferredMethod: .legacy).then { displaySources in
         callback(data, displaySources as CFArray, nil)
     }.catch { error in
         callback(data, nil, error.localizedDescription as CFString)
