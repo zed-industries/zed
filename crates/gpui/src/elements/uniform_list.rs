@@ -304,7 +304,7 @@ impl Element for UniformList {
                       },
                       cx| {
                     if !Self::scroll(state.clone(), position, delta, precise, scroll_max, cx) {
-                        cx.propogate_event();
+                        cx.propagate_event();
                     }
                 }
             }),

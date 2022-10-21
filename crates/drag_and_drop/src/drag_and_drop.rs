@@ -125,7 +125,7 @@ impl<V: View> DragAndDrop<V> {
                             cx.defer(|cx| {
                                 cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
                             });
-                            cx.propogate_event();
+                            cx.propagate_event();
                         })
                         .on_up_out(MouseButton::Left, |_, cx| {
                             cx.defer(|cx| {

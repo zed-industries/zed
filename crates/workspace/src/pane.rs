@@ -1061,127 +1061,123 @@ impl Pane {
         enum Tab {}
         enum Filler {}
         let pane = cx.handle();
-        MouseEventHandler::<Tabs>::new(0, cx, |_, cx| {
-            let autoscroll = if mem::take(&mut self.autoscroll) {
-                Some(self.active_item_index)
-            } else {
-                None
-            };
+        let autoscroll = if mem::take(&mut self.autoscroll) {
+            Some(self.active_item_index)
+        } else {
+            None
+        };
 
-            let pane_active = self.is_active;
+        let pane_active = self.is_active;
 
-            let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
-            for (ix, (item, detail)) in self
-                .items
-                .iter()
-                .cloned()
-                .zip(self.tab_details(cx))
-                .enumerate()
-            {
-                let detail = if detail == 0 { None } else { Some(detail) };
-                let tab_active = ix == self.active_item_index;
+        let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
+        for (ix, (item, detail)) in self
+            .items
+            .iter()
+            .cloned()
+            .zip(self.tab_details(cx))
+            .enumerate()
+        {
+            let detail = if detail == 0 { None } else { Some(detail) };
+            let tab_active = ix == self.active_item_index;
 
-                row.add_child({
-                    MouseEventHandler::<Tab>::new(ix, cx, {
-                        let item = item.clone();
-                        let pane = pane.clone();
-                        let detail = detail.clone();
+            row.add_child({
+                MouseEventHandler::<Tab>::above(ix, cx, {
+                    let item = item.clone();
+                    let pane = pane.clone();
+                    let detail = detail.clone();
 
+                    let theme = cx.global::<Settings>().theme.clone();
+
+                    move |mouse_state, cx| {
+                        let tab_style = theme.workspace.tab_bar.tab_style(pane_active, tab_active);
+                        let hovered = mouse_state.hovered();
+                        Self::render_tab(
+                            &item,
+                            pane,
+                            ix == 0,
+                            detail,
+                            hovered,
+                            Self::tab_overlay_color(hovered, theme.as_ref(), cx),
+                            tab_style,
+                            cx,
+                        )
+                    }
+                })
+                .with_cursor_style(if pane_active && tab_active {
+                    CursorStyle::Arrow
+                } else {
+                    CursorStyle::PointingHand
+                })
+                .on_down(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(ActivateItem(ix));
+                    cx.propagate_event();
+                })
+                .on_click(MouseButton::Middle, {
+                    let item = item.clone();
+                    let pane = pane.clone();
+                    move |_, cx: &mut EventContext| {
+                        cx.dispatch_action(CloseItem {
+                            item_id: item.id(),
+                            pane: pane.clone(),
+                        })
+                    }
+                })
+                .on_up(MouseButton::Left, {
+                    let pane = pane.clone();
+                    move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, ix, true, cx)
+                })
+                .as_draggable(
+                    DraggedItem {
+                        item,
+                        pane: pane.clone(),
+                    },
+                    {
                         let theme = cx.global::<Settings>().theme.clone();
 
-                        move |mouse_state, cx| {
-                            let tab_style =
-                                theme.workspace.tab_bar.tab_style(pane_active, tab_active);
-                            let hovered = mouse_state.hovered();
+                        let detail = detail.clone();
+                        move |dragged_item, cx: &mut RenderContext<Workspace>| {
+                            let tab_style = &theme.workspace.tab_bar.dragged_tab;
                             Self::render_tab(
-                                &item,
-                                pane,
-                                ix == 0,
+                                &dragged_item.item,
+                                dragged_item.pane.clone(),
+                                false,
                                 detail,
-                                hovered,
-                                Self::tab_overlay_color(hovered, theme.as_ref(), cx),
-                                tab_style,
+                                false,
+                                None,
+                                &tab_style,
                                 cx,
                             )
                         }
-                    })
-                    .with_cursor_style(if pane_active && tab_active {
-                        CursorStyle::Arrow
-                    } else {
-                        CursorStyle::PointingHand
-                    })
-                    .on_down(MouseButton::Left, move |_, cx| {
-                        cx.dispatch_action(ActivateItem(ix));
-                    })
-                    .on_click(MouseButton::Middle, {
-                        let item = item.clone();
-                        let pane = pane.clone();
-                        move |_, cx: &mut EventContext| {
-                            cx.dispatch_action(CloseItem {
-                                item_id: item.id(),
-                                pane: pane.clone(),
-                            })
-                        }
-                    })
-                    .on_up(MouseButton::Left, {
-                        let pane = pane.clone();
-                        move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, ix, cx)
-                    })
-                    .as_draggable(
-                        DraggedItem {
-                            item,
-                            pane: pane.clone(),
-                        },
-                        {
-                            let theme = cx.global::<Settings>().theme.clone();
+                    },
+                )
+                .boxed()
+            })
+        }
 
-                            let detail = detail.clone();
-                            move |dragged_item, cx: &mut RenderContext<Workspace>| {
-                                let tab_style = &theme.workspace.tab_bar.dragged_tab;
-                                Self::render_tab(
-                                    &dragged_item.item,
-                                    dragged_item.pane.clone(),
-                                    false,
-                                    detail,
-                                    false,
-                                    None,
-                                    &tab_style,
-                                    cx,
-                                )
-                            }
-                        },
-                    )
-                    .boxed()
-                })
-            }
+        // Use the inactive tab style along with the current pane's active status to decide how to render
+        // the filler
+        let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
+        row.add_child(
+            MouseEventHandler::<Filler>::new(0, cx, |mouse_state, cx| {
+                let mut filler = Empty::new()
+                    .contained()
+                    .with_style(filler_style.container)
+                    .with_border(filler_style.container.border);
 
-            // Use the inactive tab style along with the current pane's active status to decide how to render
-            // the filler
-            let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
-            row.add_child(
-                MouseEventHandler::<Filler>::new(0, cx, |mouse_state, cx| {
-                    let mut filler = Empty::new()
-                        .contained()
-                        .with_style(filler_style.container)
-                        .with_border(filler_style.container.border);
+                if let Some(overlay) = Self::tab_overlay_color(mouse_state.hovered(), &theme, cx) {
+                    filler = filler.with_overlay_color(overlay);
+                }
 
-                    if let Some(overlay) =
-                        Self::tab_overlay_color(mouse_state.hovered(), &theme, cx)
-                    {
-                        filler = filler.with_overlay_color(overlay);
-                    }
+                filler.boxed()
+            })
+            .on_up(MouseButton::Left, move |_, cx| {
+                Pane::handle_dropped_item(&pane, filler_index, true, cx)
+            })
+            .flex(1., true)
+            .named("filler"),
+        );
 
-                    filler.boxed()
-                })
-                .flex(1., true)
-                .named("filler"),
-            );
-
-            row.boxed()
-        })
-        .on_up(MouseButton::Left, move |_, cx| {
-            Pane::handle_dropped_item(&pane, filler_index, cx)
-        })
+        row
     }
 
     fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
@@ -1305,7 +1301,6 @@ impl Pane {
                                 })
                             }
                         })
-                        .on_click(MouseButton::Middle, |_, cx| cx.propogate_event())
                         .named("close-tab-icon")
                     } else {
                         Empty::new().boxed()
@@ -1325,19 +1320,26 @@ impl Pane {
         tab.constrained().with_height(tab_style.height).boxed()
     }
 
-    pub fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
+    pub fn handle_dropped_item(
+        pane: &WeakViewHandle<Pane>,
+        index: usize,
+        allow_same_pane: bool,
+        cx: &mut EventContext,
+    ) {
         if let Some((_, dragged_item)) = cx
             .global::<DragAndDrop<Workspace>>()
             .currently_dragged::<DraggedItem>(cx.window_id)
         {
-            cx.dispatch_action(MoveItem {
-                item_id: dragged_item.item.id(),
-                from: dragged_item.pane.clone(),
-                to: pane.clone(),
-                destination_index: index,
-            })
+            if pane != &dragged_item.pane || allow_same_pane {
+                cx.dispatch_action(MoveItem {
+                    item_id: dragged_item.item.id(),
+                    from: dragged_item.pane.clone(),
+                    to: pane.clone(),
+                    destination_index: index,
+                })
+            }
         } else {
-            cx.propogate_event();
+            cx.propagate_event();
         }
     }
 
@@ -1448,7 +1450,7 @@ impl View for Pane {
                             })
                             .with_child({
                                 let drop_index = self.active_item_index + 1;
-                                MouseEventHandler::<PaneContentTabDropTarget>::new(
+                                MouseEventHandler::<PaneContentTabDropTarget>::above(
                                     0,
                                     cx,
                                     |_, cx| {
@@ -1469,7 +1471,7 @@ impl View for Pane {
                                 .on_up(MouseButton::Left, {
                                     let pane = cx.handle();
                                     move |_, cx: &mut EventContext| {
-                                        Pane::handle_dropped_item(&pane, drop_index, cx)
+                                        Pane::handle_dropped_item(&pane, drop_index, false, cx)
                                     }
                                 })
                                 .flex(1., true)
@@ -1491,7 +1493,9 @@ impl View for Pane {
                         })
                         .on_up(MouseButton::Left, {
                             let pane = this.clone();
-                            move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, 0, cx)
+                            move |_, cx: &mut EventContext| {
+                                Pane::handle_dropped_item(&pane, 0, true, cx)
+                            }
                         })
                         .boxed()
                     }

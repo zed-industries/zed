@@ -485,9 +485,7 @@ impl Presenter {
                     event_cx.handled = true;
                     event_cx.with_current_view(valid_region.id().view_id(), {
                         let region_event = mouse_event.clone();
-                        |cx| {
-                            callback(region_event, cx);
-                        }
+                        |cx| callback(region_event, cx)
                     });
                 }
 
@@ -804,7 +802,7 @@ impl<'a> EventContext<'a> {
         self.notify_count
     }
 
-    pub fn propogate_event(&mut self) {
+    pub fn propagate_event(&mut self) {
         self.handled = false;
     }
 }

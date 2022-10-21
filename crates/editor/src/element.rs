@@ -137,7 +137,7 @@ impl EditorElement {
                             gutter_bounds,
                             cx,
                         ) {
-                            cx.propogate_event();
+                            cx.propagate_event();
                         }
                     }
                 })
@@ -150,7 +150,7 @@ impl EditorElement {
                             text_bounds,
                             cx,
                         ) {
-                            cx.propogate_event();
+                            cx.propagate_event();
                         }
                     }
                 })
@@ -167,7 +167,7 @@ impl EditorElement {
                             text_bounds,
                             cx,
                         ) {
-                            cx.propogate_event()
+                            cx.propagate_event()
                         }
                     }
                 })
@@ -182,7 +182,7 @@ impl EditorElement {
                             text_bounds,
                             cx,
                         ) {
-                            cx.propogate_event()
+                            cx.propagate_event()
                         }
                     }
                 })
@@ -190,7 +190,7 @@ impl EditorElement {
                     let position_map = position_map.clone();
                     move |e, cx| {
                         if !Self::mouse_moved(e.platform_event, &position_map, text_bounds, cx) {
-                            cx.propogate_event()
+                            cx.propagate_event()
                         }
                     }
                 })
@@ -199,7 +199,7 @@ impl EditorElement {
                     move |e, cx| {
                         if !Self::scroll(e.position, e.delta, e.precise, &position_map, bounds, cx)
                         {
-                            cx.propogate_event()
+                            cx.propagate_event()
                         }
                     }
                 }),

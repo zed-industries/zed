@@ -204,25 +204,24 @@ impl Element for Overlay {
             OverlayFitMode::None => {}
         }
 
-        cx.scene.push_stacking_context(None);
+        cx.paint_stacking_context(None, |cx| {
+            if self.hoverable {
+                enum OverlayHoverCapture {}
+                // Block hovers in lower stacking contexts
+                cx.scene
+                    .push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
+                        cx.current_view_id(),
+                        cx.current_view_id(),
+                        bounds,
+                    ));
+            }
 
-        if self.hoverable {
-            enum OverlayHoverCapture {}
-            // Block hovers in lower stacking contexts
-            cx.scene
-                .push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
-                    cx.current_view_id(),
-                    cx.current_view_id(),
-                    bounds,
-                ));
-        }
-
-        self.child.paint(
-            bounds.origin(),
-            RectF::new(Vector2F::zero(), cx.window_size),
-            cx,
-        );
-        cx.scene.pop_stacking_context();
+            self.child.paint(
+                bounds.origin(),
+                RectF::new(Vector2F::zero(), cx.window_size),
+                cx,
+            );
+        });
     }
 
     fn rect_for_text_range(

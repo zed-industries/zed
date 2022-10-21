@@ -277,7 +277,7 @@ impl Element for Flex {
 
                                 cx.notify();
                             } else {
-                                cx.propogate_event();
+                                cx.propagate_event();
                             }
                         }
                     })
