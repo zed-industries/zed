@@ -1,4 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::pane::{PaneGroupId, PaneId, SerializedPane, SerializedPaneGroup};
 

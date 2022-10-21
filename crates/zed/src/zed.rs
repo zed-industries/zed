@@ -463,7 +463,7 @@ fn open_config_file(
 
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(cx, app_state, |workspace, cx| {
+                workspace.with_local_workspace(app_state, cx, |workspace, cx| {
                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
                 })
             })
@@ -480,7 +480,7 @@ fn open_log_file(
 ) {
     const MAX_LINES: usize = 1000;
 
-    workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
+    workspace.with_local_workspace(app_state.clone(), cx, |_, cx| {
         cx.spawn_weak(|workspace, mut cx| async move {
             let (old_log, new_log) = futures::join!(
                 app_state.fs.load(&paths::OLD_LOG),
@@ -532,7 +532,7 @@ fn open_telemetry_log_file(
     app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
+    workspace.with_local_workspace(app_state.clone(), cx, |_, cx| {
         cx.spawn_weak(|workspace, mut cx| async move {
             let workspace = workspace.upgrade(&cx)?;
             let path = app_state.client.telemetry_log_file_path()?;

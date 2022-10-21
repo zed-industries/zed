@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::{SerializedWorkspace, WorkspaceId};
+use db::{Db, SerializedWorkspace, WorkspaceId};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -180,7 +180,11 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewFile, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx)
+                let task = open_new(&app_state, cx);
+                cx.spawn(|_| async {
+                    task.await;
+                })
+                .detach();
             }
         }
     });
@@ -188,7 +192,11 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx)
+                let task = open_new(&app_state, cx);
+                cx.spawn(|_| async {
+                    task.await;
+                })
+                .detach();
             }
         }
     });
@@ -1112,8 +1120,8 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(
-        project: ModelHandle<Project>,
         serialized_workspace: SerializedWorkspace,
+        project: ModelHandle<Project>,
         dock_default_factory: DefaultItemFactory,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -1242,6 +1250,74 @@ impl Workspace {
         this
     }
 
+    fn new_local<T, F>(
+        abs_paths: &[PathBuf],
+        app_state: &Arc<AppState>,
+        cx: &mut MutableAppContext,
+        callback: F,
+    ) -> Task<T>
+    where
+        T: 'static,
+        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+    {
+        let project_handle = Project::local(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            app_state.project_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        );
+
+        cx.spawn(|mut cx| async move {
+            // Get project paths for all of the abs_paths
+            let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
+            let mut project_paths = Vec::new();
+            for path in abs_paths {
+                if let Some((worktree, project_entry)) = cx
+                    .update(|cx| Workspace::project_path_for_path(project_handle, path, true, cx))
+                    .await
+                    .log_err()
+                {
+                    worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
+                    project_paths.push(project_entry);
+                }
+            }
+
+            // Use the resolved worktree roots to get the serialized_db from the database
+            let serialized_workspace = cx.read(|cx| {
+                cx.global::<Db>()
+                    .workspace_for_worktree_roots(&Vec::from_iter(worktree_roots.into_iter())[..])
+            });
+
+            // Use the serialized workspace to construct the new window
+            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
+                let mut workspace = Workspace::new(
+                    serialized_workspace,
+                    project_handle,
+                    app_state.default_item_factory,
+                    cx,
+                );
+                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                workspace
+            });
+
+            // Call open path for each of the project paths
+            // (this will bring them to the front if they were in kthe serialized workspace)
+            let tasks = workspace.update(&mut cx, |workspace, cx| {
+                let tasks = Vec::new();
+                for path in project_paths {
+                    tasks.push(workspace.open_path(path, true, cx));
+                }
+                tasks
+            });
+            futures::future::join_all(tasks.into_iter()).await;
+
+            // Finally call callback on the workspace
+            workspace.update(&mut cx, |workspace, cx| callback(workspace, cx))
+        })
+    }
+
     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
         self.weak_self.clone()
     }
@@ -1289,34 +1365,18 @@ impl Workspace {
     /// to the callback. Otherwise, a new empty window will be created.
     pub fn with_local_workspace<T, F>(
         &mut self,
+        app_state: &Arc<AppState>,
         cx: &mut ViewContext<Self>,
-        app_state: Arc<AppState>,
         callback: F,
-    ) -> T
+    ) -> Task<T>
     where
         T: 'static,
         F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
-            callback(self, cx)
+            Task::Ready(Some(callback(self, cx)))
         } else {
-            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-                let mut workspace = Workspace::new(
-                    Project::local(
-                        app_state.client.clone(),
-                        app_state.user_store.clone(),
-                        app_state.project_store.clone(),
-                        app_state.languages.clone(),
-                        app_state.fs.clone(),
-                        cx,
-                    ),
-                    app_state.default_item_factory,
-                    cx,
-                );
-                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                workspace
-            });
-            workspace.update(cx, callback)
+            Self::new_local(&[], app_state, cx, callback)
         }
     }
 
@@ -1479,7 +1539,7 @@ impl Workspace {
             for path in &abs_paths {
                 project_paths.push(
                     this.update(&mut cx, |this, cx| {
-                        this.project_path_for_path(path, visible, cx)
+                        Workspace::project_path_for_path(this.project, path, visible, cx)
                     })
                     .await
                     .log_err(),
@@ -1544,15 +1604,15 @@ impl Workspace {
     }
 
     fn project_path_for_path(
-        &self,
+        project: ModelHandle<Project>,
         abs_path: &Path,
         visible: bool,
-        cx: &mut ViewContext<Self>,
+        cx: &mut MutableAppContext,
     ) -> Task<Result<(ModelHandle<Worktree>, ProjectPath)>> {
-        let entry = self.project().update(cx, |project, cx| {
+        let entry = project.update(cx, |project, cx| {
             project.find_or_create_local_worktree(abs_path, visible, cx)
         });
-        cx.spawn(|_, cx| async move {
+        cx.spawn(|cx| async move {
             let (worktree, path) = entry.await?;
             let worktree_id = worktree.read_with(&cx, |t, _| t.id());
             Ok((
@@ -2957,7 +3017,6 @@ pub fn open_paths(
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
-        let mut new_project = None;
         let workspace = if let Some(existing) = existing {
             existing
         } else {
@@ -2966,24 +3025,15 @@ pub fn open_paths(
                     .await
                     .contains(&false);
 
-            cx.add_window((app_state.build_window_options)(), |cx| {
-                let project = Project::local(
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    app_state.project_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
-                    cx,
-                );
-                new_project = Some(project.clone());
-                let mut workspace = Workspace::new(project, app_state.default_item_factory, cx);
-                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                if contains_directory {
-                    workspace.toggle_sidebar(SidebarSide::Left, cx);
-                }
-                workspace
+            cx.update(|cx| {
+                Workspace::new_local(&abs_paths[..], &app_state, cx, move |workspace, cx| {
+                    if contains_directory {
+                        workspace.toggle_sidebar(SidebarSide::Left, cx);
+                    }
+                    cx.handle()
+                })
             })
-            .1
+            .await
         };
 
         let items = workspace
@@ -2996,24 +3046,8 @@ pub fn open_paths(
     })
 }
 
-fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-        let mut workspace = Workspace::new(
-            Project::local(
-                app_state.client.clone(),
-                app_state.user_store.clone(),
-                app_state.project_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx,
-            ),
-            app_state.default_item_factory,
-            cx,
-        );
-        (app_state.initialize_workspace)(&mut workspace, app_state, cx);
-        workspace
-    });
-    cx.dispatch_action_at(window_id, workspace.id(), NewFile);
+fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
+    Workspace::new_local(&[], app_state, cx, |_, cx| cx.dispatch_action(NewFile))
 }
 
 #[cfg(test)]
