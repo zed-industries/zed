@@ -10,8 +10,9 @@ import snakeCase from "./utils/snakeCase";
 import { ColorScheme } from "./themes/common/colorScheme";
 
 const themeDirectory = `${__dirname}/../../assets/themes`;
-const internalDirectory = `${themeDirectory}/internal`;
-const experimentsDirectory = `${themeDirectory}/experiments`;
+const internalDirectory = `${themeDirectory}/Internal`;
+const experimentsDirectory = `${themeDirectory}/Experiments`;
+
 const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"));
 
 // Clear existing themes
