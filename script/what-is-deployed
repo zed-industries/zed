@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -eu
+source script/lib/deploy-helpers.sh
+
+if [[ $# < 1 ]]; then
+  echo "Usage: $0 <production|staging|preview>"
+  exit 1
+fi
+ZED_KUBE_NAMESPACE=$1
+
+export_vars_for_environment $ZED_KUBE_NAMESPACE
+target_zed_kube_cluster
+
+IMAGE_ID=$(kubectl --namespace=${ZED_KUBE_NAMESPACE} get deployment collab -o 'jsonpath={.spec.template.spec.containers[0].image}')
+
+echo "Deployed image on ${ZED_KUBE_NAMESPACE}:" $(version_for_image_id $IMAGE_ID)
