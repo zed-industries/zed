@@ -227,5 +227,9 @@ export default function workspace(colorScheme: ColorScheme) {
         shadow: colorScheme.modalShadow,
       },
     },
+    dropTargetOverlayColor: withOpacity(
+      foreground(layer),
+      0.6
+    ),
   };
 }

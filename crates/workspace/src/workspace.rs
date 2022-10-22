@@ -100,7 +100,7 @@ actions!(
         ToggleLeftSidebar,
         ToggleRightSidebar,
         NewTerminal,
-        NewSearch
+        NewSearch,
     ]
 );
 
@@ -126,6 +126,12 @@ pub struct OpenSharedScreen {
     pub peer_id: PeerId,
 }
 
+pub struct SplitWithItem {
+    pane_to_split: WeakViewHandle<Pane>,
+    split_direction: SplitDirection,
+    item_id_to_move: usize,
+}
+
 impl_internal_actions!(
     workspace,
     [
@@ -133,7 +139,8 @@ impl_internal_actions!(
         ToggleFollow,
         JoinProject,
         OpenSharedScreen,
-        RemoveWorktreeFromProject
+        RemoveWorktreeFromProject,
+        SplitWithItem,
     ]
 );
 impl_actions!(workspace, [ActivatePane]);
@@ -206,6 +213,22 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         workspace.toggle_sidebar(SidebarSide::Right, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
+    cx.add_action(
+        |workspace: &mut Workspace,
+         SplitWithItem {
+             pane_to_split,
+             item_id_to_move,
+             split_direction,
+         }: &_,
+         cx| {
+            workspace.split_pane_with_item(
+                pane_to_split.clone(),
+                *item_id_to_move,
+                *split_direction,
+                cx,
+            )
+        },
+    );
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -1948,6 +1971,35 @@ impl Workspace {
             cx.notify();
             new_pane
         })
+    }
+
+    pub fn split_pane_with_item(
+        &mut self,
+        pane_to_split: WeakViewHandle<Pane>,
+        item_id_to_move: usize,
+        split_direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(pane_to_split) = pane_to_split.upgrade(cx) {
+            if &pane_to_split == self.dock_pane() {
+                warn!("Can't split dock pane.");
+                return;
+            }
+
+            let new_pane = self.add_pane(cx);
+            Pane::move_item(
+                self,
+                pane_to_split.clone(),
+                new_pane.clone(),
+                item_id_to_move,
+                0,
+                cx,
+            );
+            self.center
+                .split(&pane_to_split, &new_pane, split_direction)
+                .unwrap();
+            cx.notify();
+        }
     }
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {

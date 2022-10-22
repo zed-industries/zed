@@ -90,6 +90,7 @@ impl Presenter {
                     window_id: self.window_id,
                     view_id: *view_id,
                     titlebar_height: self.titlebar_height,
+                    mouse_position: self.mouse_position.clone(),
                     hovered_region_ids: self.hovered_region_ids.clone(),
                     clicked_region_ids: self
                         .clicked_button
@@ -116,6 +117,7 @@ impl Presenter {
                         window_id: self.window_id,
                         view_id: *view_id,
                         titlebar_height: self.titlebar_height,
+                        mouse_position: self.mouse_position.clone(),
                         hovered_region_ids: self.hovered_region_ids.clone(),
                         clicked_region_ids: self
                             .clicked_button
@@ -183,6 +185,7 @@ impl Presenter {
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
             refreshing,
+            mouse_position: self.mouse_position.clone(),
             hovered_region_ids: self.hovered_region_ids.clone(),
             clicked_region_ids: self
                 .clicked_button
@@ -230,6 +233,10 @@ impl Presenter {
     ) -> bool {
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
+
+        if let Some(mouse_position) = event.position() {
+            self.mouse_position = mouse_position;
+        }
 
         // 1. Handle platform event. Keyboard events get dispatched immediately, while mouse events
         //    get mapped into the mouse-specific MouseEvent type.
@@ -402,10 +409,10 @@ impl Presenter {
                 MouseEvent::Down(_) | MouseEvent::Up(_) => {
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(self.mouse_position) {
+                            valid_regions.push(region.clone());
                             if region.notify_on_click {
                                 notified_views.insert(region.id().view_id());
                             }
-                            valid_regions.push(region.clone());
                         }
                     }
                 }
@@ -444,6 +451,16 @@ impl Presenter {
                         // NOT contains
                         if !mouse_region.bounds.contains_point(self.mouse_position) {
                             valid_regions.push(mouse_region.clone());
+                        }
+                    }
+                }
+                MouseEvent::Move(_) => {
+                    for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                        if mouse_region.bounds.contains_point(self.mouse_position) {
+                            valid_regions.push(mouse_region.clone());
+                            if mouse_region.notify_on_move {
+                                notified_views.insert(mouse_region.id().view_id());
+                            }
                         }
                     }
                 }
@@ -551,6 +568,7 @@ pub struct LayoutContext<'a> {
     pub window_size: Vector2F,
     titlebar_height: f32,
     appearance: Appearance,
+    mouse_position: Vector2F,
     hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
 }
@@ -622,6 +640,7 @@ impl<'a> LayoutContext<'a> {
                 view_id: handle.id(),
                 view_type: PhantomData,
                 titlebar_height: self.titlebar_height,
+                mouse_position: self.mouse_position.clone(),
                 hovered_region_ids: self.hovered_region_ids.clone(),
                 clicked_region_ids: self.clicked_region_ids.clone(),
                 refreshing: self.refreshing,
@@ -859,6 +878,13 @@ impl Axis {
         match self {
             Self::Horizontal => Self::Vertical,
             Self::Vertical => Self::Horizontal,
+        }
+    }
+
+    pub fn component(&self, point: Vector2F) -> f32 {
+        match self {
+            Self::Horizontal => point.x(),
+            Self::Vertical => point.y(),
         }
     }
 }
