@@ -391,7 +391,7 @@ impl Presenter {
                             //Ensure that hover entrance events aren't sent twice
                             if self.hovered_region_ids.insert(region.id()) {
                                 valid_regions.push(region.clone());
-                                if region.notify_on_hover {
+                                if region.notify_on_hover || region.notify_on_move {
                                     notified_views.insert(region.id().view_id());
                                 }
                             }
@@ -399,7 +399,7 @@ impl Presenter {
                             // Ensure that hover exit events aren't sent twice
                             if self.hovered_region_ids.remove(&region.id()) {
                                 valid_regions.push(region.clone());
-                                if region.notify_on_hover {
+                                if region.notify_on_hover || region.notify_on_move {
                                     notified_views.insert(region.id().view_id());
                                 }
                             }

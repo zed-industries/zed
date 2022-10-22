@@ -1373,6 +1373,7 @@ impl Pane {
                 .and_then(|margin| Self::drop_split_direction(event.position, event.region, margin))
             {
                 cx.dispatch_action(SplitWithItem {
+                    from: dragged_item.pane.clone(),
                     item_id_to_move: dragged_item.item.id(),
                     pane_to_split: pane.clone(),
                     split_direction,
@@ -1476,9 +1477,13 @@ impl View for Pane {
                                     cx,
                                     |state, cx| {
                                         let overlay_color = Self::tab_overlay_color(true, cx);
+                                        // Hovered will cause a render when the mouse enters regardless
+                                        // of if mouse position was accessed before
+                                        let hovered = state.hovered();
                                         let drag_position = cx
                                             .global::<DragAndDrop<Workspace>>()
                                             .currently_dragged::<DraggedItem>(cx.window_id())
+                                            .filter(|_| hovered)
                                             .map(|_| state.mouse_position());
 
                                         Stack::new()
@@ -1498,25 +1503,27 @@ impl View for Pane {
                                             )
                                             .with_children(drag_position.map(|drag_position| {
                                                 Canvas::new(move |region, _, cx| {
-                                                    let overlay_region =
-                                                        if let Some(split_direction) =
+                                                    if region.contains_point(drag_position) {
+                                                        let overlay_region = if let Some(
+                                                            split_direction,
+                                                        ) =
                                                             Self::drop_split_direction(
                                                                 drag_position,
                                                                 region,
                                                                 100., /* Replace with theme value */
-                                                            )
-                                                        {
+                                                            ) {
                                                             split_direction.along_edge(region, 100.)
                                                         } else {
                                                             region
                                                         };
 
-                                                    cx.scene.push_quad(Quad {
-                                                        bounds: overlay_region,
-                                                        background: overlay_color,
-                                                        border: Default::default(),
-                                                        corner_radius: 0.,
-                                                    });
+                                                        cx.scene.push_quad(Quad {
+                                                            bounds: overlay_region,
+                                                            background: overlay_color,
+                                                            border: Default::default(),
+                                                            corner_radius: 0.,
+                                                        });
+                                                    }
                                                 })
                                                 .boxed()
                                             }))

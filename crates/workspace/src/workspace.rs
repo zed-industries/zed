@@ -127,6 +127,7 @@ pub struct OpenSharedScreen {
 }
 
 pub struct SplitWithItem {
+    from: WeakViewHandle<Pane>,
     pane_to_split: WeakViewHandle<Pane>,
     split_direction: SplitDirection,
     item_id_to_move: usize,
@@ -216,12 +217,14 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(
         |workspace: &mut Workspace,
          SplitWithItem {
+             from,
              pane_to_split,
              item_id_to_move,
              split_direction,
          }: &_,
          cx| {
             workspace.split_pane_with_item(
+                from.clone(),
                 pane_to_split.clone(),
                 *item_id_to_move,
                 *split_direction,
@@ -1975,26 +1978,20 @@ impl Workspace {
 
     pub fn split_pane_with_item(
         &mut self,
+        from: WeakViewHandle<Pane>,
         pane_to_split: WeakViewHandle<Pane>,
         item_id_to_move: usize,
         split_direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(pane_to_split) = pane_to_split.upgrade(cx) {
+        if let Some((pane_to_split, from)) = pane_to_split.upgrade(cx).zip(from.upgrade(cx)) {
             if &pane_to_split == self.dock_pane() {
                 warn!("Can't split dock pane.");
                 return;
             }
 
             let new_pane = self.add_pane(cx);
-            Pane::move_item(
-                self,
-                pane_to_split.clone(),
-                new_pane.clone(),
-                item_id_to_move,
-                0,
-                cx,
-            );
+            Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
             self.center
                 .split(&pane_to_split, &new_pane, split_direction)
                 .unwrap();
