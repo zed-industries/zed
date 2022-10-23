@@ -21,7 +21,6 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
-use pathfinder_geometry::vector::Vector2F;
 use postage::oneshot;
 use smallvec::SmallVec;
 use smol::prelude::*;
@@ -940,7 +939,6 @@ impl MutableAppContext {
                         window_id,
                         view_id,
                         titlebar_height,
-                        mouse_position: Default::default(),
                         hovered_region_ids: Default::default(),
                         clicked_region_ids: None,
                         refreshing: false,
@@ -3897,7 +3895,6 @@ pub struct RenderParams {
     pub window_id: usize,
     pub view_id: usize,
     pub titlebar_height: f32,
-    pub mouse_position: Vector2F,
     pub hovered_region_ids: HashSet<MouseRegionId>,
     pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub refreshing: bool,

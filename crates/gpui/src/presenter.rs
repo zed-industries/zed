@@ -90,7 +90,6 @@ impl Presenter {
                     window_id: self.window_id,
                     view_id: *view_id,
                     titlebar_height: self.titlebar_height,
-                    mouse_position: self.mouse_position.clone(),
                     hovered_region_ids: self.hovered_region_ids.clone(),
                     clicked_region_ids: self
                         .clicked_button
@@ -117,7 +116,6 @@ impl Presenter {
                         window_id: self.window_id,
                         view_id: *view_id,
                         titlebar_height: self.titlebar_height,
-                        mouse_position: self.mouse_position.clone(),
                         hovered_region_ids: self.hovered_region_ids.clone(),
                         clicked_region_ids: self
                             .clicked_button
@@ -232,10 +230,6 @@ impl Presenter {
     ) -> bool {
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
-
-        if let Some(mouse_position) = event.position() {
-            self.mouse_position = mouse_position;
-        }
 
         // 1. Handle platform event. Keyboard events get dispatched immediately, while mouse events
         //    get mapped into the mouse-specific MouseEvent type.
