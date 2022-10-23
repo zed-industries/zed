@@ -33,7 +33,7 @@ where
             .global::<DragAndDrop<Workspace>>()
             .currently_dragged::<DraggedItem>(cx.window_id())
             .filter(|_| hovered)
-            .map(|_| state.mouse_position());
+            .map(|(drag_position, _)| drag_position);
 
         Stack::new()
             .with_child(render_child(state, cx))
@@ -66,6 +66,15 @@ where
         let pane = cx.handle();
         move |event, cx| {
             handle_dropped_item(event, &pane, drop_index, allow_same_pane, split_margin, cx);
+            cx.notify();
+        }
+    })
+    .on_move(|_, cx| {
+        if cx
+            .global::<DragAndDrop<Workspace>>()
+            .currently_dragged::<DraggedItem>(cx.window_id())
+            .is_some()
+        {
             cx.notify();
         }
     })

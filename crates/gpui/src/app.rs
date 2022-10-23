@@ -3908,7 +3908,6 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) window_id: usize,
     pub(crate) view_id: usize,
     pub(crate) view_type: PhantomData<T>,
-    pub(crate) mouse_position: Vector2F,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
     pub(crate) clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub app: &'a mut MutableAppContext,
@@ -3920,19 +3919,12 @@ pub struct RenderContext<'a, T: View> {
 #[derive(Clone, Default)]
 pub struct MouseState {
     hovered: bool,
-    mouse_position: Vector2F,
     clicked: Option<MouseButton>,
-    accessed_mouse_position: bool,
     accessed_hovered: bool,
     accessed_clicked: bool,
 }
 
 impl MouseState {
-    pub fn mouse_position(&mut self) -> Vector2F {
-        self.accessed_mouse_position = true;
-        self.mouse_position
-    }
-
     pub fn hovered(&mut self) -> bool {
         self.accessed_hovered = true;
         self.hovered
@@ -3941,10 +3933,6 @@ impl MouseState {
     pub fn clicked(&mut self) -> Option<MouseButton> {
         self.accessed_clicked = true;
         self.clicked
-    }
-
-    pub fn accessed_mouse_position(&self) -> bool {
-        self.accessed_mouse_position
     }
 
     pub fn accessed_hovered(&self) -> bool {
@@ -3964,7 +3952,6 @@ impl<'a, V: View> RenderContext<'a, V> {
             view_id: params.view_id,
             view_type: PhantomData,
             titlebar_height: params.titlebar_height,
-            mouse_position: params.mouse_position,
             hovered_region_ids: params.hovered_region_ids.clone(),
             clicked_region_ids: params.clicked_region_ids.clone(),
             refreshing: params.refreshing,
@@ -3987,7 +3974,6 @@ impl<'a, V: View> RenderContext<'a, V> {
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
         let region_id = MouseRegionId::new::<Tag>(self.view_id, region_id);
         MouseState {
-            mouse_position: self.mouse_position.clone(),
             hovered: self.hovered_region_ids.contains(&region_id),
             clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
                 if ids.contains(&region_id) {
@@ -3996,7 +3982,6 @@ impl<'a, V: View> RenderContext<'a, V> {
                     None
                 }
             }),
-            accessed_mouse_position: false,
             accessed_hovered: false,
             accessed_clicked: false,
         }

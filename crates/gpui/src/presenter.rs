@@ -185,7 +185,6 @@ impl Presenter {
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
             refreshing,
-            mouse_position: self.mouse_position.clone(),
             hovered_region_ids: self.hovered_region_ids.clone(),
             clicked_region_ids: self
                 .clicked_button
@@ -568,7 +567,6 @@ pub struct LayoutContext<'a> {
     pub window_size: Vector2F,
     titlebar_height: f32,
     appearance: Appearance,
-    mouse_position: Vector2F,
     hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
 }
@@ -640,7 +638,6 @@ impl<'a> LayoutContext<'a> {
                 view_id: handle.id(),
                 view_type: PhantomData,
                 titlebar_height: self.titlebar_height,
-                mouse_position: self.mouse_position.clone(),
                 hovered_region_ids: self.hovered_region_ids.clone(),
                 clicked_region_ids: self.clicked_region_ids.clone(),
                 refreshing: self.refreshing,

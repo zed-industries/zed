@@ -21,7 +21,6 @@ pub struct MouseEventHandler<Tag: 'static> {
     cursor_style: Option<CursorStyle>,
     handlers: HandlerSet,
     hoverable: bool,
-    notify_on_move: bool,
     notify_on_hover: bool,
     notify_on_click: bool,
     above: bool,
@@ -39,7 +38,6 @@ impl<Tag> MouseEventHandler<Tag> {
     {
         let mut mouse_state = cx.mouse_state::<Tag>(region_id);
         let child = render_child(&mut mouse_state, cx);
-        let notify_on_move = mouse_state.accessed_mouse_position();
         let notify_on_hover = mouse_state.accessed_hovered();
         let notify_on_click = mouse_state.accessed_clicked();
         Self {
@@ -47,7 +45,6 @@ impl<Tag> MouseEventHandler<Tag> {
             region_id,
             cursor_style: None,
             handlers: Default::default(),
-            notify_on_move,
             notify_on_hover,
             notify_on_click,
             hoverable: true,
@@ -188,7 +185,6 @@ impl<Tag> MouseEventHandler<Tag> {
                 self.handlers.clone(),
             )
             .with_hoverable(self.hoverable)
-            .with_notify_on_move(self.notify_on_move)
             .with_notify_on_hover(self.notify_on_hover)
             .with_notify_on_click(self.notify_on_click),
         );

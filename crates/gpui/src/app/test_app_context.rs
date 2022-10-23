@@ -186,7 +186,6 @@ impl TestAppContext {
                 view_id: handle.id(),
                 view_type: PhantomData,
                 titlebar_height: 0.,
-                mouse_position: Default::default(),
                 hovered_region_ids: Default::default(),
                 clicked_region_ids: None,
                 refreshing: false,

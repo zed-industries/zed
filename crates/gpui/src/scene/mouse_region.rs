@@ -138,11 +138,6 @@ impl MouseRegion {
         self
     }
 
-    pub fn with_notify_on_move(mut self, notify: bool) -> Self {
-        self.notify_on_move = notify;
-        self
-    }
-
     pub fn with_notify_on_hover(mut self, notify: bool) -> Self {
         self.notify_on_hover = notify;
         self
