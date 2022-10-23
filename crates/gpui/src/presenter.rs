@@ -384,7 +384,7 @@ impl Presenter {
                             //Ensure that hover entrance events aren't sent twice
                             if self.hovered_region_ids.insert(region.id()) {
                                 valid_regions.push(region.clone());
-                                if region.notify_on_hover || region.notify_on_move {
+                                if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());
                                 }
                             }
@@ -392,7 +392,7 @@ impl Presenter {
                             // Ensure that hover exit events aren't sent twice
                             if self.hovered_region_ids.remove(&region.id()) {
                                 valid_regions.push(region.clone());
-                                if region.notify_on_hover || region.notify_on_move {
+                                if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());
                                 }
                             }
@@ -451,9 +451,6 @@ impl Presenter {
                     for (mouse_region, _) in self.mouse_regions.iter().rev() {
                         if mouse_region.bounds.contains_point(self.mouse_position) {
                             valid_regions.push(mouse_region.clone());
-                            if mouse_region.notify_on_move {
-                                notified_views.insert(mouse_region.id().view_id());
-                            }
                         }
                     }
                 }
