@@ -1,17 +1,19 @@
+mod dragged_item_receiver;
+
 use super::{ItemHandle, SplitDirection};
 use crate::{
     dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, ExpandDock, HideDock},
     toolbar::Toolbar,
-    Item, NewFile, NewSearch, NewTerminal, SplitWithItem, WeakItemHandle, Workspace,
+    Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
-use drag_and_drop::{DragAndDrop, Draggable};
+use drag_and_drop::Draggable;
+pub use dragged_item_receiver::{dragged_item_receiver, handle_dropped_item};
 use futures::StreamExt;
 use gpui::{
     actions,
-    color::Color,
     elements::*,
     geometry::{
         rect::RectF,
@@ -19,7 +21,6 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    scene::MouseUp,
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
     ModelHandle, MouseButton, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -1056,11 +1057,7 @@ impl Pane {
 
     fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
-        let filler_index = self.items.len();
 
-        enum Tabs {}
-        enum Tab {}
-        enum Filler {}
         let pane = cx.handle();
         let autoscroll = if mem::take(&mut self.autoscroll) {
             Some(self.active_item_index)
@@ -1070,6 +1067,7 @@ impl Pane {
 
         let pane_active = self.is_active;
 
+        enum Tabs {}
         let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
         for (ix, (item, detail)) in self
             .items
@@ -1082,7 +1080,8 @@ impl Pane {
             let tab_active = ix == self.active_item_index;
 
             row.add_child({
-                MouseEventHandler::<Tab>::above(ix, cx, {
+                enum Tab {}
+                dragged_item_receiver::<Tab, _>(ix, ix, true, None, cx, {
                     let item = item.clone();
                     let pane = pane.clone();
                     let detail = detail.clone();
@@ -1092,16 +1091,7 @@ impl Pane {
                     move |mouse_state, cx| {
                         let tab_style = theme.workspace.tab_bar.tab_style(pane_active, tab_active);
                         let hovered = mouse_state.hovered();
-                        Self::render_tab(
-                            &item,
-                            pane,
-                            ix == 0,
-                            detail,
-                            hovered,
-                            Self::tab_overlay_color(hovered, cx),
-                            tab_style,
-                            cx,
-                        )
+                        Self::render_tab(&item, pane, ix == 0, detail, hovered, tab_style, cx)
                     }
                 })
                 .with_cursor_style(if pane_active && tab_active {
@@ -1123,10 +1113,6 @@ impl Pane {
                         })
                     }
                 })
-                .on_up(MouseButton::Left, {
-                    let pane = pane.clone();
-                    move |event, cx| Pane::handle_dropped_item(event, &pane, ix, true, None, cx)
-                })
                 .as_draggable(
                     DraggedItem {
                         item,
@@ -1144,7 +1130,6 @@ impl Pane {
                                 false,
                                 detail,
                                 false,
-                                None,
                                 &tab_style,
                                 cx,
                             )
@@ -1157,22 +1142,16 @@ impl Pane {
 
         // Use the inactive tab style along with the current pane's active status to decide how to render
         // the filler
+        let filler_index = self.items.len();
         let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
+        enum Filler {}
         row.add_child(
-            MouseEventHandler::<Filler>::new(0, cx, |mouse_state, cx| {
-                let mut filler = Empty::new()
+            dragged_item_receiver::<Filler, _>(0, filler_index, true, None, cx, |_, _| {
+                Empty::new()
                     .contained()
                     .with_style(filler_style.container)
-                    .with_border(filler_style.container.border);
-
-                if let Some(overlay) = Self::tab_overlay_color(mouse_state.hovered(), cx) {
-                    filler = filler.with_overlay_color(overlay);
-                }
-
-                filler.boxed()
-            })
-            .on_up(MouseButton::Left, move |event, cx| {
-                Pane::handle_dropped_item(event, &pane, filler_index, true, None, cx)
+                    .with_border(filler_style.container.border)
+                    .boxed()
             })
             .flex(1., true)
             .named("filler"),
@@ -1224,7 +1203,6 @@ impl Pane {
         first: bool,
         detail: Option<usize>,
         hovered: bool,
-        overlay: Option<Color>,
         tab_style: &theme::Tab,
         cx: &mut RenderContext<V>,
     ) -> ElementBox {
@@ -1234,7 +1212,7 @@ impl Pane {
             container.border.left = false;
         }
 
-        let mut tab = Flex::row()
+        Flex::row()
             .with_child(
                 Align::new({
                     let diameter = 7.0;
@@ -1312,13 +1290,10 @@ impl Pane {
                 .boxed(),
             )
             .contained()
-            .with_style(container);
-
-        if let Some(overlay) = overlay {
-            tab = tab.with_overlay_color(overlay);
-        }
-
-        tab.constrained().with_height(tab_style.height).boxed()
+            .with_style(container)
+            .constrained()
+            .with_height(tab_style.height)
+            .boxed()
     }
 
     fn render_tab_bar_buttons(
@@ -1356,79 +1331,6 @@ impl Pane {
             .flex(1., false)
             .boxed()
     }
-
-    pub fn handle_dropped_item(
-        event: MouseUp,
-        pane: &WeakViewHandle<Pane>,
-        index: usize,
-        allow_same_pane: bool,
-        split_margin: Option<f32>,
-        cx: &mut EventContext,
-    ) {
-        if let Some((_, dragged_item)) = cx
-            .global::<DragAndDrop<Workspace>>()
-            .currently_dragged::<DraggedItem>(cx.window_id)
-        {
-            if let Some(split_direction) = split_margin
-                .and_then(|margin| Self::drop_split_direction(event.position, event.region, margin))
-            {
-                cx.dispatch_action(SplitWithItem {
-                    from: dragged_item.pane.clone(),
-                    item_id_to_move: dragged_item.item.id(),
-                    pane_to_split: pane.clone(),
-                    split_direction,
-                });
-            } else if pane != &dragged_item.pane || allow_same_pane {
-                // If no split margin or not close enough to the edge, just move the item
-                cx.dispatch_action(MoveItem {
-                    item_id: dragged_item.item.id(),
-                    from: dragged_item.pane.clone(),
-                    to: pane.clone(),
-                    destination_index: index,
-                })
-            }
-        } else {
-            cx.propagate_event();
-        }
-    }
-
-    fn drop_split_direction(
-        position: Vector2F,
-        region: RectF,
-        split_margin: f32,
-    ) -> Option<SplitDirection> {
-        let mut min_direction = None;
-        let mut min_distance = split_margin;
-        for direction in SplitDirection::all() {
-            let edge_distance =
-                (direction.edge(region) - direction.axis().component(position)).abs();
-
-            if edge_distance < min_distance {
-                min_direction = Some(direction);
-                min_distance = edge_distance;
-            }
-        }
-
-        min_direction
-    }
-
-    fn tab_overlay_color(hovered: bool, cx: &mut RenderContext<Self>) -> Option<Color> {
-        if hovered
-            && cx
-                .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<DraggedItem>(cx.window_id())
-                .is_some()
-        {
-            Some(
-                cx.global::<Settings>()
-                    .theme
-                    .workspace
-                    .drop_target_overlay_color,
-            )
-        } else {
-            None
-        }
-    }
 }
 
 impl Entity for Pane {
@@ -1449,8 +1351,6 @@ impl View for Pane {
             .with_child(
                 MouseEventHandler::<MouseNavigationHandler>::new(0, cx, |_, cx| {
                     if let Some(active_item) = self.active_item() {
-                        enum PaneContentTabDropTarget {}
-
                         Flex::column()
                             .with_child({
                                 let mut tab_row = Flex::row()
@@ -1471,78 +1371,29 @@ impl View for Pane {
                                     .named("tab bar")
                             })
                             .with_child({
-                                let drop_index = self.active_item_index + 1;
-                                MouseEventHandler::<PaneContentTabDropTarget>::above(
+                                enum PaneContentTabDropTarget {}
+                                dragged_item_receiver::<PaneContentTabDropTarget, _>(
                                     0,
+                                    self.active_item_index + 1,
+                                    false,
+                                    Some(100.),
                                     cx,
-                                    |state, cx| {
-                                        let overlay_color = Self::tab_overlay_color(true, cx);
-                                        // Hovered will cause a render when the mouse enters regardless
-                                        // of if mouse position was accessed before
-                                        let hovered = state.hovered();
-                                        let drag_position = cx
-                                            .global::<DragAndDrop<Workspace>>()
-                                            .currently_dragged::<DraggedItem>(cx.window_id())
-                                            .filter(|_| hovered)
-                                            .map(|_| state.mouse_position());
-
-                                        Stack::new()
-                                            .with_child(
-                                                Flex::column()
-                                                    .with_child(
-                                                        ChildView::new(&self.toolbar, cx)
-                                                            .expanded()
-                                                            .boxed(),
-                                                    )
-                                                    .with_child(
-                                                        ChildView::new(active_item, cx)
-                                                            .flex(1., true)
-                                                            .boxed(),
-                                                    )
-                                                    .boxed(),
-                                            )
-                                            .with_children(drag_position.map(|drag_position| {
-                                                Canvas::new(move |region, _, cx| {
-                                                    if region.contains_point(drag_position) {
-                                                        let overlay_region = if let Some(
-                                                            split_direction,
-                                                        ) =
-                                                            Self::drop_split_direction(
-                                                                drag_position,
-                                                                region,
-                                                                100., /* Replace with theme value */
-                                                            ) {
-                                                            split_direction.along_edge(region, 100.)
-                                                        } else {
-                                                            region
-                                                        };
-
-                                                        cx.scene.push_quad(Quad {
-                                                            bounds: overlay_region,
-                                                            background: overlay_color,
-                                                            border: Default::default(),
-                                                            corner_radius: 0.,
-                                                        });
-                                                    }
-                                                })
+                                    {
+                                        let toolbar = self.toolbar.clone();
+                                        move |_, cx| {
+                                            Flex::column()
+                                                .with_child(
+                                                    ChildView::new(&toolbar, cx).expanded().boxed(),
+                                                )
+                                                .with_child(
+                                                    ChildView::new(active_item, cx)
+                                                        .flex(1., true)
+                                                        .boxed(),
+                                                )
                                                 .boxed()
-                                            }))
-                                            .boxed()
+                                        }
                                     },
                                 )
-                                .on_up(MouseButton::Left, {
-                                    let pane = cx.handle();
-                                    move |event, cx| {
-                                        Pane::handle_dropped_item(
-                                            event,
-                                            &pane,
-                                            drop_index,
-                                            false,
-                                            Some(100.), /* Use theme value */
-                                            cx,
-                                        )
-                                    }
-                                })
                                 .flex(1., true)
                                 .boxed()
                             })
@@ -1551,7 +1402,7 @@ impl View for Pane {
                         enum EmptyPane {}
                         let theme = cx.global::<Settings>().theme.clone();
 
-                        MouseEventHandler::<EmptyPane>::new(0, cx, |_, _| {
+                        dragged_item_receiver::<EmptyPane, _>(0, 0, false, None, cx, |_, _| {
                             Empty::new()
                                 .contained()
                                 .with_background_color(theme.workspace.background)
@@ -1559,12 +1410,6 @@ impl View for Pane {
                         })
                         .on_down(MouseButton::Left, |_, cx| {
                             cx.focus_parent_view();
-                        })
-                        .on_up(MouseButton::Left, {
-                            let pane = this.clone();
-                            move |event, cx| {
-                                Pane::handle_dropped_item(event, &pane, 0, true, None, cx)
-                            }
                         })
                         .boxed()
                     }

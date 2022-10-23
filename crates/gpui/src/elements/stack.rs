@@ -24,12 +24,13 @@ impl Element for Stack {
 
     fn layout(
         &mut self,
-        constraint: SizeConstraint,
+        mut constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.min;
         for child in &mut self.children {
             size = size.max(child.layout(constraint, cx));
+            constraint.min = size;
         }
         (size, ())
     }

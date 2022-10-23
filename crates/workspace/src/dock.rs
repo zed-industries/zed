@@ -9,7 +9,9 @@ use serde::Deserialize;
 use settings::{DockAnchor, Settings};
 use theme::Theme;
 
-use crate::{sidebar::SidebarSide, ItemHandle, Pane, StatusItemView, Workspace};
+use crate::{
+    handle_dropped_item, sidebar::SidebarSide, ItemHandle, Pane, StatusItemView, Workspace,
+};
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct MoveDock(pub DockAnchor);
@@ -376,6 +378,7 @@ impl View for ToggleDockButton {
         let dock_position = workspace.read(cx).dock.position;
 
         let theme = cx.global::<Settings>().theme.clone();
+
         let button = MouseEventHandler::<Self>::new(0, cx, {
             let theme = theme.clone();
             move |state, _| {
@@ -400,7 +403,7 @@ impl View for ToggleDockButton {
         .on_up(MouseButton::Left, move |event, cx| {
             let dock_pane = workspace.read(cx.app).dock_pane();
             let drop_index = dock_pane.read(cx.app).items_len() + 1;
-            Pane::handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
+            handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
         });
 
         if dock_position.is_visible() {
