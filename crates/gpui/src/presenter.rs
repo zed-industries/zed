@@ -447,13 +447,6 @@ impl Presenter {
                         }
                     }
                 }
-                MouseEvent::Move(_) => {
-                    for (mouse_region, _) in self.mouse_regions.iter().rev() {
-                        if mouse_region.bounds.contains_point(self.mouse_position) {
-                            valid_regions.push(mouse_region.clone());
-                        }
-                    }
-                }
                 _ => {
                     for (mouse_region, _) in self.mouse_regions.iter().rev() {
                         // Contains
