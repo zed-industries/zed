@@ -1,3 +1,5 @@
+use derive_more::Deref;
+
 use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 
 #[derive(Clone, Debug)]
@@ -11,12 +13,19 @@ pub struct KeyUpEvent {
     pub keystroke: Keystroke,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ModifiersChangedEvent {
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Modifiers {
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
     pub cmd: bool,
+    pub fun: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deref)]
+pub struct ModifiersChangedEvent {
+    #[deref]
+    pub modifiers: Modifiers,
 }
 
 /// The phase of a touch motion event.
@@ -28,15 +37,13 @@ pub enum TouchPhase {
     Ended,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Deref)]
 pub struct ScrollWheelEvent {
     pub position: Vector2F,
     pub delta: Vector2F,
     pub precise: bool,
-    pub ctrl: bool,
-    pub alt: bool,
-    pub shift: bool,
-    pub cmd: bool,
+    #[deref]
+    pub modifiers: Modifiers,
     /// If the platform supports returning the phase of a scroll wheel event, it will be stored here
     pub phase: Option<TouchPhase>,
 }
@@ -79,25 +86,21 @@ impl Default for MouseButton {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Deref)]
 pub struct MouseButtonEvent {
     pub button: MouseButton,
     pub position: Vector2F,
-    pub ctrl: bool,
-    pub alt: bool,
-    pub shift: bool,
-    pub cmd: bool,
+    #[deref]
+    pub modifiers: Modifiers,
     pub click_count: usize,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Deref)]
 pub struct MouseMovedEvent {
     pub position: Vector2F,
     pub pressed_button: Option<MouseButton>,
-    pub ctrl: bool,
-    pub cmd: bool,
-    pub alt: bool,
-    pub shift: bool,
+    #[deref]
+    pub modifiers: Modifiers,
 }
 
 impl MouseMovedEvent {
@@ -105,10 +108,7 @@ impl MouseMovedEvent {
         MouseButtonEvent {
             position: self.position,
             button: self.pressed_button.unwrap_or(button),
-            ctrl: self.ctrl,
-            alt: self.alt,
-            shift: self.shift,
-            cmd: self.cmd,
+            modifiers: self.modifiers,
             click_count: 0,
         }
     }

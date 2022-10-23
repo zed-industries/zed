@@ -981,25 +981,13 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             }) => {
                 window_state_borrow.synthetic_drag_counter += 1;
             }
-            Event::ModifiersChanged(ModifiersChangedEvent {
-                ctrl,
-                alt,
-                shift,
-                cmd,
-            }) => {
+            Event::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
                 // Only raise modifiers changed event when they have actually changed
                 if let Some(Event::ModifiersChanged(ModifiersChangedEvent {
-                    ctrl: prev_ctrl,
-                    alt: prev_alt,
-                    shift: prev_shift,
-                    cmd: prev_cmd,
+                    modifiers: prev_modifiers,
                 })) = &window_state_borrow.previous_modifiers_changed_event
                 {
-                    if prev_ctrl == ctrl
-                        && prev_alt == alt
-                        && prev_shift == shift
-                        && prev_cmd == cmd
-                    {
+                    if prev_modifiers == modifiers {
                         return;
                     }
                 }

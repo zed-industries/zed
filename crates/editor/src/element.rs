@@ -30,8 +30,8 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
-    MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext, PaintContext,
-    Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
+    PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
 use language::{Bias, CursorShape, DiagnosticSeverity, OffsetUtf16, Point, Selection};
@@ -209,10 +209,14 @@ impl EditorElement {
     fn mouse_down(
         MouseButtonEvent {
             position,
-            ctrl,
-            alt,
-            shift,
-            cmd,
+            modifiers:
+                Modifiers {
+                    shift,
+                    ctrl,
+                    alt,
+                    cmd,
+                    ..
+                },
             mut click_count,
             ..
         }: MouseButtonEvent,
@@ -303,8 +307,7 @@ impl EditorElement {
     fn mouse_dragged(
         view: WeakViewHandle<Editor>,
         MouseMovedEvent {
-            cmd,
-            shift,
+            modifiers: Modifiers { cmd, shift, .. },
             position,
             ..
         }: MouseMovedEvent,
@@ -379,8 +382,7 @@ impl EditorElement {
 
     fn mouse_moved(
         MouseMovedEvent {
-            cmd,
-            shift,
+            modifiers: Modifiers { shift, cmd, .. },
             position,
             ..
         }: MouseMovedEvent,

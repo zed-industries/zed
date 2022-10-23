@@ -20,6 +20,7 @@ sum_tree = { path = "../sum_tree" }
 async-task = "4.0.3"
 backtrace = { version = "0.3", optional = true }
 ctor = "0.1"
+derive_more = "0.99.17"
 dhat = { version = "0.3", optional = true }
 env_logger = { version = "0.9", optional = true }
 etagere = "0.2"

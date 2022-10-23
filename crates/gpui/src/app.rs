@@ -5777,10 +5777,7 @@ mod tests {
             Event::MouseDown(MouseButtonEvent {
                 position: Default::default(),
                 button: MouseButton::Left,
-                ctrl: false,
-                alt: false,
-                shift: false,
-                cmd: false,
+                modifiers: Default::default(),
                 click_count: 1,
             }),
             false,
