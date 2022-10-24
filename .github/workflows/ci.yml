@@ -85,8 +85,9 @@ jobs:
       - name: Create app bundle
         run: script/bundle
 
-      - name: Upload app bundle to workflow run
+      - name: Upload app bundle to workflow run if main branch
         uses: actions/upload-artifact@v2
+        if: ${{ github.ref == 'refs/heads/main' }}
         with:
           name: Zed.dmg
           path: target/release/Zed.dmg
