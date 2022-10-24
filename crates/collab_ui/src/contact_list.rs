@@ -17,7 +17,7 @@ use serde::Deserialize;
 use settings::Settings;
 use theme::IconButton;
 use util::ResultExt;
-use workspace::JoinProject;
+use workspace::{JoinProject, OpenSharedScreen};
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
 impl_internal_actions!(contact_list, [ToggleExpanded, Call, LeaveCall]);
@@ -67,6 +67,10 @@ enum ContactEntry {
         host_user_id: u64,
         is_last: bool,
     },
+    ParticipantScreen {
+        peer_id: PeerId,
+        is_last: bool,
+    },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     Contact(Arc<Contact>),
@@ -95,6 +99,16 @@ impl PartialEq for ContactEntry {
                 } = other
                 {
                     return project_id_1 == project_id_2;
+                }
+            }
+            ContactEntry::ParticipantScreen {
+                peer_id: peer_id_1, ..
+            } => {
+                if let ContactEntry::ParticipantScreen {
+                    peer_id: peer_id_2, ..
+                } = other
+                {
+                    return peer_id_1 == peer_id_2;
                 }
             }
             ContactEntry::IncomingRequest(user_1) => {
@@ -216,6 +230,15 @@ impl ContactList {
                     &theme.contact_list,
                     cx,
                 ),
+                ContactEntry::ParticipantScreen { peer_id, is_last } => {
+                    Self::render_participant_screen(
+                        *peer_id,
+                        *is_last,
+                        is_selected,
+                        &theme.contact_list,
+                        cx,
+                    )
+                }
                 ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                     user.clone(),
                     this.user_store.clone(),
@@ -347,6 +370,9 @@ impl ContactList {
                             follow_user_id: *host_user_id,
                         });
                     }
+                    ContactEntry::ParticipantScreen { peer_id, .. } => {
+                        cx.dispatch_action(OpenSharedScreen { peer_id: *peer_id });
+                    }
                     _ => {}
                 }
             }
@@ -430,11 +456,10 @@ impl ContactList {
                 executor.clone(),
             ));
             for mat in matches {
-                let participant = &room.remote_participants()[&PeerId(mat.candidate_id as u32)];
+                let peer_id = PeerId(mat.candidate_id as u32);
+                let participant = &room.remote_participants()[&peer_id];
                 participant_entries.push(ContactEntry::CallParticipant {
-                    user: room.remote_participants()[&PeerId(mat.candidate_id as u32)]
-                        .user
-                        .clone(),
+                    user: participant.user.clone(),
                     is_pending: false,
                 });
                 let mut projects = participant.projects.iter().peekable();
@@ -443,7 +468,13 @@ impl ContactList {
                         project_id: project.id,
                         worktree_root_names: project.worktree_root_names.clone(),
                         host_user_id: participant.user.id,
-                        is_last: projects.peek().is_none(),
+                        is_last: projects.peek().is_none() && participant.tracks.is_empty(),
+                    });
+                }
+                if !participant.tracks.is_empty() {
+                    participant_entries.push(ContactEntry::ParticipantScreen {
+                        peer_id,
+                        is_last: true,
                     });
                 }
             }
@@ -759,6 +790,102 @@ impl ContactList {
                     follow_user_id: host_user_id,
                 });
             }
+        })
+        .boxed()
+    }
+
+    fn render_participant_screen(
+        peer_id: PeerId,
+        is_last: bool,
+        is_selected: bool,
+        theme: &theme::ContactList,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let font_cache = cx.font_cache();
+        let host_avatar_height = theme
+            .contact_avatar
+            .width
+            .or(theme.contact_avatar.height)
+            .unwrap_or(0.);
+        let row = &theme.project_row.default;
+        let tree_branch = theme.tree_branch;
+        let line_height = row.name.text.line_height(font_cache);
+        let cap_height = row.name.text.cap_height(font_cache);
+        let baseline_offset =
+            row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
+
+        MouseEventHandler::<OpenSharedScreen>::new(peer_id.0 as usize, cx, |mouse_state, _| {
+            let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
+            let row = theme.project_row.style_for(mouse_state, is_selected);
+
+            Flex::row()
+                .with_child(
+                    Stack::new()
+                        .with_child(
+                            Canvas::new(move |bounds, _, cx| {
+                                let start_x = bounds.min_x() + (bounds.width() / 2.)
+                                    - (tree_branch.width / 2.);
+                                let end_x = bounds.max_x();
+                                let start_y = bounds.min_y();
+                                let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, start_y),
+                                        vec2f(
+                                            start_x + tree_branch.width,
+                                            if is_last { end_y } else { bounds.max_y() },
+                                        ),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, end_y),
+                                        vec2f(end_x, end_y + tree_branch.width),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                            })
+                            .boxed(),
+                        )
+                        .constrained()
+                        .with_width(host_avatar_height)
+                        .boxed(),
+                )
+                .with_child(
+                    Svg::new("icons/disable_screen_sharing_12.svg")
+                        .with_color(row.icon.color)
+                        .constrained()
+                        .with_width(row.icon.width)
+                        .aligned()
+                        .left()
+                        .contained()
+                        .with_style(row.icon.container)
+                        .boxed(),
+                )
+                .with_child(
+                    Label::new("Screen Sharing".into(), row.name.text.clone())
+                        .aligned()
+                        .left()
+                        .contained()
+                        .with_style(row.name.container)
+                        .flex(1., false)
+                        .boxed(),
+                )
+                .constrained()
+                .with_height(theme.row_height)
+                .contained()
+                .with_style(row.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_action(OpenSharedScreen { peer_id });
         })
         .boxed()
     }

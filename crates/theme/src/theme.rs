@@ -120,6 +120,7 @@ pub struct ContactList {
 pub struct ProjectRow {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub icon: Icon,
     pub name: ContainedText,
 }
 
@@ -381,7 +382,6 @@ pub struct Icon {
     pub container: ContainerStyle,
     pub color: Color,
     pub width: f32,
-    pub path: String,
 }
 
 #[derive(Deserialize, Clone, Copy, Default)]

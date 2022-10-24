@@ -121,12 +121,18 @@ pub struct JoinProject {
     pub follow_user_id: u64,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct OpenSharedScreen {
+    pub peer_id: PeerId,
+}
+
 impl_internal_actions!(
     workspace,
     [
         OpenPaths,
         ToggleFollow,
         JoinProject,
+        OpenSharedScreen,
         RemoveWorktreeFromProject
     ]
 );
@@ -166,6 +172,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
     cx.add_async_action(Workspace::save_all);
+    cx.add_action(Workspace::open_shared_screen);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(Workspace::remove_folder_from_project);
     cx.add_action(
@@ -1788,6 +1795,15 @@ impl Workspace {
         item
     }
 
+    pub fn open_shared_screen(&mut self, action: &OpenSharedScreen, cx: &mut ViewContext<Self>) {
+        if let Some(shared_screen) =
+            self.shared_screen_for_peer(action.peer_id, &self.active_pane, cx)
+        {
+            let pane = self.active_pane.clone();
+            Pane::add_item(self, &pane, Box::new(shared_screen), false, true, None, cx);
+        }
+    }
+
     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             pane.read(cx)
@@ -2534,20 +2550,10 @@ impl Workspace {
             }
             call::ParticipantLocation::UnsharedProject => {}
             call::ParticipantLocation::External => {
-                let track = participant.tracks.values().next()?.clone();
-                let user = participant.user.clone();
-
-                'outer: for (pane, _) in self.follower_states_by_leader.get(&leader_id)? {
-                    for item in pane.read(cx).items_of_type::<SharedScreen>() {
-                        if item.read(cx).peer_id == leader_id {
-                            items_to_add.push((pane.clone(), Box::new(item)));
-                            continue 'outer;
-                        }
+                for (pane, _) in self.follower_states_by_leader.get(&leader_id)? {
+                    if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
+                        items_to_add.push((pane.clone(), Box::new(shared_screen)));
                     }
-
-                    let shared_screen =
-                        cx.add_view(|cx| SharedScreen::new(&track, leader_id, user.clone(), cx));
-                    items_to_add.push((pane.clone(), Box::new(shared_screen)));
                 }
             }
         }
@@ -2560,6 +2566,27 @@ impl Workspace {
         }
 
         None
+    }
+
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        pane: &ViewHandle<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<ViewHandle<SharedScreen>> {
+        let call = self.active_call()?;
+        let room = call.read(cx).room()?.read(cx);
+        let participant = room.remote_participants().get(&peer_id)?;
+        let track = participant.tracks.values().next()?.clone();
+        let user = participant.user.clone();
+
+        for item in pane.read(cx).items_of_type::<SharedScreen>() {
+            if item.read(cx).peer_id == peer_id {
+                return Some(item);
+            }
+        }
+
+        Some(cx.add_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
     }
 
     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {

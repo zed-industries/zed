@@ -3835,6 +3835,11 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.notify_view(self.window_id, self.view_id);
     }
 
+    pub fn dispatch_action(&mut self, action: impl Action) {
+        self.app
+            .dispatch_action_at(self.window_id, self.view_id, action)
+    }
+
     pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
         self.app
             .dispatch_any_action_at(self.window_id, self.view_id, action)
