@@ -869,7 +869,7 @@ impl ContactList {
                         .boxed(),
                 )
                 .with_child(
-                    Label::new("Screen Sharing".into(), row.name.text.clone())
+                    Label::new("Screen".into(), row.name.text.clone())
                         .aligned()
                         .left()
                         .contained()
