@@ -39,6 +39,7 @@ jobs:
         uses: actions/checkout@v2
         with:
           clean: false
+          submodules: 'recursive'
             
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
@@ -75,6 +76,7 @@ jobs:
         uses: actions/checkout@v2
         with:
           clean: false
+          submodules: 'recursive'
 
       - name: Validate version
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
