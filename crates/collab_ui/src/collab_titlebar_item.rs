@@ -259,11 +259,17 @@ impl CollabTitlebarItem {
     ) -> Option<ElementBox> {
         let active_call = ActiveCall::global(cx);
         let room = active_call.read(cx).room().cloned()?;
-        let icon = if room.read(cx).is_screen_sharing() {
-            "icons/disable_screen_sharing_12.svg"
+        let icon;
+        let tooltip;
+
+        if room.read(cx).is_screen_sharing() {
+            icon = "icons/disable_screen_sharing_12.svg";
+            tooltip = "Stop Sharing Screen"
         } else {
-            "icons/enable_screen_sharing_12.svg"
-        };
+            icon = "icons/enable_screen_sharing_12.svg";
+            tooltip = "Share Screen";
+        }
+
         let titlebar = &theme.workspace.titlebar;
         Some(
             MouseEventHandler::<ToggleScreenSharing>::new(0, cx, |state, _| {
@@ -284,6 +290,13 @@ impl CollabTitlebarItem {
             .on_click(MouseButton::Left, move |_, cx| {
                 cx.dispatch_action(ToggleScreenSharing);
             })
+            .with_tooltip::<ToggleScreenSharing, _>(
+                0,
+                tooltip.into(),
+                Some(Box::new(ToggleScreenSharing)),
+                theme.tooltip.clone(),
+                cx,
+            )
             .aligned()
             .boxed(),
         )
