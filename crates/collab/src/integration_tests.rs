@@ -55,7 +55,7 @@ use std::{
 };
 use theme::ThemeRegistry;
 use unindent::Unindent as _;
-use workspace::{Item, SplitDirection, ToggleFollow, Workspace};
+use workspace::{shared_screen::SharedScreen, Item, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -5058,7 +5058,11 @@ async fn test_contact_requests(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+async fn test_following(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
     cx_a.foreground().forbid_parking();
     cx_a.update(editor::init);
     cx_b.update(editor::init);
@@ -5239,7 +5243,7 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.activate_item(&editor_a2, cx)
     });
-    cx_a.foreground().run_until_parked();
+    deterministic.run_until_parked();
     assert_eq!(
         workspace_b.read_with(cx_b, |workspace, cx| workspace
             .active_item(cx)
@@ -5269,9 +5273,62 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         editor_a1.id()
     );
 
+    // Client B activates an external window, which causes a new screen-sharing item to be added to the pane.
+    let display = MacOSDisplay::new();
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(None, cx))
+        .await
+        .unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_display_sources(vec![display.clone()]);
+                room.share_screen(cx)
+            })
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    let shared_screen = workspace_a.read_with(cx_a, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<SharedScreen>()
+            .unwrap()
+    });
+
+    // Client B activates Zed again, which causes the previous editor to become focused again.
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        workspace_a.read_with(cx_a, |workspace, cx| workspace
+            .active_item(cx)
+            .unwrap()
+            .id()),
+        editor_a1.id()
+    );
+
+    // Client B activates an external window again, and the previously-opened screen-sharing item
+    // gets activated.
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(None, cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        workspace_a.read_with(cx_a, |workspace, cx| workspace
+            .active_item(cx)
+            .unwrap()
+            .id()),
+        shared_screen.id()
+    );
+
     // Following interrupts when client B disconnects.
     client_b.disconnect(&cx_b.to_async()).unwrap();
-    cx_a.foreground().run_until_parked();
+    deterministic.run_until_parked();
     assert_eq!(
         workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
         None

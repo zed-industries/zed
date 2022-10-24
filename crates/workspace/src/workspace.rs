@@ -6,7 +6,7 @@ pub mod dock;
 pub mod pane;
 pub mod pane_group;
 pub mod searchable;
-mod shared_screen;
+pub mod shared_screen;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
