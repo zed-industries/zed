@@ -7,8 +7,9 @@ use unindent::Unindent;
 
 use super::*;
 use crate::test::{
-    assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-    editor_test_context::EditorTestContext, select_ranges,
+    assert_text_with_selections, build_editor, editor_git_test_context::EditorGitTestContext,
+    editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+    select_ranges,
 };
 use gpui::{
     geometry::rect::RectF,
@@ -5077,6 +5078,11 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
             ),
         ]
     );
+}
+
+#[gpui::test]
+fn go_to_hunk(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorGitTestContext::new(cx);
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
