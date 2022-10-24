@@ -2621,15 +2621,9 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            call::room::Event::ParticipantLocationChanged {
-                participant_id: peer_id,
-            }
-            | call::room::Event::RemoteVideoTrackShared {
-                participant_id: peer_id,
-                ..
-            }
-            | call::room::Event::RemoteVideoTrackUnshared { peer_id, .. } => {
-                self.leader_updated(*peer_id, cx);
+            call::room::Event::ParticipantLocationChanged { participant_id }
+            | call::room::Event::RemoteVideoTracksChanged { participant_id } => {
+                self.leader_updated(*participant_id, cx);
             }
             _ => {}
         }

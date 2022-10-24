@@ -7,7 +7,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate, Sid};
+use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
 use project::Project;
 use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
@@ -18,13 +18,8 @@ pub enum Event {
     ParticipantLocationChanged {
         participant_id: PeerId,
     },
-    RemoteVideoTrackShared {
+    RemoteVideoTracksChanged {
         participant_id: PeerId,
-        track_id: Sid,
-    },
-    RemoteVideoTrackUnshared {
-        peer_id: PeerId,
-        track_id: Sid,
     },
     RemoteProjectShared {
         owner: Arc<User>,
@@ -448,9 +443,8 @@ impl Room {
                         live_kit_track: track,
                     }),
                 );
-                cx.emit(Event::RemoteVideoTrackShared {
+                cx.emit(Event::RemoteVideoTracksChanged {
                     participant_id: peer_id,
-                    track_id,
                 });
             }
             RemoteVideoTrackUpdate::Unsubscribed {
@@ -463,7 +457,9 @@ impl Room {
                     .get_mut(&peer_id)
                     .ok_or_else(|| anyhow!("unsubscribed from track by unknown participant"))?;
                 participant.tracks.remove(&track_id);
-                cx.emit(Event::RemoteVideoTrackUnshared { peer_id, track_id });
+                cx.emit(Event::RemoteVideoTracksChanged {
+                    participant_id: peer_id,
+                });
             }
         }
 

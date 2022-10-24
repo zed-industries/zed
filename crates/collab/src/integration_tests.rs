@@ -203,16 +203,15 @@ async fn test_basic_calls(
 
     assert_eq!(events_b.borrow().len(), 1);
     let event = events_b.borrow().first().unwrap().clone();
-    if let call::room::Event::RemoteVideoTrackShared {
-        participant_id,
-        track_id,
-    } = event
-    {
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event {
         assert_eq!(participant_id, client_a.peer_id().unwrap());
         room_b.read_with(cx_b, |room, _| {
-            assert!(room.remote_participants()[&client_a.peer_id().unwrap()]
-                .tracks
-                .contains_key(&track_id));
+            assert_eq!(
+                room.remote_participants()[&client_a.peer_id().unwrap()]
+                    .tracks
+                    .len(),
+                1
+            );
         });
     } else {
         panic!("unexpected event")
