@@ -2,9 +2,7 @@ use crate::{FollowerStatesByLeader, JoinProject, Pane, Workspace};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use gpui::{
-    elements::*,
-    geometry::{rect::RectF, vector::vec2f},
-    Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
+    elements::*, Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -144,30 +142,6 @@ impl Member {
                     Border::default()
                 };
 
-                let content = if leader.as_ref().map_or(false, |(_, leader)| {
-                    leader.location == ParticipantLocation::External && !leader.tracks.is_empty()
-                }) {
-                    let (_, leader) = leader.unwrap();
-                    let track = leader.tracks.values().next().unwrap();
-                    let frame = track.frame().cloned();
-                    Canvas::new(move |bounds, _, cx| {
-                        if let Some(frame) = frame.clone() {
-                            let size = constrain_size_preserving_aspect_ratio(
-                                bounds.size(),
-                                vec2f(frame.width() as f32, frame.height() as f32),
-                            );
-                            let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
-                            cx.scene.push_surface(gpui::mac::Surface {
-                                bounds: RectF::new(origin, size),
-                                image_buffer: frame.image(),
-                            });
-                        }
-                    })
-                    .boxed()
-                } else {
-                    ChildView::new(pane, cx).boxed()
-                };
-
                 let prompt = if let Some((_, leader)) = leader {
                     match leader.location {
                         ParticipantLocation::SharedProject {
@@ -251,7 +225,12 @@ impl Member {
                 };
 
                 Stack::new()
-                    .with_child(Container::new(content).with_border(border).boxed())
+                    .with_child(
+                        ChildView::new(pane, cx)
+                            .contained()
+                            .with_border(border)
+                            .boxed(),
+                    )
                     .with_children(prompt)
                     .boxed()
             }

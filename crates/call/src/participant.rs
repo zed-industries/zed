@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use client::{proto, User};
 use collections::HashMap;
-use gpui::{Task, WeakModelHandle};
-use live_kit_client::Frame;
+use gpui::WeakModelHandle;
+pub use live_kit_client::Frame;
 use project::Project;
 use std::sync::Arc;
 
@@ -41,18 +41,16 @@ pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
-    pub tracks: HashMap<live_kit_client::Sid, RemoteVideoTrack>,
+    pub tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
 }
 
 #[derive(Clone)]
 pub struct RemoteVideoTrack {
-    pub(crate) frame: Option<Frame>,
-    pub(crate) _live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
-    pub(crate) _maintain_frame: Arc<Task<()>>,
+    pub(crate) live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
 }
 
 impl RemoteVideoTrack {
-    pub fn frame(&self) -> Option<&Frame> {
-        self.frame.as_ref()
+    pub fn frames(&self) -> async_broadcast::Receiver<Frame> {
+        self.live_kit_track.frames()
     }
 }

@@ -7,7 +7,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
+use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate, Sid};
 use postage::stream::Stream;
 use project::Project;
 use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
@@ -15,9 +15,16 @@ use util::{post_inc, ResultExt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    Frame {
+    ParticipantLocationChanged {
         participant_id: PeerId,
-        track_id: live_kit_client::Sid,
+    },
+    RemoteVideoTrackShared {
+        participant_id: PeerId,
+        track_id: Sid,
+    },
+    RemoteVideoTrackUnshared {
+        peer_id: PeerId,
+        track_id: Sid,
     },
     RemoteProjectShared {
         owner: Arc<User>,
@@ -356,7 +363,12 @@ impl Room {
                         if let Some(remote_participant) = this.remote_participants.get_mut(&peer_id)
                         {
                             remote_participant.projects = participant.projects;
-                            remote_participant.location = location;
+                            if location != remote_participant.location {
+                                remote_participant.location = location;
+                                cx.emit(Event::ParticipantLocationChanged {
+                                    participant_id: peer_id,
+                                });
+                            }
                         } else {
                             this.remote_participants.insert(
                                 peer_id,
@@ -430,44 +442,16 @@ impl Room {
                     .remote_participants
                     .get_mut(&peer_id)
                     .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
-                let mut frames = track.frames();
                 participant.tracks.insert(
                     track_id.clone(),
-                    RemoteVideoTrack {
-                        frame: None,
-                        _live_kit_track: track,
-                        _maintain_frame: Arc::new(cx.spawn_weak(|this, mut cx| async move {
-                            while let Some(frame) = frames.next().await {
-                                let this = if let Some(this) = this.upgrade(&cx) {
-                                    this
-                                } else {
-                                    break;
-                                };
-
-                                let done = this.update(&mut cx, |this, cx| {
-                                    if let Some(track) =
-                                        this.remote_participants.get_mut(&peer_id).and_then(
-                                            |participant| participant.tracks.get_mut(&track_id),
-                                        )
-                                    {
-                                        track.frame = Some(frame);
-                                        cx.emit(Event::Frame {
-                                            participant_id: peer_id,
-                                            track_id: track_id.clone(),
-                                        });
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                });
-
-                                if done {
-                                    break;
-                                }
-                            }
-                        })),
-                    },
+                    Arc::new(RemoteVideoTrack {
+                        live_kit_track: track,
+                    }),
                 );
+                cx.emit(Event::RemoteVideoTrackShared {
+                    participant_id: peer_id,
+                    track_id,
+                });
             }
             RemoteVideoTrackUpdate::Unsubscribed {
                 publisher_id,
@@ -479,6 +463,7 @@ impl Room {
                     .get_mut(&peer_id)
                     .ok_or_else(|| anyhow!("unsubscribed from track by unknown participant"))?;
                 participant.tracks.remove(&track_id);
+                cx.emit(Event::RemoteVideoTrackUnshared { peer_id, track_id });
             }
         }
 
@@ -750,7 +735,7 @@ struct LiveKitRoom {
     _maintain_tracks: Task<()>,
 }
 
-pub enum ScreenTrack {
+enum ScreenTrack {
     None,
     Pending { publish_id: usize },
     Published(LocalTrackPublication),

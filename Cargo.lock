@@ -172,17 +172,6 @@ dependencies = [
 
 [[package]]
 name = "async-broadcast"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90622698a1218e0b2fb846c97b5f19a0831f6baddee73d9454156365ccfa473b"
-dependencies = [
- "easy-parallel",
- "event-listener",
- "futures-core",
-]
-
-[[package]]
-name = "async-broadcast"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d26004fe83b2d1cd3a97609b21e39f9a31535822210fe83205d2ce48866ea61"
@@ -727,6 +716,7 @@ name = "call"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "client",
  "collections",
  "futures 0.3.24",
@@ -2983,7 +2973,7 @@ name = "language"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-broadcast 0.3.4",
+ "async-broadcast",
  "async-trait",
  "client",
  "clock",
@@ -3156,7 +3146,7 @@ name = "live_kit_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-broadcast 0.4.1",
+ "async-broadcast",
  "async-trait",
  "block",
  "byteorder",

@@ -27,6 +27,7 @@ project = { path = "../project" }
 util = { path = "../util" }
 
 anyhow = "1.0.38"
+async-broadcast = "0.4"
 futures = "0.3"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 

@@ -5,10 +5,7 @@ use crate::{
 };
 use ::rpc::Peer;
 use anyhow::anyhow;
-use call::{
-    room::{self, Event},
-    ActiveCall, ParticipantLocation, Room,
-};
+use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
     self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
     Credentials, EstablishConnectionError, PeerId, User, UserStore, RECEIVE_TIMEOUT,
@@ -33,7 +30,7 @@ use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, LanguageRegistry, OffsetRangeExt, Point, Rope,
 };
-use live_kit_client::{Frame, MacOSDisplay};
+use live_kit_client::MacOSDisplay;
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
 use project::{
@@ -202,35 +199,24 @@ async fn test_basic_calls(
         .await
         .unwrap();
 
-    let frame = Frame {
-        width: 800,
-        height: 600,
-        label: "a".into(),
-    };
-    display.send_frame(frame.clone());
     deterministic.run_until_parked();
 
     assert_eq!(events_b.borrow().len(), 1);
     let event = events_b.borrow().first().unwrap().clone();
-    if let Event::Frame {
+    if let call::room::Event::RemoteVideoTrackShared {
         participant_id,
         track_id,
     } = event
     {
         assert_eq!(participant_id, client_a.peer_id().unwrap());
         room_b.read_with(cx_b, |room, _| {
-            assert_eq!(
-                room.remote_participants()[&client_a.peer_id().unwrap()].tracks[&track_id].frame(),
-                Some(&frame)
-            );
+            assert!(room.remote_participants()[&client_a.peer_id().unwrap()]
+                .tracks
+                .contains_key(&track_id));
         });
     } else {
         panic!("unexpected event")
     }
-
-    display.send_frame(frame.clone());
-    deterministic.run_until_parked();
-    assert_eq!(events_b.borrow().len(), 2);
 
     // User A leaves the room.
     active_call_a.update(cx_a, |call, cx| {

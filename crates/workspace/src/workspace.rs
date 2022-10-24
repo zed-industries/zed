@@ -6,6 +6,7 @@ pub mod dock;
 pub mod pane;
 pub mod pane_group;
 pub mod searchable;
+mod shared_screen;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
@@ -36,6 +37,7 @@ use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, Work
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
 use settings::{Autosave, DockAnchor, Settings};
+use shared_screen::SharedScreen;
 use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
 use smallvec::SmallVec;
 use status_bar::StatusBar;
@@ -1097,14 +1099,7 @@ impl Workspace {
         if cx.has_global::<ModelHandle<ActiveCall>>() {
             let call = cx.global::<ModelHandle<ActiveCall>>().clone();
             let mut subscriptions = Vec::new();
-            subscriptions.push(cx.observe(&call, |_, _, cx| cx.notify()));
-            subscriptions.push(cx.subscribe(&call, |this, _, event, cx| {
-                if let call::room::Event::Frame { participant_id, .. } = event {
-                    if this.follower_states_by_leader.contains_key(&participant_id) {
-                        cx.notify();
-                    }
-                }
-            }));
+            subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
             active_call = Some((call, subscriptions));
         }
 
@@ -2517,13 +2512,43 @@ impl Workspace {
     }
 
     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
+        cx.notify();
+
+        let call = self.active_call()?;
+        let room = call.read(cx).room()?.read(cx);
+        let participant = room.remote_participants().get(&leader_id)?;
+
         let mut items_to_add = Vec::new();
-        for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
-            if let Some(FollowerItem::Loaded(item)) = state
-                .active_view_id
-                .and_then(|id| state.items_by_leader_view_id.get(&id))
-            {
-                items_to_add.push((pane.clone(), item.boxed_clone()));
+        match participant.location {
+            call::ParticipantLocation::SharedProject { project_id } => {
+                if Some(project_id) == self.project.read(cx).remote_id() {
+                    for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
+                        if let Some(FollowerItem::Loaded(item)) = state
+                            .active_view_id
+                            .and_then(|id| state.items_by_leader_view_id.get(&id))
+                        {
+                            items_to_add.push((pane.clone(), item.boxed_clone()));
+                        }
+                    }
+                }
+            }
+            call::ParticipantLocation::UnsharedProject => {}
+            call::ParticipantLocation::External => {
+                let track = participant.tracks.values().next()?.clone();
+                let user = participant.user.clone();
+
+                'outer: for (pane, _) in self.follower_states_by_leader.get(&leader_id)? {
+                    for item in pane.read(cx).items_of_type::<SharedScreen>() {
+                        if item.read(cx).peer_id == leader_id {
+                            items_to_add.push((pane.clone(), Box::new(item)));
+                            continue 'outer;
+                        }
+                    }
+
+                    let shared_screen =
+                        cx.add_view(|cx| SharedScreen::new(&track, leader_id, user.clone(), cx));
+                    items_to_add.push((pane.clone(), Box::new(shared_screen)));
+                }
             }
         }
 
@@ -2532,8 +2557,8 @@ impl Workspace {
             if pane == self.active_pane {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }
-            cx.notify();
         }
+
         None
     }
 
@@ -2560,6 +2585,27 @@ impl Workspace {
 
     fn active_call(&self) -> Option<&ModelHandle<ActiveCall>> {
         self.active_call.as_ref().map(|(call, _)| call)
+    }
+
+    fn on_active_call_event(
+        &mut self,
+        _: ModelHandle<ActiveCall>,
+        event: &call::room::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            call::room::Event::ParticipantLocationChanged {
+                participant_id: peer_id,
+            }
+            | call::room::Event::RemoteVideoTrackShared {
+                participant_id: peer_id,
+                ..
+            }
+            | call::room::Event::RemoteVideoTrackUnshared { peer_id, .. } => {
+                self.leader_updated(*peer_id, cx);
+            }
+            _ => {}
+        }
     }
 }
 

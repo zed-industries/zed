@@ -1,4 +1,4 @@
-mod participant;
+pub mod participant;
 pub mod room;
 
 use anyhow::{anyhow, Result};
