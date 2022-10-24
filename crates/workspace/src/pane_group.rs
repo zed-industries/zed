@@ -1,6 +1,6 @@
 use crate::{FollowerStatesByLeader, JoinProject, Pane, Workspace};
 use anyhow::{anyhow, Result};
-use call::ActiveCall;
+use call::{ActiveCall, ParticipantLocation};
 use gpui::{
     elements::*, Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
 };
@@ -130,18 +130,21 @@ impl Member {
                         Some((collaborator.replica_id, participant))
                     });
 
-                let mut border = Border::default();
-
-                let prompt = if let Some((replica_id, leader)) = leader {
-                    let leader_color = theme.editor.replica_selection_style(replica_id).cursor;
-                    border = Border::all(theme.workspace.leader_border_width, leader_color);
+                let border = if let Some((replica_id, _)) = leader.as_ref() {
+                    let leader_color = theme.editor.replica_selection_style(*replica_id).cursor;
+                    let mut border = Border::all(theme.workspace.leader_border_width, leader_color);
                     border
                         .color
                         .fade_out(1. - theme.workspace.leader_border_opacity);
                     border.overlay = true;
+                    border
+                } else {
+                    Border::default()
+                };
 
+                let prompt = if let Some((_, leader)) = leader {
                     match leader.location {
-                        call::ParticipantLocation::SharedProject {
+                        ParticipantLocation::SharedProject {
                             project_id: leader_project_id,
                         } => {
                             if Some(leader_project_id) == project.read(cx).remote_id() {
@@ -186,7 +189,7 @@ impl Member {
                                 )
                             }
                         }
-                        call::ParticipantLocation::UnsharedProject => Some(
+                        ParticipantLocation::UnsharedProject => Some(
                             Label::new(
                                 format!(
                                     "{} is viewing an unshared Zed project",
@@ -201,7 +204,7 @@ impl Member {
                             .right()
                             .boxed(),
                         ),
-                        call::ParticipantLocation::External => Some(
+                        ParticipantLocation::External => Some(
                             Label::new(
                                 format!(
                                     "{} is viewing a window outside of Zed",

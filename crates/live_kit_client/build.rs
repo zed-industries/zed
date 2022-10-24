@@ -32,17 +32,23 @@ pub struct SwiftTarget {
     pub paths: SwiftPaths,
 }
 
-const MACOS_TARGET_VERSION: &str = "10.15";
+const MACOS_TARGET_VERSION: &str = "10.15.7";
 
 fn main() {
-    let swift_target = get_swift_target();
+    if cfg!(not(any(test, feature = "test-support"))) {
+        let swift_target = get_swift_target();
 
-    build_bridge(&swift_target);
-    link_swift_stdlib(&swift_target);
-    link_webrtc_framework(&swift_target);
+        build_bridge(&swift_target);
+        link_swift_stdlib(&swift_target);
+        link_webrtc_framework(&swift_target);
+
+        // Register exported Objective-C selectors, protocols, etc when building example binaries.
+        println!("cargo:rustc-link-arg=-Wl,-ObjC");
+    }
 }
 
 fn build_bridge(swift_target: &SwiftTarget) {
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
     println!("cargo:rerun-if-changed={}/Sources", SWIFT_PACKAGE_NAME);
     println!(
         "cargo:rerun-if-changed={}/Package.swift",
@@ -76,13 +82,9 @@ fn build_bridge(swift_target: &SwiftTarget) {
 }
 
 fn link_swift_stdlib(swift_target: &SwiftTarget) {
-    swift_target
-        .paths
-        .runtime_library_paths
-        .iter()
-        .for_each(|path| {
-            println!("cargo:rustc-link-search=native={}", path);
-        });
+    for path in &swift_target.paths.runtime_library_paths {
+        println!("cargo:rustc-link-search=native={}", path);
+    }
 }
 
 fn link_webrtc_framework(swift_target: &SwiftTarget) {
@@ -94,6 +96,8 @@ fn link_webrtc_framework(swift_target: &SwiftTarget) {
     );
     // Find WebRTC.framework as a sibling of the executable when running tests.
     println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+    // Find WebRTC.framework in parent directory of the executable when running examples.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/..");
 
     let source_path = swift_out_dir_path.join("WebRTC.framework");
     let deps_dir_path =
@@ -126,8 +130,19 @@ fn swift_package_root() -> PathBuf {
 
 fn copy_dir(source: &Path, destination: &Path) {
     assert!(
+        Command::new("rm")
+            .arg("-rf")
+            .arg(destination)
+            .status()
+            .unwrap()
+            .success(),
+        "could not remove {:?} before copying",
+        destination
+    );
+
+    assert!(
         Command::new("cp")
-            .arg("-r")
+            .arg("-R")
             .args(&[source, destination])
             .status()
             .unwrap()

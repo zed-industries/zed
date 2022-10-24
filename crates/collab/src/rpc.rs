@@ -50,6 +50,7 @@ use std::{
     },
     time::Duration,
 };
+pub use store::{Store, Worktree};
 use time::OffsetDateTime;
 use tokio::{
     sync::{Mutex, MutexGuard},
@@ -57,8 +58,6 @@ use tokio::{
 };
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
-
-pub use store::{Store, Worktree};
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -477,6 +476,7 @@ impl Server {
 
         let mut projects_to_unshare = Vec::new();
         let mut contacts_to_update = HashSet::default();
+        let mut room_left = None;
         {
             let mut store = self.store().await;
 
@@ -509,22 +509,23 @@ impl Server {
                 });
             }
 
+            if let Some(room) = removed_connection.room {
+                self.room_updated(&room);
+                room_left = Some(self.room_left(&room, connection_id));
+            }
+
+            contacts_to_update.insert(removed_connection.user_id);
             for connection_id in removed_connection.canceled_call_connection_ids {
                 self.peer
                     .send(connection_id, proto::CallCanceled {})
                     .trace_err();
                 contacts_to_update.extend(store.user_id_for_connection(connection_id).ok());
             }
-
-            if let Some(room) = removed_connection
-                .room_id
-                .and_then(|room_id| store.room(room_id))
-            {
-                self.room_updated(room);
-            }
-
-            contacts_to_update.insert(removed_connection.user_id);
         };
+
+        if let Some(room_left) = room_left {
+            room_left.await.trace_err();
+        }
 
         for user_id in contacts_to_update {
             self.update_user_contacts(user_id).await.trace_err();
@@ -607,13 +608,42 @@ impl Server {
         response: Response<proto::CreateRoom>,
     ) -> Result<()> {
         let user_id;
-        let room_id;
+        let room;
         {
             let mut store = self.store().await;
             user_id = store.user_id_for_connection(request.sender_id)?;
-            room_id = store.create_room(request.sender_id)?;
+            room = store.create_room(request.sender_id)?.clone();
         }
-        response.send(proto::CreateRoomResponse { id: room_id })?;
+
+        let live_kit_connection_info =
+            if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+                if let Some(_) = live_kit
+                    .create_room(room.live_kit_room.clone())
+                    .await
+                    .trace_err()
+                {
+                    if let Some(token) = live_kit
+                        .room_token(&room.live_kit_room, &request.sender_id.to_string())
+                        .trace_err()
+                    {
+                        Some(proto::LiveKitConnectionInfo {
+                            server_url: live_kit.url().into(),
+                            token,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        response.send(proto::CreateRoomResponse {
+            room: Some(room),
+            live_kit_connection_info,
+        })?;
         self.update_user_contacts(user_id).await?;
         Ok(())
     }
@@ -634,8 +664,27 @@ impl Server {
                     .send(recipient_id, proto::CallCanceled {})
                     .trace_err();
             }
+
+            let live_kit_connection_info =
+                if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+                    if let Some(token) = live_kit
+                        .room_token(&room.live_kit_room, &request.sender_id.to_string())
+                        .trace_err()
+                    {
+                        Some(proto::LiveKitConnectionInfo {
+                            server_url: live_kit.url().into(),
+                            token,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
             response.send(proto::JoinRoomResponse {
                 room: Some(room.clone()),
+                live_kit_connection_info,
             })?;
             self.room_updated(room);
         }
@@ -645,6 +694,7 @@ impl Server {
 
     async fn leave_room(self: Arc<Server>, message: TypedEnvelope<proto::LeaveRoom>) -> Result<()> {
         let mut contacts_to_update = HashSet::default();
+        let room_left;
         {
             let mut store = self.store().await;
             let user_id = store.user_id_for_connection(message.sender_id)?;
@@ -683,9 +733,8 @@ impl Server {
                 }
             }
 
-            if let Some(room) = left_room.room {
-                self.room_updated(room);
-            }
+            self.room_updated(&left_room.room);
+            room_left = self.room_left(&left_room.room, message.sender_id);
 
             for connection_id in left_room.canceled_call_connection_ids {
                 self.peer
@@ -695,6 +744,7 @@ impl Server {
             }
         }
 
+        room_left.await.trace_err();
         for user_id in contacts_to_update {
             self.update_user_contacts(user_id).await?;
         }
@@ -840,6 +890,29 @@ impl Server {
                     },
                 )
                 .trace_err();
+        }
+    }
+
+    fn room_left(
+        &self,
+        room: &proto::Room,
+        connection_id: ConnectionId,
+    ) -> impl Future<Output = Result<()>> {
+        let client = self.app_state.live_kit_client.clone();
+        let room_name = room.live_kit_room.clone();
+        let participant_count = room.participants.len();
+        async move {
+            if let Some(client) = client {
+                client
+                    .remove_participant(room_name.clone(), connection_id.to_string())
+                    .await?;
+
+                if participant_count == 0 {
+                    client.delete_room(room_name).await?;
+                }
+            }
+
+            Ok(())
         }
     }
 

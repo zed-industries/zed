@@ -1,9 +1,10 @@
 use crate::db::{self, ChannelId, ProjectId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use nanoid::nanoid;
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
-use std::{mem, path::PathBuf, str, time::Duration};
+use std::{borrow::Cow, mem, path::PathBuf, str, time::Duration};
 use time::OffsetDateTime;
 use tracing::instrument;
 use util::post_inc;
@@ -85,12 +86,12 @@ pub struct Channel {
 pub type ReplicaId = u16;
 
 #[derive(Default)]
-pub struct RemovedConnectionState {
+pub struct RemovedConnectionState<'a> {
     pub user_id: UserId,
     pub hosted_projects: Vec<Project>,
     pub guest_projects: Vec<LeftProject>,
     pub contact_ids: HashSet<UserId>,
-    pub room_id: Option<RoomId>,
+    pub room: Option<Cow<'a, proto::Room>>,
     pub canceled_call_connection_ids: Vec<ConnectionId>,
 }
 
@@ -103,7 +104,7 @@ pub struct LeftProject {
 }
 
 pub struct LeftRoom<'a> {
-    pub room: Option<&'a proto::Room>,
+    pub room: Cow<'a, proto::Room>,
     pub unshared_projects: Vec<Project>,
     pub left_projects: Vec<LeftProject>,
     pub canceled_call_connection_ids: Vec<ConnectionId>,
@@ -219,11 +220,11 @@ impl Store {
                 let left_room = self.leave_room(room_id, connection_id)?;
                 result.hosted_projects = left_room.unshared_projects;
                 result.guest_projects = left_room.left_projects;
-                result.room_id = Some(room_id);
+                result.room = Some(Cow::Owned(left_room.room.into_owned()));
                 result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
             } else if connected_user.connection_ids.len() == 1 {
-                self.decline_call(room_id, connection_id)?;
-                result.room_id = Some(room_id);
+                let (room, _) = self.decline_call(room_id, connection_id)?;
+                result.room = Some(Cow::Owned(room.clone()));
             }
         }
 
@@ -345,7 +346,7 @@ impl Store {
         }
     }
 
-    pub fn create_room(&mut self, creator_connection_id: ConnectionId) -> Result<RoomId> {
+    pub fn create_room(&mut self, creator_connection_id: ConnectionId) -> Result<&proto::Room> {
         let connection = self
             .connections
             .get_mut(&creator_connection_id)
@@ -359,19 +360,23 @@ impl Store {
             "can't create a room with an active call"
         );
 
-        let mut room = proto::Room::default();
-        room.participants.push(proto::Participant {
-            user_id: connection.user_id.to_proto(),
-            peer_id: creator_connection_id.0,
-            projects: Default::default(),
-            location: Some(proto::ParticipantLocation {
-                variant: Some(proto::participant_location::Variant::External(
-                    proto::participant_location::External {},
-                )),
-            }),
-        });
-
         let room_id = post_inc(&mut self.next_room_id);
+        let room = proto::Room {
+            id: room_id,
+            participants: vec![proto::Participant {
+                user_id: connection.user_id.to_proto(),
+                peer_id: creator_connection_id.0,
+                projects: Default::default(),
+                location: Some(proto::ParticipantLocation {
+                    variant: Some(proto::participant_location::Variant::External(
+                        proto::participant_location::External {},
+                    )),
+                }),
+            }],
+            pending_participant_user_ids: Default::default(),
+            live_kit_room: nanoid!(30),
+        };
+
         self.rooms.insert(room_id, room);
         connected_user.active_call = Some(Call {
             caller_user_id: connection.user_id,
@@ -379,7 +384,7 @@ impl Store {
             connection_id: Some(creator_connection_id),
             initial_project_id: None,
         });
-        Ok(room_id)
+        Ok(self.rooms.get(&room_id).unwrap())
     }
 
     pub fn join_room(
@@ -496,12 +501,14 @@ impl Store {
                 }
             });
 
-        if room.participants.is_empty() && room.pending_participant_user_ids.is_empty() {
-            self.rooms.remove(&room_id);
-        }
+        let room = if room.participants.is_empty() {
+            Cow::Owned(self.rooms.remove(&room_id).unwrap())
+        } else {
+            Cow::Borrowed(self.rooms.get(&room_id).unwrap())
+        };
 
         Ok(LeftRoom {
-            room: self.rooms.get(&room_id),
+            room,
             unshared_projects,
             left_projects,
             canceled_call_connection_ids,
@@ -510,6 +517,10 @@ impl Store {
 
     pub fn room(&self, room_id: RoomId) -> Option<&proto::Room> {
         self.rooms.get(&room_id)
+    }
+
+    pub fn rooms(&self) -> &BTreeMap<RoomId, proto::Room> {
+        &self.rooms
     }
 
     pub fn call(

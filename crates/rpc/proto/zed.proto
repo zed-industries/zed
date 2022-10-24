@@ -145,7 +145,8 @@ message Test {
 message CreateRoom {}
 
 message CreateRoomResponse {
-    uint64 id = 1;
+    Room room = 1;
+    optional LiveKitConnectionInfo live_kit_connection_info = 2;
 }
 
 message JoinRoom {
@@ -154,6 +155,7 @@ message JoinRoom {
 
 message JoinRoomResponse {
     Room room = 1;
+    optional LiveKitConnectionInfo live_kit_connection_info = 2;
 }
 
 message LeaveRoom {
@@ -161,8 +163,10 @@ message LeaveRoom {
 }
 
 message Room {
-    repeated Participant participants = 1;
-    repeated uint64 pending_participant_user_ids = 2;
+    uint64 id = 1;
+    repeated Participant participants = 2;
+    repeated uint64 pending_participant_user_ids = 3;
+    string live_kit_room = 4;
 }
 
 message Participant {
@@ -224,6 +228,11 @@ message UpdateParticipantLocation {
 
 message RoomUpdated {
     Room room = 1;
+}
+
+message LiveKitConnectionInfo {
+    string server_url = 1;
+    string token = 2;
 }
 
 message ShareProject {

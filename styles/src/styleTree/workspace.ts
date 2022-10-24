@@ -137,7 +137,18 @@ export default function workspace(colorScheme: ColorScheme) {
         },
         cornerRadius: 6,
       },
+      callControl: {
+        cornerRadius: 6,
+        color: foreground(layer, "variant"),
+        iconWidth: 12,
+        buttonWidth: 20,
+        hover: {
+          background: background(layer, "variant", "hovered"),
+          color: foreground(layer, "variant", "hovered"),
+        },
+      },
       toggleContactsButton: {
+        margin: { left: 6 },
         cornerRadius: 6,
         color: foreground(layer, "variant"),
         iconWidth: 8,
