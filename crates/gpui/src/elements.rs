@@ -464,7 +464,7 @@ pub trait ParentElement<'a>: Extend<ElementBox> + Sized {
 
 impl<'a, T> ParentElement<'a> for T where T: Extend<ElementBox> {}
 
-fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F) -> Vector2F {
+pub fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F) -> Vector2F {
     if max_size.x().is_infinite() && max_size.y().is_infinite() {
         size
     } else if max_size.x().is_infinite() || max_size.x() / max_size.y() > size.x() / size.y() {

@@ -1,11 +1,11 @@
-mod participant;
+pub mod participant;
 pub mod room;
 
 use anyhow::{anyhow, Result};
 use client::{proto, Client, TypedEnvelope, User, UserStore};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Subscription, Task,
+    Subscription, Task, WeakModelHandle,
 };
 pub use participant::ParticipantLocation;
 use postage::watch;
@@ -27,6 +27,7 @@ pub struct IncomingCall {
 }
 
 pub struct ActiveCall {
+    location: Option<WeakModelHandle<Project>>,
     room: Option<(ModelHandle<Room>, Vec<Subscription>)>,
     incoming_call: (
         watch::Sender<Option<IncomingCall>>,
@@ -49,6 +50,7 @@ impl ActiveCall {
     ) -> Self {
         Self {
             room: None,
+            location: None,
             incoming_call: watch::channel(),
             _subscriptions: vec![
                 client.add_request_handler(cx.handle(), Self::handle_incoming_call),
@@ -132,7 +134,9 @@ impl ActiveCall {
                         Room::create(recipient_user_id, initial_project, client, user_store, cx)
                     })
                     .await?;
-                this.update(&mut cx, |this, cx| this.set_room(Some(room), cx));
+
+                this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
+                    .await?;
             };
 
             Ok(())
@@ -180,7 +184,8 @@ impl ActiveCall {
         let join = Room::join(&call, self.client.clone(), self.user_store.clone(), cx);
         cx.spawn(|this, mut cx| async move {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
+            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
+                .await?;
             Ok(())
         })
     }
@@ -223,35 +228,46 @@ impl ActiveCall {
         project: Option<&ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        self.location = project.map(|project| project.downgrade());
         if let Some((room, _)) = self.room.as_ref() {
             room.update(cx, |room, cx| room.set_location(project, cx))
         } else {
-            Task::ready(Err(anyhow!("no active call")))
+            Task::ready(Ok(()))
         }
     }
 
-    fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ModelContext<Self>) {
+    fn set_room(
+        &mut self,
+        room: Option<ModelHandle<Room>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         if room.as_ref() != self.room.as_ref().map(|room| &room.0) {
+            cx.notify();
             if let Some(room) = room {
                 if room.read(cx).status().is_offline() {
                     self.room = None;
+                    Task::ready(Ok(()))
                 } else {
                     let subscriptions = vec![
                         cx.observe(&room, |this, room, cx| {
                             if room.read(cx).status().is_offline() {
-                                this.set_room(None, cx);
+                                this.set_room(None, cx).detach_and_log_err(cx);
                             }
 
                             cx.notify();
                         }),
                         cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
                     ];
-                    self.room = Some((room, subscriptions));
+                    self.room = Some((room.clone(), subscriptions));
+                    let location = self.location.and_then(|location| location.upgrade(cx));
+                    room.update(cx, |room, cx| room.set_location(location.as_ref(), cx))
                 }
             } else {
                 self.room = None;
+                Task::ready(Ok(()))
             }
-            cx.notify();
+        } else {
+            Task::ready(Ok(()))
         }
     }
 

@@ -116,8 +116,8 @@ export function createTheme(
     on500Ok: {
       base: sample(ramps.green, 0.05),
       hovered: sample(ramps.green, 0.1),
-      active: sample(ramps.green, 0.15)
-    }
+      active: sample(ramps.green, 0.15),
+    },
   };
 
   const borderColor = {
@@ -186,7 +186,7 @@ export function createTheme(
       weight: fontWeights.normal,
     },
     "variable.special": {
-      color: sample(ramps.blue, 0.80),
+      color: sample(ramps.blue, 0.8),
       weight: fontWeights.normal,
     },
     comment: {

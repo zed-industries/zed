@@ -39,6 +39,7 @@ jobs:
         uses: actions/checkout@v2
         with:
           clean: false
+          submodules: 'recursive'
             
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
@@ -57,6 +58,7 @@ jobs:
       APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
       APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
       ZED_AMPLITUDE_API_KEY: ${{ secrets.ZED_AMPLITUDE_API_KEY }}
+      ZED_MIXPANEL_TOKEN: ${{ secrets.ZED_MIXPANEL_TOKEN }}
     steps:
       - name: Install Rust
         run: |
@@ -75,6 +77,7 @@ jobs:
         uses: actions/checkout@v2
         with:
           clean: false
+          submodules: 'recursive'
 
       - name: Validate version
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}

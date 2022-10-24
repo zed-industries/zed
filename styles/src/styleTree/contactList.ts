@@ -166,6 +166,11 @@ export default function contactsPanel(colorScheme: ColorScheme) {
     projectRow: {
       ...projectRow,
       background: background(layer, "on"),
+      icon: {
+        margin: { left: nameMargin },
+        color: foreground(layer, "variant"),
+        width: 12,
+      },
       name: {
         ...projectRow.name,
         ...text(layer, "mono", { size: "sm" }),

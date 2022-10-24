@@ -28,14 +28,14 @@ impl ThemeRegistry {
         if !internal {
             dirs = dirs
                 .into_iter()
-                .filter(|path| !path.starts_with("themes/internal"))
+                .filter(|path| !path.starts_with("themes/Internal"))
                 .collect()
         }
 
         if !experiments {
             dirs = dirs
                 .into_iter()
-                .filter(|path| !path.starts_with("themes/experiments"))
+                .filter(|path| !path.starts_with("themes/Experiments"))
                 .collect()
         }
 

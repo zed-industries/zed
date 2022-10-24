@@ -1,0 +1,70 @@
+[package]
+name = "live_kit_client"
+version = "0.1.0"
+edition = "2021"
+description = "Bindings to LiveKit Swift client SDK"
+
+[lib]
+path = "src/live_kit_client.rs"
+doctest = false
+
+[[example]]
+name = "test_app"
+
+[features]
+test-support = [
+    "async-trait", 
+    "collections/test-support",
+    "gpui/test-support",
+    "lazy_static",
+    "live_kit_server",
+    "nanoid",
+]
+
+[dependencies]
+collections = { path = "../collections", optional = true }
+gpui = { path = "../gpui", optional = true }
+live_kit_server = { path = "../live_kit_server", optional = true }
+media = { path = "../media" }
+
+anyhow = "1.0.38"
+async-broadcast = "0.4"
+core-foundation = "0.9.3"
+core-graphics = "0.22.3"
+futures = "0.3"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+parking_lot = "0.11.1"
+postage = { version = "0.4.1", features = ["futures-traits"] }
+
+async-trait = { version = "0.1", optional = true }
+lazy_static = { version = "1.4", optional = true }
+nanoid = { version ="0.4", optional = true}
+
+[dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+live_kit_server = { path = "../live_kit_server" }
+media = { path = "../media" }
+
+anyhow = "1.0.38"
+async-trait = "0.1"
+block = "0.1"
+bytes = "1.2"
+byteorder = "1.4"
+cocoa = "0.24"
+core-foundation = "0.9.3"
+core-graphics = "0.22.3"
+foreign-types = "0.3"
+futures = "0.3"
+hmac = "0.12"
+jwt = "0.16"
+lazy_static = "1.4"
+objc = "0.2"
+parking_lot = "0.11.1"
+serde = { version = "1.0", features = ["derive", "rc"] }
+sha2 = "0.10"
+simplelog = "0.9"
+
+[build-dependencies]
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }

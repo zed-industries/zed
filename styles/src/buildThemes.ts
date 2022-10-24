@@ -10,17 +10,22 @@ import snakeCase from "./utils/snakeCase";
 import { ColorScheme } from "./themes/common/colorScheme";
 
 const themeDirectory = `${__dirname}/../../assets/themes`;
-const internalDirectory = `${themeDirectory}/internal`;
-const experimentsDirectory = `${themeDirectory}/experiments`;
+const internalDirectory = `${themeDirectory}/Internal`;
+const experimentsDirectory = `${themeDirectory}/Experiments`;
+
 const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"));
 
 // Clear existing themes
 function clearThemes(themeDirectory: string) {
-  for (const file of fs.readdirSync(themeDirectory)) {
-    if (file.endsWith(".json")) {
-      const name = file.replace(/\.json$/, "");
-      if (!colorSchemes.find((colorScheme) => colorScheme.name === name)) {
-        fs.unlinkSync(path.join(themeDirectory, file));
+  if (!fs.existsSync(themeDirectory)) {
+    fs.mkdirSync(themeDirectory, { recursive: true });
+  } else {
+    for (const file of fs.readdirSync(themeDirectory)) {
+      if (file.endsWith(".json")) {
+        const name = file.replace(/\.json$/, "");
+        if (!colorSchemes.find((colorScheme) => colorScheme.name === name)) {
+          fs.unlinkSync(path.join(themeDirectory, file));
+        }
       }
     }
   }

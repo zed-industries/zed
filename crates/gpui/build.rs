@@ -57,7 +57,7 @@ fn compile_metal_shaders() {
             "macosx",
             "metal",
             "-gline-tables-only",
-            "-mmacosx-version-min=10.14",
+            "-mmacosx-version-min=10.15.7",
             "-MO",
             "-c",
             shader_path,

@@ -172,13 +172,13 @@ dependencies = [
 
 [[package]]
 name = "async-broadcast"
-version = "0.3.4"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90622698a1218e0b2fb846c97b5f19a0831f6baddee73d9454156365ccfa473b"
+checksum = "6d26004fe83b2d1cd3a97609b21e39f9a31535822210fe83205d2ce48866ea61"
 dependencies = [
- "easy-parallel",
  "event-listener",
  "futures-core",
+ "parking_lot 0.12.1",
 ]
 
 [[package]]
@@ -716,10 +716,13 @@ name = "call"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "client",
  "collections",
  "futures 0.3.24",
  "gpui",
+ "live_kit_client",
+ "media",
  "postage",
  "project",
  "util",
@@ -789,34 +792,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "winx",
-]
-
-[[package]]
-name = "capture"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bindgen",
- "block",
- "byteorder",
- "bytes 1.2.1",
- "cocoa",
- "core-foundation",
- "core-graphics",
- "foreign-types",
- "futures 0.3.24",
- "gpui",
- "hmac 0.12.1",
- "jwt",
- "live_kit",
- "log",
- "media",
- "objc",
- "parking_lot 0.11.2",
- "postage",
- "serde",
- "sha2 0.10.6",
- "simplelog",
 ]
 
 [[package]]
@@ -1076,6 +1051,8 @@ dependencies = [
  "language",
  "lazy_static",
  "lipsum",
+ "live_kit_client",
+ "live_kit_server",
  "log",
  "lsp",
  "nanoid",
@@ -3165,17 +3142,54 @@ dependencies = [
 ]
 
 [[package]]
-name = "live_kit"
+name = "live_kit_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-broadcast",
+ "async-trait",
+ "block",
+ "byteorder",
+ "bytes 1.2.1",
+ "cocoa",
+ "collections",
  "core-foundation",
  "core-graphics",
+ "foreign-types",
  "futures 0.3.24",
+ "gpui",
+ "hmac 0.12.1",
+ "jwt",
+ "lazy_static",
+ "live_kit_server",
+ "log",
  "media",
+ "nanoid",
+ "objc",
  "parking_lot 0.11.2",
+ "postage",
  "serde",
  "serde_json",
+ "sha2 0.10.6",
+ "simplelog",
+]
+
+[[package]]
+name = "live_kit_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures 0.3.24",
+ "hmac 0.12.1",
+ "jwt",
+ "log",
+ "prost 0.8.0",
+ "prost-build",
+ "prost-types 0.8.0",
+ "reqwest",
+ "serde",
+ "sha2 0.10.6",
 ]
 
 [[package]]
@@ -4332,7 +4346,7 @@ dependencies = [
  "multimap",
  "petgraph",
  "prost 0.9.0",
- "prost-types",
+ "prost-types 0.9.0",
  "regex",
  "tempfile",
  "which",
@@ -4362,6 +4376,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "603bbd6394701d13f3f25aada59c7de9d35a6a5887cfc156181234a44002771b"
+dependencies = [
+ "bytes 1.2.1",
+ "prost 0.8.0",
 ]
 
 [[package]]

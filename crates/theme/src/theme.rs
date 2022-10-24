@@ -79,6 +79,7 @@ pub struct Titlebar {
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
     pub share_button: Interactive<ContainedText>,
+    pub call_control: Interactive<IconButton>,
     pub toggle_contacts_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
 }
@@ -119,6 +120,7 @@ pub struct ContactList {
 pub struct ProjectRow {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub icon: Icon,
     pub name: ContainedText,
 }
 
@@ -380,7 +382,6 @@ pub struct Icon {
     pub container: ContainerStyle,
     pub color: Color,
     pub width: f32,
-    pub path: String,
 }
 
 #[derive(Deserialize, Clone, Copy, Default)]

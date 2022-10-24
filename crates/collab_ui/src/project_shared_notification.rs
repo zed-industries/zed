@@ -62,6 +62,7 @@ pub fn init(cx: &mut MutableAppContext) {
                 cx.remove_window(window_id);
             }
         }
+        _ => {}
     })
     .detach();
 }
