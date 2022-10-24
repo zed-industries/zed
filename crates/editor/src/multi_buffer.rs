@@ -2592,10 +2592,13 @@ impl MultiBufferSnapshot {
     pub fn git_diff_hunks_in_range<'a>(
         &'a self,
         row_range: Range<u32>,
+        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         self.as_singleton()
             .into_iter()
-            .flat_map(move |(_, _, buffer)| buffer.git_diff_hunks_in_range(row_range.clone()))
+            .flat_map(move |(_, _, buffer)| {
+                buffer.git_diff_hunks_in_range(row_range.clone(), reversed)
+            })
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
