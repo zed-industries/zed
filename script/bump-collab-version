@@ -1,0 +1,3 @@
+#!/bin/bash
+
+exec script/lib/bump-version.sh collab collab-v $@

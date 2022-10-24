@@ -1,2 +1,0 @@
-collab: ./target/release/collab
-release: ./target/release/sqlx migrate run

@@ -7,7 +7,7 @@ echo "creating database..."
 script/sqlx database create
 
 echo "migrating database..."
-script/sqlx migrate run
+cargo run -p collab -- migrate
 
 echo "seeding database..."
 script/seed-db

@@ -1,0 +1,35 @@
+#!/bin/bash
+
+set -eu
+source script/lib/deploy-helpers.sh
+
+if [[ $# < 1 ]]; then
+  echo "Usage: $0 <production|staging|preview>"
+  exit 1
+fi
+environment=$1
+
+export_vars_for_environment ${environment}
+target_zed_kube_cluster
+
+deployed_image_id=$(
+  kubectl \
+    --namespace=${environment} \
+    get deployment collab \
+    -o 'jsonpath={.spec.template.spec.containers[0].image}' \
+    | cut -d: -f2
+)
+
+job_image_ids=$(
+  kubectl \
+    --namespace=${environment} \
+    get jobs \
+    -o 'jsonpath={range .items[0:5]}{.spec.template.spec.containers[0].image}{"\n"}{end}'
+)
+
+echo "Deployed image version:"
+echo "$deployed_image_id"
+echo
+echo "Migration job image versions:"
+echo "$job_image_ids"
+echo

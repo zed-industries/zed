@@ -10,12 +10,15 @@ mod db_tests;
 mod integration_tests;
 
 use crate::rpc::ResultExt as _;
-use axum::{body::Body, Router};
+use anyhow::anyhow;
+use axum::{routing::get, Router};
 use collab::{Error, Result};
 use db::{Db, PostgresDb};
 use serde::Deserialize;
 use std::{
+    env::args,
     net::{SocketAddr, TcpListener},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -23,6 +26,8 @@ use tokio::signal;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
+
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default, Deserialize)]
 pub struct Config {
@@ -35,6 +40,12 @@ pub struct Config {
     pub live_kit_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
+}
+
+#[derive(Default, Deserialize)]
+pub struct MigrateConfig {
+    pub database_url: String,
+    pub migrations_path: Option<PathBuf>,
 }
 
 pub struct AppState {
@@ -79,26 +90,60 @@ async fn main() -> Result<()> {
         );
     }
 
-    let config = envy::from_env::<Config>().expect("error loading config");
-    init_tracing(&config);
-    let state = AppState::new(config).await?;
+    match args().skip(1).next().as_deref() {
+        Some("version") => {
+            println!("collab v{VERSION}");
+        }
+        Some("migrate") => {
+            let config = envy::from_env::<MigrateConfig>().expect("error loading config");
+            let db = PostgresDb::new(&config.database_url, 5).await?;
 
-    let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
-        .expect("failed to bind TCP listener");
-    let rpc_server = rpc::Server::new(state.clone(), None);
+            let migrations_path = config
+                .migrations_path
+                .as_deref()
+                .or(db::DEFAULT_MIGRATIONS_PATH.map(|s| s.as_ref()))
+                .ok_or_else(|| anyhow!("missing MIGRATIONS_PATH environment variable"))?;
 
-    rpc_server.start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
+            let migrations = db.migrate(&migrations_path, false).await?;
+            for (migration, duration) in migrations {
+                println!(
+                    "Ran {} {} {:?}",
+                    migration.version, migration.description, duration
+                );
+            }
 
-    let app = Router::<Body>::new()
-        .merge(api::routes(rpc_server.clone(), state.clone()))
-        .merge(rpc::routes(rpc_server.clone()));
+            return Ok(());
+        }
+        Some("serve") => {
+            let config = envy::from_env::<Config>().expect("error loading config");
+            init_tracing(&config);
 
-    axum::Server::from_tcp(listener)?
-        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(graceful_shutdown(rpc_server, state))
-        .await?;
+            let state = AppState::new(config).await?;
+            let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
+                .expect("failed to bind TCP listener");
 
+            let rpc_server = rpc::Server::new(state.clone(), None);
+            rpc_server
+                .start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
+
+            let app = api::routes(rpc_server.clone(), state.clone())
+                .merge(rpc::routes(rpc_server.clone()))
+                .merge(Router::new().route("/", get(handle_root)));
+
+            axum::Server::from_tcp(listener)?
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .with_graceful_shutdown(graceful_shutdown(rpc_server, state))
+                .await?;
+        }
+        _ => {
+            Err(anyhow!("usage: collab <version | migrate | serve>"))?;
+        }
+    }
     Ok(())
+}
+
+async fn handle_root() -> String {
+    format!("collab v{VERSION}")
 }
 
 pub fn init_tracing(config: &Config) -> Option<()> {

@@ -54,6 +54,8 @@ spec:
       containers:
         - name: collab
           image: "${ZED_IMAGE_ID}"
+          args:
+            - serve
           ports:
             - containerPort: 8080
               protocol: TCP

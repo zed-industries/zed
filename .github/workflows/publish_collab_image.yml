@@ -1,0 +1,46 @@
+name: Publish Collab Server Image
+
+on:
+  push:
+    tags:
+      - collab-v*
+
+env:
+  DOCKER_BUILDKIT: 1
+  DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+jobs:
+  publish:
+    name: Publish collab server image 
+    runs-on:
+      - self-hosted
+      - deploy
+    steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Sign into DigitalOcean docker registry
+        run: doctl registry login
+
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          clean: false
+
+      - name: Check that tag version matches package version
+        run: |
+          set -eu
+          package_version=$(cargo metadata --no-deps --format-version=1 | jq --raw-output '.packages[] | select(.name == "collab") | .version')
+          tag_version=$(echo $GITHUB_REF_NAME | sed -e 's/collab-v//')
+          if [[ $tag_version != $package_version ]]; then
+            echo "collab package version $package_version does not match git tag version $tag_version"
+            exit 1
+          fi
+          echo "Publishing image version: $package_version"
+          echo "COLLAB_VERSION=$package_version" >> $GITHUB_ENV
+
+      - name: Build docker image
+        run: docker build . --tag registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}
+    
+      - name: Publish docker image
+        run: docker push registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}
