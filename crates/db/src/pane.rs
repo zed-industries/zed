@@ -28,6 +28,13 @@ CREATE TABLE pane_items(
     index INTEGER,
     KEY (workspace_id, pane_id)
 ) STRICT;
+
+ALTER TABLE WORKSPACE
+ADD THESE COLS:
+center_group INTEGER NOT NULL,
+dock_pane INTEGER NOT NULL,
+--    FOREIGN KEY(center_group) REFERENCES pane_groups(group_id)
+--    FOREIGN KEY(dock_pane) REFERENCES pane_items(pane_id)
 ";
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

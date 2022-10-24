@@ -1,7 +1,6 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use anyhow::Result;
+
+use std::{path::Path, sync::Arc};
 
 use crate::pane::{PaneGroupId, PaneId, SerializedPane, SerializedPaneGroup};
 
@@ -9,18 +8,15 @@ use super::Db;
 
 pub(crate) const WORKSPACE_M_1: &str = "
 CREATE TABLE workspaces(
-    workspace_id INTEGER PRIMARY KEY,
-    center_group INTEGER NOT NULL,
-    dock_pane INTEGER NOT NULL,
-    timestamp INTEGER,
-    FOREIGN KEY(center_group) REFERENCES pane_groups(group_id)
-    FOREIGN KEY(dock_pane) REFERENCES pane_items(pane_id)
+    workspace_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+    dummy_data INTEGER
 ) STRICT;
 
 CREATE TABLE worktree_roots(
     worktree_root BLOB NOT NULL,
     workspace_id INTEGER NOT NULL,
-    FOREIGN KEY(workspace_id) REFERENCES workspace_ids(workspace_id)
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
 ) STRICT;
 ";
 
@@ -35,18 +31,19 @@ CREATE TABLE worktree_roots(
 //      Case 4: Starting Zed with multiple project folders
 //          > Zed ~/projects/Zed ~/projects/Zed.dev
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub struct WorkspaceId(usize);
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
+pub struct WorkspaceId(i64);
 
 struct WorkspaceRow {
     pub center_group_id: PaneGroupId,
     pub dock_pane_id: PaneId,
 }
 
+#[derive(Default)]
 pub struct SerializedWorkspace {
     pub workspace_id: WorkspaceId,
-    pub center_group: SerializedPaneGroup,
-    pub dock_pane: Option<SerializedPane>,
+    // pub center_group: SerializedPaneGroup,
+    // pub dock_pane: Option<SerializedPane>,
 }
 
 impl Db {
@@ -58,28 +55,33 @@ impl Db {
     ) -> SerializedWorkspace {
         // Find the workspace id which is uniquely identified by this set of paths return it if found
         if let Some(workspace_id) = self.workspace_id(worktree_roots) {
-            let workspace_row = self.get_workspace_row(workspace_id);
-            let center_group = self.get_pane_group(workspace_row.center_group_id);
-            let dock_pane = self.get_pane(workspace_row.dock_pane_id);
+            // TODO
+            // let workspace_row = self.get_workspace_row(workspace_id);
+            // let center_group = self.get_pane_group(workspace_row.center_group_id);
+            // let dock_pane = self.get_pane(workspace_row.dock_pane_id);
 
             SerializedWorkspace {
                 workspace_id,
-                center_group,
-                dock_pane: Some(dock_pane),
+                // center_group,
+                // dock_pane: Some(dock_pane),
             }
         } else {
-            let workspace_id = self.get_next_workspace_id();
-
-            SerializedWorkspace {
-                workspace_id,
-                center_group: SerializedPaneGroup::empty_root(workspace_id),
-                dock_pane: None,
-            }
+            self.make_new_workspace()
         }
     }
 
-    fn get_next_workspace_id(&self) -> WorkspaceId {
-        unimplemented!()
+    fn make_new_workspace(&self) -> SerializedWorkspace {
+        self.real()
+            .map(|db| {
+                let lock = db.connection.lock();
+                match lock.execute("INSERT INTO workspaces(dummy_data) VALUES(1);", []) {
+                    Ok(_) => SerializedWorkspace {
+                        workspace_id: WorkspaceId(lock.last_insert_rowid()),
+                    },
+                    Err(_) => Default::default(),
+                }
+            })
+            .unwrap_or_default()
     }
 
     fn workspace_id(&self, worktree_roots: &[Arc<Path>]) -> Option<WorkspaceId> {
@@ -128,6 +130,7 @@ mod tests {
         PathBuf::from(path).into()
     }
 
+    #[test]
     fn test_detect_workspace_id() {
         let data = &[
             (WorkspaceId(1), vec![arc_path("/tmp")]),
@@ -160,6 +163,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn test_tricky_overlapping_updates() {
         // DB state:
         // (/tree) -> ID: 1
@@ -202,31 +206,3 @@ mod tests {
         assert_eq!(recent_workspaces.get(2).unwrap().0, WorkspaceId(1));
     }
 }
-
-// [/tmp, /tmp2] -> ID1?
-// [/tmp] -> ID2?
-
-/*
-path | id
-/tmp   ID1
-/tmp   ID2
-/tmp2  ID1
-
-
-SELECT id
-FROM workspace_ids
-WHERE path IN (path1, path2)
-INTERSECT
-SELECT id
-FROM workspace_ids
-WHERE path = path_2
-... and etc. for each element in path array
-
-If contains row, yay! If not,
-SELECT max(id) FROm workspace_ids
-
-Select id WHERE path IN paths
-
-SELECT MAX(id)
-
-*/

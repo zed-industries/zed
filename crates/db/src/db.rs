@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use log::error;
 use parking_lot::Mutex;
-use rusqlite::Connection;
+use rusqlite::{backup, Connection};
 
 use migrations::MIGRATIONS;
 pub use workspace::*;
@@ -54,27 +54,6 @@ impl Db {
             })
     }
 
-    /// Open a in memory database for testing and as a fallback.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn open_in_memory() -> Self {
-        Connection::open_in_memory()
-            .map_err(Into::into)
-            .and_then(|connection| Self::initialize(connection))
-            .map(|connection| {
-                Db::Real(Arc::new(RealDb {
-                    connection,
-                    path: None,
-                }))
-            })
-            .unwrap_or_else(|e| {
-                error!(
-                    "Connecting to in memory db failed. Reverting to null db. {}",
-                    e
-                );
-                Self::Null
-            })
-    }
-
     fn initialize(mut conn: Connection) -> Result<Mutex<Connection>> {
         MIGRATIONS.to_latest(&mut conn)?;
 
@@ -95,6 +74,43 @@ impl Db {
             Db::Real(db) => Some(&db),
             _ => None,
         }
+    }
+
+    /// Open a in memory database for testing and as a fallback.
+    pub fn open_in_memory() -> Self {
+        Connection::open_in_memory()
+            .map_err(Into::into)
+            .and_then(|connection| Self::initialize(connection))
+            .map(|connection| {
+                Db::Real(Arc::new(RealDb {
+                    connection,
+                    path: None,
+                }))
+            })
+            .unwrap_or_else(|e| {
+                error!(
+                    "Connecting to in memory db failed. Reverting to null db. {}",
+                    e
+                );
+                Self::Null
+            })
+    }
+
+    pub fn write_to<P: AsRef<Path>>(&self, dest: P) -> Result<()> {
+        self.real()
+            .map(|db| {
+                if db.path.is_some() {
+                    panic!("DB already exists");
+                }
+
+                let lock = db.connection.lock();
+                let mut dst = Connection::open(dest)?;
+                let backup = backup::Backup::new(&lock, &mut dst)?;
+                backup.step(-1)?;
+
+                Ok(())
+            })
+            .unwrap_or(Ok(()))
     }
 }
 
