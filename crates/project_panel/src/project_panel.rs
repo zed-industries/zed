@@ -375,6 +375,7 @@ impl ProjectPanel {
                 }
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
                 cx.focus_self();
+                cx.notify();
             }
         }
     }
