@@ -120,19 +120,15 @@ impl CollabTitlebarItem {
     }
 
     fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        let workspace = self.workspace.upgrade(cx);
-        let room = ActiveCall::global(cx).read(cx).room().cloned();
-        if let Some((workspace, room)) = workspace.zip(room) {
-            let workspace = workspace.read(cx);
+        if let Some(workspace) = self.workspace.upgrade(cx) {
             let project = if active {
-                Some(workspace.project().clone())
+                Some(workspace.read(cx).project().clone())
             } else {
                 None
             };
-            room.update(cx, |room, cx| {
-                room.set_location(project.as_ref(), cx)
-                    .detach_and_log_err(cx);
-            });
+            ActiveCall::global(cx)
+                .update(cx, |call, cx| call.set_location(project.as_ref(), cx))
+                .detach_and_log_err(cx);
         }
     }
 

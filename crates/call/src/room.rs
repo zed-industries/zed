@@ -567,7 +567,7 @@ impl Room {
         })
     }
 
-    pub fn set_location(
+    pub(crate) fn set_location(
         &mut self,
         project: Option<&ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,

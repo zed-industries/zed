@@ -1074,15 +1074,9 @@ async fn test_room_location(
     client_a.fs.insert_tree("/a", json!({})).await;
     client_b.fs.insert_tree("/b", json!({})).await;
 
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
-
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-
     let active_call_a = cx_a.read(ActiveCall::global);
-    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    let active_call_b = cx_b.read(ActiveCall::global);
+
     let a_notified = Rc::new(Cell::new(false));
     cx_a.update({
         let notified = a_notified.clone();
@@ -1092,8 +1086,6 @@ async fn test_room_location(
         }
     });
 
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
     let b_notified = Rc::new(Cell::new(false));
     cx_b.update({
         let b_notified = b_notified.clone();
@@ -1103,10 +1095,18 @@ async fn test_room_location(
         }
     });
 
-    room_a
-        .update(cx_a, |room, cx| room.set_location(Some(&project_a), cx))
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
         .unwrap();
+    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
     deterministic.run_until_parked();
     assert!(a_notified.take());
     assert_eq!(
@@ -1161,8 +1161,8 @@ async fn test_room_location(
         )]
     );
 
-    room_b
-        .update(cx_b, |room, cx| room.set_location(Some(&project_b), cx))
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -1187,8 +1187,8 @@ async fn test_room_location(
         )]
     );
 
-    room_b
-        .update(cx_b, |room, cx| room.set_location(None, cx))
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(None, cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -5070,6 +5070,7 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
     client_a
         .fs
@@ -5083,11 +5084,20 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -5281,6 +5291,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
     // Client A shares a project.
     client_a
@@ -5296,6 +5307,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5303,6 +5318,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // Client B joins the project.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -5450,6 +5469,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
     // Client A shares a project.
     client_a
@@ -5464,11 +5484,20 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
