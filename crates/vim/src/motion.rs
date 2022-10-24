@@ -145,8 +145,12 @@ impl Motion {
 
         match self {
             EndOfLine | NextWordEnd { .. } | Matching => true,
-            Left | Right | StartOfLine | NextWordStart { .. } | PreviousWordStart { .. } => false,
-            _ => panic!("Exclusivity not defined for {self:?}"),
+            Left
+            | Backspace
+            | Right
+            | StartOfLine
+            | NextWordStart { .. }
+            | PreviousWordStart { .. } => false,
         }
     }
 
