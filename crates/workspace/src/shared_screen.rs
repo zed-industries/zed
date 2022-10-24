@@ -6,7 +6,7 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    Entity, ModelHandle, RenderContext, Task, View, ViewContext,
+    Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{
@@ -63,21 +63,27 @@ impl View for SharedScreen {
         "SharedScreen"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        enum Focus {}
+
         let frame = self.frame.clone();
-        Canvas::new(move |bounds, _, cx| {
-            if let Some(frame) = frame.clone() {
-                let size = constrain_size_preserving_aspect_ratio(
-                    bounds.size(),
-                    vec2f(frame.width() as f32, frame.height() as f32),
-                );
-                let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
-                cx.scene.push_surface(gpui::mac::Surface {
-                    bounds: RectF::new(origin, size),
-                    image_buffer: frame.image(),
-                });
-            }
+        MouseEventHandler::<Focus>::new(0, cx, |_, _| {
+            Canvas::new(move |bounds, _, cx| {
+                if let Some(frame) = frame.clone() {
+                    let size = constrain_size_preserving_aspect_ratio(
+                        bounds.size(),
+                        vec2f(frame.width() as f32, frame.height() as f32),
+                    );
+                    let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
+                    cx.scene.push_surface(gpui::mac::Surface {
+                        bounds: RectF::new(origin, size),
+                        image_buffer: frame.image(),
+                    });
+                }
+            })
+            .boxed()
         })
+        .on_down(MouseButton::Left, |_, cx| cx.focus_parent_view())
         .boxed()
     }
 }
