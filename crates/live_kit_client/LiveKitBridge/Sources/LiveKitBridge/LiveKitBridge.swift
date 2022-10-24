@@ -59,7 +59,6 @@ class LKVideoRenderer: NSObject, VideoRenderer {
     }
 
     func setSize(_ size: CGSize) {
-        print("Called setSize", size);
     }
 
     func renderFrame(_ frame: RTCVideoFrame?) {
