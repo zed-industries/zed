@@ -3041,6 +3041,12 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
                     close: false,
                     newline: true,
                 },
+                BracketPair {
+                    start: "\"".to_string(),
+                    end: "\"".to_string(),
+                    close: true,
+                    newline: false,
+                },
             ],
             autoclose_before: "})]".to_string(),
             ..Default::default()
@@ -3161,6 +3167,13 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     cx.set_state("«aˇ» b");
     cx.update_editor(|view, cx| view.handle_input("{", cx));
     cx.assert_editor_state("{«aˇ»} b");
+
+    // Autclose pair where the start and end characters are the same
+    cx.set_state("aˇ");
+    cx.update_editor(|view, cx| view.handle_input("\"", cx));
+    cx.assert_editor_state("a\"ˇ\"");
+    cx.update_editor(|view, cx| view.handle_input("\"", cx));
+    cx.assert_editor_state("a\"\"ˇ");
 }
 
 #[gpui::test]

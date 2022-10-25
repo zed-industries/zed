@@ -2080,7 +2080,9 @@ impl Editor {
                                 ));
                                 continue;
                             }
-                        } else if let Some(region) = autoclose_region {
+                        }
+
+                        if let Some(region) = autoclose_region {
                             // If the selection is followed by an auto-inserted closing bracket,
                             // then don't insert that closing bracket again; just move the selection
                             // past the closing bracket.
