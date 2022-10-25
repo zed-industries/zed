@@ -29,7 +29,7 @@ pub struct SceneBuilder {
 struct StackingContext {
     layers: Vec<Layer>,
     active_layer_stack: Vec<usize>,
-    depth: usize,
+    height: usize,
 }
 
 #[derive(Default)]
@@ -205,7 +205,7 @@ impl Scene {
                     .layers
                     .iter()
                     .flat_map(|layer| &layer.mouse_regions)
-                    .map(|region| (region.clone(), context.depth))
+                    .map(|region| (region.clone(), context.height))
             })
             .collect()
     }
@@ -224,7 +224,7 @@ impl SceneBuilder {
     }
 
     pub fn build(mut self) -> Scene {
-        self.stacking_contexts.sort_by_key(|context| context.depth);
+        self.stacking_contexts.sort_by_key(|context| context.height);
         Scene {
             scale_factor: self.scale_factor,
             stacking_contexts: self.stacking_contexts,
@@ -236,11 +236,11 @@ impl SceneBuilder {
     }
 
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
-        let depth = self.active_stacking_context().depth + 1;
+        let height = self.active_stacking_context().height + 1;
         self.active_stacking_context_stack
             .push(self.stacking_contexts.len());
         self.stacking_contexts
-            .push(StackingContext::new(depth, clip_bounds))
+            .push(StackingContext::new(height, clip_bounds))
     }
 
     pub fn pop_stacking_context(&mut self) {
@@ -332,11 +332,11 @@ impl SceneBuilder {
 }
 
 impl StackingContext {
-    fn new(depth: usize, clip_bounds: Option<RectF>) -> Self {
+    fn new(height: usize, clip_bounds: Option<RectF>) -> Self {
         Self {
             layers: vec![Layer::new(clip_bounds)],
             active_layer_stack: vec![0],
-            depth,
+            height,
         }
     }
 

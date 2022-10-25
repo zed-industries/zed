@@ -360,14 +360,14 @@ impl Presenter {
         for mut mouse_event in mouse_events {
             let mut valid_regions = Vec::new();
 
-            // GPUI elements are arranged by depth but sibling elements can register overlapping
+            // GPUI elements are arranged by height but sibling elements can register overlapping
             // mouse regions. As such, hover events are only fired on overlapping elements which
-            // are at the same depth as the topmost element which overlaps with the mouse.
+            // are at the same height as the topmost element which overlaps with the mouse.
             match &mouse_event {
                 MouseEvent::Hover(_) => {
-                    let mut top_most_depth = None;
+                    let mut top_most_height = None;
                     let mouse_position = self.mouse_position.clone();
-                    for (region, depth) in self.mouse_regions.iter().rev() {
+                    for (region, height) in self.mouse_regions.iter().rev() {
                         // Allow mouse regions to appear transparent to hovers
                         if !region.hoverable {
                             continue;
@@ -375,15 +375,15 @@ impl Presenter {
 
                         let contains_mouse = region.bounds.contains_point(mouse_position);
 
-                        if contains_mouse && top_most_depth.is_none() {
-                            top_most_depth = Some(depth);
+                        if contains_mouse && top_most_height.is_none() {
+                            top_most_height = Some(height);
                         }
 
                         // This unwrap relies on short circuiting boolean expressions
                         // The right side of the && is only executed when contains_mouse
                         // is true, and we know above that when contains_mouse is true
-                        // top_most_depth is set
-                        if contains_mouse && depth == top_most_depth.unwrap() {
+                        // top_most_height is set
+                        if contains_mouse && height == top_most_height.unwrap() {
                             //Ensure that hover entrance events aren't sent twice
                             if self.hovered_region_ids.insert(region.id()) {
                                 valid_regions.push(region.clone());
