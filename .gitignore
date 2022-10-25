@@ -10,6 +10,7 @@
 /assets/themes/Internal/*.json
 /assets/themes/Experiments/*.json
 **/venv
+<<<<<<< HEAD
 .build
 Packages
 *.xcodeproj
@@ -18,3 +19,6 @@ DerivedData/
 .swiftpm/config/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+=======
+crates/db/test-db.db
+>>>>>>> 9d9ad38ce (Successfully detecting workplace IDs :D)

@@ -20,7 +20,6 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 rusqlite = { version = "0.28.0", features = ["bundled", "serde_json", "backup"] }
 rusqlite_migration = { git = "https://github.com/cljoly/rusqlite_migration", rev = "c433555d7c1b41b103426e35756eb3144d0ebbc6" }
->>>>>>> dd2ddc5e3 (Started writing the real SQL we're going to need)
 serde = { workspace = true }
 serde_rusqlite = "0.31.0"
 
