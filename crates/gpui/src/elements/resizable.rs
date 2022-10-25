@@ -149,7 +149,7 @@ impl Element for Resizable {
         _child_size: &mut Self::LayoutState,
         cx: &mut crate::PaintContext,
     ) -> Self::PaintState {
-        cx.scene.push_stacking_context(None);
+        cx.scene.push_stacking_context(None, None);
 
         let handle_region = self.side.of_rect(bounds, self.handle_size);
 
