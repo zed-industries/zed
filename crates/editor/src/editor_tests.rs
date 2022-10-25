@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
+use drag_and_drop::DragAndDrop;
 use futures::StreamExt;
 use indoc::indoc;
 use unindent::Unindent;
@@ -472,6 +473,7 @@ fn test_clone(cx: &mut gpui::MutableAppContext) {
 #[gpui::test]
 fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
+    cx.set_global(DragAndDrop::<Workspace>::default());
     use workspace::Item;
     let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(None, cx));
     let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);

@@ -2,7 +2,9 @@ use crate::{FollowerStatesByLeader, JoinProject, Pane, Workspace};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use gpui::{
-    elements::*, Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
+    elements::*,
+    geometry::{rect::RectF, vector::Vector2F},
+    Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -263,9 +265,7 @@ impl PaneAxis {
         new_pane: &ViewHandle<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
-        use SplitDirection::*;
-
-        for (idx, member) in self.members.iter_mut().enumerate() {
+        for (mut idx, member) in self.members.iter_mut().enumerate() {
             match member {
                 Member::Axis(axis) => {
                     if axis.split(old_pane, new_pane, direction).is_ok() {
@@ -274,15 +274,12 @@ impl PaneAxis {
                 }
                 Member::Pane(pane) => {
                     if pane == old_pane {
-                        if direction.matches_axis(self.axis) {
-                            match direction {
-                                Up | Left => {
-                                    self.members.insert(idx, Member::Pane(new_pane.clone()));
-                                }
-                                Down | Right => {
-                                    self.members.insert(idx + 1, Member::Pane(new_pane.clone()));
-                                }
+                        if direction.axis() == self.axis {
+                            if direction.increasing() {
+                                idx += 1;
                             }
+
+                            self.members.insert(idx, Member::Pane(new_pane.clone()));
                         } else {
                             *member =
                                 Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
@@ -374,187 +371,46 @@ pub enum SplitDirection {
 }
 
 impl SplitDirection {
-    fn matches_axis(self, orientation: Axis) -> bool {
-        use Axis::*;
-        use SplitDirection::*;
+    pub fn all() -> [Self; 4] {
+        [Self::Up, Self::Down, Self::Left, Self::Right]
+    }
 
+    pub fn edge(&self, rect: RectF) -> f32 {
         match self {
-            Up | Down => match orientation {
-                Vertical => true,
-                Horizontal => false,
-            },
-            Left | Right => match orientation {
-                Vertical => false,
-                Horizontal => true,
-            },
+            Self::Up => rect.min_y(),
+            Self::Down => rect.max_y(),
+            Self::Left => rect.min_x(),
+            Self::Right => rect.max_x(),
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    // use super::*;
-    // use serde_json::json;
+    // Returns a new rectangle which shares an edge in SplitDirection and has `size` along SplitDirection
+    pub fn along_edge(&self, rect: RectF, size: f32) -> RectF {
+        match self {
+            Self::Up => RectF::new(rect.origin(), Vector2F::new(rect.width(), size)),
+            Self::Down => RectF::new(
+                rect.lower_left() - Vector2F::new(0., size),
+                Vector2F::new(rect.width(), size),
+            ),
+            Self::Left => RectF::new(rect.origin(), Vector2F::new(size, rect.height())),
+            Self::Right => RectF::new(
+                rect.upper_right() - Vector2F::new(size, 0.),
+                Vector2F::new(size, rect.height()),
+            ),
+        }
+    }
 
-    // #[test]
-    // fn test_split_and_remove() -> Result<()> {
-    //     let mut group = PaneGroup::new(1);
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "pane",
-    //             "paneId": 1,
-    //         })
-    //     );
+    pub fn axis(&self) -> Axis {
+        match self {
+            Self::Up | Self::Down => Axis::Vertical,
+            Self::Left | Self::Right => Axis::Horizontal,
+        }
+    }
 
-    //     group.split(1, 2, SplitDirection::Right)?;
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "axis",
-    //             "orientation": "horizontal",
-    //             "members": [
-    //                 {"type": "pane", "paneId": 1},
-    //                 {"type": "pane", "paneId": 2},
-    //             ]
-    //         })
-    //     );
-
-    //     group.split(2, 3, SplitDirection::Up)?;
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "axis",
-    //             "orientation": "horizontal",
-    //             "members": [
-    //                 {"type": "pane", "paneId": 1},
-    //                 {
-    //                     "type": "axis",
-    //                     "orientation": "vertical",
-    //                     "members": [
-    //                         {"type": "pane", "paneId": 3},
-    //                         {"type": "pane", "paneId": 2},
-    //                     ]
-    //                 },
-    //             ]
-    //         })
-    //     );
-
-    //     group.split(1, 4, SplitDirection::Right)?;
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "axis",
-    //             "orientation": "horizontal",
-    //             "members": [
-    //                 {"type": "pane", "paneId": 1},
-    //                 {"type": "pane", "paneId": 4},
-    //                 {
-    //                     "type": "axis",
-    //                     "orientation": "vertical",
-    //                     "members": [
-    //                         {"type": "pane", "paneId": 3},
-    //                         {"type": "pane", "paneId": 2},
-    //                     ]
-    //                 },
-    //             ]
-    //         })
-    //     );
-
-    //     group.split(2, 5, SplitDirection::Up)?;
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "axis",
-    //             "orientation": "horizontal",
-    //             "members": [
-    //                 {"type": "pane", "paneId": 1},
-    //                 {"type": "pane", "paneId": 4},
-    //                 {
-    //                     "type": "axis",
-    //                     "orientation": "vertical",
-    //                     "members": [
-    //                         {"type": "pane", "paneId": 3},
-    //                         {"type": "pane", "paneId": 5},
-    //                         {"type": "pane", "paneId": 2},
-    //                     ]
-    //                 },
-    //             ]
-    //         })
-    //     );
-
-    //     assert_eq!(true, group.remove(5)?);
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "axis",
-    //             "orientation": "horizontal",
-    //             "members": [
-    //                 {"type": "pane", "paneId": 1},
-    //                 {"type": "pane", "paneId": 4},
-    //                 {
-    //                     "type": "axis",
-    //                     "orientation": "vertical",
-    //                     "members": [
-    //                         {"type": "pane", "paneId": 3},
-    //                         {"type": "pane", "paneId": 2},
-    //                     ]
-    //                 },
-    //             ]
-    //         })
-    //     );
-
-    //     assert_eq!(true, group.remove(4)?);
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "axis",
-    //             "orientation": "horizontal",
-    //             "members": [
-    //                 {"type": "pane", "paneId": 1},
-    //                 {
-    //                     "type": "axis",
-    //                     "orientation": "vertical",
-    //                     "members": [
-    //                         {"type": "pane", "paneId": 3},
-    //                         {"type": "pane", "paneId": 2},
-    //                     ]
-    //                 },
-    //             ]
-    //         })
-    //     );
-
-    //     assert_eq!(true, group.remove(3)?);
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "axis",
-    //             "orientation": "horizontal",
-    //             "members": [
-    //                 {"type": "pane", "paneId": 1},
-    //                 {"type": "pane", "paneId": 2},
-    //             ]
-    //         })
-    //     );
-
-    //     assert_eq!(true, group.remove(2)?);
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "pane",
-    //             "paneId": 1,
-    //         })
-    //     );
-
-    //     assert_eq!(false, group.remove(1)?);
-    //     assert_eq!(
-    //         serde_json::to_value(&group)?,
-    //         json!({
-    //             "type": "pane",
-    //             "paneId": 1,
-    //         })
-    //     );
-
-    //     Ok(())
-    // }
+    pub fn increasing(&self) -> bool {
+        match self {
+            Self::Left | Self::Up => false,
+            Self::Down | Self::Right => true,
+        }
+    }
 }

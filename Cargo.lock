@@ -1736,6 +1736,7 @@ dependencies = [
  "collections",
  "context_menu",
  "ctor",
+ "drag_and_drop",
  "env_logger",
  "futures 0.3.24",
  "fuzzy",

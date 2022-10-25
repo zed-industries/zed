@@ -23,10 +23,13 @@ pub struct MouseEventHandler<Tag: 'static> {
     hoverable: bool,
     notify_on_hover: bool,
     notify_on_click: bool,
+    above: bool,
     padding: Padding,
     _tag: PhantomData<Tag>,
 }
 
+/// Element which provides a render_child callback with a MouseState and paints a mouse
+/// region under (or above) it for easy mouse event handling.
 impl<Tag> MouseEventHandler<Tag> {
     pub fn new<V, F>(region_id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
     where
@@ -45,9 +48,23 @@ impl<Tag> MouseEventHandler<Tag> {
             notify_on_hover,
             notify_on_click,
             hoverable: true,
+            above: false,
             padding: Default::default(),
             _tag: PhantomData,
         }
+    }
+
+    /// Modifies the MouseEventHandler to render the MouseRegion above the child element. Useful
+    /// for drag and drop handling and similar events which should be captured before the child
+    /// gets the opportunity
+    pub fn above<V, F>(region_id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
+    where
+        V: View,
+        F: FnOnce(&mut MouseState, &mut RenderContext<V>) -> ElementBox,
+    {
+        let mut handler = Self::new(region_id, cx, render_child);
+        handler.above = true;
+        handler
     }
 
     pub fn with_cursor_style(mut self, cursor: CursorStyle) -> Self {
@@ -149,6 +166,29 @@ impl<Tag> MouseEventHandler<Tag> {
         )
         .round_out()
     }
+
+    fn paint_regions(&self, bounds: RectF, visible_bounds: RectF, cx: &mut PaintContext) {
+        let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
+        let hit_bounds = self.hit_bounds(visible_bounds);
+
+        if let Some(style) = self.cursor_style {
+            cx.scene.push_cursor_region(CursorRegion {
+                bounds: hit_bounds,
+                style,
+            });
+        }
+        cx.scene.push_mouse_region(
+            MouseRegion::from_handlers::<Tag>(
+                cx.current_view_id(),
+                self.region_id,
+                hit_bounds,
+                self.handlers.clone(),
+            )
+            .with_hoverable(self.hoverable)
+            .with_notify_on_hover(self.notify_on_hover)
+            .with_notify_on_click(self.notify_on_click),
+        );
+    }
 }
 
 impl<Tag> Element for MouseEventHandler<Tag> {
@@ -170,28 +210,16 @@ impl<Tag> Element for MouseEventHandler<Tag> {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
-        let hit_bounds = self.hit_bounds(visible_bounds);
-        if let Some(style) = self.cursor_style {
-            cx.scene.push_cursor_region(CursorRegion {
-                bounds: hit_bounds,
-                style,
+        if self.above {
+            self.child.paint(bounds.origin(), visible_bounds, cx);
+
+            cx.paint_layer(None, |cx| {
+                self.paint_regions(bounds, visible_bounds, cx);
             });
+        } else {
+            self.paint_regions(bounds, visible_bounds, cx);
+            self.child.paint(bounds.origin(), visible_bounds, cx);
         }
-
-        cx.scene.push_mouse_region(
-            MouseRegion::from_handlers::<Tag>(
-                cx.current_view_id(),
-                self.region_id,
-                hit_bounds,
-                self.handlers.clone(),
-            )
-            .with_hoverable(self.hoverable)
-            .with_notify_on_hover(self.notify_on_hover)
-            .with_notify_on_click(self.notify_on_click),
-        );
-
-        self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
     fn rect_for_text_range(

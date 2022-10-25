@@ -100,7 +100,7 @@ actions!(
         ToggleLeftSidebar,
         ToggleRightSidebar,
         NewTerminal,
-        NewSearch
+        NewSearch,
     ]
 );
 
@@ -126,6 +126,14 @@ pub struct OpenSharedScreen {
     pub peer_id: PeerId,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct SplitWithItem {
+    from: WeakViewHandle<Pane>,
+    pane_to_split: WeakViewHandle<Pane>,
+    split_direction: SplitDirection,
+    item_id_to_move: usize,
+}
+
 impl_internal_actions!(
     workspace,
     [
@@ -133,7 +141,8 @@ impl_internal_actions!(
         ToggleFollow,
         JoinProject,
         OpenSharedScreen,
-        RemoveWorktreeFromProject
+        RemoveWorktreeFromProject,
+        SplitWithItem,
     ]
 );
 impl_actions!(workspace, [ActivatePane]);
@@ -206,6 +215,24 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         workspace.toggle_sidebar(SidebarSide::Right, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
+    cx.add_action(
+        |workspace: &mut Workspace,
+         SplitWithItem {
+             from,
+             pane_to_split,
+             item_id_to_move,
+             split_direction,
+         }: &_,
+         cx| {
+            workspace.split_pane_with_item(
+                from.clone(),
+                pane_to_split.clone(),
+                *item_id_to_move,
+                *split_direction,
+                cx,
+            )
+        },
+    );
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -1950,6 +1977,29 @@ impl Workspace {
         })
     }
 
+    pub fn split_pane_with_item(
+        &mut self,
+        from: WeakViewHandle<Pane>,
+        pane_to_split: WeakViewHandle<Pane>,
+        item_id_to_move: usize,
+        split_direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some((pane_to_split, from)) = pane_to_split.upgrade(cx).zip(from.upgrade(cx)) {
+            if &pane_to_split == self.dock_pane() {
+                warn!("Can't split dock pane.");
+                return;
+            }
+
+            let new_pane = self.add_pane(cx);
+            Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
+            self.center
+                .split(&pane_to_split, &new_pane, split_direction)
+                .unwrap();
+            cx.notify();
+        }
+    }
+
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
@@ -3175,7 +3225,7 @@ mod tests {
 
         cx.foreground().run_until_parked();
         pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items().count(), 4);
+            assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
 
@@ -3185,7 +3235,7 @@ mod tests {
             assert_eq!(item1.read(cx).save_count, 1);
             assert_eq!(item1.read(cx).save_as_count, 0);
             assert_eq!(item1.read(cx).reload_count, 0);
-            assert_eq!(pane.items().count(), 3);
+            assert_eq!(pane.items_len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
 
@@ -3195,7 +3245,7 @@ mod tests {
             assert_eq!(item3.read(cx).save_count, 0);
             assert_eq!(item3.read(cx).save_as_count, 0);
             assert_eq!(item3.read(cx).reload_count, 1);
-            assert_eq!(pane.items().count(), 2);
+            assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
 
@@ -3207,7 +3257,7 @@ mod tests {
             assert_eq!(item4.read(cx).save_count, 0);
             assert_eq!(item4.read(cx).save_as_count, 1);
             assert_eq!(item4.read(cx).reload_count, 0);
-            assert_eq!(pane.items().count(), 1);
+            assert_eq!(pane.items_len(), 1);
             assert_eq!(pane.active_item().unwrap().id(), item2.id());
         });
     }
@@ -3309,7 +3359,7 @@ mod tests {
         cx.foreground().run_until_parked();
         close.await.unwrap();
         left_pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items().count(), 0);
+            assert_eq!(pane.items_len(), 0);
         });
     }
 

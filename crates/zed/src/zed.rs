@@ -811,7 +811,7 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
-            assert_eq!(pane.items().count(), 1);
+            assert_eq!(pane.items_len(), 1);
         });
 
         // Open the second entry
@@ -825,7 +825,7 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file2.clone())
             );
-            assert_eq!(pane.items().count(), 2);
+            assert_eq!(pane.items_len(), 2);
         });
 
         // Open the first entry again. The existing pane item is activated.
@@ -841,7 +841,7 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
-            assert_eq!(pane.items().count(), 2);
+            assert_eq!(pane.items_len(), 2);
         });
 
         // Split the pane with the first entry, then open the second entry again.

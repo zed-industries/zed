@@ -1,3 +1,5 @@
+mod dragged_item_receiver;
+
 use super::{ItemHandle, SplitDirection};
 use crate::{
     dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, ExpandDock, HideDock},
@@ -7,11 +9,11 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
-use drag_and_drop::{DragAndDrop, Draggable};
+use drag_and_drop::Draggable;
+pub use dragged_item_receiver::{dragged_item_receiver, handle_dropped_item};
 use futures::StreamExt;
 use gpui::{
     actions,
-    color::Color,
     elements::*,
     geometry::{
         rect::RectF,
@@ -98,7 +100,7 @@ impl_internal_actions!(
         DeploySplitMenu,
         DeployNewMenu,
         DeployDockMenu,
-        MoveItem
+        MoveItem,
     ]
 );
 
@@ -575,6 +577,10 @@ impl Pane {
         }
     }
 
+    pub fn items_len(&self) -> usize {
+        self.items.len()
+    }
+
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
         self.items.iter()
     }
@@ -943,11 +949,11 @@ impl Pane {
         }
     }
 
-    fn move_item(
+    pub fn move_item(
         workspace: &mut Workspace,
         from: ViewHandle<Pane>,
         to: ViewHandle<Pane>,
-        item_to_move: usize,
+        item_id_to_move: usize,
         destination_index: usize,
         cx: &mut ViewContext<Workspace>,
     ) {
@@ -955,7 +961,7 @@ impl Pane {
             .read(cx)
             .items()
             .enumerate()
-            .find(|(_, item_handle)| item_handle.id() == item_to_move);
+            .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
 
         if item_to_move.is_none() {
             log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
@@ -1051,133 +1057,107 @@ impl Pane {
 
     fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
-        let filler_index = self.items.len();
+
+        let pane = cx.handle();
+        let autoscroll = if mem::take(&mut self.autoscroll) {
+            Some(self.active_item_index)
+        } else {
+            None
+        };
+
+        let pane_active = self.is_active;
 
         enum Tabs {}
-        enum Tab {}
-        enum Filler {}
-        let pane = cx.handle();
-        MouseEventHandler::<Tabs>::new(0, cx, |_, cx| {
-            let autoscroll = if mem::take(&mut self.autoscroll) {
-                Some(self.active_item_index)
-            } else {
-                None
-            };
+        let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
+        for (ix, (item, detail)) in self
+            .items
+            .iter()
+            .cloned()
+            .zip(self.tab_details(cx))
+            .enumerate()
+        {
+            let detail = if detail == 0 { None } else { Some(detail) };
+            let tab_active = ix == self.active_item_index;
 
-            let pane_active = self.is_active;
+            row.add_child({
+                enum Tab {}
+                dragged_item_receiver::<Tab, _>(ix, ix, true, None, cx, {
+                    let item = item.clone();
+                    let pane = pane.clone();
+                    let detail = detail.clone();
 
-            let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
-            for (ix, (item, detail)) in self
-                .items
-                .iter()
-                .cloned()
-                .zip(self.tab_details(cx))
-                .enumerate()
-            {
-                let detail = if detail == 0 { None } else { Some(detail) };
-                let tab_active = ix == self.active_item_index;
+                    let theme = cx.global::<Settings>().theme.clone();
 
-                row.add_child({
-                    MouseEventHandler::<Tab>::new(ix, cx, {
-                        let item = item.clone();
-                        let pane = pane.clone();
-                        let detail = detail.clone();
-
+                    move |mouse_state, cx| {
+                        let tab_style = theme.workspace.tab_bar.tab_style(pane_active, tab_active);
+                        let hovered = mouse_state.hovered();
+                        Self::render_tab(&item, pane, ix == 0, detail, hovered, tab_style, cx)
+                    }
+                })
+                .with_cursor_style(if pane_active && tab_active {
+                    CursorStyle::Arrow
+                } else {
+                    CursorStyle::PointingHand
+                })
+                .on_down(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(ActivateItem(ix));
+                    cx.propagate_event();
+                })
+                .on_click(MouseButton::Middle, {
+                    let item = item.clone();
+                    let pane = pane.clone();
+                    move |_, cx: &mut EventContext| {
+                        cx.dispatch_action(CloseItem {
+                            item_id: item.id(),
+                            pane: pane.clone(),
+                        })
+                    }
+                })
+                .as_draggable(
+                    DraggedItem {
+                        item,
+                        pane: pane.clone(),
+                    },
+                    {
                         let theme = cx.global::<Settings>().theme.clone();
 
-                        move |mouse_state, cx| {
-                            let tab_style =
-                                theme.workspace.tab_bar.tab_style(pane_active, tab_active);
-                            let hovered = mouse_state.hovered();
+                        let detail = detail.clone();
+                        move |dragged_item, cx: &mut RenderContext<Workspace>| {
+                            let tab_style = &theme.workspace.tab_bar.dragged_tab;
                             Self::render_tab(
-                                &item,
-                                pane,
-                                ix == 0,
+                                &dragged_item.item,
+                                dragged_item.pane.clone(),
+                                false,
                                 detail,
-                                hovered,
-                                Self::tab_overlay_color(hovered, theme.as_ref(), cx),
-                                tab_style,
+                                false,
+                                &tab_style,
                                 cx,
                             )
                         }
-                    })
-                    .with_cursor_style(if pane_active && tab_active {
-                        CursorStyle::Arrow
-                    } else {
-                        CursorStyle::PointingHand
-                    })
-                    .on_down(MouseButton::Left, move |_, cx| {
-                        cx.dispatch_action(ActivateItem(ix));
-                    })
-                    .on_click(MouseButton::Middle, {
-                        let item = item.clone();
-                        let pane = pane.clone();
-                        move |_, cx: &mut EventContext| {
-                            cx.dispatch_action(CloseItem {
-                                item_id: item.id(),
-                                pane: pane.clone(),
-                            })
-                        }
-                    })
-                    .on_up(MouseButton::Left, {
-                        let pane = pane.clone();
-                        move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, ix, cx)
-                    })
-                    .as_draggable(
-                        DraggedItem {
-                            item,
-                            pane: pane.clone(),
-                        },
-                        {
-                            let theme = cx.global::<Settings>().theme.clone();
+                    },
+                )
+                .boxed()
+            })
+        }
 
-                            let detail = detail.clone();
-                            move |dragged_item, cx: &mut RenderContext<Workspace>| {
-                                let tab_style = &theme.workspace.tab_bar.dragged_tab;
-                                Self::render_tab(
-                                    &dragged_item.item,
-                                    dragged_item.pane.clone(),
-                                    false,
-                                    detail,
-                                    false,
-                                    None,
-                                    &tab_style,
-                                    cx,
-                                )
-                            }
-                        },
-                    )
+        // Use the inactive tab style along with the current pane's active status to decide how to render
+        // the filler
+        let filler_index = self.items.len();
+        let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
+        enum Filler {}
+        row.add_child(
+            dragged_item_receiver::<Filler, _>(0, filler_index, true, None, cx, |_, _| {
+                Empty::new()
+                    .contained()
+                    .with_style(filler_style.container)
+                    .with_border(filler_style.container.border)
                     .boxed()
-                })
-            }
+            })
+            .flex(1., true)
+            .named("filler"),
+        );
 
-            // Use the inactive tab style along with the current pane's active status to decide how to render
-            // the filler
-            let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
-            row.add_child(
-                MouseEventHandler::<Filler>::new(0, cx, |mouse_state, cx| {
-                    let mut filler = Empty::new()
-                        .contained()
-                        .with_style(filler_style.container)
-                        .with_border(filler_style.container.border);
-
-                    if let Some(overlay) =
-                        Self::tab_overlay_color(mouse_state.hovered(), &theme, cx)
-                    {
-                        filler = filler.with_overlay_color(overlay);
-                    }
-
-                    filler.boxed()
-                })
-                .flex(1., true)
-                .named("filler"),
-            );
-
-            row.boxed()
-        })
-        .on_up(MouseButton::Left, move |_, cx| {
-            Pane::handle_dropped_item(&pane, filler_index, cx)
-        })
+        row
     }
 
     fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
@@ -1223,7 +1203,6 @@ impl Pane {
         first: bool,
         detail: Option<usize>,
         hovered: bool,
-        overlay: Option<Color>,
         tab_style: &theme::Tab,
         cx: &mut RenderContext<V>,
     ) -> ElementBox {
@@ -1233,7 +1212,7 @@ impl Pane {
             container.border.left = false;
         }
 
-        let mut tab = Flex::row()
+        Flex::row()
             .with_child(
                 Align::new({
                     let diameter = 7.0;
@@ -1301,7 +1280,6 @@ impl Pane {
                                 })
                             }
                         })
-                        .on_click(MouseButton::Middle, |_, cx| cx.propogate_event())
                         .named("close-tab-icon")
                     } else {
                         Empty::new().boxed()
@@ -1312,46 +1290,46 @@ impl Pane {
                 .boxed(),
             )
             .contained()
-            .with_style(container);
-
-        if let Some(overlay) = overlay {
-            tab = tab.with_overlay_color(overlay);
-        }
-
-        tab.constrained().with_height(tab_style.height).boxed()
+            .with_style(container)
+            .constrained()
+            .with_height(tab_style.height)
+            .boxed()
     }
 
-    fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
-        if let Some((_, dragged_item)) = cx
-            .global::<DragAndDrop<Workspace>>()
-            .currently_dragged::<DraggedItem>(cx.window_id)
-        {
-            cx.dispatch_action(MoveItem {
-                item_id: dragged_item.item.id(),
-                from: dragged_item.pane.clone(),
-                to: pane.clone(),
-                destination_index: index,
-            })
-        } else {
-            cx.propogate_event();
-        }
-    }
-
-    fn tab_overlay_color(
-        hovered: bool,
+    fn render_tab_bar_buttons(
+        &mut self,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
-    ) -> Option<Color> {
-        if hovered
-            && cx
-                .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<DraggedItem>(cx.window_id())
-                .is_some()
-        {
-            Some(theme.workspace.tab_bar.drop_target_overlay_color)
-        } else {
-            None
-        }
+    ) -> ElementBox {
+        Flex::row()
+            // New menu
+            .with_child(tab_bar_button(0, "icons/plus_12.svg", cx, |position| {
+                DeployNewMenu { position }
+            }))
+            .with_child(
+                self.docked
+                    .map(|anchor| {
+                        // Add the dock menu button if this pane is a dock
+                        let dock_icon = icon_for_dock_anchor(anchor);
+
+                        tab_bar_button(1, dock_icon, cx, |position| DeployDockMenu { position })
+                    })
+                    .unwrap_or_else(|| {
+                        // Add the split menu if this pane is not a dock
+                        tab_bar_button(2, "icons/split_12.svg", cx, |position| DeploySplitMenu {
+                            position,
+                        })
+                    }),
+            )
+            // Add the close dock button if this pane is a dock
+            .with_children(
+                self.docked
+                    .map(|_| tab_bar_button(3, "icons/x_mark_thin_8.svg", cx, |_| HideDock)),
+            )
+            .contained()
+            .with_style(theme.workspace.tab_bar.pane_button_container)
+            .flex(1., false)
+            .boxed()
     }
 }
 
@@ -1376,60 +1354,12 @@ impl View for Pane {
                         Flex::column()
                             .with_child({
                                 let mut tab_row = Flex::row()
-                                    .with_child(self.render_tabs(cx).flex(1.0, true).named("tabs"));
+                                    .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
 
                                 // Render pane buttons
                                 let theme = cx.global::<Settings>().theme.clone();
                                 if self.is_active {
-                                    tab_row.add_child(
-                                        Flex::row()
-                                            // New menu
-                                            .with_child(tab_bar_button(
-                                                0,
-                                                "icons/plus_12.svg",
-                                                cx,
-                                                |position| DeployNewMenu { position },
-                                            ))
-                                            .with_child(
-                                                self.docked
-                                                    .map(|anchor| {
-                                                        // Add the dock menu button if this pane is a dock
-                                                        let dock_icon =
-                                                            icon_for_dock_anchor(anchor);
-
-                                                        tab_bar_button(
-                                                            1,
-                                                            dock_icon,
-                                                            cx,
-                                                            |position| DeployDockMenu { position },
-                                                        )
-                                                    })
-                                                    .unwrap_or_else(|| {
-                                                        // Add the split menu if this pane is not a dock
-                                                        tab_bar_button(
-                                                            2,
-                                                            "icons/split_12.svg",
-                                                            cx,
-                                                            |position| DeploySplitMenu { position },
-                                                        )
-                                                    }),
-                                            )
-                                            // Add the close dock button if this pane is a dock
-                                            .with_children(self.docked.map(|_| {
-                                                tab_bar_button(
-                                                    3,
-                                                    "icons/x_mark_thin_8.svg",
-                                                    cx,
-                                                    |_| HideDock,
-                                                )
-                                            }))
-                                            .contained()
-                                            .with_style(
-                                                theme.workspace.tab_bar.pane_button_container,
-                                            )
-                                            .flex(1., false)
-                                            .boxed(),
-                                    )
+                                    tab_row.add_child(self.render_tab_bar_buttons(&theme, cx))
                                 }
 
                                 tab_row
@@ -1440,14 +1370,39 @@ impl View for Pane {
                                     .flex(1., false)
                                     .named("tab bar")
                             })
-                            .with_child(ChildView::new(&self.toolbar, cx).expanded().boxed())
-                            .with_child(ChildView::new(active_item, cx).flex(1., true).boxed())
+                            .with_child({
+                                enum PaneContentTabDropTarget {}
+                                dragged_item_receiver::<PaneContentTabDropTarget, _>(
+                                    0,
+                                    self.active_item_index + 1,
+                                    false,
+                                    Some(100.),
+                                    cx,
+                                    {
+                                        let toolbar = self.toolbar.clone();
+                                        move |_, cx| {
+                                            Flex::column()
+                                                .with_child(
+                                                    ChildView::new(&toolbar, cx).expanded().boxed(),
+                                                )
+                                                .with_child(
+                                                    ChildView::new(active_item, cx)
+                                                        .flex(1., true)
+                                                        .boxed(),
+                                                )
+                                                .boxed()
+                                        }
+                                    },
+                                )
+                                .flex(1., true)
+                                .boxed()
+                            })
                             .boxed()
                     } else {
                         enum EmptyPane {}
                         let theme = cx.global::<Settings>().theme.clone();
 
-                        MouseEventHandler::<EmptyPane>::new(0, cx, |_, _| {
+                        dragged_item_receiver::<EmptyPane, _>(0, 0, false, None, cx, |_, _| {
                             Empty::new()
                                 .contained()
                                 .with_background_color(theme.workspace.background)
@@ -1455,10 +1410,6 @@ impl View for Pane {
                         })
                         .on_down(MouseButton::Left, |_, cx| {
                             cx.focus_parent_view();
-                        })
-                        .on_up(MouseButton::Left, {
-                            let pane = this.clone();
-                            move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, 0, cx)
                         })
                         .boxed()
                     }

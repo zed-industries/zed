@@ -62,6 +62,7 @@ pub struct Workspace {
     pub joining_project_message: ContainedText,
     pub external_location_message: ContainedText,
     pub dock: Dock,
+    pub drop_target_overlay_color: Color,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -150,7 +151,6 @@ pub struct TabBar {
     pub inactive_pane: TabStyles,
     pub dragged_tab: Tab,
     pub height: f32,
-    pub drop_target_overlay_color: Color,
 }
 
 impl TabBar {

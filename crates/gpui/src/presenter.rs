@@ -402,10 +402,10 @@ impl Presenter {
                 MouseEvent::Down(_) | MouseEvent::Up(_) => {
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(self.mouse_position) {
+                            valid_regions.push(region.clone());
                             if region.notify_on_click {
                                 notified_views.insert(region.id().view_id());
                             }
-                            valid_regions.push(region.clone());
                         }
                     }
                 }
@@ -485,9 +485,7 @@ impl Presenter {
                     event_cx.handled = true;
                     event_cx.with_current_view(valid_region.id().view_id(), {
                         let region_event = mouse_event.clone();
-                        |cx| {
-                            callback(region_event, cx);
-                        }
+                        |cx| callback(region_event, cx)
                     });
                 }
 
@@ -708,6 +706,16 @@ impl<'a> PaintContext<'a> {
     }
 
     #[inline]
+    pub fn paint_stacking_context<F>(&mut self, clip_bounds: Option<RectF>, f: F)
+    where
+        F: FnOnce(&mut Self),
+    {
+        self.scene.push_stacking_context(clip_bounds);
+        f(self);
+        self.scene.pop_stacking_context();
+    }
+
+    #[inline]
     pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
     where
         F: FnOnce(&mut Self),
@@ -794,7 +802,7 @@ impl<'a> EventContext<'a> {
         self.notify_count
     }
 
-    pub fn propogate_event(&mut self) {
+    pub fn propagate_event(&mut self) {
         self.handled = false;
     }
 }
@@ -851,6 +859,13 @@ impl Axis {
         match self {
             Self::Horizontal => Self::Vertical,
             Self::Vertical => Self::Horizontal,
+        }
+    }
+
+    pub fn component(&self, point: Vector2F) -> f32 {
+        match self {
+            Self::Horizontal => point.x(),
+            Self::Vertical => point.y(),
         }
     }
 }

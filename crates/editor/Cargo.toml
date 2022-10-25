@@ -20,6 +20,7 @@ test-support = [
 ]
 
 [dependencies]
+drag_and_drop = { path = "../drag_and_drop" }
 text = { path = "../text" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }

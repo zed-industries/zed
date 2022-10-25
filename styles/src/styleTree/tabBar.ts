@@ -75,10 +75,6 @@ export default function tabBar(colorScheme: ColorScheme) {
   return {
     height,
     background: background(layer),
-    dropTargetOverlayColor: withOpacity(
-      foreground(layer),
-      0.6
-    ),
     activePane: {
       activeTab: activePaneActiveTab,
       inactiveTab: tab,

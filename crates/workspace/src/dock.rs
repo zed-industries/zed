@@ -1,7 +1,7 @@
 use collections::HashMap;
 use gpui::{
     actions,
-    elements::{ChildView, Container, Empty, MouseEventHandler, Side, Svg},
+    elements::{ChildView, Container, Empty, MouseEventHandler, ParentElement, Side, Stack, Svg},
     impl_internal_actions, Border, CursorStyle, Element, ElementBox, Entity, MouseButton,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -9,7 +9,9 @@ use serde::Deserialize;
 use settings::{DockAnchor, Settings};
 use theme::Theme;
 
-use crate::{sidebar::SidebarSide, ItemHandle, Pane, StatusItemView, Workspace};
+use crate::{
+    handle_dropped_item, sidebar::SidebarSide, ItemHandle, Pane, StatusItemView, Workspace,
+};
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct MoveDock(pub DockAnchor);
@@ -24,7 +26,8 @@ actions!(
         HideDock,
         AnchorDockRight,
         AnchorDockBottom,
-        ExpandDock
+        ExpandDock,
+        MoveActiveItemToDock,
     ]
 );
 impl_internal_actions!(dock, [MoveDock, AddDefaultItemToDock]);
@@ -46,6 +49,30 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(
         |workspace: &mut Workspace, _: &ExpandDock, cx: &mut ViewContext<Workspace>| {
             Dock::move_dock(workspace, &MoveDock(DockAnchor::Expanded), cx)
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &MoveActiveItemToDock, cx: &mut ViewContext<Workspace>| {
+            if let Some(active_item) = workspace.active_item(cx) {
+                let item_id = active_item.id();
+
+                let from = workspace.active_pane();
+                let to = workspace.dock_pane();
+                if from.id() == to.id() {
+                    return;
+                }
+
+                let destination_index = to.read(cx).items_len() + 1;
+
+                Pane::move_item(
+                    workspace,
+                    from.clone(),
+                    to.clone(),
+                    item_id,
+                    destination_index,
+                    cx,
+                );
+            }
         },
     );
 }
@@ -283,25 +310,34 @@ impl Dock {
                 DockAnchor::Expanded => {
                     enum ExpandedDockWash {}
                     enum ExpandedDockPane {}
-                    Container::new(
-                        MouseEventHandler::<ExpandedDockWash>::new(0, cx, |_state, cx| {
+                    Stack::new()
+                        .with_child(
+                            // Render wash under the dock which when clicked hides it
+                            MouseEventHandler::<ExpandedDockWash>::new(0, cx, |_, _| {
+                                Empty::new()
+                                    .contained()
+                                    .with_background_color(style.wash_color)
+                                    .boxed()
+                            })
+                            .capture_all()
+                            .on_down(MouseButton::Left, |_, cx| {
+                                cx.dispatch_action(HideDock);
+                            })
+                            .with_cursor_style(CursorStyle::Arrow)
+                            .boxed(),
+                        )
+                        .with_child(
                             MouseEventHandler::<ExpandedDockPane>::new(0, cx, |_state, cx| {
                                 ChildView::new(&self.pane, cx).boxed()
                             })
+                            // Make sure all events directly under the dock pane
+                            // are captured
                             .capture_all()
                             .contained()
                             .with_style(style.maximized)
-                            .boxed()
-                        })
-                        .capture_all()
-                        .on_down(MouseButton::Left, |_, cx| {
-                            cx.dispatch_action(HideDock);
-                        })
-                        .with_cursor_style(CursorStyle::Arrow)
-                        .boxed(),
-                    )
-                    .with_background_color(style.wash_color)
-                    .boxed()
+                            .boxed(),
+                        )
+                        .boxed()
                 }
             })
     }
@@ -338,9 +374,11 @@ impl View for ToggleDockButton {
             return Empty::new().boxed();
         }
 
-        let dock_position = workspace.unwrap().read(cx).dock.position;
+        let workspace = workspace.unwrap();
+        let dock_position = workspace.read(cx).dock.position;
 
         let theme = cx.global::<Settings>().theme.clone();
+
         let button = MouseEventHandler::<Self>::new(0, cx, {
             let theme = theme.clone();
             move |state, _| {
@@ -361,7 +399,12 @@ impl View for ToggleDockButton {
                     .boxed()
             }
         })
-        .with_cursor_style(CursorStyle::PointingHand);
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_up(MouseButton::Left, move |event, cx| {
+            let dock_pane = workspace.read(cx.app).dock_pane();
+            let drop_index = dock_pane.read(cx.app).items_len() + 1;
+            handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
+        });
 
         if dock_position.is_visible() {
             button
