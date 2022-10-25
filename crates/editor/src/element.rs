@@ -31,7 +31,7 @@ use gpui::{
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
     Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
-    PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
 use language::{Bias, CursorShape, DiagnosticSeverity, OffsetUtf16, Point, Selection};
@@ -2189,7 +2189,7 @@ pub struct HighlightedRangeLine {
 }
 
 impl HighlightedRange {
-    pub fn paint(&self, bounds: RectF, scene: &mut Scene) {
+    pub fn paint(&self, bounds: RectF, scene: &mut SceneBuilder) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
             self.paint_lines(self.start_y, &self.lines[0..1], bounds, scene);
             self.paint_lines(
@@ -2208,7 +2208,7 @@ impl HighlightedRange {
         start_y: f32,
         lines: &[HighlightedRangeLine],
         bounds: RectF,
-        scene: &mut Scene,
+        scene: &mut SceneBuilder,
     ) {
         if lines.is_empty() {
             return;
@@ -2375,7 +2375,7 @@ mod tests {
 
         let mut element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
 
-        let mut scene = Scene::new(1.0);
+        let mut scene = SceneBuilder::new(1.0);
         let mut presenter = cx.build_presenter(window_id, 30., Default::default());
         let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
         let (size, mut state) = element.layout(

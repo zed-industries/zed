@@ -18,7 +18,7 @@ use crate::{
 pub use mouse_event::*;
 pub use mouse_region::*;
 
-pub struct Scene {
+pub struct SceneBuilder {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
@@ -176,18 +176,12 @@ pub struct Image {
     pub data: Arc<ImageData>,
 }
 
-impl Scene {
-    pub fn new(scale_factor: f32) -> Self {
-        let stacking_context = StackingContext::new(0, None);
-        Scene {
-            scale_factor,
-            stacking_contexts: vec![stacking_context],
-            active_stacking_context_stack: vec![0],
-            #[cfg(debug_assertions)]
-            mouse_region_ids: Default::default(),
-        }
-    }
+pub struct Scene {
+    scale_factor: f32,
+    stacking_contexts: Vec<StackingContext>,
+}
 
+impl Scene {
     pub fn scale_factor(&self) -> f32 {
         self.scale_factor
     }
@@ -204,16 +198,41 @@ impl Scene {
     }
 
     pub fn mouse_regions(&self) -> Vec<(MouseRegion, usize)> {
-        let mut regions = Vec::new();
-        for stacking_context in self.stacking_contexts.iter() {
-            for layer in &stacking_context.layers {
-                for mouse_region in &layer.mouse_regions {
-                    regions.push((mouse_region.clone(), stacking_context.depth));
-                }
-            }
+        self.stacking_contexts
+            .iter()
+            .flat_map(|context| {
+                context
+                    .layers
+                    .iter()
+                    .flat_map(|layer| &layer.mouse_regions)
+                    .map(|region| (region.clone(), context.depth))
+            })
+            .collect()
+    }
+}
+
+impl SceneBuilder {
+    pub fn new(scale_factor: f32) -> Self {
+        let stacking_context = StackingContext::new(0, None);
+        SceneBuilder {
+            scale_factor,
+            stacking_contexts: vec![stacking_context],
+            active_stacking_context_stack: vec![0],
+            #[cfg(debug_assertions)]
+            mouse_region_ids: Default::default(),
         }
-        regions.sort_by_key(|(_, depth)| *depth);
-        regions
+    }
+
+    pub fn build(mut self) -> Scene {
+        self.stacking_contexts.sort_by_key(|context| context.depth);
+        Scene {
+            scale_factor: self.scale_factor,
+            stacking_contexts: self.stacking_contexts,
+        }
+    }
+
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
     }
 
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {

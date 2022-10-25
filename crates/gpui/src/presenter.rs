@@ -8,13 +8,14 @@ use crate::{
     platform::{CursorStyle, Event},
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
-        MouseMove, MouseScrollWheel, MouseUp, MouseUpOut,
+        MouseMove, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
     },
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, Appearance,
     AssetCache, ElementBox, Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent,
-    MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene,
-    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView, RenderContext, RenderParams,
+    SceneBuilder, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -135,17 +136,18 @@ impl Presenter {
         refreshing: bool,
         cx: &mut MutableAppContext,
     ) -> Scene {
-        let mut scene = Scene::new(scale_factor);
+        let mut scene_builder = SceneBuilder::new(scale_factor);
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             self.layout(window_size, refreshing, cx);
-            let mut paint_cx = self.build_paint_context(&mut scene, window_size, cx);
+            let mut paint_cx = self.build_paint_context(&mut scene_builder, window_size, cx);
             paint_cx.paint(
                 root_view_id,
                 Vector2F::zero(),
                 RectF::new(Vector2F::zero(), window_size),
             );
             self.text_layout_cache.finish_frame();
+            let scene = scene_builder.build();
             self.cursor_regions = scene.cursor_regions();
             self.mouse_regions = scene.mouse_regions();
 
@@ -154,11 +156,12 @@ impl Presenter {
                     self.dispatch_event(event, true, cx);
                 }
             }
+
+            scene
         } else {
             log::error!("could not find root_view_id for window {}", self.window_id);
+            scene_builder.build()
         }
-
-        scene
     }
 
     fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
@@ -196,7 +199,7 @@ impl Presenter {
 
     pub fn build_paint_context<'a>(
         &'a mut self,
-        scene: &'a mut Scene,
+        scene: &'a mut SceneBuilder,
         window_size: Vector2F,
         cx: &'a mut MutableAppContext,
     ) -> PaintContext {
@@ -689,7 +692,7 @@ pub struct PaintContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     view_stack: Vec<usize>,
     pub window_size: Vector2F,
-    pub scene: &'a mut Scene,
+    pub scene: &'a mut SceneBuilder,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub app: &'a AppContext,
