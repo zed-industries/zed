@@ -567,6 +567,10 @@ impl Db for PostgresDb {
             (email_address, github_login, github_user_id, admin, invite_count, invite_code)
             VALUES
             ($1, $2, $3, 'f', $4, $5)
+            ON CONFLICT (github_login) DO UPDATE SET
+                email_address = excluded.email_address,
+                github_user_id = excluded.github_user_id,
+                admin = excluded.admin
             RETURNING id, metrics_id::text
             ",
         )
@@ -616,6 +620,7 @@ impl Db for PostgresDb {
                     (user_id_a, user_id_b, a_to_b, should_notify, accepted)
                 VALUES
                     ($1, $2, 't', 't', 't')
+                ON CONFLICT DO NOTHING
                 ",
             )
             .bind(inviting_user_id)
