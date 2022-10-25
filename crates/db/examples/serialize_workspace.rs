@@ -25,26 +25,19 @@ fn main() -> anyhow::Result<()> {
 
     // Order scrambled + sleeps added because sqlite only has 1 second resolution on
     // their timestamps
-    db.update_worktree_roots(&workspace_7.workspace_id, &["/tmp2"])
-        .unwrap();
+    db.update_worktree_roots(&workspace_7.workspace_id, &["/tmp2"]);
     sleep(Duration::from_secs(1));
-    db.update_worktree_roots(&workspace_1.workspace_id, &["/tmp1"])
-        .unwrap();
+    db.update_worktree_roots(&workspace_1.workspace_id, &["/tmp1"]);
     sleep(Duration::from_secs(1));
-    db.update_worktree_roots(&workspace_2.workspace_id, &["/tmp1", "/tmp2"])
-        .unwrap();
+    db.update_worktree_roots(&workspace_2.workspace_id, &["/tmp1", "/tmp2"]);
     sleep(Duration::from_secs(1));
-    db.update_worktree_roots(&workspace_3.workspace_id, &["/tmp1", "/tmp2", "/tmp3"])
-        .unwrap();
+    db.update_worktree_roots(&workspace_3.workspace_id, &["/tmp1", "/tmp2", "/tmp3"]);
     sleep(Duration::from_secs(1));
-    db.update_worktree_roots(&workspace_4.workspace_id, &["/tmp2", "/tmp3"])
-        .unwrap();
+    db.update_worktree_roots(&workspace_4.workspace_id, &["/tmp2", "/tmp3"]);
     sleep(Duration::from_secs(1));
-    db.update_worktree_roots(&workspace_5.workspace_id, &["/tmp2", "/tmp3", "/tmp4"])
-        .unwrap();
+    db.update_worktree_roots(&workspace_5.workspace_id, &["/tmp2", "/tmp3", "/tmp4"]);
     sleep(Duration::from_secs(1));
-    db.update_worktree_roots(&workspace_6.workspace_id, &["/tmp2", "/tmp4"])
-        .unwrap();
+    db.update_worktree_roots(&workspace_6.workspace_id, &["/tmp2", "/tmp4"]);
 
     db.write_to(file).ok();
 
