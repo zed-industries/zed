@@ -38,8 +38,8 @@ struct StateInner {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ListOffset {
-    item_ix: usize,
-    offset_in_item: f32,
+    pub item_ix: usize,
+    pub offset_in_item: f32,
 }
 
 #[derive(Clone)]
@@ -112,18 +112,7 @@ impl Element for List {
         let mut new_items = SumTree::new();
         let mut rendered_items = VecDeque::new();
         let mut rendered_height = 0.;
-        let mut scroll_top = state
-            .logical_scroll_top
-            .unwrap_or_else(|| match state.orientation {
-                Orientation::Top => ListOffset {
-                    item_ix: 0,
-                    offset_in_item: 0.,
-                },
-                Orientation::Bottom => ListOffset {
-                    item_ix: state.items.summary().count,
-                    offset_in_item: 0.,
-                },
-            });
+        let mut scroll_top = state.logical_scroll_top();
 
         // Render items after the scroll top, including those in the trailing overdraw.
         let mut cursor = old_items.cursor::<Count>();
@@ -421,6 +410,20 @@ impl ListState {
     ) {
         self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
     }
+
+    pub fn logical_scroll_top(&self) -> ListOffset {
+        self.0.borrow().logical_scroll_top()
+    }
+
+    pub fn scroll_to(&self, mut scroll_top: ListOffset) {
+        let state = &mut *self.0.borrow_mut();
+        let item_count = state.items.summary().count;
+        if scroll_top.item_ix >= item_count {
+            scroll_top.item_ix = item_count;
+            scroll_top.offset_in_item = 0.;
+        }
+        state.logical_scroll_top = Some(scroll_top);
+    }
 }
 
 impl StateInner {
@@ -512,6 +515,20 @@ impl StateInner {
         }
 
         cx.notify();
+    }
+
+    fn logical_scroll_top(&self) -> ListOffset {
+        self.logical_scroll_top
+            .unwrap_or_else(|| match self.orientation {
+                Orientation::Top => ListOffset {
+                    item_ix: 0,
+                    offset_in_item: 0.,
+                },
+                Orientation::Bottom => ListOffset {
+                    item_ix: self.items.summary().count,
+                    offset_in_item: 0.,
+                },
+            })
     }
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> f32 {

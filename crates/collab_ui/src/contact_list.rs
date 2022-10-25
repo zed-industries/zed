@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 use crate::contacts_popover;
 use call::ActiveCall;
@@ -334,8 +334,14 @@ impl ContactList {
         } else if !self.entries.is_empty() {
             self.selection = Some(0);
         }
-        cx.notify();
         self.list_state.reset(self.entries.len());
+        if let Some(ix) = self.selection {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: ix,
+                offset_in_item: 0.,
+            });
+        }
+        cx.notify();
     }
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
@@ -346,8 +352,14 @@ impl ContactList {
                 self.selection = None;
             }
         }
-        cx.notify();
         self.list_state.reset(self.entries.len());
+        if let Some(ix) = self.selection {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: ix,
+                offset_in_item: 0.,
+            });
+        }
+        cx.notify();
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -404,7 +416,7 @@ impl ContactList {
         let executor = cx.background().clone();
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
-        self.entries.clear();
+        let old_entries = mem::take(&mut self.entries);
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
             let room = room.read(cx);
@@ -653,7 +665,47 @@ impl ContactList {
             }
         }
 
+        let old_scroll_top = self.list_state.logical_scroll_top();
         self.list_state.reset(self.entries.len());
+
+        // Attempt to maintain the same scroll position.
+        if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
+            let new_scroll_top = self
+                .entries
+                .iter()
+                .position(|entry| entry == old_top_entry)
+                .map(|item_ix| ListOffset {
+                    item_ix,
+                    offset_in_item: old_scroll_top.offset_in_item,
+                })
+                .or_else(|| {
+                    let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
+                    let item_ix = self
+                        .entries
+                        .iter()
+                        .position(|entry| entry == entry_after_old_top)?;
+                    Some(ListOffset {
+                        item_ix,
+                        offset_in_item: 0.,
+                    })
+                })
+                .or_else(|| {
+                    let entry_before_old_top =
+                        old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
+                    let item_ix = self
+                        .entries
+                        .iter()
+                        .position(|entry| entry == entry_before_old_top)?;
+                    Some(ListOffset {
+                        item_ix,
+                        offset_in_item: 0.,
+                    })
+                });
+
+            self.list_state
+                .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+        }
+
         cx.notify();
     }
 
