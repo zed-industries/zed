@@ -235,8 +235,8 @@ impl SceneBuilder {
         self.scale_factor
     }
 
-    pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
-        let height = self.active_stacking_context().height + 1;
+    pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>, height: Option<usize>) {
+        let height = height.unwrap_or_else(|| self.active_stacking_context().height + 1);
         self.active_stacking_context_stack
             .push(self.stacking_contexts.len());
         self.stacking_contexts

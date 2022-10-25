@@ -791,7 +791,7 @@ impl EditorElement {
         cx.scene.pop_layer();
 
         if let Some((position, context_menu)) = layout.context_menu.as_mut() {
-            cx.scene.push_stacking_context(None);
+            cx.scene.push_stacking_context(None, None);
             let cursor_row_layout =
                 &layout.position_map.line_layouts[(position.row() - start_row) as usize];
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
@@ -820,7 +820,7 @@ impl EditorElement {
         }
 
         if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
-            cx.scene.push_stacking_context(None);
+            cx.scene.push_stacking_context(None, None);
 
             // This is safe because we check on layout whether the required row is available
             let hovered_row_layout =

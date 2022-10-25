@@ -16,6 +16,7 @@ pub struct Overlay {
     fit_mode: OverlayFitMode,
     position_mode: OverlayPositionMode,
     hoverable: bool,
+    height: Option<usize>,
 }
 
 #[derive(Copy, Clone)]
@@ -82,6 +83,7 @@ impl Overlay {
             fit_mode: OverlayFitMode::None,
             position_mode: OverlayPositionMode::Window,
             hoverable: false,
+            height: None,
         }
     }
 
@@ -107,6 +109,11 @@ impl Overlay {
 
     pub fn with_hoverable(mut self, hoverable: bool) -> Self {
         self.hoverable = hoverable;
+        self
+    }
+
+    pub fn with_height(mut self, height: usize) -> Self {
+        self.height = Some(height);
         self
     }
 }
@@ -204,7 +211,7 @@ impl Element for Overlay {
             OverlayFitMode::None => {}
         }
 
-        cx.paint_stacking_context(None, |cx| {
+        cx.paint_stacking_context(None, self.height, |cx| {
             if self.hoverable {
                 enum OverlayHoverCapture {}
                 // Block hovers in lower stacking contexts

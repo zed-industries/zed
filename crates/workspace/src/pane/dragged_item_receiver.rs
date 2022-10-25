@@ -48,7 +48,7 @@ where
                             .map(|(dir, margin)| dir.along_edge(bounds, margin))
                             .unwrap_or(bounds);
 
-                        cx.paint_stacking_context(None, |cx| {
+                        cx.paint_stacking_context(None, None, |cx| {
                             cx.scene.push_quad(Quad {
                                 bounds: overlay_region,
                                 background: Some(overlay_color(cx)),
