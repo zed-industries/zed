@@ -38,7 +38,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v2
         with:
-          clean: false
+          clean: true
             
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
@@ -74,7 +74,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v2
         with:
-          clean: false
+          clean: true
 
       - name: Validate version
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
