@@ -73,7 +73,10 @@ enum ContactEntry {
     },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
-    Contact(Arc<Contact>),
+    Contact {
+        contact: Arc<Contact>,
+        calling: bool,
+    },
 }
 
 impl PartialEq for ContactEntry {
@@ -121,8 +124,13 @@ impl PartialEq for ContactEntry {
                     return user_1.id == user_2.id;
                 }
             }
-            ContactEntry::Contact(contact_1) => {
-                if let ContactEntry::Contact(contact_2) = other {
+            ContactEntry::Contact {
+                contact: contact_1, ..
+            } => {
+                if let ContactEntry::Contact {
+                    contact: contact_2, ..
+                } = other
+                {
                     return contact_1.user.id == contact_2.user.id;
                 }
             }
@@ -255,8 +263,9 @@ impl ContactList {
                     is_selected,
                     cx,
                 ),
-                ContactEntry::Contact(contact) => Self::render_contact(
+                ContactEntry::Contact { contact, calling } => Self::render_contact(
                     contact,
+                    *calling,
                     &this.project,
                     &theme.contact_list,
                     is_selected,
@@ -349,8 +358,8 @@ impl ContactList {
                         let section = *section;
                         self.toggle_expanded(&ToggleExpanded(section), cx);
                     }
-                    ContactEntry::Contact(contact) => {
-                        if contact.online && !contact.busy {
+                    ContactEntry::Contact { contact, calling } => {
+                        if contact.online && !contact.busy && !calling {
                             self.call(
                                 &Call {
                                     recipient_user_id: contact.user.id,
@@ -621,9 +630,13 @@ impl ContactList {
                 if !matches.is_empty() {
                     self.entries.push(ContactEntry::Header(section));
                     if !self.collapsed_sections.contains(&section) {
+                        let active_call = &ActiveCall::global(cx).read(cx);
                         for mat in matches {
                             let contact = &contacts[mat.candidate_id];
-                            self.entries.push(ContactEntry::Contact(contact.clone()));
+                            self.entries.push(ContactEntry::Contact {
+                                contact: contact.clone(),
+                                calling: active_call.pending_invites().contains(&contact.user.id),
+                            });
                         }
                     }
                 }
@@ -968,13 +981,14 @@ impl ContactList {
 
     fn render_contact(
         contact: &Contact,
+        calling: bool,
         project: &ModelHandle<Project>,
         theme: &theme::ContactList,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let online = contact.online;
-        let busy = contact.busy;
+        let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let initial_project = project.clone();
         let mut element =
@@ -986,7 +1000,7 @@ impl ContactList {
                                 Empty::new()
                                     .collapsed()
                                     .contained()
-                                    .with_style(if contact.busy {
+                                    .with_style(if busy {
                                         theme.contact_status_busy
                                     } else {
                                         theme.contact_status_free
@@ -1020,6 +1034,17 @@ impl ContactList {
                         .flex(1., true)
                         .boxed(),
                     )
+                    .with_children(if calling {
+                        Some(
+                            Label::new("Calling".to_string(), theme.calling_indicator.text.clone())
+                                .contained()
+                                .with_style(theme.calling_indicator.container)
+                                .aligned()
+                                .boxed(),
+                        )
+                    } else {
+                        None
+                    })
                     .constrained()
                     .with_height(theme.row_height)
                     .contained()
@@ -1164,7 +1189,7 @@ impl ContactList {
         let initial_project = action.initial_project.clone();
         ActiveCall::global(cx)
             .update(cx, |call, cx| {
-                call.invite(recipient_user_id, initial_project.clone(), cx)
+                call.invite(recipient_user_id, initial_project, cx)
             })
             .detach_and_log_err(cx);
     }
