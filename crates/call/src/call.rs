@@ -3,6 +3,7 @@ pub mod room;
 
 use anyhow::{anyhow, Result};
 use client::{proto, Client, TypedEnvelope, User, UserStore};
+use collections::HashSet;
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Subscription, Task, WeakModelHandle,
@@ -27,8 +28,9 @@ pub struct IncomingCall {
 }
 
 pub struct ActiveCall {
-    location: Option<WeakModelHandle<Project>>,
     room: Option<(ModelHandle<Room>, Vec<Subscription>)>,
+    location: Option<WeakModelHandle<Project>>,
+    pending_invites: HashSet<u64>,
     incoming_call: (
         watch::Sender<Option<IncomingCall>>,
         watch::Receiver<Option<IncomingCall>>,
@@ -51,6 +53,7 @@ impl ActiveCall {
         Self {
             room: None,
             location: None,
+            pending_invites: Default::default(),
             incoming_call: watch::channel(),
             _subscriptions: vec![
                 client.add_request_handler(cx.handle(), Self::handle_incoming_call),
@@ -113,33 +116,49 @@ impl ActiveCall {
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        cx.spawn(|this, mut cx| async move {
-            if let Some(room) = this.read_with(&cx, |this, _| this.room().cloned()) {
-                let initial_project_id = if let Some(initial_project) = initial_project {
-                    Some(
-                        room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))
-                            .await?,
-                    )
-                } else {
-                    None
-                };
+        if !self.pending_invites.insert(recipient_user_id) {
+            return Task::ready(Err(anyhow!("user was already invited")));
+        }
 
-                room.update(&mut cx, |room, cx| {
-                    room.call(recipient_user_id, initial_project_id, cx)
-                })
-                .await?;
-            } else {
-                let room = cx
-                    .update(|cx| {
-                        Room::create(recipient_user_id, initial_project, client, user_store, cx)
+        cx.notify();
+        cx.spawn(|this, mut cx| async move {
+            let invite = async {
+                if let Some(room) = this.read_with(&cx, |this, _| this.room().cloned()) {
+                    let initial_project_id = if let Some(initial_project) = initial_project {
+                        Some(
+                            room.update(&mut cx, |room, cx| {
+                                room.share_project(initial_project, cx)
+                            })
+                            .await?,
+                        )
+                    } else {
+                        None
+                    };
+
+                    room.update(&mut cx, |room, cx| {
+                        room.call(recipient_user_id, initial_project_id, cx)
                     })
                     .await?;
+                } else {
+                    let room = cx
+                        .update(|cx| {
+                            Room::create(recipient_user_id, initial_project, client, user_store, cx)
+                        })
+                        .await?;
 
-                this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
-                    .await?;
+                    this.update(&mut cx, |this, cx| this.set_room(Some(room), cx))
+                        .await?;
+                };
+
+                Ok(())
             };
 
-            Ok(())
+            let result = invite.await;
+            this.update(&mut cx, |this, cx| {
+                this.pending_invites.remove(&recipient_user_id);
+                cx.notify();
+            });
+            result
         })
     }
 
@@ -273,5 +292,9 @@ impl ActiveCall {
 
     pub fn room(&self) -> Option<&ModelHandle<Room>> {
         self.room.as_ref().map(|(room, _)| room)
+    }
+
+    pub fn pending_invites(&self) -> &HashSet<u64> {
+        &self.pending_invites
     }
 }
