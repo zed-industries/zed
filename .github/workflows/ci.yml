@@ -79,9 +79,22 @@ jobs:
           clean: false
           submodules: 'recursive'
 
-      - name: Validate version
+      - name: Check that tag version matches package version
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: script/validate-version
+        run: |
+          set -eu
+          crate_version=$(script/get-crate-version zed)
+          tag_version=$(echo $GITHUB_REF_NAME | sed -e 's/^v//' -e 's/-pre$//')
+          if [[ $tag_version != $crate_version ]]; then
+            echo "zed crate version $crate_version does not match git tag version $tag_version"
+            exit 1
+          fi
+          echo "Publishing zed version: $crate_version"
+
+      - name: Enable the preview channel
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') }}
+        run: |
+          echo "ZED_PREVIEW_CHANNEL=1 >> $GITHUB_ENV
 
       - name: Create app bundle
         run: script/bundle
@@ -98,6 +111,7 @@ jobs:
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         with:
           draft: true
+          prerelease: ${{ endsWith(github.ref, '-pre') }}
           files: target/release/Zed.dmg
           overwrite: true
           body: ""

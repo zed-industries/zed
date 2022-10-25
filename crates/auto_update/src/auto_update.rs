@@ -1,7 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
+use client::{http::HttpClient, PREVIEW_CHANNEL, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, WeakViewHandle,
@@ -54,13 +54,9 @@ impl Entity for AutoUpdater {
     type Event = ();
 }
 
-pub fn init(
-    db: project::Db,
-    http_client: Arc<dyn HttpClient>,
-    server_url: String,
-    cx: &mut MutableAppContext,
-) {
+pub fn init(db: project::Db, http_client: Arc<dyn HttpClient>, cx: &mut MutableAppContext) {
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
+        let server_url = ZED_SERVER_URL.to_string();
         let auto_updater = cx.add_model(|cx| {
             let updater = AutoUpdater::new(version, db.clone(), http_client, server_url.clone());
             updater.start_polling(cx).detach();
@@ -177,9 +173,12 @@ impl AutoUpdater {
                 this.current_version,
             )
         });
+
+        let preview_param = if *PREVIEW_CHANNEL { "&preview=1" } else { "" };
+
         let mut response = client
             .get(
-                &format!("{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg"),
+                &format!("{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg{preview_param}"),
                 Default::default(),
                 true,
             )

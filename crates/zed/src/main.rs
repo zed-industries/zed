@@ -158,7 +158,7 @@ fn main() {
             initialize_workspace,
             default_item_factory,
         });
-        auto_update::init(db, http, client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(db, http, cx);
         workspace::init(app_state.clone(), cx);
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);

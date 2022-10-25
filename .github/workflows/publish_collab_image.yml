@@ -31,14 +31,14 @@ jobs:
       - name: Check that tag version matches package version
         run: |
           set -eu
-          package_version=$(cargo metadata --no-deps --format-version=1 | jq --raw-output '.packages[] | select(.name == "collab") | .version')
+          crate_version=$(script/get-crate-version collab)
           tag_version=$(echo $GITHUB_REF_NAME | sed -e 's/collab-v//')
-          if [[ $tag_version != $package_version ]]; then
-            echo "collab package version $package_version does not match git tag version $tag_version"
+          if [[ $tag_version != $crate_version ]]; then
+            echo "collab crate version $crate_version does not match git tag version $tag_version"
             exit 1
           fi
-          echo "Publishing image version: $package_version"
-          echo "COLLAB_VERSION=$package_version" >> $GITHUB_ENV
+          echo "Publishing collab version: $crate_version"
+          echo "COLLAB_VERSION=$crate_version" >> $GITHUB_ENV
 
       - name: Build docker image
         run: docker build . --tag registry.digitalocean.com/zed/collab:v${COLLAB_VERSION}
