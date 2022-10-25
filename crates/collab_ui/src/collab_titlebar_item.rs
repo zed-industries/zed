@@ -247,6 +247,7 @@ impl CollabTitlebarItem {
                 )
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
                 .with_anchor_corner(AnchorCorner::BottomLeft)
+                .with_z_index(999)
                 .boxed()
             }))
             .boxed()
