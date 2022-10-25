@@ -372,7 +372,7 @@ mod test {
             Mode::{self, *},
             Namespace, Operator,
         },
-        test::{NeovimBackedTestContext, VimTestContext},
+        test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
     };
 
     #[gpui::test]
@@ -741,11 +741,14 @@ mod test {
                 brown ˇfox
                 jumps ˇover"})
             .await;
-        cx.assert(indoc! {"
+        cx.assert_exempted(
+            indoc! {"
                 The quick
                 ˇ
-                brown fox"})
-            .await;
+                brown fox"},
+            ExemptionFeatures::DeletionOnEmptyLine,
+        )
+        .await;
     }
 
     #[gpui::test]

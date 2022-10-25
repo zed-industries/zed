@@ -85,372 +85,271 @@ fn expand_changed_word_selection(
 mod test {
     use indoc::indoc;
 
-    use crate::{
-        state::Mode,
-        test::{NeovimBackedTestContext, VimTestContext},
-    };
+    use crate::test::{ExemptionFeatures, NeovimBackedTestContext};
 
     #[gpui::test]
     async fn test_change_h(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "h"]).mode_after(Mode::Insert);
-        cx.assert("Teˇst", "Tˇst");
-        cx.assert("Tˇest", "ˇest");
-        cx.assert("ˇTest", "ˇTest");
-        cx.assert(
-            indoc! {"
-                Test
-                ˇtest"},
-            indoc! {"
-                Test
-                ˇtest"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "h"]);
+        cx.assert("Teˇst").await;
+        cx.assert("Tˇest").await;
+        cx.assert("ˇTest").await;
+        cx.assert(indoc! {"
+            Test
+            ˇtest"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_change_backspace(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["c", "backspace"]);
+        cx.assert("Teˇst").await;
+        cx.assert("Tˇest").await;
+        cx.assert("ˇTest").await;
+        cx.assert(indoc! {"
+            Test
+            ˇtest"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_change_l(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "l"]).mode_after(Mode::Insert);
-        cx.assert("Teˇst", "Teˇt");
-        cx.assert("Tesˇt", "Tesˇ");
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "l"]);
+        cx.assert("Teˇst").await;
+        cx.assert("Tesˇt").await;
     }
 
     #[gpui::test]
     async fn test_change_w(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "w"]).mode_after(Mode::Insert);
-        cx.assert("Teˇst", "Teˇ");
-        cx.assert("Tˇest test", "Tˇ test");
-        cx.assert("Testˇ  test", "Testˇtest");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "w"]);
+        cx.assert("Teˇst").await;
+        cx.assert("Tˇest test").await;
+        cx.assert("Testˇ  test").await;
+        cx.assert(indoc! {"
                 Test teˇst
-                test"},
-            indoc! {"
-                Test teˇ
-                test"},
-        );
-        cx.assert(
-            indoc! {"
+                test"})
+            .await;
+        cx.assert(indoc! {"
                 Test tesˇt
-                test"},
-            indoc! {"
-                Test tesˇ
-                test"},
-        );
-        cx.assert(
-            indoc! {"
+                test"})
+            .await;
+        cx.assert(indoc! {"
                 Test test
                 ˇ
-                test"},
-            indoc! {"
-                Test test
-                ˇ
-                test"},
-        );
+                test"})
+            .await;
 
         let mut cx = cx.binding(["c", "shift-w"]);
-        cx.assert("Test teˇst-test test", "Test teˇ test");
+        cx.assert("Test teˇst-test test").await;
     }
 
     #[gpui::test]
     async fn test_change_e(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "e"]).mode_after(Mode::Insert);
-        cx.assert("Teˇst Test", "Teˇ Test");
-        cx.assert("Tˇest test", "Tˇ test");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "e"]);
+        cx.assert("Teˇst Test").await;
+        cx.assert("Tˇest test").await;
+        cx.assert(indoc! {"
                 Test teˇst
-                test"},
-            indoc! {"
-                Test teˇ
-                test"},
-        );
-        cx.assert(
-            indoc! {"
+                test"})
+            .await;
+        cx.assert(indoc! {"
                 Test tesˇt
-                test"},
-            "Test tesˇ",
-        );
-        cx.assert(
-            indoc! {"
+                test"})
+            .await;
+        cx.assert(indoc! {"
                 Test test
                 ˇ
-                test"},
-            indoc! {"
-                Test test
-                ˇ"},
-        );
+                test"})
+            .await;
 
         let mut cx = cx.binding(["c", "shift-e"]);
-        cx.assert("Test teˇst-test test", "Test teˇ test");
+        cx.assert("Test teˇst-test test").await;
     }
 
     #[gpui::test]
     async fn test_change_b(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "b"]).mode_after(Mode::Insert);
-        cx.assert("Teˇst Test", "ˇst Test");
-        cx.assert("Test ˇtest", "ˇtest");
-        cx.assert("Test1 test2 ˇtest3", "Test1 ˇtest3");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "b"]);
+        cx.assert("Teˇst Test").await;
+        cx.assert("Test ˇtest").await;
+        cx.assert("Test1 test2 ˇtest3").await;
+        cx.assert(indoc! {"
                 Test test
-                ˇtest"},
-            indoc! {"
-                Test ˇ
-                test"},
-        );
+                ˇtest"})
+            .await;
         println!("Marker");
-        cx.assert(
-            indoc! {"
+        cx.assert(indoc! {"
                 Test test
                 ˇ
-                test"},
-            indoc! {"
-                Test ˇ
-                
-                test"},
-        );
+                test"})
+            .await;
 
         let mut cx = cx.binding(["c", "shift-b"]);
-        cx.assert("Test test-test ˇtest", "Test ˇtest");
+        cx.assert("Test test-test ˇtest").await;
     }
 
     #[gpui::test]
     async fn test_change_end_of_line(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "$"]).mode_after(Mode::Insert);
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox"},
-            indoc! {"
-                The qˇ
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "$"]);
+        cx.assert(indoc! {"
+            The qˇuick
+            brown fox"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            ˇ
+            brown fox"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_change_0(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "0"]).mode_after(Mode::Insert);
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox"},
-            indoc! {"
-                ˇuick
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "0"]);
+        cx.assert(indoc! {"
+            The qˇuick
+            brown fox"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            ˇ
+            brown fox"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_change_k(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "k"]).mode_after(Mode::Insert);
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "k"]);
+        cx.assert(indoc! {"
+            The quick
+            brown ˇfox
+            jumps over"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brown fox
+            jumps ˇover"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                brown ˇfox
-                jumps over"},
+            The qˇuick
+            brown fox
+            jumps over"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
+        cx.assert_exempted(
             indoc! {"
-                ˇ
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps ˇover"},
-            indoc! {"
-                The quick
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox
-                jumps over"},
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over"},
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over"},
-        );
+            ˇ
+            brown fox
+            jumps over"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
     }
 
     #[gpui::test]
     async fn test_change_j(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "j"]).mode_after(Mode::Insert);
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "j"]);
+        cx.assert(indoc! {"
+            The quick
+            brown ˇfox
+            jumps over"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                brown ˇfox
-                jumps over"},
+            The quick
+            brown fox
+            jumps ˇover"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
+        cx.assert(indoc! {"
+            The qˇuick
+            brown fox
+            jumps over"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps ˇover"},
-            indoc! {"
-                The quick
-                brown fox
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox
-                jumps over"},
-            indoc! {"
-                ˇ
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                ˇ"},
-            indoc! {"
-                The quick
-                brown fox
-                ˇ"},
-        );
+            The quick
+            brown fox
+            ˇ"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
     }
 
     #[gpui::test]
     async fn test_change_end_of_document(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "shift-g"]).mode_after(Mode::Insert);
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["c", "shift-g"]);
+        cx.assert(indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                brownˇ fox
-                jumps over
-                the lazy"},
+            The quick
+            brown fox
+            jumps over
+            the lˇazy"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brownˇ fox
-                jumps over
-                the lazy"},
-            indoc! {"
-                The quick
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                the lˇazy"},
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                ˇ"},
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                ˇ"},
-        );
+            The quick
+            brown fox
+            jumps over
+            ˇ"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
     }
 
     #[gpui::test]
     async fn test_change_gg(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "g", "g"]).mode_after(Mode::Insert);
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["c", "g", "g"]);
+        cx.assert(indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the lˇazy"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                brownˇ fox
-                jumps over
-                the lazy"},
+            The qˇuick
+            brown fox
+            jumps over
+            the lazy"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
+        cx.assert_exempted(
             indoc! {"
-                ˇ
-                jumps over
-                the lazy"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                the lˇazy"},
-            "ˇ",
-        );
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox
-                jumps over
-                the lazy"},
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over
-                the lazy"},
-        );
-        cx.assert(
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over
-                the lazy"},
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over
-                the lazy"},
-        );
+            ˇ
+            brown fox
+            jumps over
+            the lazy"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
     }
 
     #[gpui::test]
@@ -493,14 +392,15 @@ mod test {
     async fn test_repeated_cb(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Changing back any number of times from the start of the file doesn't
-        // switch to insert mode in vim. This is weird and painful to implement
-        cx.add_initial_state_exemption(indoc! {"
+        cx.add_initial_state_exemptions(
+            indoc! {"
             ˇThe quick brown
-            
+
             fox jumps-over
             the lazy dog
-            "});
+            "},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        );
 
         for count in 1..=5 {
             cx.assert_binding_matches_all(

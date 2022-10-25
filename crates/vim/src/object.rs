@@ -431,7 +431,7 @@ fn surrounding_markers(
 mod test {
     use indoc::indoc;
 
-    use crate::test::NeovimBackedTestContext;
+    use crate::test::{ExemptionFeatures, NeovimBackedTestContext};
 
     const WORD_LOCATIONS: &'static str = indoc! {"
         The quick ˇbrowˇnˇ   
@@ -482,25 +482,46 @@ mod test {
 
         cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
             .await;
-        // Visual text objects are slightly broken when used with non empty selections
-        // cx.assert_binding_matches_all(["v", "h", "i", "w"], WORD_LOCATIONS)
-        //     .await;
-        // cx.assert_binding_matches_all(["v", "l", "i", "w"], WORD_LOCATIONS)
-        //     .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "h", "i", "w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "l", "i", "w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
         cx.assert_binding_matches_all(["v", "i", "shift-w"], WORD_LOCATIONS)
             .await;
 
-        // Visual text objects are slightly broken when used with non empty selections
-        // cx.assert_binding_matches_all(["v", "i", "h", "shift-w"], WORD_LOCATIONS)
-        //     .await;
-        // cx.assert_binding_matches_all(["v", "i", "l", "shift-w"], WORD_LOCATIONS)
-        //     .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "i", "h", "shift-w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "i", "l", "shift-w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
 
-        // Visual around words is somewhat broken right now when it comes to newlines
-        // cx.assert_binding_matches_all(["v", "a", "w"], WORD_LOCATIONS)
-        //     .await;
-        // cx.assert_binding_matches_all(["v", "a", "shift-w"], WORD_LOCATIONS)
-        //     .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "a", "w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "a", "shift-w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        )
+        .await;
     }
 
     const SENTENCE_EXAMPLES: &[&'static str] = &[
@@ -511,17 +532,15 @@ mod test {
             the lazy doˇgˇ.ˇ ˇThe quick ˇ
             brown fox jumps over
         "},
-        // Position of the cursor after deletion between lines isn't quite right.
-        // Deletion in a sentence at the start of a line with whitespace is incorrect.
-        // indoc! {"
-        //     The quick brown fox jumps.
-        //     Over the lazy dog
-        //     ˇ
-        //     ˇ
-        //     ˇ  fox-jumpˇs over
-        //     the lazy dog.ˇ
-        //     ˇ
-        // "},
+        indoc! {"
+            The quick brown fox jumps.
+            Over the lazy dog
+            ˇ
+            ˇ
+            ˇ  fox-jumpˇs over
+            the lazy dog.ˇ
+            ˇ
+        "},
         r#"ˇThe ˇquick brownˇ.)ˇ]ˇ'ˇ" Brown ˇfox jumpsˇ.ˇ "#,
     ];
 
@@ -530,15 +549,28 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["c", "i", "s"]);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\nˇ\nˇ\n  fox-jumps over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceOnEmptyLines);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\nˇ  foxˇ-ˇjumpˇs over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceAtStartOfLineWithWhitespace);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\n  fox-jumps over\nthe lazy dog.ˇ\nˇ\n",
+            ExemptionFeatures::SentenceAfterPunctuationAtEndOfFile);
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
 
         let mut cx = cx.binding(["c", "a", "s"]);
-        // Resulting position is slightly incorrect for unintuitive reasons.
-        cx.add_initial_state_exemption("The quick brown?ˇ Fox Jumps! Over the lazy.");
-        // Changing around the sentence at the end of the line doesn't remove whitespace.'
-        cx.add_initial_state_exemption("The quick brown.)]\'\" Brown fox jumps.ˇ ");
+        cx.add_initial_state_exemptions(
+            "The quick brown?ˇ Fox Jumps! Over the lazy.",
+            ExemptionFeatures::IncorrectLandingPosition,
+        );
+        cx.add_initial_state_exemptions(
+            "The quick brown.)]\'\" Brown fox jumps.ˇ ",
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        );
 
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
@@ -550,15 +582,29 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "i", "s"]);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\nˇ\nˇ\n  fox-jumps over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceOnEmptyLines);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\nˇ  foxˇ-ˇjumpˇs over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceAtStartOfLineWithWhitespace);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\n  fox-jumps over\nthe lazy dog.ˇ\nˇ\n",
+            ExemptionFeatures::SentenceAfterPunctuationAtEndOfFile);
+
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
 
         let mut cx = cx.binding(["d", "a", "s"]);
-        // Resulting position is slightly incorrect for unintuitive reasons.
-        cx.add_initial_state_exemption("The quick brown?ˇ Fox Jumps! Over the lazy.");
-        // Changing around the sentence at the end of the line doesn't remove whitespace.'
-        cx.add_initial_state_exemption("The quick brown.)]\'\" Brown fox jumps.ˇ ");
+        cx.add_initial_state_exemptions(
+            "The quick brown?ˇ Fox Jumps! Over the lazy.",
+            ExemptionFeatures::IncorrectLandingPosition,
+        );
+        cx.add_initial_state_exemptions(
+            "The quick brown.)]\'\" Brown fox jumps.ˇ ",
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        );
 
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
@@ -571,14 +617,18 @@ mod test {
             .await
             .binding(["v", "i", "s"]);
         for sentence_example in SENTENCE_EXAMPLES {
-            cx.assert_all(sentence_example).await;
+            cx.assert_all_exempted(sentence_example, ExemptionFeatures::SentenceOnEmptyLines)
+                .await;
         }
 
-        // Visual around sentences is somewhat broken right now when it comes to newlines
-        // let mut cx = cx.binding(["d", "a", "s"]);
-        // for sentence_example in SENTENCE_EXAMPLES {
-        //     cx.assert_all(sentence_example).await;
-        // }
+        let mut cx = cx.binding(["v", "a", "s"]);
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all_exempted(
+                sentence_example,
+                ExemptionFeatures::AroundSentenceStartingBetweenIncludesWrongWhitespace,
+            )
+            .await;
+        }
     }
 
     // Test string with "`" for opening surrounders and "'" for closing surrounders
@@ -588,14 +638,13 @@ mod test {
         the ˇlazy dˇ'ˇoˇ`ˇg"};
 
     const SURROUNDING_OBJECTS: &[(char, char)] = &[
-        // ('\'', '\''), // Quote,
-        // ('`', '`'),   // Back Quote
-        // ('"', '"'),   // Double Quote
-        // ('"', '"'),   // Double Quote
-        ('(', ')'), // Parentheses
-        ('[', ']'), // SquareBrackets
-        ('{', '}'), // CurlyBrackets
-        ('<', '>'), // AngleBrackets
+        ('\'', '\''), // Quote
+        ('`', '`'),   // Back Quote
+        ('"', '"'),   // Double Quote
+        ('(', ')'),   // Parentheses
+        ('[', ']'),   // SquareBrackets
+        ('{', '}'),   // CurlyBrackets
+        ('<', '>'),   // AngleBrackets
     ];
 
     #[gpui::test]
@@ -603,16 +652,23 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for (start, end) in SURROUNDING_OBJECTS {
+            if ((start == &'\'' || start == &'`' || start == &'"')
+                && !ExemptionFeatures::QuotesSeekForward.supported())
+                || (start == &'<' && !ExemptionFeatures::AngleBracketsFreezeNeovim.supported())
+            {
+                continue;
+            }
+
             let marked_string = SURROUNDING_MARKER_STRING
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
 
-            // cx.assert_binding_matches_all(["c", "i", &start.to_string()], &marked_string)
-            //     .await;
+            cx.assert_binding_matches_all(["c", "i", &start.to_string()], &marked_string)
+                .await;
             cx.assert_binding_matches_all(["c", "i", &end.to_string()], &marked_string)
                 .await;
-            // cx.assert_binding_matches_all(["c", "a", &start.to_string()], &marked_string)
-            //     .await;
+            cx.assert_binding_matches_all(["c", "a", &start.to_string()], &marked_string)
+                .await;
             cx.assert_binding_matches_all(["c", "a", &end.to_string()], &marked_string)
                 .await;
         }
@@ -623,16 +679,22 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         for (start, end) in SURROUNDING_OBJECTS {
+            if ((start == &'\'' || start == &'`' || start == &'"')
+                && !ExemptionFeatures::QuotesSeekForward.supported())
+                || (start == &'<' && !ExemptionFeatures::AngleBracketsFreezeNeovim.supported())
+            {
+                continue;
+            }
             let marked_string = SURROUNDING_MARKER_STRING
                 .replace('`', &start.to_string())
                 .replace('\'', &end.to_string());
 
-            // cx.assert_binding_matches_all(["d", "i", &start.to_string()], &marked_string)
-            //     .await;
+            cx.assert_binding_matches_all(["d", "i", &start.to_string()], &marked_string)
+                .await;
             cx.assert_binding_matches_all(["d", "i", &end.to_string()], &marked_string)
                 .await;
-            // cx.assert_binding_matches_all(["d", "a", &start.to_string()], &marked_string)
-            //     .await;
+            cx.assert_binding_matches_all(["d", "a", &start.to_string()], &marked_string)
+                .await;
             cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
                 .await;
         }

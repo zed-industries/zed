@@ -8,6 +8,45 @@ use util::test::marked_text_offsets;
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
 
+pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[];
+
+/// Enum representing features we have tests for but which don't work, yet. Used
+/// to add exemptions and automatically
+#[derive(PartialEq, Eq)]
+pub enum ExemptionFeatures {
+    // MOTIONS
+    // Deletions on empty lines miss some newlines
+    DeletionOnEmptyLine,
+    // When a motion fails, it should should not apply linewise operations
+    OperatorAbortsOnFailedMotion,
+
+    // OBJECTS
+    // Resulting position after the operation is slightly incorrect for unintuitive reasons.
+    IncorrectLandingPosition,
+    // Operator around the text object at the end of the line doesn't remove whitespace.
+    AroundObjectLeavesWhitespaceAtEndOfLine,
+    // Sentence object on empty lines
+    SentenceOnEmptyLines,
+    // Whitespace isn't included with text objects at the start of the line
+    SentenceAtStartOfLineWithWhitespace,
+    // Whitespace around sentences is slightly incorrect when starting between sentences
+    AroundSentenceStartingBetweenIncludesWrongWhitespace,
+    // Non empty selection with text objects in visual mode
+    NonEmptyVisualTextObjects,
+    // Quote style surrounding text objects don't seek forward properly
+    QuotesSeekForward,
+    // Neovim freezes up for some reason with angle brackets
+    AngleBracketsFreezeNeovim,
+    // Sentence Doesn't backtrack when its at the end of the file
+    SentenceAfterPunctuationAtEndOfFile,
+}
+
+impl ExemptionFeatures {
+    pub fn supported(&self) -> bool {
+        SUPPORTED_FEATURES.contains(self)
+    }
+}
+
 pub struct NeovimBackedTestContext<'a> {
     cx: VimTestContext<'a>,
     // Lookup for exempted assertions. Keyed by the insertion text, and with a value indicating which
@@ -27,10 +66,22 @@ impl<'a> NeovimBackedTestContext<'a> {
         }
     }
 
-    pub fn add_initial_state_exemption(&mut self, initial_state: &str) {
-        let initial_state = initial_state.to_string();
-        // None represents all keybindings being exempted for that initial state
-        self.exemptions.insert(initial_state, None);
+    pub fn add_initial_state_exemptions(
+        &mut self,
+        marked_positions: &str,
+        missing_feature: ExemptionFeatures, // Feature required to support this exempted test case
+    ) {
+        if !missing_feature.supported() {
+            let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
+
+            for cursor_offset in cursor_offsets.iter() {
+                let mut marked_text = unmarked_text.clone();
+                marked_text.insert(*cursor_offset, 'ˇ');
+
+                // None represents all keybindings being exempted for that initial state
+                self.exemptions.insert(marked_text, None);
+            }
+        }
     }
 
     pub async fn simulate_shared_keystroke(&mut self, keystroke_text: &str) -> ContextHandle {
@@ -117,6 +168,18 @@ impl<'a> NeovimBackedTestContext<'a> {
             marked_text.insert(*cursor_offset, 'ˇ');
 
             self.assert_binding_matches(keystrokes, &marked_text).await;
+        }
+    }
+
+    pub async fn assert_binding_matches_all_exempted<const COUNT: usize>(
+        &mut self,
+        keystrokes: [&str; COUNT],
+        marked_positions: &str,
+        feature: ExemptionFeatures,
+    ) {
+        if SUPPORTED_FEATURES.contains(&feature) {
+            self.assert_binding_matches_all(keystrokes, marked_positions)
+                .await
         }
     }
 

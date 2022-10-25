@@ -4,7 +4,7 @@ use gpui::ContextHandle;
 
 use crate::state::Mode;
 
-use super::NeovimBackedTestContext;
+use super::{ExemptionFeatures, NeovimBackedTestContext, SUPPORTED_FEATURES};
 
 pub struct NeovimBackedBindingTestContext<'a, const COUNT: usize> {
     cx: NeovimBackedTestContext<'a>,
@@ -42,6 +42,20 @@ impl<'a, const COUNT: usize> NeovimBackedBindingTestContext<'a, COUNT> {
             .await
     }
 
+    pub async fn assert_exempted(
+        &mut self,
+        marked_positions: &str,
+        feature: ExemptionFeatures,
+    ) -> Option<(ContextHandle, ContextHandle)> {
+        if SUPPORTED_FEATURES.contains(&feature) {
+            self.cx
+                .assert_binding_matches(self.keystrokes_under_test, marked_positions)
+                .await
+        } else {
+            None
+        }
+    }
+
     pub fn assert_manual(
         &mut self,
         initial_state: &str,
@@ -62,6 +76,18 @@ impl<'a, const COUNT: usize> NeovimBackedBindingTestContext<'a, COUNT> {
         self.cx
             .assert_binding_matches_all(self.keystrokes_under_test, marked_positions)
             .await
+    }
+
+    pub async fn assert_all_exempted(
+        &mut self,
+        marked_positions: &str,
+        feature: ExemptionFeatures,
+    ) {
+        if SUPPORTED_FEATURES.contains(&feature) {
+            self.cx
+                .assert_binding_matches_all(self.keystrokes_under_test, marked_positions)
+                .await
+        }
     }
 }
 
