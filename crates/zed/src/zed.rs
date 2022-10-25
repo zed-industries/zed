@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
+use client::PREVIEW_CHANNEL;
 use collab_ui::{CollabTitlebarItem, ToggleCollaborationMenu};
 use collections::VecDeque;
 pub use editor;
@@ -377,9 +378,11 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
+    let channel = if *PREVIEW_CHANNEL { "Preview " } else { "" };
+    let version = env!("CARGO_PKG_VERSION");
     cx.prompt(
         gpui::PromptLevel::Info,
-        &format!("Zed {}", env!("CARGO_PKG_VERSION")),
+        &format!("Zed {channel}{version}"),
         &["OK"],
     );
 }
