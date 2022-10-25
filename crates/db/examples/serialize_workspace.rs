@@ -1,4 +1,4 @@
-use std::{fs::File, path::Path};
+use std::{fs::File, path::Path, thread::sleep, time::Duration};
 
 const TEST_FILE: &'static str = "test-db.db";
 
@@ -23,19 +23,27 @@ fn main() -> anyhow::Result<()> {
     let workspace_6 = db.workspace_for_worktree_roots(&[]);
     let workspace_7 = db.workspace_for_worktree_roots(&[]);
 
+    // Order scrambled + sleeps added because sqlite only has 1 second resolution on
+    // their timestamps
+    db.update_worktree_roots(&workspace_7.workspace_id, &["/tmp2"])
+        .unwrap();
+    sleep(Duration::from_secs(1));
     db.update_worktree_roots(&workspace_1.workspace_id, &["/tmp1"])
         .unwrap();
+    sleep(Duration::from_secs(1));
     db.update_worktree_roots(&workspace_2.workspace_id, &["/tmp1", "/tmp2"])
         .unwrap();
+    sleep(Duration::from_secs(1));
     db.update_worktree_roots(&workspace_3.workspace_id, &["/tmp1", "/tmp2", "/tmp3"])
         .unwrap();
+    sleep(Duration::from_secs(1));
     db.update_worktree_roots(&workspace_4.workspace_id, &["/tmp2", "/tmp3"])
         .unwrap();
+    sleep(Duration::from_secs(1));
     db.update_worktree_roots(&workspace_5.workspace_id, &["/tmp2", "/tmp3", "/tmp4"])
         .unwrap();
+    sleep(Duration::from_secs(1));
     db.update_worktree_roots(&workspace_6.workspace_id, &["/tmp2", "/tmp4"])
-        .unwrap();
-    db.update_worktree_roots(&workspace_7.workspace_id, &["/tmp2"])
         .unwrap();
 
     db.write_to(file).ok();
