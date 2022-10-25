@@ -26,6 +26,11 @@ pub struct SceneBuilder {
     mouse_region_ids: HashSet<MouseRegionId>,
 }
 
+pub struct Scene {
+    scale_factor: f32,
+    stacking_contexts: Vec<StackingContext>,
+}
+
 struct StackingContext {
     layers: Vec<Layer>,
     active_layer_stack: Vec<usize>,
@@ -174,11 +179,6 @@ pub struct Image {
     pub corner_radius: f32,
     pub grayscale: bool,
     pub data: Arc<ImageData>,
-}
-
-pub struct Scene {
-    scale_factor: f32,
-    stacking_contexts: Vec<StackingContext>,
 }
 
 impl Scene {
