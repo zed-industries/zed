@@ -38,11 +38,6 @@ impl<'a, const COUNT: usize> VimBindingTestContext<'a, COUNT> {
         }
     }
 
-    pub fn mode_after(mut self, mode_after: Mode) -> Self {
-        self.mode_after = mode_after;
-        self
-    }
-
     pub fn assert(&mut self, initial_state: &str, state_after: &str) {
         self.cx.assert_binding(
             self.keystrokes_under_test,

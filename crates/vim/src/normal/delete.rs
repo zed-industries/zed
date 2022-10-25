@@ -96,354 +96,256 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Mutab
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, test::VimTestContext};
+    use crate::{
+        state::Mode,
+        test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_delete_h(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "h"]);
-        cx.assert("Teˇst", "Tˇst");
-        cx.assert("Tˇest", "ˇest");
-        cx.assert("ˇTest", "ˇTest");
-        cx.assert(
-            indoc! {"
-                Test
-                ˇtest"},
-            indoc! {"
-                Test
-                ˇtest"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "h"]);
+        cx.assert("Teˇst").await;
+        cx.assert("Tˇest").await;
+        cx.assert("ˇTest").await;
+        cx.assert(indoc! {"
+            Test
+            ˇtest"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_l(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "l"]);
-        cx.assert("ˇTest", "ˇest");
-        cx.assert("Teˇst", "Teˇt");
-        cx.assert("Tesˇt", "Teˇs");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "l"]);
+        cx.assert("ˇTest").await;
+        cx.assert("Teˇst").await;
+        cx.assert("Tesˇt").await;
+        cx.assert(indoc! {"
                 Tesˇt
-                test"},
-            indoc! {"
-                Teˇs
-                test"},
-        );
+                test"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_w(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "w"]);
-        cx.assert("Teˇst", "Tˇe");
-        cx.assert("Tˇest test", "Tˇtest");
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "w"]);
+        cx.assert("Teˇst").await;
+        cx.assert("Tˇest test").await;
+        cx.assert(indoc! {"
+            Test teˇst
+            test"})
+            .await;
+        cx.assert(indoc! {"
+            Test tesˇt
+            test"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                Test teˇst
-                test"},
-            indoc! {"
-                Test tˇe
-                test"},
-        );
-        cx.assert(
-            indoc! {"
-                Test tesˇt
-                test"},
-            indoc! {"
-                Test teˇs
-                test"},
-        );
-        cx.assert(
-            indoc! {"
-                Test test
-                ˇ
-                test"},
-            indoc! {"
-                Test test
-                ˇ
-                test"},
-        );
+            Test test
+            ˇ
+            test"},
+            ExemptionFeatures::DeletionOnEmptyLine,
+        )
+        .await;
 
         let mut cx = cx.binding(["d", "shift-w"]);
-        cx.assert("Test teˇst-test test", "Test teˇtest");
+        cx.assert("Test teˇst-test test").await;
     }
 
     #[gpui::test]
     async fn test_delete_e(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "e"]);
-        cx.assert("Teˇst Test", "Teˇ Test");
-        cx.assert("Tˇest test", "Tˇ test");
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "e"]);
+        cx.assert("Teˇst Test").await;
+        cx.assert("Tˇest test").await;
+        cx.assert(indoc! {"
+            Test teˇst
+            test"})
+            .await;
+        cx.assert(indoc! {"
+            Test tesˇt
+            test"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                Test teˇst
-                test"},
-            indoc! {"
-                Test tˇe
-                test"},
-        );
-        cx.assert(
-            indoc! {"
-                Test tesˇt
-                test"},
-            "Test teˇs",
-        );
-        cx.assert(
-            indoc! {"
-                Test test
-                ˇ
-                test"},
-            indoc! {"
-                Test test
-                ˇ"},
-        );
+            Test test
+            ˇ
+            test"},
+            ExemptionFeatures::DeletionOnEmptyLine,
+        )
+        .await;
 
         let mut cx = cx.binding(["d", "shift-e"]);
-        cx.assert("Test teˇst-test test", "Test teˇ test");
+        cx.assert("Test teˇst-test test").await;
     }
 
     #[gpui::test]
     async fn test_delete_b(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "b"]);
-        cx.assert("Teˇst Test", "ˇst Test");
-        cx.assert("Test ˇtest", "ˇtest");
-        cx.assert("Test1 test2 ˇtest3", "Test1 ˇtest3");
-        cx.assert(
-            indoc! {"
-                Test test
-                ˇtest"},
-            // Trailing whitespace after cursor
-            indoc! {"
-                Testˇ 
-                test"},
-        );
-        cx.assert(
-            indoc! {"
-                Test test
-                ˇ
-                test"},
-            // Trailing whitespace after cursor
-            indoc! {"
-                Testˇ 
-                
-                test"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "b"]);
+        cx.assert("Teˇst Test").await;
+        cx.assert("Test ˇtest").await;
+        cx.assert("Test1 test2 ˇtest3").await;
+        cx.assert(indoc! {"
+            Test test
+            ˇtest"})
+            .await;
+        cx.assert(indoc! {"
+            Test test
+            ˇ
+            test"})
+            .await;
 
         let mut cx = cx.binding(["d", "shift-b"]);
-        cx.assert("Test test-test ˇtest", "Test ˇtest");
+        cx.assert("Test test-test ˇtest").await;
     }
 
     #[gpui::test]
     async fn test_delete_end_of_line(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "$"]);
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox"},
-            indoc! {"
-                The ˇq
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "$"]);
+        cx.assert(indoc! {"
+            The qˇuick
+            brown fox"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            ˇ
+            brown fox"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_0(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "0"]);
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox"},
-            indoc! {"
-                ˇuick
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "0"]);
+        cx.assert(indoc! {"
+            The qˇuick
+            brown fox"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            ˇ
+            brown fox"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_k(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "k"]);
-        cx.assert(
-            indoc! {"
-                The quick
-                brown ˇfox
-                jumps over"},
-            "jumps ˇover",
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps ˇover"},
-            "The quˇick",
-        );
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox
-                jumps over"},
-            indoc! {"
-                brownˇ fox
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                ˇbrown fox
-                jumps over"},
-            "ˇjumps over",
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "k"]);
+        cx.assert(indoc! {"
+            The quick
+            brown ˇfox
+            jumps over"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brown fox
+            jumps ˇover"})
+            .await;
+        cx.assert(indoc! {"
+            The qˇuick
+            brown fox
+            jumps over"})
+            .await;
+        cx.assert(indoc! {"
+            ˇbrown fox
+            jumps over"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_j(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "j"]);
-        cx.assert(
-            indoc! {"
-                The quick
-                brown ˇfox
-                jumps over"},
-            "The quˇick",
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps ˇover"},
-            indoc! {"
-                The quick
-                brown ˇfox"},
-        );
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox
-                jumps over"},
-            "jumpsˇ over",
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                ˇ"},
-            indoc! {"
-                The quick
-                ˇbrown fox"},
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "j"]);
+        cx.assert(indoc! {"
+            The quick
+            brown ˇfox
+            jumps over"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brown fox
+            jumps ˇover"})
+            .await;
+        cx.assert(indoc! {"
+            The qˇuick
+            brown fox
+            jumps over"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brown fox
+            ˇ"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_end_of_document(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "shift-g"]);
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["d", "shift-g"]);
+        cx.assert(indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                brownˇ fox
-                jumps over
-                the lazy"},
-            "The qˇuick",
-        );
-        cx.assert(
+            The quick
+            brown fox
+            jumps over
+            the lˇazy"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                brownˇ fox
-                jumps over
-                the lazy"},
-            "The qˇuick",
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                the lˇazy"},
-            indoc! {"
-                The quick
-                brown fox
-                jumpsˇ over"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                ˇ"},
-            indoc! {"
-                The quick
-                brown fox
-                ˇjumps over"},
-        );
+            The quick
+            brown fox
+            jumps over
+            ˇ"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
     }
 
     #[gpui::test]
     async fn test_delete_gg(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "g", "g"]);
-        cx.assert(
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["d", "g", "g"]);
+        cx.assert(indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"})
+            .await;
+        cx.assert(indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the lˇazy"})
+            .await;
+        cx.assert_exempted(
             indoc! {"
-                The quick
-                brownˇ fox
-                jumps over
-                the lazy"},
+            The qˇuick
+            brown fox
+            jumps over
+            the lazy"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
+        cx.assert_exempted(
             indoc! {"
-                jumpsˇ over
-                the lazy"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                the lˇazy"},
-            "ˇ",
-        );
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox
-                jumps over
-                the lazy"},
-            indoc! {"
-                brownˇ fox
-                jumps over
-                the lazy"},
-        );
-        cx.assert(
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over
-                the lazy"},
-            indoc! {"
-                ˇbrown fox
-                jumps over
-                the lazy"},
-        );
+            ˇ
+            brown fox
+            jumps over
+            the lazy"},
+            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+        )
+        .await;
     }
 
     #[gpui::test]

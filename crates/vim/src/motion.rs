@@ -15,7 +15,7 @@ use crate::{
     Vim,
 };
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Motion {
     Left,
     Backspace,
@@ -139,14 +139,22 @@ impl Motion {
 
     pub fn inclusive(self) -> bool {
         use Motion::*;
-        if self.linewise() {
-            return true;
-        }
-
         match self {
-            EndOfLine | NextWordEnd { .. } | Matching => true,
-            Left | Right | StartOfLine | NextWordStart { .. } | PreviousWordStart { .. } => false,
-            _ => panic!("Exclusivity not defined for {self:?}"),
+            Down
+            | Up
+            | StartOfDocument
+            | EndOfDocument
+            | CurrentLine
+            | EndOfLine
+            | NextWordEnd { .. }
+            | Matching => true,
+            Left
+            | Backspace
+            | Right
+            | StartOfLine
+            | NextWordStart { .. }
+            | PreviousWordStart { .. }
+            | FirstNonWhitespace => false,
         }
     }
 
@@ -194,27 +202,29 @@ impl Motion {
         times: usize,
         expand_to_surrounding_newline: bool,
     ) {
-        let (head, goal) = self.move_point(map, selection.head(), selection.goal, times);
-        selection.set_head(head, goal);
+        let (new_head, goal) = self.move_point(map, selection.head(), selection.goal, times);
+        selection.set_head(new_head, goal);
 
         if self.linewise() {
-            selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
+            if selection.start != selection.end {
+                selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
 
-            if expand_to_surrounding_newline {
-                if selection.end.row() < map.max_point().row() {
-                    *selection.end.row_mut() += 1;
-                    *selection.end.column_mut() = 0;
-                    selection.end = map.clip_point(selection.end, Bias::Right);
-                    // Don't reset the end here
-                    return;
-                } else if selection.start.row() > 0 {
-                    *selection.start.row_mut() -= 1;
-                    *selection.start.column_mut() = map.line_len(selection.start.row());
-                    selection.start = map.clip_point(selection.start, Bias::Left);
+                if expand_to_surrounding_newline {
+                    if selection.end.row() < map.max_point().row() {
+                        *selection.end.row_mut() += 1;
+                        *selection.end.column_mut() = 0;
+                        selection.end = map.clip_point(selection.end, Bias::Right);
+                        // Don't reset the end here
+                        return;
+                    } else if selection.start.row() > 0 {
+                        *selection.start.row_mut() -= 1;
+                        *selection.start.column_mut() = map.line_len(selection.start.row());
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                    }
                 }
-            }
 
-            (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
+                (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
+            }
         } else {
             // If the motion is exclusive and the end of the motion is in column 1, the
             // end of the motion is moved to the end of the previous line and the motion
@@ -222,6 +232,7 @@ impl Motion {
             // but "d}" will not include that line.
             let mut inclusive = self.inclusive();
             if !inclusive
+                && self != Motion::Backspace
                 && selection.end.row() > selection.start.row()
                 && selection.end.column() == 0
                 && selection.end.row() > 0
