@@ -7,6 +7,8 @@ use crate::{
     DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 
+/// Element which renders it's children in a stack on top of each other.
+/// The first child determines the size of the others.
 #[derive(Default)]
 pub struct Stack {
     children: Vec<ElementBox>,
@@ -28,10 +30,16 @@ impl Element for Stack {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.min;
-        for child in &mut self.children {
-            size = size.max(child.layout(constraint, cx));
-            constraint.min = size;
+        let mut children = self.children.iter_mut();
+        if let Some(bottom_child) = children.next() {
+            size = bottom_child.layout(constraint, cx);
+            constraint = SizeConstraint::strict(size);
         }
+
+        for child in children {
+            child.layout(constraint, cx);
+        }
+
         (size, ())
     }
 

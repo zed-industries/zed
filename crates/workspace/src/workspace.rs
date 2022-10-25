@@ -126,6 +126,7 @@ pub struct OpenSharedScreen {
     pub peer_id: PeerId,
 }
 
+#[derive(Clone, PartialEq)]
 pub struct SplitWithItem {
     from: WeakViewHandle<Pane>,
     pane_to_split: WeakViewHandle<Pane>,

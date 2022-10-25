@@ -228,8 +228,8 @@ export default function workspace(colorScheme: ColorScheme) {
       },
     },
     dropTargetOverlayColor: withOpacity(
-      foreground(layer),
-      0.6
+      foreground(layer, "variant"),
+      0.5
     ),
   };
 }
