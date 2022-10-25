@@ -2262,8 +2262,11 @@ impl Project {
             return;
         }
 
-        let is_disk_based_diagnostics_progress =
-            Some(token.as_ref()) == disk_based_diagnostics_progress_token.as_deref();
+        let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
+            .as_ref()
+            .map_or(false, |disk_based_token| {
+                token.starts_with(disk_based_token)
+            });
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
