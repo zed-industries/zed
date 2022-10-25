@@ -644,7 +644,9 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let mut events = subscribe(&project, cx);
 
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.start_progress(progress_token).await;
+    fake_server
+        .start_progress(format!("{}/0", progress_token))
+        .await;
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
@@ -670,7 +672,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }
     );
 
-    fake_server.end_progress(progress_token);
+    fake_server.end_progress(format!("{}/0", progress_token));
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsFinished {
