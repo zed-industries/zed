@@ -358,7 +358,7 @@ fn go_to_fetched_definition_of_kind(
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
-    use gpui::{ModifiersChangedEvent, View};
+    use gpui::{Modifiers, ModifiersChangedEvent, View};
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
 
@@ -431,7 +431,10 @@ mod tests {
         cx.update_editor(|editor, cx| {
             editor.modifiers_changed(
                 &gpui::ModifiersChangedEvent {
-                    cmd: true,
+                    modifiers: Modifiers {
+                        cmd: true,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 cx,
@@ -660,8 +663,10 @@ mod tests {
         cx.update_editor(|editor, cx| {
             editor.modifiers_changed(
                 &ModifiersChangedEvent {
-                    cmd: true,
-                    ..Default::default()
+                    modifiers: Modifiers {
+                        cmd: true,
+                        ..Default::default()
+                    },
                 },
                 cx,
             );
