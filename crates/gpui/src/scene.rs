@@ -34,7 +34,7 @@ pub struct Scene {
 struct StackingContext {
     layers: Vec<Layer>,
     active_layer_stack: Vec<usize>,
-    height: usize,
+    z_index: usize,
 }
 
 #[derive(Default)]
@@ -205,7 +205,7 @@ impl Scene {
                     .layers
                     .iter()
                     .flat_map(|layer| &layer.mouse_regions)
-                    .map(|region| (region.clone(), context.height))
+                    .map(|region| (region.clone(), context.z_index))
             })
             .collect()
     }
@@ -213,7 +213,7 @@ impl Scene {
 
 impl SceneBuilder {
     pub fn new(scale_factor: f32) -> Self {
-        let stacking_context = StackingContext::new(0, None);
+        let stacking_context = StackingContext::new(None, 0);
         SceneBuilder {
             scale_factor,
             stacking_contexts: vec![stacking_context],
@@ -224,7 +224,8 @@ impl SceneBuilder {
     }
 
     pub fn build(mut self) -> Scene {
-        self.stacking_contexts.sort_by_key(|context| context.height);
+        self.stacking_contexts
+            .sort_by_key(|context| context.z_index);
         Scene {
             scale_factor: self.scale_factor,
             stacking_contexts: self.stacking_contexts,
@@ -235,12 +236,12 @@ impl SceneBuilder {
         self.scale_factor
     }
 
-    pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>, height: Option<usize>) {
-        let height = height.unwrap_or_else(|| self.active_stacking_context().height + 1);
+    pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>, z_index: Option<usize>) {
+        let z_index = z_index.unwrap_or_else(|| self.active_stacking_context().z_index + 1);
         self.active_stacking_context_stack
             .push(self.stacking_contexts.len());
         self.stacking_contexts
-            .push(StackingContext::new(height, clip_bounds))
+            .push(StackingContext::new(clip_bounds, z_index))
     }
 
     pub fn pop_stacking_context(&mut self) {
@@ -332,11 +333,11 @@ impl SceneBuilder {
 }
 
 impl StackingContext {
-    fn new(height: usize, clip_bounds: Option<RectF>) -> Self {
+    fn new(clip_bounds: Option<RectF>, z_index: usize) -> Self {
         Self {
             layers: vec![Layer::new(clip_bounds)],
             active_layer_stack: vec![0],
-            height,
+            z_index,
         }
     }
 

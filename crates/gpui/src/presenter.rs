@@ -360,14 +360,14 @@ impl Presenter {
         for mut mouse_event in mouse_events {
             let mut valid_regions = Vec::new();
 
-            // GPUI elements are arranged by height but sibling elements can register overlapping
+            // GPUI elements are arranged by z_index but sibling elements can register overlapping
             // mouse regions. As such, hover events are only fired on overlapping elements which
-            // are at the same height as the topmost element which overlaps with the mouse.
+            // are at the same z-index as the topmost element which overlaps with the mouse.
             match &mouse_event {
                 MouseEvent::Hover(_) => {
-                    let mut top_most_height = None;
+                    let mut highest_z_index = None;
                     let mouse_position = self.mouse_position.clone();
-                    for (region, height) in self.mouse_regions.iter().rev() {
+                    for (region, z_index) in self.mouse_regions.iter().rev() {
                         // Allow mouse regions to appear transparent to hovers
                         if !region.hoverable {
                             continue;
@@ -375,15 +375,15 @@ impl Presenter {
 
                         let contains_mouse = region.bounds.contains_point(mouse_position);
 
-                        if contains_mouse && top_most_height.is_none() {
-                            top_most_height = Some(height);
+                        if contains_mouse && highest_z_index.is_none() {
+                            highest_z_index = Some(z_index);
                         }
 
                         // This unwrap relies on short circuiting boolean expressions
                         // The right side of the && is only executed when contains_mouse
                         // is true, and we know above that when contains_mouse is true
-                        // top_most_height is set
-                        if contains_mouse && height == top_most_height.unwrap() {
+                        // highest_z_index is set.
+                        if contains_mouse && z_index == highest_z_index.unwrap() {
                             //Ensure that hover entrance events aren't sent twice
                             if self.hovered_region_ids.insert(region.id()) {
                                 valid_regions.push(region.clone());
@@ -712,12 +712,12 @@ impl<'a> PaintContext<'a> {
     pub fn paint_stacking_context<F>(
         &mut self,
         clip_bounds: Option<RectF>,
-        height: Option<usize>,
+        z_index: Option<usize>,
         f: F,
     ) where
         F: FnOnce(&mut Self),
     {
-        self.scene.push_stacking_context(clip_bounds, height);
+        self.scene.push_stacking_context(clip_bounds, z_index);
         f(self);
         self.scene.pop_stacking_context();
     }
