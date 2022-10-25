@@ -1,4 +1,4 @@
-use derive_more::Deref;
+use std::ops::Deref;
 
 use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 
@@ -22,10 +22,17 @@ pub struct Modifiers {
     pub fun: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deref)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ModifiersChangedEvent {
-    #[deref]
     pub modifiers: Modifiers,
+}
+
+impl Deref for ModifiersChangedEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
 }
 
 /// The phase of a touch motion event.
@@ -37,15 +44,22 @@ pub enum TouchPhase {
     Ended,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deref)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ScrollWheelEvent {
     pub position: Vector2F,
     pub delta: Vector2F,
     pub precise: bool,
-    #[deref]
     pub modifiers: Modifiers,
     /// If the platform supports returning the phase of a scroll wheel event, it will be stored here
     pub phase: Option<TouchPhase>,
+}
+
+impl Deref for ScrollWheelEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -86,21 +100,35 @@ impl Default for MouseButton {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deref)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MouseButtonEvent {
     pub button: MouseButton,
     pub position: Vector2F,
-    #[deref]
     pub modifiers: Modifiers,
     pub click_count: usize,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deref)]
+impl Deref for MouseButtonEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MouseMovedEvent {
     pub position: Vector2F,
     pub pressed_button: Option<MouseButton>,
-    #[deref]
     pub modifiers: Modifiers,
+}
+
+impl Deref for MouseMovedEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
 }
 
 impl MouseMovedEvent {
