@@ -10,3 +10,11 @@
 /assets/themes/Internal/*.json
 /assets/themes/Experiments/*.json
 **/venv
+.build
+Packages
+*.xcodeproj
+xcuserdata/
+DerivedData/
+.swiftpm/config/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
