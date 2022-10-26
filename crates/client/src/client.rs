@@ -991,13 +991,13 @@ impl Client {
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
             let stream = smol::net::TcpStream::connect(rpc_host).await?;
+            rpc_url.set_query(if is_preview { Some("preview=1") } else { None });
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
             match rpc_url.scheme() {
                 "https" => {
                     rpc_url.set_scheme("wss").unwrap();
-                    rpc_url.set_query(if is_preview { Some("preview=1") } else { None });
                     let request = request.uri(rpc_url.as_str()).body(())?;
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls(request, stream).await?;

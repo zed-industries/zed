@@ -69,14 +69,15 @@ actions!(
 );
 
 const MIN_FONT_SIZE: f32 = 6.0;
-const RELEASE_CHANNEL_NAME: &str = include_str!("../RELEASE_CHANNEL");
 
 lazy_static! {
-    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME {
+    static ref RELEASE_CHANNEL_NAME: String =
+        env::var("ZED_RELEASE_CHANNEL").unwrap_or(include_str!("../RELEASE_CHANNEL").to_string());
+    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => ReleaseChannel::Dev,
         "preview" => ReleaseChannel::Preview,
         "stable" => ReleaseChannel::Preview,
-        _ => panic!("invalid release channel {RELEASE_CHANNEL_NAME}"),
+        _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     };
 }
 
