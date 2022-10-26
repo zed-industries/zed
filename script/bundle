@@ -22,7 +22,17 @@ echo "Compiling cli binary for x86_64-apple-darwin"
 cargo build --release --package cli --target x86_64-apple-darwin
 
 echo "Creating application bundle"
-(cd crates/zed && cargo bundle --release --target x86_64-apple-darwin)
+(
+    cd crates/zed
+    channel=$(cat RELEASE_CHANNEL)
+    cp Cargo.toml Cargo.toml.backup
+    sed \
+        -i .backup \
+        "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
+        Cargo.toml
+    cargo bundle --release --target x86_64-apple-darwin
+    mv Cargo.toml.backup Cargo.toml
+)
 
 echo "Creating fat binaries"
 lipo \

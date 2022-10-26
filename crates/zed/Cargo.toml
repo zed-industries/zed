@@ -123,8 +123,20 @@ env_logger = "0.9"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 unindent = "0.1.7"
 
-[package.metadata.bundle]
-icon = ["app-icon@2x.png", "app-icon.png"]
+[package.metadata.bundle-dev]
+icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
+identifier = "dev.zed.Zed-Dev"
+name = "Zed Dev"
+osx_minimum_system_version = "10.15.7"
+
+[package.metadata.bundle-preview]
+icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
+identifier = "dev.zed.Zed-Preview"
+name = "Zed Preview"
+osx_minimum_system_version = "10.15.7"
+
+[package.metadata.bundle-stable]
+icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
 identifier = "dev.zed.Zed"
 name = "Zed"
 osx_minimum_system_version = "10.15.7"
