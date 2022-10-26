@@ -131,8 +131,8 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
-    fn screen_size(&self) -> Vector2F {
-        vec2f(1024., 768.)
+    fn screens(&self) -> Vec<Rc<dyn crate::Screen>> {
+        Default::default()
     }
 
     fn open_window(

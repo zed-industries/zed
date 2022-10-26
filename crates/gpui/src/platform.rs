@@ -25,7 +25,7 @@ use postage::oneshot;
 use serde::Deserialize;
 use std::{
     any::Any,
-    fmt::{self, Display},
+    fmt::{self, Debug, Display},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -44,7 +44,7 @@ pub trait Platform: Send + Sync {
     fn unhide_other_apps(&self);
     fn quit(&self);
 
-    fn screen_size(&self) -> Vector2F;
+    fn screens(&self) -> Vec<Rc<dyn Screen>>;
 
     fn open_window(
         &self,
@@ -115,6 +115,11 @@ pub trait InputHandler {
     fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF>;
 }
 
+pub trait Screen: Debug {
+    fn as_any(&self) -> &dyn Any;
+    fn size(&self) -> Vector2F;
+}
+
 pub trait Window {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
@@ -149,6 +154,7 @@ pub struct WindowOptions<'a> {
     pub center: bool,
     pub kind: WindowKind,
     pub is_movable: bool,
+    pub screen: Option<Rc<dyn Screen>>,
 }
 
 #[derive(Debug)]
@@ -292,6 +298,7 @@ impl<'a> Default for WindowOptions<'a> {
             center: false,
             kind: WindowKind::Normal,
             is_movable: true,
+            screen: None,
         }
     }
 }

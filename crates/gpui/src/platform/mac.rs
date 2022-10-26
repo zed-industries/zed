@@ -7,6 +7,7 @@ mod geometry;
 mod image_cache;
 mod platform;
 mod renderer;
+mod screen;
 mod sprite_cache;
 mod status_item;
 mod window;

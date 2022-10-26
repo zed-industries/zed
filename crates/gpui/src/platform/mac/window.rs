@@ -8,7 +8,7 @@ use crate::{
     mac::platform::NSViewLayerContentsRedrawDuringViewResize,
     platform::{
         self,
-        mac::{geometry::RectFExt, renderer::Renderer},
+        mac::{geometry::RectFExt, renderer::Renderer, screen::Screen},
         Event, WindowBounds,
     },
     InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
@@ -377,11 +377,17 @@ impl Window {
                     msg_send![PANEL_CLASS, alloc]
                 }
             };
-            let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
+            let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 RectF::new(Default::default(), vec2f(1024., 768.)).to_ns_rect(),
                 style_mask,
                 NSBackingStoreBuffered,
                 NO,
+                options
+                    .screen
+                    .and_then(|screen| {
+                        Some(screen.as_any().downcast_ref::<Screen>()?.native_screen)
+                    })
+                    .unwrap_or(nil),
             );
             assert!(!native_window.is_null());
 
