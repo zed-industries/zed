@@ -1523,42 +1523,43 @@ impl MutableAppContext {
     }
 
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: &Keystroke) -> bool {
-        let mut pending = false;
-
         if let Some(focused_view_id) = self.focused_view_id(window_id) {
-            for view_id in self
+            let dispatch_path = self
                 .ancestors(window_id, focused_view_id)
-                .collect::<Vec<_>>()
-            {
-                let keymap_context = self
-                    .cx
-                    .views
-                    .get(&(window_id, view_id))
-                    .unwrap()
-                    .keymap_context(self.as_ref());
+                .map(|view_id| {
+                    (
+                        view_id,
+                        self.cx
+                            .views
+                            .get(&(window_id, view_id))
+                            .unwrap()
+                            .keymap_context(self.as_ref()),
+                    )
+                })
+                .collect();
 
-                match self.keystroke_matcher.push_keystroke(
-                    keystroke.clone(),
-                    view_id,
-                    &keymap_context,
-                ) {
-                    MatchResult::None => {}
-                    MatchResult::Pending => pending = true,
-                    MatchResult::Action(action) => {
-                        if self.handle_dispatch_action_from_effect(
-                            window_id,
-                            Some(view_id),
-                            action.as_ref(),
-                        ) {
-                            self.keystroke_matcher.clear_pending();
-                            return true;
-                        }
+            match self
+                .keystroke_matcher
+                .push_keystroke(keystroke.clone(), dispatch_path)
+            {
+                MatchResult::None => false,
+                MatchResult::Pending => true,
+                MatchResult::Match { view_id, action } => {
+                    if self.handle_dispatch_action_from_effect(
+                        window_id,
+                        Some(view_id),
+                        action.as_ref(),
+                    ) {
+                        self.keystroke_matcher.clear_pending();
+                        true
+                    } else {
+                        false
                     }
                 }
             }
+        } else {
+            false
         }
-
-        pending
     }
 
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
