@@ -344,6 +344,7 @@ pub fn build_window_options() -> WindowOptions<'static> {
         center: false,
         kind: WindowKind::Normal,
         is_movable: true,
+        screen: None,
     }
 }
 

@@ -189,7 +189,15 @@ impl Renderer {
     pub fn render(&mut self, scene: &Scene) {
         let layer = self.layer.clone();
         let drawable_size = layer.drawable_size();
-        let drawable = layer.next_drawable().unwrap();
+        let drawable = if let Some(drawable) = layer.next_drawable() {
+            drawable
+        } else {
+            log::error!(
+                "failed to retrieve next drawable, drawable size: {:?}",
+                drawable_size
+            );
+            return;
+        };
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
 

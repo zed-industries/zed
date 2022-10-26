@@ -1,10 +1,9 @@
 use super::{
-    event::key_to_native, status_item::StatusItem, BoolExt as _, Dispatcher, FontSystem, Window,
+    event::key_to_native, screen::Screen, status_item::StatusItem, BoolExt as _, Dispatcher,
+    FontSystem, Window,
 };
 use crate::{
-    executor,
-    geometry::vector::{vec2f, Vector2F},
-    keymap,
+    executor, keymap,
     platform::{self, CursorStyle},
     Action, AppVersion, ClipboardItem, Event, Menu, MenuItem,
 };
@@ -14,7 +13,7 @@ use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypeString, NSSavePanel, NSScreen, NSWindow,
+        NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, YES},
     foundation::{
@@ -488,12 +487,11 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn screen_size(&self) -> Vector2F {
-        unsafe {
-            let screen = NSScreen::mainScreen(nil);
-            let frame = NSScreen::frame(screen);
-            vec2f(frame.size.width as f32, frame.size.height as f32)
-        }
+    fn screens(&self) -> Vec<Rc<dyn platform::Screen>> {
+        Screen::all()
+            .into_iter()
+            .map(|screen| Rc::new(screen) as Rc<_>)
+            .collect()
     }
 
     fn open_window(

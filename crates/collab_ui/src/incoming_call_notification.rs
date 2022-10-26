@@ -18,34 +18,37 @@ pub fn init(cx: &mut MutableAppContext) {
 
     let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();
     cx.spawn(|mut cx| async move {
-        let mut notification_window = None;
+        let mut notification_windows = Vec::new();
         while let Some(incoming_call) = incoming_call.next().await {
-            if let Some(window_id) = notification_window.take() {
+            for window_id in notification_windows.drain(..) {
                 cx.remove_window(window_id);
             }
 
             if let Some(incoming_call) = incoming_call {
                 const PADDING: f32 = 16.;
-                let screen_size = cx.platform().screen_size();
-
                 let window_size = cx.read(|cx| {
                     let theme = &cx.global::<Settings>().theme.incoming_call_notification;
                     vec2f(theme.window_width, theme.window_height)
                 });
-                let (window_id, _) = cx.add_window(
-                    WindowOptions {
-                        bounds: WindowBounds::Fixed(RectF::new(
-                            vec2f(screen_size.x() - window_size.x() - PADDING, PADDING),
-                            window_size,
-                        )),
-                        titlebar: None,
-                        center: false,
-                        kind: WindowKind::PopUp,
-                        is_movable: false,
-                    },
-                    |_| IncomingCallNotification::new(incoming_call),
-                );
-                notification_window = Some(window_id);
+
+                for screen in cx.platform().screens() {
+                    let screen_size = screen.size();
+                    let (window_id, _) = cx.add_window(
+                        WindowOptions {
+                            bounds: WindowBounds::Fixed(RectF::new(
+                                vec2f(screen_size.x() - window_size.x() - PADDING, PADDING),
+                                window_size,
+                            )),
+                            titlebar: None,
+                            center: false,
+                            kind: WindowKind::PopUp,
+                            is_movable: false,
+                            screen: Some(screen),
+                        },
+                        |_| IncomingCallNotification::new(incoming_call.clone()),
+                    );
+                    notification_windows.push(window_id);
+                }
             }
         }
     })
