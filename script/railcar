@@ -15,39 +15,75 @@ if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
   exit 1
 fi
 git pull -q --ff-only origin main
+git fetch --tags
 
-# Determine the name of the new preview branch
+# Parse the current version
 version=$(script/get-crate-version zed)
 major=$(echo $version | cut -d. -f1)
 minor=$(echo $version | cut -d. -f2)
+patch=$(echo $version | cut -d. -f3)
 prev_minor=$(expr $minor - 1)
 next_minor=$(expr $minor + 1)
 
 minor_branch_name="v${major}.${minor}.x"
 prev_minor_branch_name="v${major}.${prev_minor}.x"
 next_minor_branch_name="v${major}.${next_minor}.x"
+preview_tag_name="v{major}.{minor}.{patch}-pre"
+
+function cleanup {
+  git checkout -q main
+}
+trap cleanup EXIT
+
+echo "Checking invariants before taking any actions..."
+if [[ $patch != 0 ]]; then
+  echo "patch version on main should be zero"
+  exit 1
+fi
+if [[ $(cat crates/zed/RELEASE_CHANNEL) != dev ]]; then
+  echo "release channel on main should be dev"
+  exit 1
+fi
+if git show-ref --quiet refs/tags/${preview_tag_name}; then
+  echo "tag ${preview_tag_name} already exists"
+  exit 1
+fi
+if git show-ref --quiet refs/heads/${minor_branch_name}; then
+  echo "branch ${minor_branch_name} already exists"
+  exit 1
+fi
+if ! git show-ref --quiet refs/heads/${prev_minor_branch_name}; then
+  echo "previous branch ${minor_branch_name} doesn't exist"
+  exit 1
+fi
+if [[ $(git show ${prev_minor_branch_name}:crates/zed/RELEASE_CHANNEL) != preview ]]; then
+  echo "release channel on branch ${prev_minor_branch_name} should be preview"
+  exit 1
+fi
 
 echo "Promoting existing branch ${prev_minor_branch_name} to stable..."
 git checkout -q ${prev_minor_branch_name}
-git clean -qdff
-old_prev_minor_sha=$(git rev-parse HEAD)
-echo -n "stable" > crates/zed/RELEASE_CHANNEL
-git commit -q --all --message "Stable ${prev_minor_branch_name}"
+git clean -q -dff
 stable_tag_name="v$(script/get-crate-version zed)"
+if git show-ref --quiet refs/tags/${stable_tag_name}; then
+  echo "tag ${preview_tag_name} already exists"
+  exit 1
+fi
+old_prev_minor_sha=$(git rev-parse HEAD)
+echo -n stable > crates/zed/RELEASE_CHANNEL
+git commit -q --all --message "Stable ${prev_minor_branch_name}"
 git tag ${stable_tag_name}
 
 echo "Creating new preview branch ${minor_branch_name}..."
 git checkout -q -b ${minor_branch_name}
-echo -n "preview" > crates/zed/RELEASE_CHANNEL
+echo -n preview > crates/zed/RELEASE_CHANNEL
 git commit -q --all --message "Preview ${minor_branch_name}"
-preview_tag_name="v$(script/get-crate-version zed)-pre"
 git tag ${preview_tag_name}
 
 echo "Preparing main for version ${next_minor_branch_name}..."
 git checkout -q main
 git clean -q -dff
 old_main_sha=$(git rev-parse HEAD)
-echo -n "dev" > crates/zed/RELEASE_CHANNEL
 cargo set-version --package zed --bump minor
 cargo check -q
 git commit -q --all --message "Dev ${next_minor_branch_name}"
