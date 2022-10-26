@@ -6,6 +6,7 @@ use gpui::{
 };
 use project::Project;
 use serde::Deserialize;
+use settings::Settings;
 use theme::Theme;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,10 +62,17 @@ impl PaneGroup {
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
+        active_pane: &ViewHandle<Pane>,
         cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
-        self.root
-            .render(project, theme, follower_states, active_call, cx)
+        self.root.render(
+            project,
+            theme,
+            follower_states,
+            active_call,
+            active_pane,
+            cx,
+        )
     }
 
     pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
@@ -102,12 +110,20 @@ impl Member {
         Member::Axis(PaneAxis { axis, members })
     }
 
+    fn contains(&self, needle: &ViewHandle<Pane>) -> bool {
+        match self {
+            Member::Axis(axis) => axis.members.iter().any(|member| member.contains(needle)),
+            Member::Pane(pane) => pane == needle,
+        }
+    }
+
     pub fn render(
         &self,
         project: &ModelHandle<Project>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
+        active_pane: &ViewHandle<Pane>,
         cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
         enum FollowIntoExternalProject {}
@@ -234,7 +250,14 @@ impl Member {
                     .with_children(prompt)
                     .boxed()
             }
-            Member::Axis(axis) => axis.render(project, theme, follower_states, active_call, cx),
+            Member::Axis(axis) => axis.render(
+                project,
+                theme,
+                follower_states,
+                active_call,
+                active_pane,
+                cx,
+            ),
         }
     }
 
@@ -340,12 +363,19 @@ impl PaneAxis {
         theme: &Theme,
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
+        active_pane: &ViewHandle<Pane>,
         cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut member = member.render(project, theme, follower_state, active_call, cx);
+                let mut flex = 1.0;
+                if member.contains(active_pane) {
+                    flex = cx.global::<Settings>().active_pane_magnification;
+                }
+
+                let mut member =
+                    member.render(project, theme, follower_state, active_call, active_pane, cx);
                 if ix < last_member_ix {
                     let mut border = theme.workspace.pane_divider;
                     border.left = false;
@@ -359,7 +389,7 @@ impl PaneAxis {
                     member = Container::new(member).with_border(border).boxed();
                 }
 
-                FlexItem::new(member).flex(1.0, true).boxed()
+                FlexItem::new(member).flex(flex, true).boxed()
             }))
             .boxed()
     }
