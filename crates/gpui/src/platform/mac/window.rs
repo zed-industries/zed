@@ -406,8 +406,12 @@ impl Window {
                                 - top_left_bounds.height(),
                         ),
                         top_left_bounds.size(),
+                    )
+                    .to_ns_rect();
+                    native_window.setFrame_display_(
+                        native_window.convertRectToScreen_(bottom_left_bounds),
+                        YES,
                     );
-                    native_window.setFrame_display_(bottom_left_bounds.to_ns_rect(), YES);
                 }
             }
 
