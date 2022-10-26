@@ -932,8 +932,9 @@ impl Client {
         self.establish_websocket_connection(credentials, cx)
     }
 
-    async fn get_rpc_url(http: Arc<dyn HttpClient>) -> Result<Url> {
-        let url = format!("{}/rpc", *ZED_SERVER_URL);
+    async fn get_rpc_url(http: Arc<dyn HttpClient>, is_preview: bool) -> Result<Url> {
+        let preview_param = if is_preview { "?preview=1" } else { "" };
+        let url = format!("{}/rpc{preview_param}", *ZED_SERVER_URL);
         let response = http.get(&url, Default::default(), false).await?;
 
         // Normally, ZED_SERVER_URL is set to the URL of zed.dev website.
@@ -985,13 +986,12 @@ impl Client {
 
         let http = self.http.clone();
         cx.background().spawn(async move {
-            let mut rpc_url = Self::get_rpc_url(http).await?;
+            let mut rpc_url = Self::get_rpc_url(http, is_preview).await?;
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
             let stream = smol::net::TcpStream::connect(rpc_host).await?;
-            rpc_url.set_query(if is_preview { Some("preview=1") } else { None });
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1140,7 +1140,7 @@ impl Client {
 
         // Use the collab server's admin API to retrieve the id
         // of the impersonated user.
-        let mut url = Self::get_rpc_url(http.clone()).await?;
+        let mut url = Self::get_rpc_url(http.clone(), false).await?;
         url.set_path("/user");
         url.set_query(Some(&format!("github_login={login}")));
         let request = Request::get(url.as_str())
