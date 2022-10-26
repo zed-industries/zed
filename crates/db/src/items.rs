@@ -46,15 +46,8 @@ use super::Db;
 // Items
 // Sidebars
 
+// Things I'm doing: finding about nullability for foreign keys
 pub(crate) const ITEMS_M_1: &str = "
-CREATE TABLE items(
-    workspace_id INTEGER,
-    item_id INTEGER,
-    kind TEXT NOT NULL,
-    PRIMARY KEY (workspace_id, item_id)
-    FOREIGN KEY(workspace_id) REFERENCES workspace_ids(workspace_id)
-) STRICT;
-
 CREATE TABLE project_searches(
     workspace_id INTEGER,
     item_id INTEGER,

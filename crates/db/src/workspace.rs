@@ -13,10 +13,15 @@ use crate::pane::{PaneGroupId, PaneId, SerializedPane, SerializedPaneGroup};
 
 use super::Db;
 
+// If you need to debug the worktree root code, change 'BLOB' here to 'TEXT' for easier debugging
+// you might want to update some of the parsing code as well, I've left the variations in but commented
+// out
 pub(crate) const WORKSPACE_M_1: &str = "
+BEGIN TRANSACTION; 
+
 CREATE TABLE workspaces(
-    workspace_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+    workspace_id INTEGER PRIMARY KEY,
+    timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
 ) STRICT;
 
 CREATE TABLE worktree_roots(
@@ -25,15 +30,12 @@ CREATE TABLE worktree_roots(
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
     PRIMARY KEY(worktree_root, workspace_id)
 ) STRICT;
+
+COMMIT;
 ";
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 pub struct WorkspaceId(i64);
-
-struct WorkspaceRow {
-    pub center_group_id: PaneGroupId,
-    pub dock_pane_id: PaneId,
-}
 
 #[derive(Default, Debug)]
 pub struct SerializedWorkspace {
@@ -72,7 +74,7 @@ impl Db {
         }
     }
 
-    fn make_new_workspace(&self) -> SerializedWorkspace {
+    pub fn make_new_workspace(&self) -> SerializedWorkspace {
         self.real()
             .map(|db| {
                 let lock = db.connection.lock();
@@ -140,6 +142,8 @@ impl Db {
 
                 for root in worktree_roots {
                     let path = root.as_ref().as_os_str().as_bytes();
+                    // If you need to debug this, here's the string parsing:
+                    // let path = root.as_ref().to_string_lossy().to_string();
 
                     tx.execute(
                         "INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)",
@@ -162,6 +166,7 @@ impl Db {
             match logic(&mut lock, worktree_roots, workspace_id) {
                 Ok(_) => {}
                 Err(err) => {
+                    dbg!(&err);
                     log::error!(
                         "Failed to update the worktree roots for {:?}, roots: {:?}, error: {}",
                         workspace_id,
@@ -222,6 +227,9 @@ impl Db {
                         .query_map([workspace_id.0], |row| {
                             let row = row.get::<_, Vec<u8>>(0)?;
                             Ok(PathBuf::from(OsStr::from_bytes(&row)).into())
+                            // If you need to debug this, here's the string parsing:
+                            // let row = row.get::<_, String>(0)?;
+                            // Ok(PathBuf::from(row).into())
                         })?
                         .collect::<Result<Vec<_>, rusqlite::Error>>()?;
                     result.push((workspace_id, roots))
@@ -260,6 +268,7 @@ where
     where
         P: AsRef<Path> + Debug,
     {
+        // Short circuit if we can
         if worktree_roots.len() == 0 {
             return Ok(None);
         }
@@ -297,7 +306,7 @@ where
         // Let's analyze what happens when querying for [/tmp, /tmp2], from the inside out:
         //  - We start with a join of this table on itself, generating every possible
         //    pair of ((path, ID), (path, ID)), and filtering the join down to just the
-        //    *overlapping but incorrect* workspace IDs. For this small data set,
+        //    *overlapping but non-matching* workspace IDs. For this small data set,
         //    this would look like:
         //
         //    wt1.ID wt1.PATH | wt2.ID wt2.PATH
@@ -349,6 +358,8 @@ where
 
         for i in 0..worktree_roots.len() {
             let path = &worktree_roots[i].as_ref().as_os_str().as_bytes();
+            // If you need to debug this, here's the string parsing:
+            // let path = &worktree_roots[i].as_ref().to_string_lossy().to_string()
             stmt.raw_bind_parameter(i + 1, path)?
         }
         // No -1, because SQLite is 1 based
@@ -402,22 +413,26 @@ mod tests {
 
         assert_eq!(None, db.workspace_id::<String>(&[]));
 
-        db.make_new_workspace();
+        db.make_new_workspace(); //ID 1
+        db.make_new_workspace(); //ID 2
         db.update_worktree_roots(&WorkspaceId(1), &["/tmp", "/tmp2"]);
 
         // Sanity check
-        assert_eq!(Some(WorkspaceId(1)), db.workspace_id(&["/tmp", "/tmp2"]));
+        assert_eq!(db.workspace_id(&["/tmp", "/tmp2"]), Some(WorkspaceId(1)));
 
         db.update_worktree_roots::<String>(&WorkspaceId(1), &[]);
 
-        // Make sure DB doesn't consider 'no worktrees' to be a query it can answer
-        assert_eq!(None, db.workspace_id::<String>(&[]));
+        // Make sure 'no worktrees' fails correctly. returning [1, 2] from this
+        // call would be semantically correct (as those are the workspaces that
+        // don't have roots) but I'd prefer that this API to either return exactly one
+        // workspace, and None otherwise
+        assert_eq!(db.workspace_id::<String>(&[]), None,);
 
-        assert_eq!(Some(WorkspaceId(1)), db.last_workspace_id());
+        assert_eq!(db.last_workspace_id(), Some(WorkspaceId(1)));
 
         assert_eq!(
-            &(WorkspaceId(1), vec![]),
-            db.recent_workspaces(1).get(0).unwrap()
+            db.recent_workspaces(2),
+            vec![(WorkspaceId(1), vec![]), (WorkspaceId(2), vec![]),],
         )
     }
 

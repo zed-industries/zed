@@ -1,41 +1,23 @@
 use gpui::Axis;
+use settings::DockAnchor;
 
 use crate::{items::ItemId, workspace::WorkspaceId};
 
 use super::Db;
 
-pub(crate) const PANE_M_1: &str = "
-CREATE TABLE pane_groups(
-    workspace_id INTEGER,
-    group_id INTEGER,
-    axis STRING NOT NULL, -- 'Vertical' / 'Horizontal'
-    PRIMARY KEY (workspace_id, group_id)
-) STRICT;
+// We have an many-branched, unbalanced tree with three types:
+// Pane Groups
+// Panes
+// Items
 
-CREATE TABLE pane_group_children(
-    workspace_id INTEGER,
-    group_id INTEGER,
-    child_pane_id INTEGER,  -- Nullable
-    child_group_id INTEGER, -- Nullable
-    index INTEGER,
-    PRIMARY KEY (workspace_id, group_id)
-) STRICT;
-
-CREATE TABLE pane_items(
-    workspace_id INTEGER,
-    pane_id INTEGER,
-    item_id INTEGER, -- Array
-    index INTEGER,
-    KEY (workspace_id, pane_id)
-) STRICT;
-
-ALTER TABLE WORKSPACE
-ADD THESE COLS:
-center_group INTEGER NOT NULL,
-dock_pane INTEGER NOT NULL,
---    FOREIGN KEY(center_group) REFERENCES pane_groups(group_id)
---    FOREIGN KEY(dock_pane) REFERENCES pane_items(pane_id)
-";
+// The root is always a Pane Group
+// Pane Groups can have 0 (or more) Panes and/or Pane Groups as children
+// Panes can have 0 or more items as children
+// Panes can be their own root
+// Items cannot have children
+// References pointing down is hard (SQL doesn't like arrays)
+// References pointing up is easy (1-1 item / parent relationship) but is harder to query
+//
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct PaneId {
@@ -93,6 +75,71 @@ pub struct SerializedPane {
     children: Vec<ItemId>,
 }
 
+pub(crate) const PANE_M_1: &str = "
+BEGIN TRANSACTION;
+
+CREATE TABLE dock_panes(
+    dock_pane_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    anchor_position TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
+    shown INTEGER NOT NULL, -- Boolean
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE pane_groups(
+    group_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    parent_group INTEGER, -- NULL indicates that this is a root node
+    axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(parent_group) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE grouped_panes(
+    pane_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE items(
+    item_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE group_items(
+    workspace_id INTEGER NOT NULL,
+    pane_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, pane_id, item_id)
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(pane_id) REFERENCES grouped_panes(pane_id) ON DELETE CASCADE,
+    FOREIGN KEY(item_id) REFERENCES items(item_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE dock_items(
+    workspace_id INTEGER NOT NULL,
+    dock_pane_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, dock_pane_id, item_id)
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(dock_pane_id) REFERENCES dock_panes(dock_pane_id) ON DELETE CASCADE,
+    FOREIGN KEY(item_id) REFERENCES items(item_id)ON DELETE CASCADE
+) STRICT;
+
+COMMIT;
+";
+
+struct SerializedDockPane {
+    //Cols
+}
+
 impl Db {
     pub(crate) fn get_pane_group(&self, pane_group_id: PaneGroupId) -> SerializedPaneGroup {
         let axis = self.get_pane_group_axis(pane_group_id);
@@ -147,5 +194,7 @@ impl Db {
         unimplemented!();
     }
 
-    pub fn save_pane(&self, pane: SerializedPane) {}
+    fn save_dock_pane() {}
 }
+
+mod tests {}

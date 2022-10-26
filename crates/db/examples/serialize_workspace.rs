@@ -15,13 +15,13 @@ fn main() -> anyhow::Result<()> {
     db.write_kvp("test", "1")?;
     db.write_kvp("test-2", "2")?;
 
-    let workspace_1 = db.workspace_for_worktree_roots(&[]);
-    let workspace_2 = db.workspace_for_worktree_roots(&[]);
-    let workspace_3 = db.workspace_for_worktree_roots(&[]);
-    let workspace_4 = db.workspace_for_worktree_roots(&[]);
-    let workspace_5 = db.workspace_for_worktree_roots(&[]);
-    let workspace_6 = db.workspace_for_worktree_roots(&[]);
-    let workspace_7 = db.workspace_for_worktree_roots(&[]);
+    let workspace_1 = db.make_new_workspace();
+    let workspace_2 = db.make_new_workspace();
+    let workspace_3 = db.make_new_workspace();
+    let workspace_4 = db.make_new_workspace();
+    let workspace_5 = db.make_new_workspace();
+    let workspace_6 = db.make_new_workspace();
+    let workspace_7 = db.make_new_workspace();
 
     // Order scrambled + sleeps added because sqlite only has 1 second resolution on
     // their timestamps
