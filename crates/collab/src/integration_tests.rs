@@ -34,8 +34,7 @@ use live_kit_client::MacOSDisplay;
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
 use project::{
-    search::SearchQuery, worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath,
-    ProjectStore, WorktreeId,
+    search::SearchQuery, DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -1228,26 +1227,49 @@ async fn test_room_location(
 
 #[gpui::test(iterations = 10)]
 async fn test_propagate_saves_and_fs_changes(
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
+
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    let rust = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ));
+    let javascript = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            path_suffixes: vec!["js".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ));
+    for client in [&client_a, &client_b, &client_c] {
+        client.language_registry.add(rust.clone());
+        client.language_registry.add(javascript.clone());
+    }
 
     client_a
         .fs
         .insert_tree(
             "/a",
             json!({
-                "file1": "",
+                "file1.rs": "",
                 "file2": ""
             }),
         )
@@ -1267,19 +1289,25 @@ async fn test_propagate_saves_and_fs_changes(
 
     // Open and edit a buffer as both guests B and C.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "file1.rs"), cx))
         .await
         .unwrap();
     let buffer_c = project_c
-        .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+        .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1.rs"), cx))
         .await
         .unwrap();
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(&*buffer.language().unwrap().name(), "Rust");
+    });
+    buffer_c.read_with(cx_c, |buffer, _| {
+        assert_eq!(&*buffer.language().unwrap().name(), "Rust");
+    });
     buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], None, cx));
     buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], None, cx));
 
     // Open and edit that buffer as the host.
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "file1.rs"), cx))
         .await
         .unwrap();
 
@@ -1290,90 +1318,87 @@ async fn test_propagate_saves_and_fs_changes(
         buf.edit([(buf.len()..buf.len(), "i-am-a")], None, cx)
     });
 
-    // Wait for edits to propagate
-    buffer_a
-        .condition(cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
-        .await;
-    buffer_b
-        .condition(cx_b, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
-        .await;
-    buffer_c
-        .condition(cx_c, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
-        .await;
+    deterministic.run_until_parked();
+    buffer_a.read_with(cx_a, |buf, _| {
+        assert_eq!(buf.text(), "i-am-c, i-am-b, i-am-a");
+    });
+    buffer_b.read_with(cx_b, |buf, _| {
+        assert_eq!(buf.text(), "i-am-c, i-am-b, i-am-a");
+    });
+    buffer_c.read_with(cx_c, |buf, _| {
+        assert_eq!(buf.text(), "i-am-c, i-am-b, i-am-a");
+    });
 
     // Edit the buffer as the host and concurrently save as guest B.
     let save_b = buffer_b.update(cx_b, |buf, cx| buf.save(cx));
     buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], None, cx));
     save_b.await.unwrap();
     assert_eq!(
-        client_a.fs.load("/a/file1".as_ref()).await.unwrap(),
+        client_a.fs.load("/a/file1.rs".as_ref()).await.unwrap(),
         "hi-a, i-am-c, i-am-b, i-am-a"
     );
+
+    deterministic.run_until_parked();
     buffer_a.read_with(cx_a, |buf, _| assert!(!buf.is_dirty()));
     buffer_b.read_with(cx_b, |buf, _| assert!(!buf.is_dirty()));
-    buffer_c.condition(cx_c, |buf, _| !buf.is_dirty()).await;
-
-    worktree_a.flush_fs_events(cx_a).await;
+    buffer_c.read_with(cx_c, |buf, _| assert!(!buf.is_dirty()));
 
     // Make changes on host's file system, see those changes on guest worktrees.
     client_a
         .fs
         .rename(
-            "/a/file1".as_ref(),
-            "/a/file1-renamed".as_ref(),
+            "/a/file1.rs".as_ref(),
+            "/a/file1.js".as_ref(),
             Default::default(),
         )
         .await
         .unwrap();
-
     client_a
         .fs
         .rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
         .await
         .unwrap();
     client_a.fs.insert_file("/a/file4", "4".into()).await;
+    deterministic.run_until_parked();
 
-    worktree_a
-        .condition(cx_a, |tree, _| {
+    worktree_a.read_with(cx_a, |tree, _| {
+        assert_eq!(
             tree.paths()
                 .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>()
-                == ["file1-renamed", "file3", "file4"]
-        })
-        .await;
-    worktree_b
-        .condition(cx_b, |tree, _| {
+                .collect::<Vec<_>>(),
+            ["file1.js", "file3", "file4"]
+        )
+    });
+    worktree_b.read_with(cx_b, |tree, _| {
+        assert_eq!(
             tree.paths()
                 .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>()
-                == ["file1-renamed", "file3", "file4"]
-        })
-        .await;
-    worktree_c
-        .condition(cx_c, |tree, _| {
+                .collect::<Vec<_>>(),
+            ["file1.js", "file3", "file4"]
+        )
+    });
+    worktree_c.read_with(cx_c, |tree, _| {
+        assert_eq!(
             tree.paths()
                 .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>()
-                == ["file1-renamed", "file3", "file4"]
-        })
-        .await;
+                .collect::<Vec<_>>(),
+            ["file1.js", "file3", "file4"]
+        )
+    });
 
     // Ensure buffer files are updated as well.
-    buffer_a
-        .condition(cx_a, |buf, _| {
-            buf.file().unwrap().path().to_str() == Some("file1-renamed")
-        })
-        .await;
-    buffer_b
-        .condition(cx_b, |buf, _| {
-            buf.file().unwrap().path().to_str() == Some("file1-renamed")
-        })
-        .await;
-    buffer_c
-        .condition(cx_c, |buf, _| {
-            buf.file().unwrap().path().to_str() == Some("file1-renamed")
-        })
-        .await;
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
+        assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
+    });
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
+        assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
+    });
+    buffer_c.read_with(cx_c, |buffer, _| {
+        assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
+        assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
+    });
 }
 
 #[gpui::test(iterations = 10)]

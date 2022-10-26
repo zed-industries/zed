@@ -1780,17 +1780,21 @@ impl Project {
     ) -> Option<()> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let full_path = buffer.read(cx).file()?.full_path(cx);
-        let language = self.languages.select_language(&full_path)?;
+        let new_language = self.languages.select_language(&full_path)?;
         buffer.update(cx, |buffer, cx| {
-            buffer.set_language_registry(self.languages.clone());
-            buffer.set_language(Some(language.clone()), cx);
+            if buffer.language().map_or(true, |old_language| {
+                !Arc::ptr_eq(old_language, &new_language)
+            }) {
+                buffer.set_language_registry(self.languages.clone());
+                buffer.set_language(Some(new_language.clone()), cx);
+            }
         });
 
         let file = File::from_dyn(buffer.read(cx).file())?;
         let worktree = file.worktree.read(cx).as_local()?;
         let worktree_id = worktree.id();
         let worktree_abs_path = worktree.abs_path().clone();
-        self.start_language_server(worktree_id, worktree_abs_path, language, cx);
+        self.start_language_server(worktree_id, worktree_abs_path, new_language, cx);
 
         None
     }
@@ -4992,6 +4996,7 @@ impl Project {
             buffer.update(cx, |buffer, cx| {
                 buffer.file_updated(Arc::new(file), cx).detach();
             });
+            this.assign_language_to_buffer(&buffer, cx);
             Ok(())
         })
     }
