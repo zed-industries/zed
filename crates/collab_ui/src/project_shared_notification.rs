@@ -27,39 +27,49 @@ pub fn init(cx: &mut MutableAppContext) {
             worktree_root_names,
         } => {
             const PADDING: f32 = 16.;
-            let screen_size = cx.platform().screen_size();
-
             let theme = &cx.global::<Settings>().theme.project_shared_notification;
             let window_size = vec2f(theme.window_width, theme.window_height);
-            let (window_id, _) = cx.add_window(
-                WindowOptions {
-                    bounds: WindowBounds::Fixed(RectF::new(
-                        vec2f(screen_size.x() - window_size.x() - PADDING, PADDING),
-                        window_size,
-                    )),
-                    titlebar: None,
-                    center: false,
-                    kind: WindowKind::PopUp,
-                    is_movable: false,
-                },
-                |_| {
-                    ProjectSharedNotification::new(
-                        owner.clone(),
-                        *project_id,
-                        worktree_root_names.clone(),
-                    )
-                },
-            );
-            notification_windows.insert(*project_id, window_id);
+
+            for screen in cx.platform().screens() {
+                let screen_size = screen.size();
+                let (window_id, _) = cx.add_window(
+                    WindowOptions {
+                        bounds: WindowBounds::Fixed(RectF::new(
+                            vec2f(screen_size.x() - window_size.x() - PADDING, PADDING),
+                            window_size,
+                        )),
+                        titlebar: None,
+                        center: false,
+                        kind: WindowKind::PopUp,
+                        is_movable: false,
+                        screen: Some(screen),
+                    },
+                    |_| {
+                        ProjectSharedNotification::new(
+                            owner.clone(),
+                            *project_id,
+                            worktree_root_names.clone(),
+                        )
+                    },
+                );
+                notification_windows
+                    .entry(*project_id)
+                    .or_insert(Vec::new())
+                    .push(window_id);
+            }
         }
         room::Event::RemoteProjectUnshared { project_id } => {
-            if let Some(window_id) = notification_windows.remove(&project_id) {
-                cx.remove_window(window_id);
+            if let Some(window_ids) = notification_windows.remove(&project_id) {
+                for window_id in window_ids {
+                    cx.remove_window(window_id);
+                }
             }
         }
         room::Event::Left => {
-            for (_, window_id) in notification_windows.drain() {
-                cx.remove_window(window_id);
+            for (_, window_ids) in notification_windows.drain() {
+                for window_id in window_ids {
+                    cx.remove_window(window_id);
+                }
             }
         }
         _ => {}
