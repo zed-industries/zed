@@ -8,6 +8,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext,
 };
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     path::PathBuf,
@@ -67,7 +68,7 @@ impl View for SharedScreen {
         enum Focus {}
 
         let frame = self.frame.clone();
-        MouseEventHandler::<Focus>::new(0, cx, |_, _| {
+        MouseEventHandler::<Focus>::new(0, cx, |_, cx| {
             Canvas::new(move |bounds, _, cx| {
                 if let Some(frame) = frame.clone() {
                     let size = constrain_size_preserving_aspect_ratio(
@@ -81,6 +82,8 @@ impl View for SharedScreen {
                     });
                 }
             })
+            .contained()
+            .with_style(cx.global::<Settings>().theme.shared_screen)
             .boxed()
         })
         .on_down(MouseButton::Left, |_, cx| cx.focus_parent_view())
