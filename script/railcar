@@ -1,0 +1,73 @@
+#!/bin/bash
+
+set -eu
+
+# Ensure cargo-edit is installed
+which cargo-set-version > /dev/null || cargo install cargo-edit
+
+# Ensure we're in a clean state on an up-to-date `main` branch.
+if [[ -n $(git status --short --untracked-files=no) ]]; then
+  echo "Can't roll the railcars with uncommitted changes"
+  exit 1
+fi
+if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
+  echo "Run this command on the main branch"
+  exit 1
+fi
+git pull -q --ff-only origin main
+
+# Determine the name of the new preview branch
+version=$(script/get-crate-version zed)
+major=$(echo $version | cut -d. -f1)
+minor=$(echo $version | cut -d. -f2)
+prev_minor=$(expr $minor - 1)
+next_minor=$(expr $minor + 1)
+
+minor_branch_name="v${major}.${minor}.x"
+prev_minor_branch_name="v${major}.${prev_minor}.x"
+next_minor_branch_name="v${major}.${next_minor}.x"
+
+echo "Promoting existing branch ${prev_minor_branch_name} to stable..."
+git checkout -q ${prev_minor_branch_name}
+git clean -qdff
+old_prev_minor_sha=$(git rev-parse HEAD)
+echo -n "stable" > crates/zed/RELEASE_CHANNEL
+git commit -q --all --message "Stable ${prev_minor_branch_name}"
+stable_tag_name="v$(script/get-crate-version zed)"
+git tag ${stable_tag_name}
+
+echo "Creating new preview branch ${minor_branch_name}..."
+git checkout -q -b ${minor_branch_name}
+echo -n "preview" > crates/zed/RELEASE_CHANNEL
+git commit -q --all --message "Preview ${minor_branch_name}"
+preview_tag_name="v$(script/get-crate-version zed)-pre"
+git tag ${preview_tag_name}
+
+echo "Preparing main for version ${next_minor_branch_name}..."
+git checkout -q main
+git clean -q -dff
+old_main_sha=$(git rev-parse HEAD)
+echo -n "dev" > crates/zed/RELEASE_CHANNEL
+cargo set-version --package zed --bump minor
+cargo check -q
+git commit -q --all --message "Dev ${next_minor_branch_name}"
+
+cat <<MESSAGE
+Locally rolled the railcars.
+
+To push this:
+    git push origin \\
+      ${preview_tag_name} \\
+      ${stable_tag_name} \\
+      ${minor_branch_name} \\
+      ${prev_minor_branch_name} \\
+      main
+
+To undo this:
+    git push -f . \\
+      :${preview_tag_name} \\
+      :${stable_tag_name} \\
+      :${minor_branch_name} \\
+      ${old_prev_minor_sha}:${prev_minor_branch_name} \\
+      ${old_main_sha}:main
+MESSAGE

@@ -21,7 +21,7 @@ which cargo-set-version > /dev/null || cargo install cargo-edit
 cargo set-version --package $package --bump $version_increment
 cargo check --quiet
 
-new_version=$(cargo metadata --no-deps --format-version=1 | jq --raw-output ".packages[] | select(.name == \"${package}\") | .version")
+new_version=$(script/get-crate-version $package)
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 old_sha=$(git rev-parse HEAD)
 tag_name=${tag_prefix}${new_version}${tag_suffix}
@@ -33,8 +33,11 @@ cat <<MESSAGE
 Locally committed and tagged ${package} version ${new_version}
 
 To push this:
-    git push origin ${tag_name} ${branch_name}
+    git push origin \
+      ${tag_name} \
+      ${branch_name}
 
 To undo this:
-    git tag -d ${tag_name} && git reset --hard ${old_sha}
+    git tag -d ${tag_name} && \
+      git reset --hard ${old_sha}
 MESSAGE
