@@ -30,6 +30,7 @@ use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage};
 use serde::Deserialize;
+use settings::ReleaseChannel;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -50,9 +51,6 @@ pub use rpc::*;
 pub use user::*;
 
 lazy_static! {
-    pub static ref PREVIEW_CHANNEL: bool = std::env::var("ZED_PREVIEW_CHANNEL")
-        .map_or(false, |var| !var.is_empty())
-        || option_env!("ZED_PREVIEW_CHANNEL").map_or(false, |var| !var.is_empty());
     pub static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
     pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
@@ -970,6 +968,14 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncAppContext,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
+        let is_preview = cx.read(|cx| {
+            if cx.has_global::<ReleaseChannel>() {
+                *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
+            } else {
+                false
+            }
+        });
+
         let request = Request::builder()
             .header(
                 "Authorization",
@@ -991,11 +997,7 @@ impl Client {
             match rpc_url.scheme() {
                 "https" => {
                     rpc_url.set_scheme("wss").unwrap();
-                    rpc_url.set_query(if *PREVIEW_CHANNEL {
-                        Some("preview=1")
-                    } else {
-                        None
-                    });
+                    rpc_url.set_query(if is_preview { Some("preview=1") } else { None });
                     let request = request.uri(rpc_url.as_str()).body(())?;
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls(request, stream).await?;

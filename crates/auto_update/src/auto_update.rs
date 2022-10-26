@@ -1,13 +1,14 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{http::HttpClient, PREVIEW_CHANNEL, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, WeakViewHandle,
 };
 use lazy_static::lazy_static;
 use serde::Deserialize;
+use settings::ReleaseChannel;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
@@ -174,7 +175,14 @@ impl AutoUpdater {
             )
         });
 
-        let preview_param = if *PREVIEW_CHANNEL { "&preview=1" } else { "" };
+        let preview_param = cx.read(|cx| {
+            if cx.has_global::<ReleaseChannel>() {
+                if *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview {
+                    return "&preview=1";
+                }
+            }
+            ""
+        });
 
         let mut response = client
             .get(

@@ -54,6 +54,14 @@ pub struct FeatureFlags {
     pub experimental_themes: bool,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum ReleaseChannel {
+    #[default]
+    Dev,
+    Preview,
+    Stable,
+}
+
 impl FeatureFlags {
     pub fn keymap_files(&self) -> Vec<&'static str> {
         vec![]
