@@ -49,7 +49,8 @@ impl Db {
         &self,
         worktree_roots: &[Arc<Path>],
     ) -> SerializedWorkspace {
-        // Find the workspace id which is uniquely identified by this set of paths return it if found
+        // Find the workspace id which is uniquely identified by this set of paths
+        // return it if found
         let mut workspace_id = self.workspace_id(worktree_roots);
         if workspace_id.is_none() && worktree_roots.len() == 0 {
             workspace_id = self.last_workspace_id();
@@ -387,6 +388,12 @@ mod tests {
     use crate::Db;
 
     use super::WorkspaceId;
+
+    #[test]
+    fn test_empty_worktrees() {
+        // TODO determine update_worktree_roots(), workspace_id(), recent_workspaces()
+        // semantics for this case
+    }
 
     #[test]
     fn test_more_workspace_ids() {
