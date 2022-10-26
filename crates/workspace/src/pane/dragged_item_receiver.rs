@@ -76,6 +76,8 @@ where
             .is_some()
         {
             cx.notify();
+        } else {
+            cx.propagate_event();
         }
     })
 }
