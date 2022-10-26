@@ -28,6 +28,7 @@ pub struct Theme {
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
+    pub shared_screen: ContainerStyle,
     pub contact_notification: ContactNotification,
     pub update_notification: UpdateNotification,
     pub project_shared_notification: ProjectSharedNotification,

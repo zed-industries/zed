@@ -8,6 +8,7 @@ import search from "./search";
 import picker from "./picker";
 import workspace from "./workspace";
 import contextMenu from "./contextMenu";
+import sharedScreen from "./sharedScreen";
 import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
 import updateNotification from "./updateNotification";
@@ -38,6 +39,7 @@ export default function app(colorScheme: ColorScheme): Object {
     contactFinder: contactFinder(colorScheme),
     contactList: contactList(colorScheme),
     search: search(colorScheme),
+    sharedScreen: sharedScreen(colorScheme),
     breadcrumbs: {
       ...text(colorScheme.highest, "sans", "variant"),
       padding: {
