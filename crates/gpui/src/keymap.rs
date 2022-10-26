@@ -93,6 +93,48 @@ impl Debug for MatchResult {
     }
 }
 
+pub enum MatchResult2 {
+    None,
+    Pending,
+    Match {
+        view_id: usize,
+        action: Box<dyn Action>,
+    },
+}
+
+impl Debug for MatchResult2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MatchResult2::None => f.debug_struct("MatchResult2::None").finish(),
+            MatchResult2::Pending => f.debug_struct("MatchResult2::Pending").finish(),
+            MatchResult2::Match { view_id, action } => f
+                .debug_struct("MatchResult::Match")
+                .field("view_id", view_id)
+                .field("action", &action.name())
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for MatchResult2 {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MatchResult2::None, MatchResult2::None) => true,
+            (MatchResult2::Pending, MatchResult2::Pending) => true,
+            (
+                MatchResult2::Match { view_id, action },
+                MatchResult2::Match {
+                    view_id: other_view_id,
+                    action: other_action,
+                },
+            ) => view_id == other_view_id && action.eq(other_action.as_ref()),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for MatchResult2 {}
+
 impl Matcher {
     pub fn new(keymap: Keymap) -> Self {
         Self {
@@ -126,6 +168,65 @@ impl Matcher {
 
     pub fn has_pending_keystrokes(&self) -> bool {
         !self.pending.is_empty()
+    }
+
+    pub fn push_keystroke_2<'a>(
+        &mut self,
+        keystroke: Keystroke,
+        dispatch_path: impl Iterator<Item = (usize, &'a Context)>,
+    ) -> MatchResult2 {
+        let mut any_pending = false;
+
+        let first_keystroke = self.pending.is_empty();
+        for (view_id, context) in dispatch_path {
+            if !first_keystroke && !self.pending.contains_key(&view_id) {
+                continue;
+            }
+
+            let pending = self.pending.entry(view_id).or_default();
+
+            if let Some(pending_context) = pending.context.as_ref() {
+                if pending_context != context {
+                    pending.keystrokes.clear();
+                }
+            }
+
+            pending.keystrokes.push(keystroke.clone());
+
+            let mut retain_pending = false;
+            for binding in self.keymap.bindings.iter().rev() {
+                if binding.keystrokes.starts_with(&pending.keystrokes)
+                    && binding
+                        .context_predicate
+                        .as_ref()
+                        .map(|c| c.eval(context))
+                        .unwrap_or(true)
+                {
+                    if binding.keystrokes.len() == pending.keystrokes.len() {
+                        self.pending.remove(&view_id);
+                        return MatchResult2::Match {
+                            view_id,
+                            action: binding.action.boxed_clone(),
+                        };
+                    } else {
+                        retain_pending = true;
+                        pending.context = Some(context.clone());
+                    }
+                }
+            }
+
+            if retain_pending {
+                any_pending = true;
+            } else {
+                self.pending.remove(&view_id);
+            }
+        }
+
+        if any_pending {
+            MatchResult2::Pending
+        } else {
+            MatchResult2::None
+        }
     }
 
     pub fn push_keystroke(
@@ -451,6 +552,7 @@ impl ContextPredicate {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
     use serde::Deserialize;
 
     use crate::{actions, impl_actions};
@@ -458,7 +560,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_keystroke_parsing() -> anyhow::Result<()> {
+    fn test_push_keystroke() -> Result<()> {
+        actions!(test, [B, AB, C]);
+
+        let mut ctx1 = Context::default();
+        ctx1.set.insert("1".into());
+
+        let mut ctx2 = Context::default();
+        ctx2.set.insert("2".into());
+
+        let keymap = Keymap::new(vec![
+            Binding::new("a b", AB, Some("1")),
+            Binding::new("b", B, Some("2")),
+            Binding::new("c", C, Some("2")),
+        ]);
+
+        let mut matcher = Matcher::new(keymap);
+
+        assert_eq!(
+            MatchResult2::Pending,
+            matcher.push_keystroke_2(Keystroke::parse("a")?, [(1, &ctx1), (2, &ctx2)].into_iter())
+        );
+        assert_eq!(
+            MatchResult2::Match {
+                view_id: 1,
+                action: Box::new(AB)
+            },
+            matcher.push_keystroke_2(Keystroke::parse("b")?, [(1, &ctx1), (2, &ctx2)].into_iter())
+        );
+        assert!(matcher.pending.is_empty());
+        assert_eq!(
+            MatchResult2::Match {
+                view_id: 2,
+                action: Box::new(B)
+            },
+            matcher.push_keystroke_2(Keystroke::parse("b")?, [(1, &ctx1), (2, &ctx2)].into_iter())
+        );
+        assert!(matcher.pending.is_empty());
+        assert_eq!(
+            MatchResult2::Pending,
+            matcher.push_keystroke_2(Keystroke::parse("a")?, [(1, &ctx1), (2, &ctx2)].into_iter())
+        );
+        assert_eq!(
+            MatchResult2::None,
+            matcher.push_keystroke_2(Keystroke::parse("c")?, [(1, &ctx1), (2, &ctx2)].into_iter())
+        );
+        assert!(matcher.pending.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_keystroke_parsing() -> Result<()> {
         assert_eq!(
             Keystroke::parse("ctrl-p")?,
             Keystroke {
@@ -499,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn test_context_predicate_parsing() -> anyhow::Result<()> {
+    fn test_context_predicate_parsing() -> Result<()> {
         use ContextPredicate::*;
 
         assert_eq!(
@@ -522,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn test_context_predicate_eval() -> anyhow::Result<()> {
+    fn test_context_predicate_eval() -> Result<()> {
         let predicate = ContextPredicate::parse("a && b || c == d")?;
 
         let mut context = Context::default();
@@ -546,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn test_matcher() -> anyhow::Result<()> {
+    fn test_matcher() -> Result<()> {
         #[derive(Clone, Deserialize, PartialEq, Eq, Debug)]
         pub struct A(pub String);
         impl_actions!(test, [A]);
