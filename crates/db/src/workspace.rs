@@ -260,10 +260,15 @@ where
     where
         P: AsRef<Path> + Debug,
     {
+        if worktree_roots.len() == 0 {
+            return Ok(None);
+        }
+
         // Prepare the array binding string. SQL doesn't have syntax for this, so
         // we have to do it ourselves.
         let mut array_binding_stmt = "(".to_string();
         for i in 0..worktree_roots.len() {
+            // This uses ?NNN for numbered placeholder syntax
             array_binding_stmt.push_str(&format!("?{}", (i + 1))); //sqlite is 1-based
             if i < worktree_roots.len() - 1 {
                 array_binding_stmt.push(',');
@@ -292,33 +297,35 @@ where
         // Let's analyze what happens when querying for [/tmp, /tmp2], from the inside out:
         //  - We start with a join of this table on itself, generating every possible
         //    pair of ((path, ID), (path, ID)), and filtering the join down to just the
-        //    *overlapping* workspace IDs. For this small data set, this would look like:
+        //    *overlapping but incorrect* workspace IDs. For this small data set,
+        //    this would look like:
         //
         //    wt1.ID wt1.PATH | wt2.ID wt2.PATH
         //    3      /tmp3      3      /tmp2
         //
         //  - Moving one SELECT out, we use the first pair's ID column to invert the selection,
-        //    meaning we now have a list of all the entries for our array and *subsets*
-        //    of our array:
+        //    meaning we now have a list of all the entries for our array, minus overlapping sets,
+        //    but including *subsets* of our worktree roots:
         //
         //    ID PATH
         //    1  /tmp
+        //    1  /tmp2
         //    2  /tmp
-        //    2  /tmp2
         //
-        // - To trim out the subsets, we need to exploit the fact that there can be no duplicate
-        //   entries in this table. We can just use GROUP BY, COUNT, and a WHERE clause that checks
-        //   for the length of our array:
+        // - To trim out the subsets, we can to exploit the PRIMARY KEY constraint that there are no
+        //   duplicate entries in this table. Using a GROUP BY and a COUNT we can find the subsets of
+        //   our keys:
         //
         //    ID num_matching
         //    1  2
+        //    2  1
         //
-        // And we're done! We've found the matching ID correctly :D
-        // However, due to limitations in sqlite's query binding, we still have to do some string
-        // substitution to generate the correct query
-        // 47,116,109,112,50
-        // 2F746D7032
-
+        // - And with one final WHERE num_matching = $num_of_worktree_roots, we're done! We've found the
+        //   matching ID correctly :D
+        //
+        // Note: due to limitations in SQLite's query binding, we have to generate the prepared
+        //       statement with string substitution (the {array_bind}) below, and then bind the
+        //       parameters by number.
         let query = format!(
             r#"
             SELECT workspace_id 
@@ -391,8 +398,27 @@ mod tests {
 
     #[test]
     fn test_empty_worktrees() {
-        // TODO determine update_worktree_roots(), workspace_id(), recent_workspaces()
-        // semantics for this case
+        let db = Db::open_in_memory();
+
+        assert_eq!(None, db.workspace_id::<String>(&[]));
+
+        db.make_new_workspace();
+        db.update_worktree_roots(&WorkspaceId(1), &["/tmp", "/tmp2"]);
+
+        // Sanity check
+        assert_eq!(Some(WorkspaceId(1)), db.workspace_id(&["/tmp", "/tmp2"]));
+
+        db.update_worktree_roots::<String>(&WorkspaceId(1), &[]);
+
+        // Make sure DB doesn't consider 'no worktrees' to be a query it can answer
+        assert_eq!(None, db.workspace_id::<String>(&[]));
+
+        assert_eq!(Some(WorkspaceId(1)), db.last_workspace_id());
+
+        assert_eq!(
+            &(WorkspaceId(1), vec![]),
+            db.recent_workspaces(1).get(0).unwrap()
+        )
     }
 
     #[test]
