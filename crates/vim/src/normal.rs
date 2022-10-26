@@ -567,9 +567,41 @@ mod test {
         cx.assert_binding_matches(
             ["2", "g", "g"],
             indoc! {"
+                ˇ
+                
+                brown fox jumps
+                over the lazydog"},
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_end_of_document(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_binding_matches_all(
+            ["shift-g"],
+            indoc! {"
+                The qˇuick
+                
+                brown fox jumps
+                over ˇthe laˇzy dog"},
+        )
+        .await;
+        cx.assert_binding_matches(
+            ["shift-g"],
+            indoc! {"
                 
                 
-                brown fox juˇmps
+                brown fox jumps
+                over the laˇzy dog"},
+        )
+        .await;
+        cx.assert_binding_matches(
+            ["2", "shift-g"],
+            indoc! {"
+                ˇ
+                
+                brown fox jumps
                 over the lazydog"},
         )
         .await;

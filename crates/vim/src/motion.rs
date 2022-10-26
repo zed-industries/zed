@@ -4,7 +4,7 @@ use editor::{
     movement, Bias, CharKind, DisplayPoint,
 };
 use gpui::{actions, impl_actions, MutableAppContext};
-use language::{Selection, SelectionGoal};
+use language::{Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -189,7 +189,7 @@ impl Motion {
             EndOfLine => (end_of_line(map, point), SelectionGoal::None),
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
-            EndOfDocument => (end_of_document(map, point), SelectionGoal::None),
+            EndOfDocument => (end_of_document(map, point, times), SelectionGoal::None),
             Matching => (matching(map, point), SelectionGoal::None),
         }
     }
@@ -409,13 +409,17 @@ fn end_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
 }
 
 fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
-    let mut new_point = (line - 1).to_display_point(map);
+    let mut new_point = Point::new((line - 1) as u32, 0).to_display_point(map);
     *new_point.column_mut() = point.column();
     map.clip_point(new_point, Bias::Left)
 }
 
-fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    let mut new_point = map.max_point();
+fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
+    let mut new_point = if line == 1 {
+        map.max_point()
+    } else {
+        Point::new((line - 1) as u32, 0).to_display_point(map)
+    };
     *new_point.column_mut() = point.column();
     map.clip_point(new_point, Bias::Left)
 }
