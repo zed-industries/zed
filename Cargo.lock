@@ -959,6 +959,7 @@ dependencies = [
  "rand 0.8.5",
  "rpc",
  "serde",
+ "settings",
  "smol",
  "sum_tree",
  "tempfile",

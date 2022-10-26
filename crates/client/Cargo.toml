@@ -35,9 +35,11 @@ tiny_http = "0.8"
 uuid = { version = "1.1.2", features = ["v4"] }
 url = "2.2"
 serde = { version = "*", features = ["derive"] }
+settings = { path = "../settings" }
 tempfile = "3"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }

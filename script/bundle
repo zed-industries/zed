@@ -5,8 +5,7 @@ set -e
 export ZED_BUNDLE=true
 export MACOSX_DEPLOYMENT_TARGET=10.15.7
 
-echo "Installing cargo bundle"
-cargo install cargo-bundle --version 0.5.0
+which cargo-bundle > /dev/null || cargo install cargo-bundle --version 0.5.0
 rustup target add wasm32-wasi
 
 # Deal with versions of macOS that don't include libstdc++ headers
@@ -22,23 +21,32 @@ echo "Compiling cli binary for x86_64-apple-darwin"
 cargo build --release --package cli --target x86_64-apple-darwin
 
 echo "Creating application bundle"
-(cd crates/zed && cargo bundle --release --target x86_64-apple-darwin)
+pushd crates/zed
+channel=$(cat RELEASE_CHANNEL)
+cp Cargo.toml Cargo.toml.backup
+sed \
+    -i .backup \
+    "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
+    Cargo.toml
+app_path=$(cargo bundle --release --target x86_64-apple-darwin | xargs)
+mv Cargo.toml.backup Cargo.toml
+popd
 
 echo "Creating fat binaries"
 lipo \
     -create \
     target/{x86_64-apple-darwin,aarch64-apple-darwin}/release/Zed \
     -output \
-    target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/zed
+    "${app_path}/Contents/MacOS/zed"
 lipo \
     -create \
     target/{x86_64-apple-darwin,aarch64-apple-darwin}/release/cli \
     -output \
-    target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/cli
+    "${app_path}/Contents/MacOS/cli"
 
 echo "Copying WebRTC.framework into the frameworks folder"
-mkdir target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Frameworks
-cp -R target/x86_64-apple-darwin/release/WebRTC.framework target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Frameworks/
+mkdir "${app_path}/Contents/Frameworks"
+cp -R target/x86_64-apple-darwin/release/WebRTC.framework "${app_path}/Contents/Frameworks/"
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
@@ -49,12 +57,12 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P $MACOS_CERTIFICATE_PASSWORD -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
-    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
+    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}" -v
     security default-keychain -s login.keychain
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
     echo "Performing an ad-hoc signature, but this bundle should not be distributed"
-    codesign --force --deep --sign - target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
+    codesign --force --deep --sign - "${app_path}" -v
 fi
 
 echo "Creating DMG"

@@ -13,6 +13,7 @@ use collab_ui::{CollabTitlebarItem, ToggleCollaborationMenu};
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
+use lazy_static::lazy_static;
 
 use gpui::{
     actions,
@@ -28,7 +29,7 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
+use settings::{keymap_file_json_schema, settings_file_json_schema, ReleaseChannel, Settings};
 use std::{env, path::Path, str, sync::Arc};
 use util::ResultExt;
 pub use workspace;
@@ -68,6 +69,17 @@ actions!(
 );
 
 const MIN_FONT_SIZE: f32 = 6.0;
+
+lazy_static! {
+    static ref RELEASE_CHANNEL_NAME: String =
+        env::var("ZED_RELEASE_CHANNEL").unwrap_or(include_str!("../RELEASE_CHANNEL").to_string());
+    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
+        "dev" => ReleaseChannel::Dev,
+        "preview" => ReleaseChannel::Preview,
+        "stable" => ReleaseChannel::Preview,
+        _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
+    };
+}
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(about);
@@ -377,9 +389,15 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
+    let app_name = match *cx.global::<ReleaseChannel>() {
+        ReleaseChannel::Dev => "Zed Dev",
+        ReleaseChannel::Preview => "Zed Preview",
+        ReleaseChannel::Stable => "Zed",
+    };
+    let version = env!("CARGO_PKG_VERSION");
     cx.prompt(
         gpui::PromptLevel::Info,
-        &format!("Zed {}", env!("CARGO_PKG_VERSION")),
+        &format!("{app_name} {version}"),
         &["OK"],
     );
 }

@@ -79,9 +79,30 @@ jobs:
           clean: false
           submodules: 'recursive'
 
-      - name: Validate version
+      - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: script/validate-version
+        run: |
+          set -eu
+
+          version=$(script/get-crate-version zed)
+          channel=$(cat crates/zed/RELEASE_CHANNEL)
+          echo "Publishing version: ${version} on release channel ${channel}"
+          echo "RELEASE_CHANNEL=${channel}" >> $GITHUB_ENV
+
+          expected_tag_name=""
+          case ${channel} in
+            stable)
+              expected_tag_name="v${version}";;
+            preview)
+              expected_tag_name="v${version}-pre";;
+            *)
+              echo "can't publish a release on channel ${channel}"
+              exit 1;;
+          esac
+          if [[ $GITHUB_REFNAME != $expected_tag_name ]]; then
+            echo "invalid release tag ${GITHUB_REFNAME}. expected ${expected_tag_name}"
+            exit 1
+          fi
 
       - name: Create app bundle
         run: script/bundle
@@ -94,10 +115,11 @@ jobs:
           path: target/release/Zed.dmg
 
       - uses: softprops/action-gh-release@v1
-        name: Upload app bundle to release if release tag
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        name: Upload app bundle to release
+        if: ${{ github.env.RELEASE_CHANNEL }}
         with:
           draft: true
+          prerelease: ${{ github.env.RELEASE_CHANNEL == 'preview' }}
           files: target/release/Zed.dmg
           overwrite: true
           body: ""

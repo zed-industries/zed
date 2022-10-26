@@ -39,7 +39,7 @@ use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJson
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
-use zed::{self, build_window_options, initialize_workspace, languages, menus};
+use zed::{self, build_window_options, initialize_workspace, languages, menus, RELEASE_CHANNEL};
 
 fn main() {
     let http = http::client();
@@ -97,6 +97,7 @@ fn main() {
 
         let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
 
+        cx.set_global(*RELEASE_CHANNEL);
         cx.set_global(HomeDir(zed::paths::HOME.to_path_buf()));
 
         //Setup settings global before binding actions
@@ -158,7 +159,7 @@ fn main() {
             initialize_workspace,
             default_item_factory,
         });
-        auto_update::init(db, http, client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(db, http, cx);
         workspace::init(app_state.clone(), cx);
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);

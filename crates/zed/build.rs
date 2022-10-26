@@ -3,11 +3,14 @@ use std::process::Command;
 fn main() {
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
 
-    if let Ok(api_key) = std::env::var("ZED_MIXPANEL_TOKEN") {
-        println!("cargo:rustc-env=ZED_MIXPANEL_TOKEN={api_key}");
+    if let Ok(value) = std::env::var("ZED_MIXPANEL_TOKEN") {
+        println!("cargo:rustc-env=ZED_MIXPANEL_TOKEN={value}");
     }
-    if let Ok(api_key) = std::env::var("ZED_AMPLITUDE_API_KEY") {
-        println!("cargo:rustc-env=ZED_AMPLITUDE_API_KEY={api_key}");
+    if let Ok(value) = std::env::var("ZED_AMPLITUDE_API_KEY") {
+        println!("cargo:rustc-env=ZED_AMPLITUDE_API_KEY={value}");
+    }
+    if let Ok(value) = std::env::var("ZED_PREVIEW_CHANNEL") {
+        println!("cargo:rustc-env=ZED_PREVIEW_CHANNEL={value}");
     }
 
     if std::env::var("ZED_BUNDLE").ok().as_deref() == Some("true") {
