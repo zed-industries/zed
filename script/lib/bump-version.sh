@@ -2,18 +2,13 @@
 
 set -eu
 
-if [[ $# < 4 ]]; then
-  echo "Missing version increment (major, minor, or patch)" >&2
-  exit 1
-fi
-
 package=$1
 tag_prefix=$2
 tag_suffix=$3
 version_increment=$4
 
 if [[ -n $(git status --short --untracked-files=no) ]]; then
-  echo "Can't push a new version with uncommitted changes"
+  echo "can't bump version with uncommitted changes"
   exit 1
 fi
 
@@ -33,11 +28,10 @@ cat <<MESSAGE
 Locally committed and tagged ${package} version ${new_version}
 
 To push this:
-    git push origin \
-      ${tag_name} \
+    git push origin \\
+      ${tag_name} \\
       ${branch_name}
 
 To undo this:
-    git tag -d ${tag_name} && \
-      git reset --hard ${old_sha}
+    git reset --hard ${old_sha} && git tag -d ${tag_name}
 MESSAGE
