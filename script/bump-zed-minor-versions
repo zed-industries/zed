@@ -92,6 +92,7 @@ cat <<MESSAGE
 Prepared new Zed versions locally.
 
 To push this:
+
     git push origin \\
       ${preview_tag_name} \\
       ${stable_tag_name} \\
@@ -100,9 +101,11 @@ To push this:
       main
 
 To undo this:
+
     git reset --hard ${old_main_sha} && git push -f . \\
       :${preview_tag_name} \\
       :${stable_tag_name} \\
       :${minor_branch_name} \\
       ${old_prev_minor_sha}:${prev_minor_branch_name}
+
 MESSAGE

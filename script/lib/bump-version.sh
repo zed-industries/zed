@@ -28,10 +28,11 @@ cat <<MESSAGE
 Locally committed and tagged ${package} version ${new_version}
 
 To push this:
-    git push origin \\
-      ${tag_name} \\
-      ${branch_name}
+
+    git push origin ${tag_name} ${branch_name}
 
 To undo this:
+
     git reset --hard ${old_sha} && git tag -d ${tag_name}
+
 MESSAGE
