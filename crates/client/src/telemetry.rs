@@ -71,7 +71,8 @@ struct MixpanelEventProperties {
     os_version: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
     signed_in: bool,
-    platform: &'static str,
+    #[serde(rename = "App")]
+    app: &'static str,
 }
 
 #[derive(Serialize)]
@@ -229,7 +230,7 @@ impl Telemetry {
                 os_version: state.os_version.clone(),
                 app_version: state.app_version.clone(),
                 signed_in: state.metrics_id.is_some(),
-                platform: "Zed",
+                app: "Zed",
             },
         };
         state.queue.push(event);
