@@ -1357,7 +1357,7 @@ impl MutableAppContext {
     ) -> BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> {
         let mut result: BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> = Default::default();
 
-        for parent_view_id in self.parents(window_id, view_id) {
+        for parent_view_id in self.ancestors(window_id, view_id) {
             let keymap_context = self
                 .cx
                 .views

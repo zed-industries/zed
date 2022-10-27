@@ -12,7 +12,7 @@ mod visual;
 
 use collections::HashMap;
 use command_palette::CommandPaletteFilter;
-use editor::{Bias, Cancel, CursorShape, Editor};
+use editor::{Bias, Cancel, Editor};
 use gpui::{
     impl_actions, keymap::MatchResult, MutableAppContext, Subscription, ViewContext, WeakViewHandle,
 };
