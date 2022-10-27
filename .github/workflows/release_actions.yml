@@ -1,7 +1,9 @@
 on:
   release:
     types: [published]
-
+  tags:
+    "!**-pre"
+    
 jobs:
   discord_release:
     runs-on: ubuntu-latest
