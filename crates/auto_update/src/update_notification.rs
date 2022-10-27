@@ -5,7 +5,7 @@ use gpui::{
     Element, Entity, MouseButton, View, ViewContext,
 };
 use menu::Cancel;
-use settings::Settings;
+use settings::{ReleaseChannel, Settings};
 use workspace::Notification;
 
 pub struct UpdateNotification {
@@ -29,13 +29,19 @@ impl View for UpdateNotification {
         let theme = cx.global::<Settings>().theme.clone();
         let theme = &theme.update_notification;
 
+        let app_name = match *cx.global::<ReleaseChannel>() {
+            ReleaseChannel::Dev => "Zed Dev",
+            ReleaseChannel::Preview => "Zed Preview",
+            ReleaseChannel::Stable => "Zed",
+        };
+
         MouseEventHandler::<ViewReleaseNotes>::new(0, cx, |state, cx| {
             Flex::column()
                 .with_child(
                     Flex::row()
                         .with_child(
                             Text::new(
-                                format!("Updated to Zed {}", self.version),
+                                format!("Updated to {app_name} {}", self.version),
                                 theme.message.text.clone(),
                             )
                             .contained()
