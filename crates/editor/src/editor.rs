@@ -1353,6 +1353,7 @@ impl Editor {
     ) {
         self.scroll_top_anchor = anchor;
         self.scroll_position = position;
+        self.make_scrollbar_visible(cx);
         cx.emit(Event::ScrollPositionChanged { local: false });
         cx.notify();
     }
