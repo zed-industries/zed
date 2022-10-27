@@ -111,6 +111,7 @@ impl Telemetry {
                 os_version: platform.os_version().ok().map(|v| v.to_string().into()),
                 os_name: platform.os_name().into(),
                 app_version: platform.app_version().ok().map(|v| v.to_string().into()),
+                release_channel,
                 device_id: None,
                 metrics_id: None,
                 queue: Default::default(),
