@@ -219,7 +219,7 @@ export default function workspace(colorScheme: ColorScheme) {
       initialSizeBottom: 480,
       wash_color: withOpacity(background(colorScheme.highest), 0.5),
       panel: {
-        border: border(colorScheme.highest),
+        border: border(colorScheme.middle),
       },
       maximized: {
         margin: 32,
