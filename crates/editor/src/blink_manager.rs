@@ -97,7 +97,7 @@ impl BlinkManager {
         self.blink_cursors(self.blink_epoch, cx);
     }
 
-    pub fn disable(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn disable(&mut self, _cx: &mut ModelContext<Self>) {
         self.enabled = false;
     }
 
