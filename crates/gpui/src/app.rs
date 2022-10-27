@@ -1544,17 +1544,18 @@ impl MutableAppContext {
             {
                 MatchResult::None => false,
                 MatchResult::Pending => true,
-                MatchResult::Match { view_id, action } => {
-                    if self.handle_dispatch_action_from_effect(
-                        window_id,
-                        Some(view_id),
-                        action.as_ref(),
-                    ) {
-                        self.keystroke_matcher.clear_pending();
-                        true
-                    } else {
-                        false
+                MatchResult::Matches(matches) => {
+                    for (view_id, action) in matches {
+                        if self.handle_dispatch_action_from_effect(
+                            window_id,
+                            Some(view_id),
+                            action.as_ref(),
+                        ) {
+                            self.keystroke_matcher.clear_pending();
+                            return true;
+                        }
                     }
+                    false
                 }
             }
         } else {
