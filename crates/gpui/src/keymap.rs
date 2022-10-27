@@ -77,10 +77,7 @@ where
 pub enum MatchResult {
     None,
     Pending,
-    Match {
-        view_id: usize,
-        action: Box<dyn Action>,
-    },
+    Match(Vec<(usize, Box<dyn Action>)>),
 }
 
 impl Debug for MatchResult {
@@ -157,8 +154,10 @@ impl Matcher {
         dispatch_path: Vec<(usize, Context)>,
     ) -> MatchResult {
         let mut any_pending = false;
+        let mut matched_bindings = Vec::new();
 
         let first_keystroke = self.pending.is_empty();
+        dbg!(&dispatch_path);
         for (view_id, context) in dispatch_path {
             if !first_keystroke && !self.pending.contains_key(&view_id) {
                 continue;
@@ -185,10 +184,7 @@ impl Matcher {
                 {
                     if binding.keystrokes.len() == pending.keystrokes.len() {
                         self.pending.remove(&view_id);
-                        return MatchResult::Match {
-                            view_id,
-                            action: binding.action.boxed_clone(),
-                        };
+                        matched_bindings.push((view_id, binding.action.boxed_clone()));
                     } else {
                         retain_pending = true;
                         pending.context = Some(context.clone());
@@ -203,7 +199,9 @@ impl Matcher {
             }
         }
 
-        if any_pending {
+        if !matched_bindings.is_empty() {
+            MatchResult::Match(matched_bindings)
+        } else if any_pending {
             MatchResult::Pending
         } else {
             MatchResult::None
