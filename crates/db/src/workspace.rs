@@ -1,5 +1,6 @@
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
 use std::{
     ffi::OsStr,
@@ -30,7 +31,7 @@ CREATE TABLE worktree_roots(
 ) STRICT;
 ";
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Default, Deserialize, Serialize)]
 pub struct WorkspaceId(i64);
 
 #[derive(Default, Debug)]

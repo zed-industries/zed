@@ -1,8 +1,68 @@
 use gpui::Axis;
 
+use serde::{Deserialize, Serialize};
+use serde_rusqlite::to_params_named;
+
 use crate::{items::ItemId, workspace::WorkspaceId};
 
 use super::Db;
+
+pub(crate) const PANE_M_1: &str = "
+CREATE TABLE dock_panes(
+    dock_pane_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    anchor_position TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
+    visible INTEGER NOT NULL, -- Boolean
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE pane_groups(
+    group_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    parent_group INTEGER, -- NULL indicates that this is a root node
+    axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(parent_group) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE grouped_panes(
+    pane_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE items(
+    item_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE group_items(
+    workspace_id INTEGER NOT NULL,
+    pane_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, pane_id, item_id)
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(pane_id) REFERENCES grouped_panes(pane_id) ON DELETE CASCADE,
+    FOREIGN KEY(item_id) REFERENCES items(item_id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE dock_items(
+    workspace_id INTEGER NOT NULL,
+    dock_pane_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, dock_pane_id, item_id)
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    FOREIGN KEY(dock_pane_id) REFERENCES dock_panes(dock_pane_id) ON DELETE CASCADE,
+    FOREIGN KEY(item_id) REFERENCES items(item_id)ON DELETE CASCADE
+) STRICT;
+";
 
 // We have an many-branched, unbalanced tree with three types:
 // Pane Groups
@@ -74,64 +134,7 @@ pub struct SerializedPane {
     children: Vec<ItemId>,
 }
 
-pub(crate) const PANE_M_1: &str = "
-CREATE TABLE dock_panes(
-    dock_pane_id INTEGER PRIMARY KEY,
-    workspace_id INTEGER NOT NULL,
-    anchor_position TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
-    shown INTEGER NOT NULL, -- Boolean
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE pane_groups(
-    group_id INTEGER PRIMARY KEY,
-    workspace_id INTEGER NOT NULL,
-    parent_group INTEGER, -- NULL indicates that this is a root node
-    axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY(parent_group) REFERENCES pane_groups(group_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE grouped_panes(
-    pane_id INTEGER PRIMARY KEY,
-    workspace_id INTEGER NOT NULL,
-    group_id INTEGER NOT NULL,
-    idx INTEGER NOT NULL,
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY(group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE items(
-    item_id INTEGER PRIMARY KEY,
-    workspace_id INTEGER NOT NULL,
-    kind TEXT NOT NULL,
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE group_items(
-    workspace_id INTEGER NOT NULL,
-    pane_id INTEGER NOT NULL,
-    item_id INTEGER NOT NULL,
-    idx INTEGER NOT NULL,
-    PRIMARY KEY (workspace_id, pane_id, item_id)
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY(pane_id) REFERENCES grouped_panes(pane_id) ON DELETE CASCADE,
-    FOREIGN KEY(item_id) REFERENCES items(item_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE dock_items(
-    workspace_id INTEGER NOT NULL,
-    dock_pane_id INTEGER NOT NULL,
-    item_id INTEGER NOT NULL,
-    idx INTEGER NOT NULL,
-    PRIMARY KEY (workspace_id, dock_pane_id, item_id)
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY(dock_pane_id) REFERENCES dock_panes(dock_pane_id) ON DELETE CASCADE,
-    FOREIGN KEY(item_id) REFERENCES items(item_id)ON DELETE CASCADE
-) STRICT;
-";
-
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum DockAnchor {
     #[default]
     Bottom,
@@ -139,11 +142,11 @@ pub enum DockAnchor {
     Expanded,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SerializedDockPane {
-    pub workspace: WorkspaceId,
+    pub workspace_id: WorkspaceId,
     pub anchor_position: DockAnchor,
-    pub shown: bool,
+    pub visible: bool,
 }
 
 impl Db {
@@ -204,7 +207,24 @@ impl Db {
         unimplemented!()
     }
 
-    pub fn save_dock_pane(&self, _dock_pane: SerializedDockPane) {}
+    pub fn save_dock_pane(&self, dock_pane: &SerializedDockPane) {
+        to_params_named(dock_pane)
+            .map_err(|err| dbg!(err))
+            .ok()
+            .zip(self.real())
+            .map(|(params, db)| {
+                // TODO: overwrite old dock panes if need be
+                let query = "INSERT INTO dock_panes (workspace_id, anchor_position, visible) VALUES (:workspace_id, :anchor_position, :visible);";
+                db.connection
+                    .lock()
+                    .execute(query, params.to_slice().as_slice())
+                    .map(|_| ()) // Eat the return value
+                    .unwrap_or_else(|err| {
+                        dbg!(&err);
+                        log::error!("Failed to insert new workspace into DB: {}", err);
+                    })
+            });
+    }
 }
 
 #[cfg(test)]
@@ -220,12 +240,16 @@ mod tests {
 
         let workspace = db.workspace_for_roots(&["/tmp"]);
 
-        db.save_dock_pane(SerializedDockPane {
-            workspace: workspace.workspace_id,
+        let dock_pane = SerializedDockPane {
+            workspace_id: workspace.workspace_id,
             anchor_position: DockAnchor::Expanded,
-            shown: true,
-        });
+            visible: true,
+        };
 
-        let _new_workspace = db.workspace_for_roots(&["/tmp"]);
+        db.save_dock_pane(&dock_pane);
+
+        let new_workspace = db.workspace_for_roots(&["/tmp"]);
+
+        assert_eq!(new_workspace.dock_pane.unwrap(), dock_pane);
     }
 }

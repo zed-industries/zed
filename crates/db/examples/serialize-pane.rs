@@ -14,15 +14,25 @@ fn main() -> anyhow::Result<()> {
     let f = File::create(file)?;
     drop(f);
 
-    let workspace = db.workspace_for_roots(&["/tmp"]);
+    let workspace_1 = db.workspace_for_roots(&["/tmp"]);
+    let workspace_2 = db.workspace_for_roots(&["/tmp", "/tmp2"]);
+    let workspace_3 = db.workspace_for_roots(&["/tmp3", "/tmp2"]);
 
-    db.save_dock_pane(SerializedDockPane {
-        workspace: workspace.workspace_id,
+    db.save_dock_pane(&SerializedDockPane {
+        workspace_id: workspace_1.workspace_id,
         anchor_position: DockAnchor::Expanded,
-        shown: true,
+        visible: true,
     });
-
-    let _new_workspace = db.workspace_for_roots(&["/tmp"]);
+    db.save_dock_pane(&SerializedDockPane {
+        workspace_id: workspace_2.workspace_id,
+        anchor_position: DockAnchor::Bottom,
+        visible: true,
+    });
+    db.save_dock_pane(&SerializedDockPane {
+        workspace_id: workspace_3.workspace_id,
+        anchor_position: DockAnchor::Right,
+        visible: false,
+    });
 
     db.write_to(file).ok();
 
