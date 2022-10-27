@@ -1524,13 +1524,6 @@ impl MutableAppContext {
 
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: &Keystroke) -> bool {
         if let Some(focused_view_id) = self.focused_view_id(window_id) {
-            // For each view in self
-            // - Get it's keymap context
-            // - Try to execute keybinding
-
-            // For us, get out dispatch path
-            // - ONLY execute for that terminal path
-
             let dispatch_path = self
                 .ancestors(window_id, focused_view_id)
                 .map(|view_id| {
