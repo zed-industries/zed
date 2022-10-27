@@ -121,7 +121,6 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: target/release/Zed.dmg
-          overwrite: true
           body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

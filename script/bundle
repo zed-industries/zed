@@ -28,6 +28,7 @@ sed \
     -i .backup \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
+rm -rf target/x86_64-apple-darwin/release/bundle
 app_path=$(cargo bundle --release --target x86_64-apple-darwin | xargs)
 mv Cargo.toml.backup Cargo.toml
 popd
