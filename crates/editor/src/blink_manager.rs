@@ -71,7 +71,6 @@ impl BlinkManager {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
                 cx.notify();
-                dbg!(cx.handle());
 
                 let epoch = self.next_blink_epoch();
                 let interval = self.blink_interval;

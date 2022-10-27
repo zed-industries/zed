@@ -7,11 +7,11 @@ which cargo-set-version > /dev/null || cargo install cargo-edit
 
 # Ensure we're in a clean state on an up-to-date `main` branch.
 if [[ -n $(git status --short --untracked-files=no) ]]; then
-  echo "Can't roll the railcars with uncommitted changes"
+  echo "can't bump versions with uncommitted changes"
   exit 1
 fi
 if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
-  echo "Run this command on the main branch"
+  echo "this command must be run on main"
   exit 1
 fi
 git pull -q --ff-only origin main
@@ -28,7 +28,7 @@ next_minor=$(expr $minor + 1)
 minor_branch_name="v${major}.${minor}.x"
 prev_minor_branch_name="v${major}.${prev_minor}.x"
 next_minor_branch_name="v${major}.${next_minor}.x"
-preview_tag_name="v{major}.{minor}.{patch}-pre"
+preview_tag_name="v${major}.${minor}.${patch}-pre"
 
 function cleanup {
   git checkout -q main
@@ -71,13 +71,13 @@ if git show-ref --quiet refs/tags/${stable_tag_name}; then
 fi
 old_prev_minor_sha=$(git rev-parse HEAD)
 echo -n stable > crates/zed/RELEASE_CHANNEL
-git commit -q --all --message "Stable ${prev_minor_branch_name}"
+git commit -q --all --message "${prev_minor_branch_name} stable"
 git tag ${stable_tag_name}
 
 echo "Creating new preview branch ${minor_branch_name}..."
 git checkout -q -b ${minor_branch_name}
 echo -n preview > crates/zed/RELEASE_CHANNEL
-git commit -q --all --message "Preview ${minor_branch_name}"
+git commit -q --all --message "${minor_branch_name} preview"
 git tag ${preview_tag_name}
 
 echo "Preparing main for version ${next_minor_branch_name}..."
@@ -86,10 +86,10 @@ git clean -q -dff
 old_main_sha=$(git rev-parse HEAD)
 cargo set-version --package zed --bump minor
 cargo check -q
-git commit -q --all --message "Dev ${next_minor_branch_name}"
+git commit -q --all --message "${next_minor_branch_name} dev"
 
 cat <<MESSAGE
-Locally rolled the railcars.
+Prepared new Zed versions locally.
 
 To push this:
     git push origin \\
@@ -100,10 +100,9 @@ To push this:
       main
 
 To undo this:
-    git push -f . \\
+    git reset --hard ${old_main_sha} && git push -f . \\
       :${preview_tag_name} \\
       :${stable_tag_name} \\
       :${minor_branch_name} \\
-      ${old_prev_minor_sha}:${prev_minor_branch_name} \\
-      ${old_main_sha}:main
+      ${old_prev_minor_sha}:${prev_minor_branch_name}
 MESSAGE

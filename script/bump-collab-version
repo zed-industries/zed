@@ -1,3 +1,8 @@
 #!/bin/bash
 
-exec script/lib/bump-version.sh collab collab-v '' $@
+if [[ $# < 1 ]]; then
+  echo "Missing version increment (major, minor, or patch)" >&2
+  exit 1
+fi
+
+exec script/lib/bump-version.sh collab collab-v '' $1
