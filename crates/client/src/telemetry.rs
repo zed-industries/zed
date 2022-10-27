@@ -69,10 +69,15 @@ struct MixpanelEventProperties {
     // Custom fields
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     event_properties: Option<Map<String, Value>>,
+    #[serde(rename = "OS Name")]
     os_name: &'static str,
+    #[serde(rename = "OS Version")]
     os_version: Option<Arc<str>>,
+    #[serde(rename = "Release Channel")]
     release_channel: &'static str,
+    #[serde(rename = "App Version")]
     app_version: Option<Arc<str>>,
+    #[serde(rename = "Signed In")]
     signed_in: bool,
     #[serde(rename = "App")]
     app: &'static str,
@@ -194,7 +199,7 @@ impl Telemetry {
                         let json_bytes = serde_json::to_vec(&[MixpanelEngageRequest {
                             token,
                             distinct_id: device_id,
-                            set: json!({ "staff": is_staff, "id": metrics_id }),
+                            set: json!({ "Staff": is_staff, "ID": metrics_id }),
                         }])?;
                         let request = Request::post(MIXPANEL_ENGAGE_URL)
                             .header("Content-Type", "application/json")
