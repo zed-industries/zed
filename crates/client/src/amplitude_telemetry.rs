@@ -97,15 +97,9 @@ impl AmplitudeTelemetry {
                 .unwrap()
                 .as_millis(),
             state: Mutex::new(AmplitudeTelemetryState {
-                os_version: platform
-                    .os_version()
-                    .log_err()
-                    .map(|v| v.to_string().into()),
+                os_version: platform.os_version().ok().map(|v| v.to_string().into()),
                 os_name: platform.os_name().into(),
-                app_version: platform
-                    .app_version()
-                    .log_err()
-                    .map(|v| v.to_string().into()),
+                app_version: platform.app_version().ok().map(|v| v.to_string().into()),
                 device_id: None,
                 queue: Default::default(),
                 flush_task: Default::default(),
