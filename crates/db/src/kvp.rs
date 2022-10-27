@@ -4,14 +4,10 @@ use rusqlite::OptionalExtension;
 use super::Db;
 
 pub(crate) const KVP_M_1: &str = "
-BEGIN TRANSACTION; 
-
 CREATE TABLE kv_store(
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 ) STRICT;
-
-COMMIT;
 ";
 
 impl Db {

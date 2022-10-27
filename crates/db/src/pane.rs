@@ -75,8 +75,6 @@ pub struct SerializedPane {
 }
 
 pub(crate) const PANE_M_1: &str = "
-BEGIN TRANSACTION;
-
 CREATE TABLE dock_panes(
     dock_pane_id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL,
@@ -131,8 +129,6 @@ CREATE TABLE dock_items(
     FOREIGN KEY(dock_pane_id) REFERENCES dock_panes(dock_pane_id) ON DELETE CASCADE,
     FOREIGN KEY(item_id) REFERENCES items(item_id)ON DELETE CASCADE
 ) STRICT;
-
-COMMIT;
 ";
 
 #[derive(Default, Debug)]
@@ -222,9 +218,7 @@ mod tests {
     fn test_basic_dock_pane() {
         let db = Db::open_in_memory();
 
-        let workspace = db.make_new_workspace::<String>(&[]);
-
-        db.update_worktrees(&workspace.workspace_id, &["/tmp"]);
+        let workspace = db.workspace_for_roots(&["/tmp"]);
 
         db.save_dock_pane(SerializedDockPane {
             workspace: workspace.workspace_id,

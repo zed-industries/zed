@@ -14,9 +14,7 @@ fn main() -> anyhow::Result<()> {
     let f = File::create(file)?;
     drop(f);
 
-    let workspace = db.make_new_workspace::<String>(&[]);
-
-    db.update_worktrees(&workspace.workspace_id, &["/tmp"]);
+    let workspace = db.workspace_for_roots(&["/tmp"]);
 
     db.save_dock_pane(SerializedDockPane {
         workspace: workspace.workspace_id,

@@ -17,8 +17,6 @@ use super::Db;
 // you might want to update some of the parsing code as well, I've left the variations in but commented
 // out
 pub(crate) const WORKSPACE_M_1: &str = "
-BEGIN TRANSACTION; 
-
 CREATE TABLE workspaces(
     workspace_id INTEGER PRIMARY KEY,
     timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
@@ -30,8 +28,6 @@ CREATE TABLE worktree_roots(
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
     PRIMARY KEY(worktree_root, workspace_id)
 ) STRICT;
-
-COMMIT;
 ";
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
@@ -68,7 +64,7 @@ impl Db {
         }
     }
 
-    pub fn make_new_workspace<P>(&self, worktree_roots: &[P]) -> SerializedWorkspace
+    fn make_new_workspace<P>(&self, worktree_roots: &[P]) -> SerializedWorkspace
     where
         P: AsRef<Path> + Debug,
     {
@@ -158,7 +154,7 @@ impl Db {
         });
     }
 
-    pub fn last_workspace_id(&self) -> Option<WorkspaceId> {
+    fn last_workspace_id(&self) -> Option<WorkspaceId> {
         fn logic(connection: &mut Connection) -> Result<Option<WorkspaceId>> {
             let mut stmt = connection
                 .prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT 1")?;
@@ -432,7 +428,7 @@ mod tests {
     use super::WorkspaceId;
 
     #[test]
-    fn test_worktree_for_roots() {
+    fn test_new_worktrees_for_roots() {
         let db = Db::open_in_memory();
 
         // Test creation in 0 case
