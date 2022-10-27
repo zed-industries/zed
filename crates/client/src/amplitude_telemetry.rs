@@ -34,7 +34,7 @@ struct AmplitudeTelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
-    release_channel: &'static str,
+    release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
     queue: Vec<AmplitudeEvent>,
@@ -72,7 +72,7 @@ struct AmplitudeEvent {
     app_version: Option<Arc<str>>,
     #[serde(rename = "App")]
     app: &'static str,
-    release_channel: &'static str,
+    release_channel: Option<&'static str>,
     event_id: usize,
     session_id: u128,
     time: u128,
@@ -93,7 +93,11 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 impl AmplitudeTelemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
-        let release_channel = cx.global::<ReleaseChannel>().name();
+        let release_channel = if cx.has_global::<ReleaseChannel>() {
+            Some(cx.global::<ReleaseChannel>().name())
+        } else {
+            None
+        };
         let this = Arc::new(Self {
             http_client: client,
             executor: cx.background().clone(),

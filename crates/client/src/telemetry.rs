@@ -33,7 +33,7 @@ struct TelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
-    release_channel: &'static str,
+    release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
     queue: Vec<MixpanelEvent>,
@@ -74,7 +74,7 @@ struct MixpanelEventProperties {
     #[serde(rename = "OS Version")]
     os_version: Option<Arc<str>>,
     #[serde(rename = "Release Channel")]
-    release_channel: &'static str,
+    release_channel: Option<&'static str>,
     #[serde(rename = "App Version")]
     app_version: Option<Arc<str>>,
     #[serde(rename = "Signed In")]
@@ -108,7 +108,11 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
-        let release_channel = cx.global::<ReleaseChannel>().name();
+        let release_channel = if cx.has_global::<ReleaseChannel>() {
+            Some(cx.global::<ReleaseChannel>().name())
+        } else {
+            None
+        };
         let this = Arc::new(Self {
             http_client: client,
             executor: cx.background().clone(),
