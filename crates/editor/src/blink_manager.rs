@@ -30,7 +30,7 @@ impl BlinkManager {
             blink_epoch: 0,
             blinking_paused: false,
             visible: true,
-            enabled: true,
+            enabled: false,
         }
     }
 
@@ -71,6 +71,7 @@ impl BlinkManager {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
                 cx.notify();
+                dbg!(cx.handle());
 
                 let epoch = self.next_blink_epoch();
                 let interval = self.blink_interval;
@@ -96,8 +97,8 @@ impl BlinkManager {
         self.blink_cursors(self.blink_epoch, cx);
     }
 
-    pub fn disable(&mut self, _: &mut ModelContext<Self>) {
-        self.enabled = true;
+    pub fn disable(&mut self, cx: &mut ModelContext<Self>) {
+        self.enabled = false;
     }
 
     pub fn visible(&self) -> bool {

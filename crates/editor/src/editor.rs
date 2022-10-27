@@ -6511,8 +6511,10 @@ impl View for Editor {
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
         } else {
+            if !self.focused {
+                self.blink_manager.update(cx, BlinkManager::enable);
+            }
             self.focused = true;
-            self.blink_manager.update(cx, BlinkManager::enable);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_replica_id.is_none() {
