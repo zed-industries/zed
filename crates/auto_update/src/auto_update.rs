@@ -218,11 +218,14 @@ impl AutoUpdater {
         let temp_dir = tempdir::TempDir::new("zed-auto-update")?;
         let dmg_path = temp_dir.path().join("Zed.dmg");
         let mount_path = temp_dir.path().join("Zed");
-        let mut mounted_app_path: OsString = mount_path.join("Zed.app").into();
-        mounted_app_path.push("/");
         let running_app_path = ZED_APP_PATH
             .clone()
             .map_or_else(|| cx.platform().app_path(), Ok)?;
+        let running_app_filename = running_app_path
+            .file_name()
+            .ok_or_else(|| anyhow!("invalid running app path"))?;
+        let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
+        mounted_app_path.push("/");
 
         let mut dmg_file = File::create(&dmg_path).await?;
         let mut response = client.get(&release.url, Default::default(), true).await?;
