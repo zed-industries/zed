@@ -8,6 +8,7 @@ jobs:
     steps:
     - name: Discord Webhook Action
       uses: tsickert/discord-webhook@v5.3.0
+      if: ${{ ! github.event.release.prerelease }}
       with:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
         content: |
