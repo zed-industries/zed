@@ -99,8 +99,8 @@ jobs:
               echo "can't publish a release on channel ${channel}"
               exit 1;;
           esac
-          if [[ $GITHUB_REFNAME != $expected_tag_name ]]; then
-            echo "invalid release tag ${GITHUB_REFNAME}. expected ${expected_tag_name}"
+          if [[ $GITHUB_REF_NAME != $expected_tag_name ]]; then
+            echo "invalid release tag ${GITHUB_REF_NAME}. expected ${expected_tag_name}"
             exit 1
           fi
 
