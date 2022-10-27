@@ -68,7 +68,8 @@ struct AmplitudeEvent {
     os_name: &'static str,
     os_version: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
-    platform: &'static str,
+    #[serde(rename = "App")]
+    app: &'static str,
     event_id: usize,
     session_id: u128,
     time: u128,
@@ -211,7 +212,7 @@ impl AmplitudeTelemetry {
             user_id: state.metrics_id.clone(),
             device_id: state.device_id.clone(),
             os_name: state.os_name,
-            platform: "Zed",
+            app: "Zed",
             os_version: state.os_version.clone(),
             app_version: state.app_version.clone(),
             event_id: post_inc(&mut state.next_event_id),
