@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::pane::{PaneGroupId, PaneId, SerializedPane, SerializedPaneGroup};
+use crate::pane::SerializedDockPane;
 
 use super::Db;
 
@@ -41,16 +41,16 @@ pub struct WorkspaceId(i64);
 pub struct SerializedWorkspace {
     pub workspace_id: WorkspaceId,
     // pub center_group: SerializedPaneGroup,
-    // pub dock_pane: Option<SerializedPane>,
+    pub dock_pane: Option<SerializedDockPane>,
 }
 
 impl Db {
     /// Finds or creates a workspace id for the given set of worktree roots. If the passed worktree roots is empty, return the
     /// the last workspace id
-    pub fn workspace_for_worktree_roots(
-        &self,
-        worktree_roots: &[Arc<Path>],
-    ) -> SerializedWorkspace {
+    pub fn workspace_for_roots<P>(&self, worktree_roots: &[P]) -> SerializedWorkspace
+    where
+        P: AsRef<Path> + Debug,
+    {
         // Find the workspace id which is uniquely identified by this set of paths
         // return it if found
         let mut workspace_id = self.workspace_id(worktree_roots);
@@ -59,31 +59,50 @@ impl Db {
         }
 
         if let Some(workspace_id) = workspace_id {
-            // TODO
-            // let workspace_row = self.get_workspace_row(workspace_id);
-            // let center_group = self.get_pane_group(workspace_row.center_group_id);
-            // let dock_pane = self.get_pane(workspace_row.dock_pane_id);
-
             SerializedWorkspace {
                 workspace_id,
-                // center_group,
-                // dock_pane: Some(dock_pane),
+                dock_pane: self.get_dock_pane(workspace_id),
             }
         } else {
-            self.make_new_workspace()
+            self.make_new_workspace(worktree_roots)
         }
     }
 
-    pub fn make_new_workspace(&self) -> SerializedWorkspace {
+    pub fn make_new_workspace<P>(&self, worktree_roots: &[P]) -> SerializedWorkspace
+    where
+        P: AsRef<Path> + Debug,
+    {
+        fn logic<P>(
+            connection: &mut Connection,
+            worktree_roots: &[P],
+        ) -> Result<SerializedWorkspace>
+        where
+            P: AsRef<Path> + Debug,
+        {
+            let tx = connection.transaction()?;
+            tx.execute("INSERT INTO workspaces DEFAULT VALUES", [])?;
+
+            let id = WorkspaceId(tx.last_insert_rowid());
+
+            update_worktree_roots(&tx, &id, worktree_roots)?;
+
+            Ok(SerializedWorkspace {
+                workspace_id: id,
+                dock_pane: None,
+            })
+        }
+
         self.real()
             .map(|db| {
-                let lock = db.connection.lock();
+                let mut lock = db.connection.lock();
+
                 // No need to waste the memory caching this, should happen rarely.
-                match lock.execute("INSERT INTO workspaces DEFAULT VALUES", []) {
-                    Ok(_) => SerializedWorkspace {
-                        workspace_id: WorkspaceId(lock.last_insert_rowid()),
-                    },
-                    Err(_) => Default::default(),
+                match logic(&mut lock, worktree_roots) {
+                    Ok(serialized_workspace) => serialized_workspace,
+                    Err(err) => {
+                        log::error!("Failed to insert new workspace into DB: {}", err);
+                        Default::default()
+                    }
                 }
             })
             .unwrap_or_default()
@@ -97,7 +116,13 @@ impl Db {
             .map(|db| {
                 let lock = db.connection.lock();
 
-                get_workspace_id(worktree_roots, &lock)
+                match get_workspace_id(worktree_roots, &lock) {
+                    Ok(workspace_id) => workspace_id,
+                    Err(err) => {
+                        log::error!("Failed ot get workspace_id: {}", err);
+                        None
+                    }
+                }
             })
             .unwrap_or(None)
     }
@@ -109,61 +134,16 @@ impl Db {
     /// Updates the open paths for the given workspace id. Will garbage collect items from
     /// any workspace ids which are no replaced by the new workspace id. Updates the timestamps
     /// in the workspace id table
-    pub fn update_worktree_roots<P>(&self, workspace_id: &WorkspaceId, worktree_roots: &[P])
+    pub fn update_worktrees<P>(&self, workspace_id: &WorkspaceId, worktree_roots: &[P])
     where
         P: AsRef<Path> + Debug,
     {
-        fn logic<P>(
-            connection: &mut Connection,
-            worktree_roots: &[P],
-            workspace_id: &WorkspaceId,
-        ) -> Result<()>
-        where
-            P: AsRef<Path> + Debug,
-        {
-            let tx = connection.transaction()?;
-            {
-                // Lookup any old WorkspaceIds which have the same set of roots, and delete them.
-                let preexisting_id = get_workspace_id(worktree_roots, &tx);
-                if let Some(preexisting_id) = preexisting_id {
-                    if preexisting_id != *workspace_id {
-                        // Should also delete fields in other tables with cascading updates
-                        tx.execute(
-                            "DELETE FROM workspaces WHERE workspace_id = ?",
-                            [preexisting_id.0],
-                        )?;
-                    }
-                }
-
-                tx.execute(
-                    "DELETE FROM worktree_roots WHERE workspace_id = ?",
-                    [workspace_id.0],
-                )?;
-
-                for root in worktree_roots {
-                    let path = root.as_ref().as_os_str().as_bytes();
-                    // If you need to debug this, here's the string parsing:
-                    // let path = root.as_ref().to_string_lossy().to_string();
-
-                    tx.execute(
-                        "INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)",
-                        params![workspace_id.0, path],
-                    )?;
-                }
-
-                tx.execute(
-                    "UPDATE workspaces SET timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?",
-                    [workspace_id.0],
-                )?;
-            }
-            tx.commit()?;
-            Ok(())
-        }
-
         self.real().map(|db| {
             let mut lock = db.connection.lock();
 
-            match logic(&mut lock, worktree_roots, workspace_id) {
+            let tx = lock.transaction();
+
+            match tx.map(|tx| update_worktree_roots(&tx, workspace_id, worktree_roots)) {
                 Ok(_) => {}
                 Err(err) => {
                     dbg!(&err);
@@ -257,86 +237,130 @@ impl Db {
     }
 }
 
-fn get_workspace_id<P>(worktree_roots: &[P], connection: &Connection) -> Option<WorkspaceId>
+fn update_worktree_roots<P>(
+    connection: &Connection,
+    workspace_id: &WorkspaceId,
+    worktree_roots: &[P],
+) -> Result<()>
 where
     P: AsRef<Path> + Debug,
 {
-    fn logic<P>(
-        worktree_roots: &[P],
-        connection: &Connection,
-    ) -> Result<Option<WorkspaceId>, anyhow::Error>
-    where
-        P: AsRef<Path> + Debug,
-    {
-        // Short circuit if we can
-        if worktree_roots.len() == 0 {
-            return Ok(None);
+    // Lookup any old WorkspaceIds which have the same set of roots, and delete them.
+    let preexisting_id = get_workspace_id(worktree_roots, &connection)?;
+    if let Some(preexisting_id) = preexisting_id {
+        if preexisting_id != *workspace_id {
+            // Should also delete fields in other tables with cascading updates
+            connection.execute(
+                "DELETE FROM workspaces WHERE workspace_id = ?",
+                [preexisting_id.0],
+            )?;
         }
+    }
 
-        // Prepare the array binding string. SQL doesn't have syntax for this, so
-        // we have to do it ourselves.
-        let mut array_binding_stmt = "(".to_string();
-        for i in 0..worktree_roots.len() {
-            // This uses ?NNN for numbered placeholder syntax
-            array_binding_stmt.push_str(&format!("?{}", (i + 1))); //sqlite is 1-based
-            if i < worktree_roots.len() - 1 {
-                array_binding_stmt.push(',');
-                array_binding_stmt.push(' ');
-            }
+    connection.execute(
+        "DELETE FROM worktree_roots WHERE workspace_id = ?",
+        [workspace_id.0],
+    )?;
+
+    for root in worktree_roots {
+        let path = root.as_ref().as_os_str().as_bytes();
+        // If you need to debug this, here's the string parsing:
+        // let path = root.as_ref().to_string_lossy().to_string();
+
+        connection.execute(
+            "INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)",
+            params![workspace_id.0, path],
+        )?;
+    }
+
+    connection.execute(
+        "UPDATE workspaces SET timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?",
+        [workspace_id.0],
+    )?;
+
+    Ok(())
+}
+
+fn get_workspace_id<P>(worktree_roots: &[P], connection: &Connection) -> Result<Option<WorkspaceId>>
+where
+    P: AsRef<Path> + Debug,
+{
+    // fn logic<P>(
+    //     worktree_roots: &[P],
+    //     connection: &Connection,
+    // ) -> Result<Option<WorkspaceId>, anyhow::Error>
+    // where
+    //     P: AsRef<Path> + Debug,
+    // {
+    // Short circuit if we can
+    if worktree_roots.len() == 0 {
+        return Ok(None);
+    }
+
+    // Prepare the array binding string. SQL doesn't have syntax for this, so
+    // we have to do it ourselves.
+    let mut array_binding_stmt = "(".to_string();
+    for i in 0..worktree_roots.len() {
+        // This uses ?NNN for numbered placeholder syntax
+        array_binding_stmt.push_str(&format!("?{}", (i + 1))); //sqlite is 1-based
+        if i < worktree_roots.len() - 1 {
+            array_binding_stmt.push(',');
+            array_binding_stmt.push(' ');
         }
-        array_binding_stmt.push(')');
-        // Any workspace can have multiple independent paths, and these paths
-        // can overlap in the database. Take this test data for example:
-        //
-        // [/tmp, /tmp2] -> 1
-        // [/tmp] -> 2
-        // [/tmp2, /tmp3] -> 3
-        //
-        // This would be stred in the database like so:
-        //
-        // ID PATH
-        // 1  /tmp
-        // 1  /tmp2
-        // 2  /tmp
-        // 3  /tmp2
-        // 3  /tmp3
-        //
-        // Note how both /tmp and /tmp2 are associated with multiple workspace IDs.
-        // So, given an array of worktree roots, how can we find the exactly matching ID?
-        // Let's analyze what happens when querying for [/tmp, /tmp2], from the inside out:
-        //  - We start with a join of this table on itself, generating every possible
-        //    pair of ((path, ID), (path, ID)), and filtering the join down to just the
-        //    *overlapping but non-matching* workspace IDs. For this small data set,
-        //    this would look like:
-        //
-        //    wt1.ID wt1.PATH | wt2.ID wt2.PATH
-        //    3      /tmp3      3      /tmp2
-        //
-        //  - Moving one SELECT out, we use the first pair's ID column to invert the selection,
-        //    meaning we now have a list of all the entries for our array, minus overlapping sets,
-        //    but including *subsets* of our worktree roots:
-        //
-        //    ID PATH
-        //    1  /tmp
-        //    1  /tmp2
-        //    2  /tmp
-        //
-        // - To trim out the subsets, we can to exploit the PRIMARY KEY constraint that there are no
-        //   duplicate entries in this table. Using a GROUP BY and a COUNT we can find the subsets of
-        //   our keys:
-        //
-        //    ID num_matching
-        //    1  2
-        //    2  1
-        //
-        // - And with one final WHERE num_matching = $num_of_worktree_roots, we're done! We've found the
-        //   matching ID correctly :D
-        //
-        // Note: due to limitations in SQLite's query binding, we have to generate the prepared
-        //       statement with string substitution (the {array_bind}) below, and then bind the
-        //       parameters by number.
-        let query = format!(
-            r#"
+    }
+    array_binding_stmt.push(')');
+    // Any workspace can have multiple independent paths, and these paths
+    // can overlap in the database. Take this test data for example:
+    //
+    // [/tmp, /tmp2] -> 1
+    // [/tmp] -> 2
+    // [/tmp2, /tmp3] -> 3
+    //
+    // This would be stred in the database like so:
+    //
+    // ID PATH
+    // 1  /tmp
+    // 1  /tmp2
+    // 2  /tmp
+    // 3  /tmp2
+    // 3  /tmp3
+    //
+    // Note how both /tmp and /tmp2 are associated with multiple workspace IDs.
+    // So, given an array of worktree roots, how can we find the exactly matching ID?
+    // Let's analyze what happens when querying for [/tmp, /tmp2], from the inside out:
+    //  - We start with a join of this table on itself, generating every possible
+    //    pair of ((path, ID), (path, ID)), and filtering the join down to just the
+    //    *overlapping but non-matching* workspace IDs. For this small data set,
+    //    this would look like:
+    //
+    //    wt1.ID wt1.PATH | wt2.ID wt2.PATH
+    //    3      /tmp3      3      /tmp2
+    //
+    //  - Moving one SELECT out, we use the first pair's ID column to invert the selection,
+    //    meaning we now have a list of all the entries for our array, minus overlapping sets,
+    //    but including *subsets* of our worktree roots:
+    //
+    //    ID PATH
+    //    1  /tmp
+    //    1  /tmp2
+    //    2  /tmp
+    //
+    // - To trim out the subsets, we can to exploit the PRIMARY KEY constraint that there are no
+    //   duplicate entries in this table. Using a GROUP BY and a COUNT we can find the subsets of
+    //   our keys:
+    //
+    //    ID num_matching
+    //    1  2
+    //    2  1
+    //
+    // - And with one final WHERE num_matching = $num_of_worktree_roots, we're done! We've found the
+    //   matching ID correctly :D
+    //
+    // Note: due to limitations in SQLite's query binding, we have to generate the prepared
+    //       statement with string substitution (the {array_bind}) below, and then bind the
+    //       parameters by number.
+    let query = format!(
+        r#"
             SELECT workspace_id 
             FROM (SELECT count(workspace_id) as num_matching, workspace_id FROM worktree_roots
                   WHERE worktree_root in {array_bind} AND workspace_id NOT IN
@@ -347,50 +371,50 @@ where
                   GROUP BY workspace_id)
             WHERE num_matching = ?
         "#,
-            array_bind = array_binding_stmt
-        );
+        array_bind = array_binding_stmt
+    );
 
-        // This will only be called on start up and when root workspaces change, no need to waste memory
-        // caching it.
-        let mut stmt = connection.prepare(&query)?;
-        // Make sure we bound the parameters correctly
-        debug_assert!(worktree_roots.len() + 1 == stmt.parameter_count());
+    // This will only be called on start up and when root workspaces change, no need to waste memory
+    // caching it.
+    let mut stmt = connection.prepare(&query)?;
+    // Make sure we bound the parameters correctly
+    debug_assert!(worktree_roots.len() + 1 == stmt.parameter_count());
 
-        for i in 0..worktree_roots.len() {
-            let path = &worktree_roots[i].as_ref().as_os_str().as_bytes();
-            // If you need to debug this, here's the string parsing:
-            // let path = &worktree_roots[i].as_ref().to_string_lossy().to_string()
-            stmt.raw_bind_parameter(i + 1, path)?
-        }
-        // No -1, because SQLite is 1 based
-        stmt.raw_bind_parameter(worktree_roots.len() + 1, worktree_roots.len())?;
-
-        let mut rows = stmt.raw_query();
-        let row = rows.next();
-        let result = if let Ok(Some(row)) = row {
-            Ok(Some(WorkspaceId(row.get(0)?)))
-        } else {
-            Ok(None)
-        };
-
-        // Ensure that this query only returns one row. The PRIMARY KEY constraint should catch this case
-        // but this is here to catch if someone refactors that constraint out.
-        debug_assert!(matches!(rows.next(), Ok(None)));
-
-        result
+    for i in 0..worktree_roots.len() {
+        let path = &worktree_roots[i].as_ref().as_os_str().as_bytes();
+        // If you need to debug this, here's the string parsing:
+        // let path = &worktree_roots[i].as_ref().to_string_lossy().to_string()
+        stmt.raw_bind_parameter(i + 1, path)?
     }
+    // No -1, because SQLite is 1 based
+    stmt.raw_bind_parameter(worktree_roots.len() + 1, worktree_roots.len())?;
 
-    match logic(worktree_roots, connection) {
-        Ok(result) => result,
-        Err(err) => {
-            log::error!(
-                "Failed to get the workspace ID for paths {:?}, err: {}",
-                worktree_roots,
-                err
-            );
-            None
-        }
-    }
+    let mut rows = stmt.raw_query();
+    let row = rows.next();
+    let result = if let Ok(Some(row)) = row {
+        Ok(Some(WorkspaceId(row.get(0)?)))
+    } else {
+        Ok(None)
+    };
+
+    // Ensure that this query only returns one row. The PRIMARY KEY constraint should catch this case
+    // but this is here to catch if someone refactors that constraint out.
+    debug_assert!(matches!(rows.next(), Ok(None)));
+
+    result
+    // }
+
+    // match logic(worktree_roots, connection) {
+    //     Ok(result) => result,
+    //     Err(err) => {
+    //         log::error!(
+    //             "Failed to get the workspace ID for paths {:?}, err: {}",
+    //             worktree_roots,
+    //             err
+    //         );
+    //         None
+    //     }
+    // }
 }
 
 #[cfg(test)]
@@ -408,19 +432,51 @@ mod tests {
     use super::WorkspaceId;
 
     #[test]
+    fn test_worktree_for_roots() {
+        let db = Db::open_in_memory();
+
+        // Test creation in 0 case
+        let workspace_1 = db.workspace_for_roots::<String>(&[]);
+        assert_eq!(workspace_1.workspace_id, WorkspaceId(1));
+
+        // Test pulling from recent workspaces
+        let workspace_1 = db.workspace_for_roots::<String>(&[]);
+        assert_eq!(workspace_1.workspace_id, WorkspaceId(1));
+
+        sleep(Duration::from_secs(1));
+        db.make_new_workspace::<String>(&[]);
+
+        // Test pulling another value from recent workspaces
+        let workspace_2 = db.workspace_for_roots::<String>(&[]);
+        assert_eq!(workspace_2.workspace_id, WorkspaceId(2));
+
+        // Test creating a new workspace that doesn't exist already
+        let workspace_3 = db.workspace_for_roots(&["/tmp", "/tmp2"]);
+        assert_eq!(workspace_3.workspace_id, WorkspaceId(3));
+
+        // Make sure it's in the recent workspaces....
+        let workspace_3 = db.workspace_for_roots::<String>(&[]);
+        assert_eq!(workspace_3.workspace_id, WorkspaceId(3));
+
+        // And that it can be pulled out again
+        let workspace_3 = db.workspace_for_roots(&["/tmp", "/tmp2"]);
+        assert_eq!(workspace_3.workspace_id, WorkspaceId(3));
+    }
+
+    #[test]
     fn test_empty_worktrees() {
         let db = Db::open_in_memory();
 
         assert_eq!(None, db.workspace_id::<String>(&[]));
 
-        db.make_new_workspace(); //ID 1
-        db.make_new_workspace(); //ID 2
-        db.update_worktree_roots(&WorkspaceId(1), &["/tmp", "/tmp2"]);
+        db.make_new_workspace::<String>(&[]); //ID 1
+        db.make_new_workspace::<String>(&[]); //ID 2
+        db.update_worktrees(&WorkspaceId(1), &["/tmp", "/tmp2"]);
 
         // Sanity check
         assert_eq!(db.workspace_id(&["/tmp", "/tmp2"]), Some(WorkspaceId(1)));
 
-        db.update_worktree_roots::<String>(&WorkspaceId(1), &[]);
+        db.update_worktrees::<String>(&WorkspaceId(1), &[]);
 
         // Make sure 'no worktrees' fails correctly. returning [1, 2] from this
         // call would be semantically correct (as those are the workspaces that
@@ -451,8 +507,8 @@ mod tests {
         let db = Db::open_in_memory();
 
         for (workspace_id, entries) in data {
-            db.make_new_workspace();
-            db.update_worktree_roots(workspace_id, entries);
+            db.make_new_workspace::<String>(&[]);
+            db.update_worktrees(workspace_id, entries);
         }
 
         assert_eq!(Some(WorkspaceId(1)), db.workspace_id(&["/tmp1"]));
@@ -485,8 +541,8 @@ mod tests {
         let db = Db::open_in_memory();
 
         for (workspace_id, entries) in data {
-            db.make_new_workspace();
-            db.update_worktree_roots(workspace_id, entries);
+            db.make_new_workspace::<String>(&[]);
+            db.update_worktrees(workspace_id, entries);
         }
 
         assert_eq!(db.workspace_id(&["/tmp2"]), None);
@@ -527,15 +583,15 @@ mod tests {
 
         // Load in the test data
         for (workspace_id, entries) in data {
-            db.make_new_workspace();
-            db.update_worktree_roots(workspace_id, entries);
+            db.make_new_workspace::<String>(&[]);
+            db.update_worktrees(workspace_id, entries);
         }
 
         // Make sure the timestamp updates
         sleep(Duration::from_secs(1));
 
         // Execute the update
-        db.update_worktree_roots(&WorkspaceId(2), &["/tmp2", "/tmp3"]);
+        db.update_worktrees(&WorkspaceId(2), &["/tmp2", "/tmp3"]);
 
         // Make sure that workspace 3 doesn't exist
         assert_eq!(db.workspace_id(&["/tmp2", "/tmp3"]), Some(WorkspaceId(2)));

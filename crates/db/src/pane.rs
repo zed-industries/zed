@@ -136,8 +136,11 @@ CREATE TABLE dock_items(
 COMMIT;
 ";
 
-struct SerializedDockPane {
-    //Cols
+#[derive(Default, Debug)]
+pub struct SerializedDockPane {
+    pub workspace: WorkspaceId,
+    pub anchor_position: DockAnchor,
+    pub shown: bool,
 }
 
 impl Db {
@@ -194,7 +197,35 @@ impl Db {
         unimplemented!();
     }
 
-    fn save_dock_pane() {}
+    pub fn get_dock_pane(&self, workspace: WorkspaceId) -> Option<SerializedDockPane> {
+        unimplemented!()
+    }
+
+    pub fn save_dock_pane(&self, dock_pane: SerializedDockPane) {}
 }
 
-mod tests {}
+#[cfg(test)]
+mod tests {
+    use settings::DockAnchor;
+
+    use crate::Db;
+
+    use super::SerializedDockPane;
+
+    #[test]
+    fn test_basic_dock_pane() {
+        let db = Db::open_in_memory();
+
+        let workspace = db.make_new_workspace::<String>(&[]);
+
+        db.update_worktrees(&workspace.workspace_id, &["/tmp"]);
+
+        db.save_dock_pane(SerializedDockPane {
+            workspace: workspace.workspace_id,
+            anchor_position: DockAnchor::Expanded,
+            shown: true,
+        });
+
+        let new_workspace = db.workspace_for_roots(&["/tmp"]);
+    }
+}

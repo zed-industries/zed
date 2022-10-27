@@ -1,8 +1,8 @@
-mod items;
-mod kvp;
+pub mod items;
+pub mod kvp;
 mod migrations;
-mod pane;
-mod workspace;
+pub mod pane;
+pub mod workspace;
 
 use std::fs;
 use std::path::{Path, PathBuf};
