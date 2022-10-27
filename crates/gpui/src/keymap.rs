@@ -174,6 +174,7 @@ impl Matcher {
                 }
             }
 
+            // Find the bindings which map the pending keystrokes and current context
             for binding in self.keymap.bindings.iter().rev() {
                 if binding.keystrokes.starts_with(&self.pending_keystrokes)
                     && binding
@@ -182,9 +183,11 @@ impl Matcher {
                         .map(|c| c.eval(&context))
                         .unwrap_or(true)
                 {
+                    // If the binding is completed, push it onto the matches list
                     if binding.keystrokes.len() == self.pending_keystrokes.len() {
                         matched_bindings.push((view_id, binding.action.boxed_clone()));
                     } else {
+                        // Otherwise, the binding is still pending
                         self.pending_views.insert(view_id, context.clone());
                         any_pending = true;
                     }
@@ -193,13 +196,11 @@ impl Matcher {
         }
 
         if !matched_bindings.is_empty() {
-            self.pending_views.clear();
-            self.pending_keystrokes.clear();
             MatchResult::Matches(matched_bindings)
         } else if any_pending {
             MatchResult::Pending
         } else {
-            self.pending_keystrokes.clear();
+            self.clear_pending();
             MatchResult::None
         }
     }
