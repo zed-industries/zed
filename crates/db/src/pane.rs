@@ -1,5 +1,4 @@
 use gpui::Axis;
-use settings::DockAnchor;
 
 use crate::{items::ItemId, workspace::WorkspaceId};
 
@@ -32,7 +31,7 @@ pub struct PaneGroupId {
 }
 
 impl PaneGroupId {
-    pub(crate) fn root(workspace_id: WorkspaceId) -> Self {
+    pub fn root(workspace_id: WorkspaceId) -> Self {
         Self {
             workspace_id,
             group_id: 0,
@@ -48,7 +47,7 @@ pub struct SerializedPaneGroup {
 }
 
 impl SerializedPaneGroup {
-    pub(crate) fn empty_root(workspace_id: WorkspaceId) -> Self {
+    pub fn empty_root(workspace_id: WorkspaceId) -> Self {
         Self {
             group_id: PaneGroupId::root(workspace_id),
             axis: Default::default(),
@@ -137,6 +136,14 @@ COMMIT;
 ";
 
 #[derive(Default, Debug)]
+pub enum DockAnchor {
+    #[default]
+    Bottom,
+    Right,
+    Expanded,
+}
+
+#[derive(Default, Debug)]
 pub struct SerializedDockPane {
     pub workspace: WorkspaceId,
     pub anchor_position: DockAnchor,
@@ -144,7 +151,7 @@ pub struct SerializedDockPane {
 }
 
 impl Db {
-    pub(crate) fn get_pane_group(&self, pane_group_id: PaneGroupId) -> SerializedPaneGroup {
+    pub fn get_pane_group(&self, pane_group_id: PaneGroupId) -> SerializedPaneGroup {
         let axis = self.get_pane_group_axis(pane_group_id);
         let mut children: Vec<(usize, PaneGroupChild)> = Vec::new();
         for child_row in self.get_pane_group_children(pane_group_id) {
@@ -177,40 +184,39 @@ impl Db {
 
     fn get_pane_group_children(
         &self,
-        pane_group_id: PaneGroupId,
+        _pane_group_id: PaneGroupId,
     ) -> impl Iterator<Item = PaneGroupChildRow> {
         Vec::new().into_iter()
     }
 
-    fn get_pane_group_axis(&self, pane_group_id: PaneGroupId) -> Axis {
+    fn get_pane_group_axis(&self, _pane_group_id: PaneGroupId) -> Axis {
         unimplemented!();
     }
 
-    pub fn save_pane_splits(&self, center_pane_group: SerializedPaneGroup) {
+    pub fn save_pane_splits(&self, _center_pane_group: SerializedPaneGroup) {
         // Delete the center pane group for this workspace and any of its children
         // Generate new pane group IDs as we go through
         // insert them
         // Items garbage collect themselves when dropped
     }
 
-    pub(crate) fn get_pane(&self, pane_id: PaneId) -> SerializedPane {
+    pub(crate) fn get_pane(&self, _pane_id: PaneId) -> SerializedPane {
         unimplemented!();
     }
 
-    pub fn get_dock_pane(&self, workspace: WorkspaceId) -> Option<SerializedDockPane> {
+    pub fn get_dock_pane(&self, _workspace: WorkspaceId) -> Option<SerializedDockPane> {
         unimplemented!()
     }
 
-    pub fn save_dock_pane(&self, dock_pane: SerializedDockPane) {}
+    pub fn save_dock_pane(&self, _dock_pane: SerializedDockPane) {}
 }
 
 #[cfg(test)]
 mod tests {
-    use settings::DockAnchor;
 
     use crate::Db;
 
-    use super::SerializedDockPane;
+    use super::{DockAnchor, SerializedDockPane};
 
     #[test]
     fn test_basic_dock_pane() {
@@ -226,6 +232,6 @@ mod tests {
             shown: true,
         });
 
-        let new_workspace = db.workspace_for_roots(&["/tmp"]);
+        let _new_workspace = db.workspace_for_roots(&["/tmp"]);
     }
 }

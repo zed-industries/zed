@@ -1,7 +1,8 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
+use db::Db;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, WeakViewHandle,
@@ -55,11 +56,16 @@ impl Entity for AutoUpdater {
     type Event = ();
 }
 
-pub fn init(db: project::Db, http_client: Arc<dyn HttpClient>, cx: &mut MutableAppContext) {
+pub fn init(
+    db: Db,
+    http_client: Arc<dyn HttpClient>,
+    server_url: String,
+    cx: &mut MutableAppContext,
+) {
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
-        let server_url = ZED_SERVER_URL.to_string();
+        let server_url = server_url;
         let auto_updater = cx.add_model(|cx| {
-            let updater = AutoUpdater::new(version, db.clone(), http_client, server_url.clone());
+            let updater = AutoUpdater::new(version, db, http_client, server_url.clone());
             updater.start_polling(cx).detach();
             updater
         });

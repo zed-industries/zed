@@ -428,6 +428,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "db",
  "gpui",
  "isahc",
  "lazy_static",
@@ -1560,7 +1561,6 @@ dependencies = [
  "rusqlite_migration",
  "serde",
  "serde_rusqlite",
- "settings",
  "tempdir",
 ]
 

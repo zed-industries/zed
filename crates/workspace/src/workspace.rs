@@ -1073,7 +1073,7 @@ pub enum Event {
 
 pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
-    db_id: WorkspaceId,
+    _db_id: WorkspaceId,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<client::Subscription>,
@@ -1217,7 +1217,7 @@ impl Workspace {
         let mut this = Workspace {
             modal: None,
             weak_self: weak_handle,
-            db_id: serialized_workspace.workspace_id,
+            _db_id: serialized_workspace.workspace_id,
             center: PaneGroup::new(center_pane.clone()),
             dock,
             // When removing an item, the last element remaining in this array
@@ -1250,16 +1250,14 @@ impl Workspace {
         this
     }
 
-    fn new_local<T, F>(
-        abs_paths: &[PathBuf],
-        app_state: &Arc<AppState>,
+    fn new_local(
+        abs_paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
         cx: &mut MutableAppContext,
-        callback: F,
-    ) -> Task<T>
-    where
-        T: 'static,
-        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
-    {
+    ) -> Task<(
+        ViewHandle<Workspace>,
+        Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
+    )> {
         let project_handle = Project::local(
             app_state.client.clone(),
             app_state.user_store.clone(),
@@ -1273,21 +1271,25 @@ impl Workspace {
             // Get project paths for all of the abs_paths
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
             let mut project_paths = Vec::new();
-            for path in abs_paths {
+            for path in abs_paths.iter() {
                 if let Some((worktree, project_entry)) = cx
-                    .update(|cx| Workspace::project_path_for_path(project_handle, path, true, cx))
+                    .update(|cx| {
+                        Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+                    })
                     .await
                     .log_err()
                 {
                     worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
-                    project_paths.push(project_entry);
+                    project_paths.push(Some(project_entry));
+                } else {
+                    project_paths.push(None);
                 }
             }
 
             // Use the resolved worktree roots to get the serialized_db from the database
             let serialized_workspace = cx.read(|cx| {
                 cx.global::<Db>()
-                    .workspace_for_worktree_roots(&Vec::from_iter(worktree_roots.into_iter())[..])
+                    .workspace_for_roots(&Vec::from_iter(worktree_roots.into_iter())[..])
             });
 
             // Use the serialized workspace to construct the new window
@@ -1303,18 +1305,36 @@ impl Workspace {
             });
 
             // Call open path for each of the project paths
-            // (this will bring them to the front if they were in kthe serialized workspace)
-            let tasks = workspace.update(&mut cx, |workspace, cx| {
-                let tasks = Vec::new();
-                for path in project_paths {
-                    tasks.push(workspace.open_path(path, true, cx));
-                }
-                tasks
-            });
-            futures::future::join_all(tasks.into_iter()).await;
+            // (this will bring them to the front if they were in the serialized workspace)
+            debug_assert!(abs_paths.len() == project_paths.len());
+            let tasks = abs_paths
+                .iter()
+                .cloned()
+                .zip(project_paths.into_iter())
+                .map(|(abs_path, project_path)| {
+                    let workspace = workspace.clone();
+                    cx.spawn(|mut cx| {
+                        let fs = app_state.fs.clone();
+                        async move {
+                            let project_path = project_path?;
+                            if fs.is_file(&abs_path).await {
+                                Some(
+                                    workspace
+                                        .update(&mut cx, |workspace, cx| {
+                                            workspace.open_path(project_path, true, cx)
+                                        })
+                                        .await,
+                                )
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                });
 
-            // Finally call callback on the workspace
-            workspace.update(&mut cx, |workspace, cx| callback(workspace, cx))
+            let opened_items = futures::future::join_all(tasks.into_iter()).await;
+
+            (workspace, opened_items)
         })
     }
 
@@ -1371,12 +1391,16 @@ impl Workspace {
     ) -> Task<T>
     where
         T: 'static,
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(callback(self, cx)))
         } else {
-            Self::new_local(&[], app_state, cx, callback)
+            let task = Self::new_local(Vec::new(), app_state.clone(), cx);
+            cx.spawn(|_vh, mut cx| async move {
+                let (workspace, _) = task.await;
+                workspace.update(&mut cx, callback)
+            })
         }
     }
 
@@ -1539,7 +1563,7 @@ impl Workspace {
             for path in &abs_paths {
                 project_paths.push(
                     this.update(&mut cx, |this, cx| {
-                        Workspace::project_path_for_path(this.project, path, visible, cx)
+                        Workspace::project_path_for_path(this.project.clone(), path, visible, cx)
                     })
                     .await
                     .log_err(),
@@ -3017,8 +3041,15 @@ pub fn open_paths(
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
-        let workspace = if let Some(existing) = existing {
-            existing
+        if let Some(existing) = existing {
+            (
+                existing.clone(),
+                existing
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_paths(abs_paths, true, cx)
+                    })
+                    .await,
+            )
         } else {
             let contains_directory =
                 futures::future::join_all(abs_paths.iter().map(|path| app_state.fs.is_file(path)))
@@ -3026,28 +3057,32 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.update(|cx| {
-                Workspace::new_local(&abs_paths[..], &app_state, cx, move |workspace, cx| {
-                    if contains_directory {
-                        workspace.toggle_sidebar(SidebarSide::Left, cx);
-                    }
-                    cx.handle()
+                let task = Workspace::new_local(abs_paths, app_state.clone(), cx);
+
+                cx.spawn(|mut cx| async move {
+                    let (workspace, items) = task.await;
+
+                    workspace.update(&mut cx, |workspace, cx| {
+                        if contains_directory {
+                            workspace.toggle_sidebar(SidebarSide::Left, cx);
+                        }
+                    });
+
+                    (workspace, items)
                 })
             })
             .await
-        };
-
-        let items = workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.open_paths(abs_paths, true, cx)
-            })
-            .await;
-
-        (workspace, items)
+        }
     })
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
-    Workspace::new_local(&[], app_state, cx, |_, cx| cx.dispatch_action(NewFile))
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
+    cx.spawn(|mut cx| async move {
+        let (workspace, _) = task.await;
+
+        workspace.update(&mut cx, |_, cx| cx.dispatch_action(NewFile))
+    })
 }
 
 #[cfg(test)]
@@ -3076,8 +3111,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
 
         // Adding an item with no ambiguity renders the tab without detail.
         let item1 = cx.add_view(&workspace, |_| {
@@ -3141,8 +3182,14 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3238,8 +3285,14 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
@@ -3279,8 +3332,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (window_id, workspace) = cx
+            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
 
         let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3375,8 +3428,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (window_id, workspace) = cx
+            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -3477,8 +3530,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (window_id, workspace) = cx
+            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3595,7 +3648,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (_, workspace) = cx
+            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();

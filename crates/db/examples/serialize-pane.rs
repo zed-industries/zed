@@ -1,7 +1,6 @@
-use std::{fs::File, path::Path, thread::sleep, time::Duration};
+use std::{fs::File, path::Path};
 
-use db::pane::SerializedDockPane;
-use settings::DockAnchor;
+use db::pane::{DockAnchor, SerializedDockPane};
 
 const TEST_FILE: &'static str = "test-db.db";
 
@@ -25,7 +24,7 @@ fn main() -> anyhow::Result<()> {
         shown: true,
     });
 
-    let new_workspace = db.workspace_for_roots(&["/tmp"]);
+    let _new_workspace = db.workspace_for_roots(&["/tmp"]);
 
     db.write_to(file).ok();
 

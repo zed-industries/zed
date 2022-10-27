@@ -1645,8 +1645,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1734,8 +1735,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1811,8 +1813,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view

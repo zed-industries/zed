@@ -463,10 +463,11 @@ fn open_config_file(
 
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(app_state, cx, |workspace, cx| {
+                workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
                 })
             })
+            .await
             .await;
         Ok::<_, anyhow::Error>(())
     })
@@ -480,51 +481,55 @@ fn open_log_file(
 ) {
     const MAX_LINES: usize = 1000;
 
-    workspace.with_local_workspace(app_state.clone(), cx, |_, cx| {
-        cx.spawn_weak(|workspace, mut cx| async move {
-            let (old_log, new_log) = futures::join!(
-                app_state.fs.load(&paths::OLD_LOG),
-                app_state.fs.load(&paths::LOG)
-            );
+    workspace
+        .with_local_workspace(&app_state.clone(), cx, move |_, cx| {
+            cx.spawn_weak(|workspace, mut cx| async move {
+                let (old_log, new_log) = futures::join!(
+                    app_state.fs.load(&paths::OLD_LOG),
+                    app_state.fs.load(&paths::LOG)
+                );
 
-            if let Some(workspace) = workspace.upgrade(&cx) {
-                let mut lines = VecDeque::with_capacity(MAX_LINES);
-                for line in old_log
-                    .iter()
-                    .flat_map(|log| log.lines())
-                    .chain(new_log.iter().flat_map(|log| log.lines()))
-                {
-                    if lines.len() == MAX_LINES {
-                        lines.pop_front();
+                if let Some(workspace) = workspace.upgrade(&cx) {
+                    let mut lines = VecDeque::with_capacity(MAX_LINES);
+                    for line in old_log
+                        .iter()
+                        .flat_map(|log| log.lines())
+                        .chain(new_log.iter().flat_map(|log| log.lines()))
+                    {
+                        if lines.len() == MAX_LINES {
+                            lines.pop_front();
+                        }
+                        lines.push_back(line);
                     }
-                    lines.push_back(line);
-                }
-                let log = lines
-                    .into_iter()
-                    .flat_map(|line| [line, "\n"])
-                    .collect::<String>();
+                    let log = lines
+                        .into_iter()
+                        .flat_map(|line| [line, "\n"])
+                        .collect::<String>();
 
-                workspace.update(&mut cx, |workspace, cx| {
-                    let project = workspace.project().clone();
-                    let buffer = project
-                        .update(cx, |project, cx| project.create_buffer("", None, cx))
-                        .expect("creating buffers on a local workspace always succeeds");
-                    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+                    workspace.update(&mut cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", None, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
 
-                    let buffer = cx.add_model(|cx| {
-                        MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                        let buffer = cx.add_model(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                        });
+                        workspace.add_item(
+                            Box::new(
+                                cx.add_view(|cx| {
+                                    Editor::for_multibuffer(buffer, Some(project), cx)
+                                }),
+                            ),
+                            cx,
+                        );
                     });
-                    workspace.add_item(
-                        Box::new(
-                            cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx)),
-                        ),
-                        cx,
-                    );
-                });
-            }
+                }
+            })
+            .detach();
         })
         .detach();
-    });
 }
 
 fn open_telemetry_log_file(
@@ -532,7 +537,7 @@ fn open_telemetry_log_file(
     app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.with_local_workspace(app_state.clone(), cx, |_, cx| {
+    workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
         cx.spawn_weak(|workspace, mut cx| async move {
             let workspace = workspace.upgrade(&cx)?;
             let path = app_state.client.telemetry_log_file_path()?;
@@ -580,31 +585,36 @@ fn open_telemetry_log_file(
             Some(())
         })
         .detach();
-    });
+    }).detach();
 }
 
 fn open_bundled_config_file(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     asset_path: &'static str,
-    title: &str,
+    title: &'static str,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.with_local_workspace(cx, app_state, |workspace, cx| {
-        let project = workspace.project().clone();
-        let buffer = project.update(cx, |project, cx| {
-            let text = Assets::get(asset_path).unwrap().data;
-            let text = str::from_utf8(text.as_ref()).unwrap();
-            project
-                .create_buffer(text, project.languages().get_language("JSON"), cx)
-                .expect("creating buffers on a local workspace always succeeds")
-        });
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
-        workspace.add_item(
-            Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), cx))),
-            cx,
-        );
-    });
+    workspace
+        .with_local_workspace(&app_state.clone(), cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let buffer = project.update(cx, |project, cx| {
+                let text = Assets::get(asset_path).unwrap().data;
+                let text = str::from_utf8(text.as_ref()).unwrap();
+                project
+                    .create_buffer(text, project.languages().get_language("JSON"), cx)
+                    .expect("creating buffers on a local workspace always succeeds")
+            });
+            let buffer =
+                cx.add_model(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
+            workspace.add_item(
+                Box::new(
+                    cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), cx)),
+                ),
+                cx,
+            );
+        })
+        .detach();
 }
 
 fn schema_file_match(path: &Path) -> &Path {
@@ -808,8 +818,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -928,8 +939,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1088,8 +1100,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1131,8 +1144,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -1221,8 +1235,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, NewFile);
@@ -1275,8 +1290,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+        });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1350,8 +1366,14 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1615,8 +1637,14 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));

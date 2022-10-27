@@ -23,7 +23,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Fs, HomeDir, ProjectStore};
+use project::{Db, Fs, HomeDir, ProjectStore};
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -148,7 +148,9 @@ fn main() {
 
         let project_store = cx.add_model(|_| ProjectStore::new());
         let db = cx.background().block(db);
-        client.start_telemetry(db.clone());
+        cx.set_global(db);
+
+        client.start_telemetry(cx.global::<Db>().clone());
         client.report_event("start app", Default::default());
 
         let app_state = Arc::new(AppState {
@@ -162,7 +164,12 @@ fn main() {
             initialize_workspace,
             default_item_factory,
         });
-        auto_update::init(db, http, cx);
+        auto_update::init(
+            cx.global::<Db>().clone(),
+            http,
+            client::ZED_SERVER_URL.clone(),
+            cx,
+        );
         workspace::init(app_state.clone(), cx);
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
