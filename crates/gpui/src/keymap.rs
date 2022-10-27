@@ -78,8 +78,8 @@ pub enum MatchResult {
 impl Debug for MatchResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MatchResult::None => f.debug_struct("MatchResult2::None").finish(),
-            MatchResult::Pending => f.debug_struct("MatchResult2::Pending").finish(),
+            MatchResult::None => f.debug_struct("MatchResult::None").finish(),
+            MatchResult::Pending => f.debug_struct("MatchResult::Pending").finish(),
             MatchResult::Matches(matches) => f
                 .debug_list()
                 .entries(
@@ -195,12 +195,15 @@ impl Matcher {
             }
         }
 
+        if !any_pending {
+            self.clear_pending();
+        }
+
         if !matched_bindings.is_empty() {
             MatchResult::Matches(matched_bindings)
         } else if any_pending {
             MatchResult::Pending
         } else {
-            self.clear_pending();
             MatchResult::None
         }
     }
@@ -494,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_push_keystroke() -> Result<()> {
-        actions!(test, [B, AB, C]);
+        actions!(test, [B, AB, C, D, DA]);
 
         let mut ctx1 = Context::default();
         ctx1.set.insert("1".into());
@@ -508,31 +511,56 @@ mod tests {
             Binding::new("a b", AB, Some("1")),
             Binding::new("b", B, Some("2")),
             Binding::new("c", C, Some("2")),
+            Binding::new("d", D, Some("1")),
+            Binding::new("d", D, Some("2")),
+            Binding::new("d a", DA, Some("2")),
         ]);
 
         let mut matcher = Matcher::new(keymap);
 
+        // Binding with pending prefix always takes precedence
         assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("a")?, dispatch_path.clone()),
             MatchResult::Pending,
-            matcher.push_keystroke(Keystroke::parse("a")?, dispatch_path.clone())
         );
+        // B alone doesn't match because a was pending, so AB is returned instead
         assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("b")?, dispatch_path.clone()),
             MatchResult::Matches(vec![(1, Box::new(AB))]),
-            matcher.push_keystroke(Keystroke::parse("b")?, dispatch_path.clone())
         );
         assert!(!matcher.has_pending_keystrokes());
+
+        // Without an a prefix, B is dispatched like expected
         assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("b")?, dispatch_path.clone()),
             MatchResult::Matches(vec![(2, Box::new(B))]),
-            matcher.push_keystroke(Keystroke::parse("b")?, dispatch_path.clone())
         );
         assert!(!matcher.has_pending_keystrokes());
+
+        // If a is prefixed, C will not be dispatched because there
+        // was a pending binding for it
         assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("a")?, dispatch_path.clone()),
             MatchResult::Pending,
-            matcher.push_keystroke(Keystroke::parse("a")?, dispatch_path.clone())
         );
         assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("c")?, dispatch_path.clone()),
             MatchResult::None,
-            matcher.push_keystroke(Keystroke::parse("c")?, dispatch_path.clone())
+        );
+        assert!(!matcher.has_pending_keystrokes());
+
+        // If a single keystroke matches multiple bindings in the tree
+        // all of them are returned so that we can fallback if the action
+        // handler decides to propagate the action
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("d")?, dispatch_path.clone()),
+            MatchResult::Matches(vec![(2, Box::new(D)), (1, Box::new(D))]),
+        );
+        // If none of the d action handlers consume the binding, a pending
+        // binding may then be used
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("a")?, dispatch_path.clone()),
+            MatchResult::Matches(vec![(2, Box::new(DA))]),
         );
         assert!(!matcher.has_pending_keystrokes());
 
@@ -655,71 +683,60 @@ mod tests {
 
         // Basic match
         assert_eq!(
-            downcast(&matcher.test_keystroke("a", vec![(1, ctx_a.clone())])),
-            Some(&A("x".to_string()))
+            matcher.push_keystroke(Keystroke::parse("a")?, vec![(1, ctx_a.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(A("x".to_string())))])
         );
+        matcher.clear_pending();
 
         // Multi-keystroke match
-        assert!(matcher
-            .test_keystroke("a", vec![(1, ctx_b.clone())])
-            .is_none());
         assert_eq!(
-            downcast(&matcher.test_keystroke("b", vec![(1, ctx_b.clone())])),
-            Some(&Ab)
+            matcher.push_keystroke(Keystroke::parse("a")?, vec![(1, ctx_b.clone())]),
+            MatchResult::Pending
         );
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("b")?, vec![(1, ctx_b.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(Ab))])
+        );
+        matcher.clear_pending();
 
         // Failed matches don't interfere with matching subsequent keys
-        assert!(matcher
-            .test_keystroke("x", vec![(1, ctx_a.clone())])
-            .is_none());
         assert_eq!(
-            downcast(&matcher.test_keystroke("a", vec![(1, ctx_a.clone())])),
-            Some(&A("x".to_string()))
+            matcher.push_keystroke(Keystroke::parse("x")?, vec![(1, ctx_a.clone())]),
+            MatchResult::None
         );
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("a")?, vec![(1, ctx_a.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(A("x".to_string())))])
+        );
+        matcher.clear_pending();
 
         // Pending keystrokes are cleared when the context changes
-        assert!(&matcher
-            .test_keystroke("a", vec![(1, ctx_b.clone())])
-            .is_none());
         assert_eq!(
-            downcast(&matcher.test_keystroke("b", vec![(1, ctx_a.clone())])),
-            Some(&B)
+            matcher.push_keystroke(Keystroke::parse("a")?, vec![(1, ctx_b.clone())]),
+            MatchResult::Pending
         );
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("b")?, vec![(1, ctx_a.clone())]),
+            MatchResult::None
+        );
+        matcher.clear_pending();
 
         let mut ctx_c = Context::default();
         ctx_c.set.insert("c".into());
 
         // Pending keystrokes are maintained per-view
-        assert!(matcher
-            .test_keystroke("a", vec![(1, ctx_b.clone()), (2, ctx_c.clone())])
-            .is_none());
         assert_eq!(
-            downcast(&matcher.test_keystroke("b", vec![(1, ctx_b.clone())])),
-            Some(&Ab)
+            matcher.push_keystroke(
+                Keystroke::parse("a")?,
+                vec![(1, ctx_b.clone()), (2, ctx_c.clone())]
+            ),
+            MatchResult::Pending
+        );
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("b")?, vec![(1, ctx_b.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(Ab))])
         );
 
         Ok(())
-    }
-
-    fn downcast<A: Action>(action: &Option<Box<dyn Action>>) -> Option<&A> {
-        action
-            .as_ref()
-            .and_then(|action| action.as_any().downcast_ref())
-    }
-
-    impl Matcher {
-        fn test_keystroke<'a>(
-            &'a mut self,
-            keystroke: &str,
-            dispatch_path: Vec<(usize, Context)>,
-        ) -> Option<Box<dyn Action>> {
-            if let MatchResult::Matches(matches) =
-                self.push_keystroke(Keystroke::parse(keystroke).unwrap(), dispatch_path)
-            {
-                Some(matches[0].1.boxed_clone())
-            } else {
-                None
-            }
-        }
     }
 }
