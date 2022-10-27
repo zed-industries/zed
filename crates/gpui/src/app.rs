@@ -1355,24 +1355,21 @@ impl MutableAppContext {
         window_id: usize,
         view_id: usize,
     ) -> BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> {
-        let mut result: BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> = Default::default();
+        let dispatch_path = self
+            .ancestors(window_id, view_id)
+            .map(|view_id| {
+                (
+                    view_id,
+                    self.cx
+                        .views
+                        .get(&(window_id, view_id))
+                        .unwrap()
+                        .keymap_context(self.as_ref()),
+                )
+            })
+            .collect();
 
-        for parent_view_id in self.ancestors(window_id, view_id) {
-            let keymap_context = self
-                .cx
-                .views
-                .get(&(window_id, parent_view_id))
-                .unwrap()
-                .keymap_context(self.as_ref());
-
-            result.append(
-                &mut self
-                    .keystroke_matcher
-                    .available_bindings(parent_view_id, &keymap_context),
-            );
-        }
-
-        result
+        self.keystroke_matcher.available_bindings(dispatch_path)
     }
 
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
@@ -1584,13 +1581,13 @@ impl MutableAppContext {
                 .keystroke_matcher
                 .push_keystroke(keystroke.clone(), dispatch_path);
 
-            let keystroke_handled = match match_result {
+            let keystroke_handled = match &match_result {
                 MatchResult::None => false,
                 MatchResult::Pending => true,
-                result @ MatchResult::Match { view_id, action } => {
+                MatchResult::Match { view_id, action } => {
                     if self.handle_dispatch_action_from_effect(
                         window_id,
-                        Some(view_id),
+                        Some(*view_id),
                         action.as_ref(),
                     ) {
                         self.keystroke_matcher.clear_pending();

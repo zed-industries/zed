@@ -352,7 +352,7 @@ pub fn initialize_workspace(
     if cx.global::<Settings>().experiments.mnemonic_keybindings {
         cx.observe_keystrokes(|_this, _key, result, cx| {
             let clear_leader = match result {
-                MatchResult::Action(action) => {
+                MatchResult::Match { action, .. } => {
                     action.namespace() != "zed" || action.name() != "Leader"
                 }
                 MatchResult::None => true,

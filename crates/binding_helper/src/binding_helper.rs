@@ -32,7 +32,7 @@ impl BindingHelper {
                             })
                             .collect();
                     }
-                    MatchResult::Action(action) => {
+                    MatchResult::Match { action, .. } => {
                         if action.namespace() == "zed" && action.name() == "Leader" {
                             this.next_bindings = cx
                                 .available_bindings(cx.window_id(), focused_view)

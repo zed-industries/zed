@@ -254,33 +254,38 @@ impl Matcher {
 
     pub fn available_bindings(
         &self,
-        view_id: usize,
-        context: &Context,
+        dispatch_path: Vec<(usize, Context)>,
     ) -> BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> {
         let mut result: BTreeMap<SmallVec<[Keystroke; 2]>, &Binding> = Default::default();
 
-        let pending_keystrokes = self
-            .pending
-            .get(&view_id)
-            .map(|p| p.keystrokes.clone())
-            .unwrap_or_default();
+        for (view_id, context) in dispatch_path {
+            if !self.pending.is_empty() && !self.pending.contains_key(&view_id) {
+                continue;
+            }
 
-        for binding in self.keymap.bindings.iter().rev() {
-            if binding.keystrokes.starts_with(&pending_keystrokes)
-                && binding
-                    .context_predicate
-                    .as_ref()
-                    .map(|c| c.eval(context))
-                    .unwrap_or(true)
-            {
-                let next_keystrokes = binding
-                    .keystrokes
-                    .iter()
-                    .skip(pending_keystrokes.len())
-                    .cloned()
-                    .collect();
-                if !result.contains_key(&next_keystrokes) {
-                    result.insert(next_keystrokes, binding);
+            let pending_keystrokes = self
+                .pending
+                .get(&view_id)
+                .map(|p| p.keystrokes.clone())
+                .unwrap_or_default();
+
+            for binding in self.keymap.bindings.iter().rev() {
+                if binding.keystrokes.starts_with(&pending_keystrokes)
+                    && binding
+                        .context_predicate
+                        .as_ref()
+                        .map(|c| c.eval(&context))
+                        .unwrap_or(true)
+                {
+                    let next_keystrokes = binding
+                        .keystrokes
+                        .iter()
+                        .skip(pending_keystrokes.len())
+                        .cloned()
+                        .collect();
+                    if !result.contains_key(&next_keystrokes) {
+                        result.insert(next_keystrokes, binding);
+                    }
                 }
             }
         }
