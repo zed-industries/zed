@@ -77,21 +77,44 @@ where
 pub enum MatchResult {
     None,
     Pending,
-    Action(Box<dyn Action>),
+    Match {
+        view_id: usize,
+        action: Box<dyn Action>,
+    },
 }
 
 impl Debug for MatchResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MatchResult::None => f.debug_struct("MatchResult::None").finish(),
-            MatchResult::Pending => f.debug_struct("MatchResult::Pending").finish(),
-            MatchResult::Action(action) => f
-                .debug_tuple("MatchResult::Action")
-                .field(&action.name())
+            MatchResult::None => f.debug_struct("MatchResult2::None").finish(),
+            MatchResult::Pending => f.debug_struct("MatchResult2::Pending").finish(),
+            MatchResult::Match { view_id, action } => f
+                .debug_struct("MatchResult::Match")
+                .field("view_id", view_id)
+                .field("action", &action.name())
                 .finish(),
         }
     }
 }
+
+impl PartialEq for MatchResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MatchResult::None, MatchResult::None) => true,
+            (MatchResult::Pending, MatchResult::Pending) => true,
+            (
+                MatchResult::Match { view_id, action },
+                MatchResult::Match {
+                    view_id: other_view_id,
+                    action: other_action,
+                },
+            ) => view_id == other_view_id && action.eq(other_action.as_ref()),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for MatchResult {}
 
 impl Matcher {
     pub fn new(keymap: Keymap) -> Self {
@@ -131,42 +154,58 @@ impl Matcher {
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,
-        view_id: usize,
-        cx: &Context,
+        dispatch_path: Vec<(usize, Context)>,
     ) -> MatchResult {
-        let pending = self.pending.entry(view_id).or_default();
+        let mut any_pending = false;
 
-        if let Some(pending_ctx) = pending.context.as_ref() {
-            if pending_ctx != cx {
-                pending.keystrokes.clear();
+        let first_keystroke = self.pending.is_empty();
+        for (view_id, context) in dispatch_path {
+            if !first_keystroke && !self.pending.contains_key(&view_id) {
+                continue;
             }
-        }
 
-        pending.keystrokes.push(keystroke);
+            let pending = self.pending.entry(view_id).or_default();
 
-        let mut retain_pending = false;
-        for binding in self.keymap.bindings.iter().rev() {
-            if binding.keystrokes.starts_with(&pending.keystrokes)
-                && binding
-                    .context_predicate
-                    .as_ref()
-                    .map(|c| c.eval(cx))
-                    .unwrap_or(true)
-            {
-                if binding.keystrokes.len() == pending.keystrokes.len() {
-                    self.pending.remove(&view_id);
-                    return MatchResult::Action(binding.action.boxed_clone());
-                } else {
-                    retain_pending = true;
-                    pending.context = Some(cx.clone());
+            if let Some(pending_context) = pending.context.as_ref() {
+                if pending_context != &context {
+                    pending.keystrokes.clear();
                 }
             }
+
+            pending.keystrokes.push(keystroke.clone());
+
+            let mut retain_pending = false;
+            for binding in self.keymap.bindings.iter().rev() {
+                if binding.keystrokes.starts_with(&pending.keystrokes)
+                    && binding
+                        .context_predicate
+                        .as_ref()
+                        .map(|c| c.eval(&context))
+                        .unwrap_or(true)
+                {
+                    if binding.keystrokes.len() == pending.keystrokes.len() {
+                        self.pending.remove(&view_id);
+                        return MatchResult::Match {
+                            view_id,
+                            action: binding.action.boxed_clone(),
+                        };
+                    } else {
+                        retain_pending = true;
+                        pending.context = Some(context.clone());
+                    }
+                }
+            }
+
+            if retain_pending {
+                any_pending = true;
+            } else {
+                self.pending.remove(&view_id);
+            }
         }
 
-        if retain_pending {
+        if any_pending {
             MatchResult::Pending
         } else {
-            self.pending.remove(&view_id);
             MatchResult::None
         }
     }
@@ -451,6 +490,7 @@ impl ContextPredicate {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
     use serde::Deserialize;
 
     use crate::{actions, impl_actions};
@@ -458,7 +498,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_keystroke_parsing() -> anyhow::Result<()> {
+    fn test_push_keystroke() -> Result<()> {
+        actions!(test, [B, AB, C]);
+
+        let mut ctx1 = Context::default();
+        ctx1.set.insert("1".into());
+
+        let mut ctx2 = Context::default();
+        ctx2.set.insert("2".into());
+
+        let dispatch_path = vec![(2, ctx2), (1, ctx1)];
+
+        let keymap = Keymap::new(vec![
+            Binding::new("a b", AB, Some("1")),
+            Binding::new("b", B, Some("2")),
+            Binding::new("c", C, Some("2")),
+        ]);
+
+        let mut matcher = Matcher::new(keymap);
+
+        assert_eq!(
+            MatchResult::Pending,
+            matcher.push_keystroke(Keystroke::parse("a")?, dispatch_path.clone())
+        );
+        assert_eq!(
+            MatchResult::Match {
+                view_id: 1,
+                action: Box::new(AB)
+            },
+            matcher.push_keystroke(Keystroke::parse("b")?, dispatch_path.clone())
+        );
+        assert!(matcher.pending.is_empty());
+        assert_eq!(
+            MatchResult::Match {
+                view_id: 2,
+                action: Box::new(B)
+            },
+            matcher.push_keystroke(Keystroke::parse("b")?, dispatch_path.clone())
+        );
+        assert!(matcher.pending.is_empty());
+        assert_eq!(
+            MatchResult::Pending,
+            matcher.push_keystroke(Keystroke::parse("a")?, dispatch_path.clone())
+        );
+        assert_eq!(
+            MatchResult::None,
+            matcher.push_keystroke(Keystroke::parse("c")?, dispatch_path.clone())
+        );
+        assert!(matcher.pending.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_keystroke_parsing() -> Result<()> {
         assert_eq!(
             Keystroke::parse("ctrl-p")?,
             Keystroke {
@@ -499,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn test_context_predicate_parsing() -> anyhow::Result<()> {
+    fn test_context_predicate_parsing() -> Result<()> {
         use ContextPredicate::*;
 
         assert_eq!(
@@ -522,7 +615,7 @@ mod tests {
     }
 
     #[test]
-    fn test_context_predicate_eval() -> anyhow::Result<()> {
+    fn test_context_predicate_eval() -> Result<()> {
         let predicate = ContextPredicate::parse("a && b || c == d")?;
 
         let mut context = Context::default();
@@ -546,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn test_matcher() -> anyhow::Result<()> {
+    fn test_matcher() -> Result<()> {
         #[derive(Clone, Deserialize, PartialEq, Eq, Debug)]
         pub struct A(pub String);
         impl_actions!(test, [A]);
@@ -573,32 +666,48 @@ mod tests {
 
         // Basic match
         assert_eq!(
-            downcast(&matcher.test_keystroke("a", 1, &ctx_a)),
+            downcast(&matcher.test_keystroke("a", vec![(1, ctx_a.clone())])),
             Some(&A("x".to_string()))
         );
 
         // Multi-keystroke match
-        assert!(matcher.test_keystroke("a", 1, &ctx_b).is_none());
-        assert_eq!(downcast(&matcher.test_keystroke("b", 1, &ctx_b)), Some(&Ab));
+        assert!(matcher
+            .test_keystroke("a", vec![(1, ctx_b.clone())])
+            .is_none());
+        assert_eq!(
+            downcast(&matcher.test_keystroke("b", vec![(1, ctx_b.clone())])),
+            Some(&Ab)
+        );
 
         // Failed matches don't interfere with matching subsequent keys
-        assert!(matcher.test_keystroke("x", 1, &ctx_a).is_none());
+        assert!(matcher
+            .test_keystroke("x", vec![(1, ctx_a.clone())])
+            .is_none());
         assert_eq!(
-            downcast(&matcher.test_keystroke("a", 1, &ctx_a)),
+            downcast(&matcher.test_keystroke("a", vec![(1, ctx_a.clone())])),
             Some(&A("x".to_string()))
         );
 
         // Pending keystrokes are cleared when the context changes
-        assert!(&matcher.test_keystroke("a", 1, &ctx_b).is_none());
-        assert_eq!(downcast(&matcher.test_keystroke("b", 1, &ctx_a)), Some(&B));
+        assert!(&matcher
+            .test_keystroke("a", vec![(1, ctx_b.clone())])
+            .is_none());
+        assert_eq!(
+            downcast(&matcher.test_keystroke("b", vec![(1, ctx_a.clone())])),
+            Some(&B)
+        );
 
         let mut ctx_c = Context::default();
         ctx_c.set.insert("c".into());
 
         // Pending keystrokes are maintained per-view
-        assert!(matcher.test_keystroke("a", 1, &ctx_b).is_none());
-        assert!(matcher.test_keystroke("a", 2, &ctx_c).is_none());
-        assert_eq!(downcast(&matcher.test_keystroke("b", 1, &ctx_b)), Some(&Ab));
+        assert!(matcher
+            .test_keystroke("a", vec![(1, ctx_b.clone()), (2, ctx_c.clone())])
+            .is_none());
+        assert_eq!(
+            downcast(&matcher.test_keystroke("b", vec![(1, ctx_b.clone())])),
+            Some(&Ab)
+        );
 
         Ok(())
     }
@@ -613,11 +722,10 @@ mod tests {
         fn test_keystroke(
             &mut self,
             keystroke: &str,
-            view_id: usize,
-            cx: &Context,
+            dispatch_path: Vec<(usize, Context)>,
         ) -> Option<Box<dyn Action>> {
-            if let MatchResult::Action(action) =
-                self.push_keystroke(Keystroke::parse(keystroke).unwrap(), view_id, cx)
+            if let MatchResult::Match { action, .. } =
+                self.push_keystroke(Keystroke::parse(keystroke).unwrap(), dispatch_path)
             {
                 Some(action.boxed_clone())
             } else {
