@@ -10,6 +10,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
+use settings::ReleaseChannel;
 use std::{
     io::Write,
     mem,
@@ -32,6 +33,7 @@ struct TelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
+    release_channel: &'static str,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
     queue: Vec<MixpanelEvent>,
@@ -69,6 +71,7 @@ struct MixpanelEventProperties {
     event_properties: Option<Map<String, Value>>,
     os_name: &'static str,
     os_version: Option<Arc<str>>,
+    release_channel: &'static str,
     app_version: Option<Arc<str>>,
     signed_in: bool,
     #[serde(rename = "App")]
@@ -100,6 +103,7 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
+        let release_channel = cx.global::<ReleaseChannel>().name();
         let this = Arc::new(Self {
             http_client: client,
             executor: cx.background().clone(),
@@ -113,6 +117,7 @@ impl Telemetry {
                     .app_version()
                     .log_err()
                     .map(|v| v.to_string().into()),
+                release_channel,
                 device_id: None,
                 metrics_id: None,
                 queue: Default::default(),
@@ -228,6 +233,7 @@ impl Telemetry {
                 },
                 os_name: state.os_name,
                 os_version: state.os_version.clone(),
+                release_channel: state.release_channel,
                 app_version: state.app_version.clone(),
                 signed_in: state.metrics_id.is_some(),
                 app: "Zed",

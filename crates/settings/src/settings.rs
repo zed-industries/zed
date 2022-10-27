@@ -62,6 +62,16 @@ pub enum ReleaseChannel {
     Stable,
 }
 
+impl ReleaseChannel {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Dev => "Zed Dev",
+            ReleaseChannel::Preview => "Zed Preview",
+            ReleaseChannel::Stable => "Zed",
+        }
+    }
+}
+
 impl FeatureFlags {
     pub fn keymap_files(&self) -> Vec<&'static str> {
         vec![]

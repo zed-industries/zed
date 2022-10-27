@@ -10,6 +10,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
+use settings::ReleaseChannel;
 use std::{
     io::Write,
     mem,
@@ -33,6 +34,7 @@ struct AmplitudeTelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
+    release_channel: &'static str,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
     queue: Vec<AmplitudeEvent>,
@@ -70,6 +72,7 @@ struct AmplitudeEvent {
     app_version: Option<Arc<str>>,
     #[serde(rename = "App")]
     app: &'static str,
+    release_channel: &'static str,
     event_id: usize,
     session_id: u128,
     time: u128,
@@ -90,6 +93,7 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 impl AmplitudeTelemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
+        let release_channel = cx.global::<ReleaseChannel>().name();
         let this = Arc::new(Self {
             http_client: client,
             executor: cx.background().clone(),
@@ -107,6 +111,7 @@ impl AmplitudeTelemetry {
                     .app_version()
                     .log_err()
                     .map(|v| v.to_string().into()),
+                release_channel,
                 device_id: None,
                 queue: Default::default(),
                 flush_task: Default::default(),
@@ -221,6 +226,7 @@ impl AmplitudeTelemetry {
             app: "Zed",
             os_version: state.os_version.clone(),
             app_version: state.app_version.clone(),
+            release_channel: state.release_channel,
             event_id: post_inc(&mut state.next_event_id),
         };
         state.queue.push(event);
