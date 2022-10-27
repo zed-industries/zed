@@ -116,10 +116,10 @@ jobs:
 
       - uses: softprops/action-gh-release@v1
         name: Upload app bundle to release
-        if: ${{ github.env.RELEASE_CHANNEL }}
+        if: ${{ env.RELEASE_CHANNEL }}
         with:
           draft: true
-          prerelease: ${{ github.env.RELEASE_CHANNEL == 'preview' }}
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: target/release/Zed.dmg
           overwrite: true
           body: ""
