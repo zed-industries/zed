@@ -6,36 +6,43 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
 
 ## Development tips
 
+### Dependencies
+
+* Install [Postgres.app](https://postgresapp.com) and start it.
+* Install the `LiveKit` server and the `foreman` process supervisor:
+
+    ```
+    brew install livekit
+    brew install foreman
+    ```
+
+* Ensure the Zed.dev website is checked out in a sibling directory:
+
+    ```
+    cd ..
+    git clone https://github.com/zed-industries/zed.dev
+    ```
+
+* Set up a local `zed` database and seed it with some initial users:
+
+    ```
+    script/bootstrap
+    ```
+
 ### Testing against locally-running servers
 
-Make sure you have `zed.dev` cloned as a sibling to this repo.
+Start the web and collab servers:
 
 ```
-cd ..
-git clone https://github.com/zed-industries/zed.dev
-```
-
-Make sure your local database is created, migrated, and seeded with initial data. Install [Postgres](https://postgresapp.com), then from the `zed` repository root, run:
-
-```
-script/sqlx database create
-script/sqlx migrate run
-script/seed-db
-```
-
-Run the web frontend and the collaboration server.
-
-```
-brew install foreman
 foreman start
 ```
 
 If you want to run Zed pointed at the local servers, you can run:
 
 ```
-script/zed_with_local_servers
+script/zed-with-local-servers
 # or...
-script/zed_with_local_servers --release
+script/zed-with-local-servers --release
 ```
 
 ### Dump element JSON
