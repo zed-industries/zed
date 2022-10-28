@@ -21,13 +21,31 @@ pub enum DisplayDiffHunk {
 }
 
 impl DisplayDiffHunk {
-    pub fn display_row_range(&self) -> Range<u32> {
+    pub fn start_display_row(&self) -> u32 {
         match self {
-            &DisplayDiffHunk::Folded { display_row } => display_row..display_row + 1,
+            &DisplayDiffHunk::Folded { display_row } => display_row,
             DisplayDiffHunk::Unfolded {
                 display_row_range, ..
-            } => display_row_range.clone(),
+            } => display_row_range.start,
         }
+    }
+
+    pub fn contains_display_row(&self, display_row: u32) -> bool {
+        let range = match self {
+            &DisplayDiffHunk::Folded { display_row } => display_row..=display_row,
+
+            DisplayDiffHunk::Unfolded {
+                display_row_range, ..
+            } => {
+                if display_row_range.len() == 0 {
+                    display_row_range.start..=display_row_range.end
+                } else {
+                    display_row_range.start..=display_row_range.end - 1
+                }
+            }
+        };
+
+        range.contains(&display_row)
     }
 }
 

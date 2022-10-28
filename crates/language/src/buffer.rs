@@ -681,7 +681,7 @@ impl Buffer {
         self.diff_base.as_deref()
     }
 
-    pub fn update_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
         self.git_diff_recalc(cx);
     }

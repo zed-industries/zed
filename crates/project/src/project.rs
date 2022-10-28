@@ -4410,7 +4410,7 @@ impl Project {
                         .await;
 
                     let buffer_id = buffer.update(&mut cx, |buffer, cx| {
-                        buffer.update_diff_base(diff_base.clone(), cx);
+                        buffer.set_diff_base(diff_base.clone(), cx);
                         buffer.remote_id()
                     });
 
@@ -4968,7 +4968,7 @@ impl Project {
                 .and_then(|b| b.upgrade(cx))
                 .ok_or_else(|| anyhow!("No such buffer {}", buffer_id))?;
 
-            buffer.update(cx, |buffer, cx| buffer.update_diff_base(diff_base, cx));
+            buffer.update(cx, |buffer, cx| buffer.set_diff_base(diff_base, cx));
 
             Ok(())
         })

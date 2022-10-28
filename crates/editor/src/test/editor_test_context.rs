@@ -151,6 +151,11 @@ impl<'a> EditorTestContext<'a> {
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
     }
 
+    pub fn set_diff_base(&mut self, diff_base: Option<&str>) {
+        let diff_base = diff_base.map(String::from);
+        self.update_buffer(|buffer, cx| buffer.set_diff_base(diff_base, cx));
+    }
+
     /// Change the editor's text and selections using a string containing
     /// embedded range markers that represent the ranges and directions of
     /// each selection.

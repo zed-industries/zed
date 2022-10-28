@@ -1,4 +1,3 @@
-pub mod editor_git_test_context;
 pub mod editor_lsp_test_context;
 pub mod editor_test_context;
 
