@@ -25,9 +25,9 @@ pub struct RealDb {
 
 impl Db {
     /// Open or create a database at the given directory path.
-    pub fn open(db_dir: &Path) -> Self {
+    pub fn open(db_dir: &Path, channel: &'static str) -> Self {
         // Use 0 for now. Will implement incrementing and clearing of old db files soon TM
-        let current_db_dir = db_dir.join(Path::new("0"));
+        let current_db_dir = db_dir.join(Path::new(&format!("0-{}", channel)));
         fs::create_dir_all(&current_db_dir)
             .expect("Should be able to create the database directory");
         let db_path = current_db_dir.join(Path::new("db.sqlite"));
