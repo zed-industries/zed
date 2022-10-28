@@ -71,7 +71,7 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 lazy_static! {
-    static ref RELEASE_CHANNEL_NAME: String =
+    pub static ref RELEASE_CHANNEL_NAME: String =
         env::var("ZED_RELEASE_CHANNEL").unwrap_or(include_str!("../RELEASE_CHANNEL").to_string());
     pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => ReleaseChannel::Dev,

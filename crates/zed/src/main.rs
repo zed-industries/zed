@@ -39,7 +39,10 @@ use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJson
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
-use zed::{self, build_window_options, initialize_workspace, languages, menus, RELEASE_CHANNEL};
+use zed::{
+    self, build_window_options, initialize_workspace, languages, menus, RELEASE_CHANNEL,
+    RELEASE_CHANNEL_NAME,
+};
 
 fn main() {
     let http = http::client();
@@ -52,9 +55,10 @@ fn main() {
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
     init_panic_hook(app_version, http.clone(), app.background());
-    let db = app
-        .background()
-        .spawn(async move { project::Db::open(&*zed::paths::DB_DIR) });
+
+    let db = app.background().spawn(async move {
+        project::Db::open(&*zed::paths::DB_DIR, RELEASE_CHANNEL_NAME.as_str())
+    });
 
     load_embedded_fonts(&app);
 
