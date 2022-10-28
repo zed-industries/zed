@@ -63,8 +63,8 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
 
     let is_removal = hunk.status() == DiffHunkStatus::Removed;
 
-    let folds_start = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
-    let folds_end = Point::new(hunk.buffer_range.end + 1, 0);
+    let folds_start = Point::new(hunk.buffer_range.start.saturating_sub(2), 0);
+    let folds_end = Point::new(hunk.buffer_range.end + 2, 0);
     let folds_range = folds_start..folds_end;
 
     let containing_fold = snapshot.folds_in_range(folds_range).find(|fold_range| {
