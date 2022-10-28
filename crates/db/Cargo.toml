@@ -18,7 +18,7 @@ lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 rusqlite = { version = "0.28.0", features = ["bundled", "serde_json"] }
-rusqlite_migration = "1.0.0"
+rusqlite_migration = { git = "https://github.com/cljoly/rusqlite_migration", rev = "c433555d7c1b41b103426e35756eb3144d0ebbc6" }
 serde = { workspace = true }
 serde_rusqlite = "0.31.0"
 
