@@ -54,6 +54,7 @@ use std::{
 };
 use theme::ThemeRegistry;
 use unindent::Unindent as _;
+use util::post_inc;
 use workspace::{shared_screen::SharedScreen, Item, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
@@ -5859,37 +5860,6 @@ async fn test_random_collaboration(
     let mut op_start_signals = Vec::new();
 
     let mut next_entity_id = 100000;
-    let mut host_cx = TestAppContext::new(
-        cx.foreground_platform(),
-        cx.platform(),
-        deterministic.build_foreground(next_entity_id),
-        deterministic.build_background(),
-        cx.font_cache(),
-        cx.leak_detector(),
-        next_entity_id,
-        cx.function_name.clone(),
-    );
-    let host = server.create_client(&mut host_cx, "host").await;
-    let host_project = host_cx.update(|cx| {
-        Project::local(
-            host.client.clone(),
-            host.user_store.clone(),
-            host.project_store.clone(),
-            host_language_registry.clone(),
-            fs.clone(),
-            cx,
-        )
-    });
-
-    let (collab_worktree, _) = host_project
-        .update(&mut host_cx, |project, cx| {
-            project.find_or_create_local_worktree("/_collab", true, cx)
-        })
-        .await
-        .unwrap();
-    collab_worktree
-        .read_with(&host_cx, |tree, _| tree.as_local().unwrap().scan_complete())
-        .await;
 
     // Set up fake language servers.
     let mut language = Language::new(
@@ -6018,83 +5988,12 @@ async fn test_random_collaboration(
             ..Default::default()
         }))
         .await;
-    host_language_registry.add(Arc::new(language));
-
-    let host_user_id = host.current_user_id(&host_cx);
-    active_call
-        .update(cx, |call, cx| {
-            call.invite(host_user_id.to_proto(), None, cx)
-        })
-        .await
-        .unwrap();
-    active_call.read_with(cx, |call, cx| call.room().unwrap().read(cx).id());
-    deterministic.run_until_parked();
-    let host_active_call = host_cx.read(ActiveCall::global);
-    host_active_call
-        .update(&mut host_cx, |call, cx| call.accept_incoming(cx))
-        .await
-        .unwrap();
-
-    let host_project_id = host_active_call
-        .update(&mut host_cx, |call, cx| {
-            call.share_project(host_project.clone(), cx)
-        })
-        .await
-        .unwrap();
+    let language = Arc::new(language);
 
     let op_start_signal = futures::channel::mpsc::unbounded();
-    user_ids.push(host_user_id);
-    peer_ids.push(host.peer_id().unwrap());
-    op_start_signals.push(op_start_signal.0);
-    clients.push(host_cx.foreground().spawn(host.simulate_host(
-        host_project,
-        op_start_signal.1,
-        rng.clone(),
-        host_cx,
-    )));
-
-    let disconnect_host_at = if rng.lock().gen_bool(0.2) {
-        rng.lock().gen_range(0..max_operations)
-    } else {
-        max_operations
-    };
 
     let mut operations = 0;
     while operations < max_operations {
-        if operations == disconnect_host_at {
-            server.disconnect_client(peer_ids[0]);
-            deterministic.advance_clock(RECEIVE_TIMEOUT);
-            drop(op_start_signals);
-
-            deterministic.start_waiting();
-            let mut clients = futures::future::join_all(clients).await;
-            deterministic.finish_waiting();
-            deterministic.run_until_parked();
-
-            let (host, host_project, mut host_cx, host_err) = clients.remove(0);
-            if let Some(host_err) = host_err {
-                log::error!("host error - {:?}", host_err);
-            }
-            host_project.read_with(&host_cx, |project, _| assert!(!project.is_shared()));
-            for (guest, guest_project, mut guest_cx, guest_err) in clients {
-                if let Some(guest_err) = guest_err {
-                    log::error!("{} error - {:?}", guest.username, guest_err);
-                }
-
-                guest_project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
-                guest_cx.update(|cx| {
-                    cx.clear_globals();
-                    drop((guest, guest_project));
-                });
-            }
-            host_cx.update(|cx| {
-                cx.clear_globals();
-                drop((host, host_project));
-            });
-
-            return;
-        }
-
         let distribution = rng.lock().gen_range(0..100);
         match distribution {
             0..=19 if !available_guests.is_empty() => {
@@ -6115,6 +6014,7 @@ async fn test_random_collaboration(
 
                 deterministic.start_waiting();
                 let guest = server.create_client(&mut guest_cx, &guest_username).await;
+                guest.language_registry.add(language.clone());
                 let guest_user_id = guest.current_user_id(&guest_cx);
 
                 active_call
@@ -6129,27 +6029,14 @@ async fn test_random_collaboration(
                     .update(&mut guest_cx, |call, cx| call.accept_incoming(cx))
                     .await
                     .unwrap();
-
-                let guest_project = Project::remote(
-                    host_project_id,
-                    guest.client.clone(),
-                    guest.user_store.clone(),
-                    guest.project_store.clone(),
-                    guest_lang_registry.clone(),
-                    FakeFs::new(cx.background()),
-                    guest_cx.to_async(),
-                )
-                .await
-                .unwrap();
                 deterministic.finish_waiting();
 
                 let op_start_signal = futures::channel::mpsc::unbounded();
                 user_ids.push(guest_user_id);
                 peer_ids.push(guest.peer_id().unwrap());
                 op_start_signals.push(op_start_signal.0);
-                clients.push(guest_cx.foreground().spawn(guest.simulate_guest(
+                clients.push(guest_cx.foreground().spawn(guest.simulate(
                     guest_username.clone(),
-                    guest_project,
                     op_start_signal.1,
                     rng.clone(),
                     guest_cx,
@@ -6170,14 +6057,17 @@ async fn test_random_collaboration(
                 deterministic.advance_clock(RECEIVE_TIMEOUT);
                 deterministic.start_waiting();
                 log::info!("Waiting for guest {} to exit...", removed_guest_id);
-                let (guest, guest_project, mut guest_cx, guest_err) = guest.await;
+                let (guest, mut guest_cx, guest_err) = guest.await;
                 deterministic.finish_waiting();
                 server.allow_connections();
 
                 if let Some(guest_err) = guest_err {
                     log::error!("{} error - {:?}", guest.username, guest_err);
                 }
-                guest_project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
+
+                for project in &guest.remote_projects {
+                    project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
+                }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
                     let contacts = server
@@ -6200,7 +6090,7 @@ async fn test_random_collaboration(
                 available_guests.push(guest.username.clone());
                 guest_cx.update(|cx| {
                     cx.clear_globals();
-                    drop((guest, guest_project));
+                    drop(guest);
                 });
 
                 operations += 1;
@@ -6228,62 +6118,73 @@ async fn test_random_collaboration(
     deterministic.finish_waiting();
     deterministic.run_until_parked();
 
-    let (host_client, host_project, mut host_cx, host_err) = clients.remove(0);
-    if let Some(host_err) = host_err {
-        panic!("host error - {:?}", host_err);
-    }
-    let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
-        project
-            .worktrees(cx)
-            .map(|worktree| {
-                let snapshot = worktree.read(cx).snapshot();
-                (snapshot.id(), snapshot)
-            })
-            .collect::<BTreeMap<_, _>>()
-    });
-
-    host_project.read_with(&host_cx, |project, cx| project.check_invariants(cx));
-
-    for (guest_client, guest_project, mut guest_cx, guest_err) in clients.into_iter() {
+    for (guest_client, mut guest_cx, guest_err) in &clients {
         if let Some(guest_err) = guest_err {
             panic!("{} error - {:?}", guest_client.username, guest_err);
         }
-        let worktree_snapshots = guest_project.read_with(&guest_cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    (worktree.id(), worktree.snapshot())
-                })
-                .collect::<BTreeMap<_, _>>()
-        });
 
-        assert_eq!(
-            worktree_snapshots.keys().collect::<Vec<_>>(),
-            host_worktree_snapshots.keys().collect::<Vec<_>>(),
-            "{} has different worktrees than the host",
-            guest_client.username
-        );
-        for (id, host_snapshot) in &host_worktree_snapshots {
-            let guest_snapshot = &worktree_snapshots[id];
-            assert_eq!(
-                guest_snapshot.root_name(),
-                host_snapshot.root_name(),
-                "{} has different root name than the host for worktree {}",
-                guest_client.username,
-                id
-            );
-            assert_eq!(
-                guest_snapshot.entries(false).collect::<Vec<_>>(),
-                host_snapshot.entries(false).collect::<Vec<_>>(),
-                "{} has different snapshot than the host for worktree {}",
-                guest_client.username,
-                id
-            );
-            assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
+        for guest_project in guest_client.remote_projects {
+            guest_project.read_with(&guest_cx, |guest_project, cx| {
+                let host_project = clients.iter().find_map(|(client, cx, _)| {
+                    let project = client.local_projects.iter().find(|host_project| {
+                        host_project.read_with(cx, |host_project, cx| {
+                            host_project.remote_id() == guest_project.remote_id()
+                        })
+                    })?;
+                    Some((client, project, cx))
+                });
+
+                if let Some((host_client, host_project, host_cx)) = host_project {
+                    let host_worktree_snapshots =
+                        host_project.read_with(host_cx, |host_project, cx| {
+                            host_project
+                                .worktrees(cx)
+                                .map(|worktree| {
+                                    let worktree = worktree.read(cx);
+                                    (worktree.id(), worktree.snapshot())
+                                })
+                                .collect::<BTreeMap<_, _>>()
+                        });
+                    let guest_worktree_snapshots = guest_project
+                        .worktrees(cx)
+                        .map(|worktree| {
+                            let worktree = worktree.read(cx);
+                            (worktree.id(), worktree.snapshot())
+                        })
+                        .collect::<BTreeMap<_, _>>();
+
+                    assert_eq!(
+                        guest_worktree_snapshots.keys().collect::<Vec<_>>(),
+                        host_worktree_snapshots.keys().collect::<Vec<_>>(),
+                        "{} has different worktrees than the host",
+                        guest_client.username
+                    );
+
+                    for (id, host_snapshot) in &host_worktree_snapshots {
+                        let guest_snapshot = &guest_worktree_snapshots[id];
+                        assert_eq!(
+                            guest_snapshot.root_name(),
+                            host_snapshot.root_name(),
+                            "{} has different root name than the host for worktree {}",
+                            guest_client.username,
+                            id
+                        );
+                        assert_eq!(
+                            guest_snapshot.entries(false).collect::<Vec<_>>(),
+                            host_snapshot.entries(false).collect::<Vec<_>>(),
+                            "{} has different snapshot than the host for worktree {}",
+                            guest_client.username,
+                            id
+                        );
+                        assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
+                    }
+                } else {
+                    assert!(guest_project.is_read_only());
+                }
+
+                guest_project.check_invariants(cx);
+            });
         }
-
-        guest_project.read_with(&guest_cx, |project, cx| project.check_invariants(cx));
 
         for guest_buffer in &guest_client.buffers {
             let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
@@ -6317,17 +6218,14 @@ async fn test_random_collaboration(
                 path
             );
         }
-
-        guest_cx.update(|cx| {
-            cx.clear_globals();
-            drop((guest_project, guest_client));
-        });
     }
 
-    host_cx.update(|cx| {
-        cx.clear_globals();
-        drop((host_client, host_project))
-    });
+    for (guest_client, guest_cx, _) in clients {
+        guest_cx.update(|cx| {
+            cx.clear_globals();
+            drop(guest_client);
+        });
+    }
 }
 
 struct TestServer {
@@ -6494,6 +6392,9 @@ impl TestServer {
         let client = TestClient {
             client,
             username: name.to_string(),
+            local_projects: Default::default(),
+            remote_projects: Default::default(),
+            next_root_dir_id: 0,
             user_store,
             project_store,
             fs,
@@ -6612,6 +6513,9 @@ impl Drop for TestServer {
 struct TestClient {
     client: Arc<Client>,
     username: String,
+    local_projects: Vec<ModelHandle<Project>>,
+    remote_projects: Vec<ModelHandle<Project>>,
+    next_root_dir_id: usize,
     pub user_store: ModelHandle<UserStore>,
     pub project_store: ModelHandle<ProjectStore>,
     language_registry: Arc<LanguageRegistry>,
@@ -7195,6 +7099,378 @@ impl TestClient {
         log::info!("{}: done", guest_username);
 
         (self, project, cx, result.err())
+    }
+
+    pub async fn simulate(
+        mut self,
+        username: String,
+        op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
+        rng: Arc<Mutex<StdRng>>,
+        mut cx: TestAppContext,
+    ) -> (Self, TestAppContext, Option<anyhow::Error>) {
+        async fn simulate_internal(
+            client: &mut TestClient,
+            username: &str,
+            mut op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
+            rng: Arc<Mutex<StdRng>>,
+            cx: &mut TestAppContext,
+        ) -> anyhow::Result<()> {
+            while op_start_signal.next().await.is_some() {
+                let active_call = cx.read(ActiveCall::global);
+                let room = active_call.read_with(cx, |call, _| call.room().unwrap().clone());
+                let remote_projects = room.read_with(cx, |room, _| {
+                    room.remote_participants()
+                        .values()
+                        .flat_map(|participant| participant.projects.clone())
+                        .collect::<Vec<_>>()
+                });
+                let project = if remote_projects.is_empty() || rng.lock().gen() {
+                    if client.local_projects.is_empty() || rng.lock().gen() {
+                        let paths = client.fs.paths().await;
+                        let local_project = if paths.is_empty() || rng.lock().gen() {
+                            let root_path = format!(
+                                "/{}-root-{}",
+                                username,
+                                post_inc(&mut client.next_root_dir_id)
+                            );
+                            client.fs.create_dir(Path::new(&root_path)).await.unwrap();
+                            client.build_local_project(root_path, cx).await.0
+                        } else {
+                            let root_path = paths.choose(&mut *rng.lock()).unwrap();
+                            client.build_local_project(root_path, cx).await.0
+                        };
+                        client.local_projects.push(local_project.clone());
+                        local_project
+                    } else {
+                        client
+                            .local_projects
+                            .choose(&mut *rng.lock())
+                            .unwrap()
+                            .clone()
+                    }
+                } else {
+                    if client.remote_projects.is_empty() || rng.lock().gen() {
+                        let remote_project_id =
+                            remote_projects.choose(&mut *rng.lock()).unwrap().id;
+                        let remote_project =
+                            client.build_remote_project(remote_project_id, cx).await;
+                        client.remote_projects.push(remote_project.clone());
+                        remote_project
+                    } else {
+                        client
+                            .remote_projects
+                            .choose(&mut *rng.lock())
+                            .unwrap()
+                            .clone()
+                    }
+                };
+                active_call
+                    .update(cx, |call, cx| call.share_project(project.clone(), cx))
+                    .await
+                    .unwrap();
+
+                let buffer = if client.buffers.is_empty() || rng.lock().gen() {
+                    let worktree = if let Some(worktree) = project.read_with(cx, |project, cx| {
+                        project
+                            .worktrees(cx)
+                            .filter(|worktree| {
+                                let worktree = worktree.read(cx);
+                                worktree.is_visible()
+                                    && worktree.entries(false).any(|e| e.is_file())
+                            })
+                            .choose(&mut *rng.lock())
+                    }) {
+                        worktree
+                    } else {
+                        cx.background().simulate_random_delay().await;
+                        continue;
+                    };
+
+                    let (worktree_root_name, project_path) =
+                        worktree.read_with(cx, |worktree, _| {
+                            let entry = worktree
+                                .entries(false)
+                                .filter(|e| e.is_file())
+                                .choose(&mut *rng.lock())
+                                .unwrap();
+                            (
+                                worktree.root_name().to_string(),
+                                (worktree.id(), entry.path.clone()),
+                            )
+                        });
+                    log::info!(
+                        "{}: opening path {:?} in worktree {} ({})",
+                        username,
+                        project_path.1,
+                        project_path.0,
+                        worktree_root_name,
+                    );
+                    let buffer = project
+                        .update(cx, |project, cx| {
+                            project.open_buffer(project_path.clone(), cx)
+                        })
+                        .await?;
+                    log::info!(
+                        "{}: opened path {:?} in worktree {} ({}) with buffer id {}",
+                        username,
+                        project_path.1,
+                        project_path.0,
+                        worktree_root_name,
+                        buffer.read_with(cx, |buffer, _| buffer.remote_id())
+                    );
+                    client.buffers.insert(buffer.clone());
+                    buffer
+                } else {
+                    client
+                        .buffers
+                        .iter()
+                        .choose(&mut *rng.lock())
+                        .unwrap()
+                        .clone()
+                };
+
+                let choice = rng.lock().gen_range(0..100);
+                match choice {
+                    0..=9 => {
+                        cx.update(|cx| {
+                            log::info!(
+                                "{}: dropping buffer {:?}",
+                                username,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            client.buffers.remove(&buffer);
+                            drop(buffer);
+                        });
+                    }
+                    10..=19 => {
+                        let completions = project.update(cx, |project, cx| {
+                            log::info!(
+                                "{}: requesting completions for buffer {} ({:?})",
+                                username,
+                                buffer.read(cx).remote_id(),
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.completions(&buffer, offset, cx)
+                        });
+                        let completions = cx.background().spawn(async move {
+                            completions
+                                .await
+                                .map_err(|err| anyhow!("completions request failed: {:?}", err))
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("{}: detaching completions request", username);
+                            cx.update(|cx| completions.detach_and_log_err(cx));
+                        } else {
+                            completions.await?;
+                        }
+                    }
+                    20..=29 => {
+                        let code_actions = project.update(cx, |project, cx| {
+                            log::info!(
+                                "{}: requesting code actions for buffer {} ({:?})",
+                                username,
+                                buffer.read(cx).remote_id(),
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
+                            project.code_actions(&buffer, range, cx)
+                        });
+                        let code_actions = cx.background().spawn(async move {
+                            code_actions
+                                .await
+                                .map_err(|err| anyhow!("code actions request failed: {:?}", err))
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("{}: detaching code actions request", username);
+                            cx.update(|cx| code_actions.detach_and_log_err(cx));
+                        } else {
+                            code_actions.await?;
+                        }
+                    }
+                    30..=39 if buffer.read_with(cx, |buffer, _| buffer.is_dirty()) => {
+                        let (requested_version, save) = buffer.update(cx, |buffer, cx| {
+                            log::info!(
+                                "{}: saving buffer {} ({:?})",
+                                username,
+                                buffer.remote_id(),
+                                buffer.file().unwrap().full_path(cx)
+                            );
+                            (buffer.version(), buffer.save(cx))
+                        });
+                        let save = cx.background().spawn(async move {
+                            let (saved_version, _, _) = save
+                                .await
+                                .map_err(|err| anyhow!("save request failed: {:?}", err))?;
+                            assert!(saved_version.observed_all(&requested_version));
+                            Ok::<_, anyhow::Error>(())
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("{}: detaching save request", username);
+                            cx.update(|cx| save.detach_and_log_err(cx));
+                        } else {
+                            save.await?;
+                        }
+                    }
+                    40..=44 => {
+                        let prepare_rename = project.update(cx, |project, cx| {
+                            log::info!(
+                                "{}: preparing rename for buffer {} ({:?})",
+                                username,
+                                buffer.read(cx).remote_id(),
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.prepare_rename(buffer, offset, cx)
+                        });
+                        let prepare_rename = cx.background().spawn(async move {
+                            prepare_rename
+                                .await
+                                .map_err(|err| anyhow!("prepare rename request failed: {:?}", err))
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("{}: detaching prepare rename request", username);
+                            cx.update(|cx| prepare_rename.detach_and_log_err(cx));
+                        } else {
+                            prepare_rename.await?;
+                        }
+                    }
+                    45..=49 => {
+                        let definitions = project.update(cx, |project, cx| {
+                            log::info!(
+                                "{}: requesting definitions for buffer {} ({:?})",
+                                username,
+                                buffer.read(cx).remote_id(),
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.definition(&buffer, offset, cx)
+                        });
+                        let definitions = cx.background().spawn(async move {
+                            definitions
+                                .await
+                                .map_err(|err| anyhow!("definitions request failed: {:?}", err))
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("{}: detaching definitions request", username);
+                            cx.update(|cx| definitions.detach_and_log_err(cx));
+                        } else {
+                            client.buffers.extend(
+                                definitions.await?.into_iter().map(|loc| loc.target.buffer),
+                            );
+                        }
+                    }
+                    50..=54 => {
+                        let highlights = project.update(cx, |project, cx| {
+                            log::info!(
+                                "{}: requesting highlights for buffer {} ({:?})",
+                                username,
+                                buffer.read(cx).remote_id(),
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.document_highlights(&buffer, offset, cx)
+                        });
+                        let highlights = cx.background().spawn(async move {
+                            highlights
+                                .await
+                                .map_err(|err| anyhow!("highlights request failed: {:?}", err))
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("{}: detaching highlights request", username);
+                            cx.update(|cx| highlights.detach_and_log_err(cx));
+                        } else {
+                            highlights.await?;
+                        }
+                    }
+                    55..=59 => {
+                        let search = project.update(cx, |project, cx| {
+                            let query = rng.lock().gen_range('a'..='z');
+                            log::info!("{}: project-wide search {:?}", username, query);
+                            project.search(SearchQuery::text(query, false, false), cx)
+                        });
+                        let search = cx.background().spawn(async move {
+                            search
+                                .await
+                                .map_err(|err| anyhow!("search request failed: {:?}", err))
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("{}: detaching search request", username);
+                            cx.update(|cx| search.detach_and_log_err(cx));
+                        } else {
+                            client.buffers.extend(search.await?.into_keys());
+                        }
+                    }
+                    60..=69 => {
+                        let worktree = project
+                            .read_with(cx, |project, cx| {
+                                project
+                                    .worktrees(cx)
+                                    .filter(|worktree| {
+                                        let worktree = worktree.read(cx);
+                                        worktree.is_visible()
+                                            && worktree.entries(false).any(|e| e.is_file())
+                                            && worktree.root_entry().map_or(false, |e| e.is_dir())
+                                    })
+                                    .choose(&mut *rng.lock())
+                            })
+                            .unwrap();
+                        let (worktree_id, worktree_root_name) = worktree
+                            .read_with(cx, |worktree, _| {
+                                (worktree.id(), worktree.root_name().to_string())
+                            });
+
+                        let mut new_name = String::new();
+                        for _ in 0..10 {
+                            let letter = rng.lock().gen_range('a'..='z');
+                            new_name.push(letter);
+                        }
+
+                        let is_dir = rng.lock().gen::<bool>();
+                        let mut new_path = PathBuf::new();
+                        new_path.push(new_name);
+                        if !is_dir {
+                            new_path.set_extension("rs");
+                        }
+                        log::info!(
+                            "{}: creating {:?} in worktree {} ({})",
+                            username,
+                            new_path,
+                            worktree_id,
+                            worktree_root_name,
+                        );
+                        project
+                            .update(cx, |project, cx| {
+                                project.create_entry((worktree_id, new_path), is_dir, cx)
+                            })
+                            .unwrap()
+                            .await?;
+                    }
+                    _ => {
+                        buffer.update(cx, |buffer, cx| {
+                            log::info!(
+                                "{}: updating buffer {} ({:?})",
+                                username,
+                                buffer.remote_id(),
+                                buffer.file().unwrap().full_path(cx)
+                            );
+                            if rng.lock().gen_bool(0.7) {
+                                buffer.randomly_edit(&mut *rng.lock(), 5, cx);
+                            } else {
+                                buffer.randomly_undo_redo(&mut *rng.lock(), cx);
+                            }
+                        });
+                    }
+                }
+                cx.background().simulate_random_delay().await;
+            }
+            Ok(())
+        }
+
+        let result = simulate_internal(&mut self, &username, op_start_signal, rng, &mut cx).await;
+        log::info!("{}: done", username);
+
+        (self, cx, result.err())
     }
 }
 
