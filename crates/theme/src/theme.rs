@@ -328,7 +328,6 @@ pub struct ProjectPanel {
     pub entry: Interactive<ProjectPanelEntry>,
     pub ignored_entry: Interactive<ProjectPanelEntry>,
     pub cut_entry: Interactive<ProjectPanelEntry>,
-    pub ignored_and_cut_entry: Interactive<ProjectPanelEntry>,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
 }

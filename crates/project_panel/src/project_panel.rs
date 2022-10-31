@@ -1016,12 +1016,10 @@ impl ProjectPanel {
         MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, cx| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
 
-            let entry_style = if details.is_ignored && details.is_cut {
-                &theme.ignored_and_cut_entry
+            let entry_style = if details.is_cut {
+                &theme.cut_entry
             } else if details.is_ignored {
                 &theme.ignored_entry
-            } else if details.is_cut {
-                &theme.cut_entry
             } else {
                 &theme.entry
             };

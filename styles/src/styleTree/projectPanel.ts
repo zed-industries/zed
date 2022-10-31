@@ -35,10 +35,10 @@ export default function projectPanel(colorScheme: ColorScheme) {
     cutEntry: {
       ...entry,
       text: text(layer, "mono", "disabled"),
-    },
-    ignoredAndCutEntry: {
-      ...entry,
-      text: text(layer, "mono", "disabled"),
+      active: {
+        background: background(layer, "active"),
+        text: text(layer, "mono", "disabled", { size: "sm" }),
+      },
     },
     filenameEditor: {
       background: background(layer, "on"),
