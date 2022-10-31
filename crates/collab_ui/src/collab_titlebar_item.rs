@@ -54,6 +54,7 @@ impl View for CollabTitlebarItem {
         let theme = cx.global::<Settings>().theme.clone();
 
         let mut container = Flex::row();
+
         container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
 
         if workspace.read(cx).client().status().borrow().is_connected() {
@@ -324,6 +325,8 @@ impl CollabTitlebarItem {
             cx,
         )
         .aligned()
+        .contained()
+        .with_margin_left(theme.workspace.titlebar.avatar_margin)
         .boxed()
     }
 
