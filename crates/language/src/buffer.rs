@@ -1068,32 +1068,40 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
+    // Create a minimal edit that will cause the the given row to be indented
+    // with the given size. After applying this edit, the length of the line
+    // will always be at least `new_size.len`.
     pub fn edit_for_indent_size_adjustment(
         row: u32,
         current_size: IndentSize,
         new_size: IndentSize,
     ) -> Option<(Range<Point>, String)> {
-        if new_size.kind != current_size.kind && current_size.len > 0 {
-            return None;
-        }
+        if new_size.kind != current_size.kind {
+            Some((
+                Point::new(row, 0)..Point::new(row, current_size.len),
+                iter::repeat(new_size.char())
+                    .take(new_size.len as usize)
+                    .collect::<String>(),
+            ))
+        } else {
+            match new_size.len.cmp(&current_size.len) {
+                Ordering::Greater => {
+                    let point = Point::new(row, 0);
+                    Some((
+                        point..point,
+                        iter::repeat(new_size.char())
+                            .take((new_size.len - current_size.len) as usize)
+                            .collect::<String>(),
+                    ))
+                }
 
-        match new_size.len.cmp(&current_size.len) {
-            Ordering::Greater => {
-                let point = Point::new(row, 0);
-                Some((
-                    point..point,
-                    iter::repeat(new_size.char())
-                        .take((new_size.len - current_size.len) as usize)
-                        .collect::<String>(),
-                ))
+                Ordering::Less => Some((
+                    Point::new(row, 0)..Point::new(row, current_size.len - new_size.len),
+                    String::new(),
+                )),
+
+                Ordering::Equal => None,
             }
-
-            Ordering::Less => Some((
-                Point::new(row, 0)..Point::new(row, current_size.len - new_size.len),
-                String::new(),
-            )),
-
-            Ordering::Equal => None,
         }
     }
 
