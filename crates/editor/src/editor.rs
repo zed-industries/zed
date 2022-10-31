@@ -6470,7 +6470,7 @@ impl Editor {
             project.read(cx).client().report_event(
                 name,
                 json!({
-                    "file_extension": file
+                    "File Extension": file
                         .path()
                         .extension()
                         .and_then(|e| e.to_str())
