@@ -177,7 +177,7 @@ impl BufferDiff {
 
         let mut first_deletion_buffer_row: Option<u32> = None;
         let mut buffer_row_range: Option<Range<u32>> = None;
-        let mut head_byte_range: Option<Range<usize>> = None;
+        let mut diff_base_byte_range: Option<Range<usize>> = None;
 
         for line_index in 0..line_item_count {
             let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
@@ -198,9 +198,9 @@ impl BufferDiff {
             if kind == GitDiffLineType::Deletion {
                 let end = content_offset + content_len;
 
-                match &mut head_byte_range {
+                match &mut diff_base_byte_range {
                     Some(head_byte_range) => head_byte_range.end = end as usize,
-                    None => head_byte_range = Some(content_offset as usize..end as usize),
+                    None => diff_base_byte_range = Some(content_offset as usize..end as usize),
                 }
 
                 if first_deletion_buffer_row.is_none() {
@@ -221,14 +221,14 @@ impl BufferDiff {
         });
 
         //unwrap_or addition without deletion
-        let head_byte_range = head_byte_range.unwrap_or(0..0);
+        let diff_base_byte_range = diff_base_byte_range.unwrap_or(0..0);
 
         let start = Point::new(buffer_row_range.start, 0);
         let end = Point::new(buffer_row_range.end, 0);
         let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
         DiffHunk {
             buffer_range,
-            diff_base_byte_range: head_byte_range,
+            diff_base_byte_range,
         }
     }
 }
