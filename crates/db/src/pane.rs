@@ -1,7 +1,9 @@
+
 use gpui::Axis;
 
+use rusqlite::{OptionalExtension, Connection};
 use serde::{Deserialize, Serialize};
-use serde_rusqlite::to_params_named;
+use serde_rusqlite::{from_row, to_params_named};
 
 use crate::{items::ItemId, workspace::WorkspaceId};
 
@@ -134,6 +136,10 @@ pub struct SerializedPane {
     children: Vec<ItemId>,
 }
 
+
+//********* CURRENTLY IN USE TYPES: *********
+
+
 #[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum DockAnchor {
     #[default]
@@ -144,9 +150,27 @@ pub enum DockAnchor {
 
 #[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SerializedDockPane {
-    pub workspace_id: WorkspaceId,
     pub anchor_position: DockAnchor,
     pub visible: bool,
+}
+
+impl SerializedDockPane {
+    pub fn to_row(&self, workspace: WorkspaceId) -> DockRow {
+        DockRow { workspace_id: workspace, anchor_position: self.anchor_position, visible: self.visible }
+    }
+}
+
+#[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct DockRow {
+    workspace_id: WorkspaceId,
+    anchor_position: DockAnchor,
+    visible: bool,
+}
+
+impl DockRow {
+    pub fn to_pane(&self) -> SerializedDockPane {
+        SerializedDockPane { anchor_position: self.anchor_position, visible: self.visible }
+    }
 }
 
 impl Db {
@@ -203,17 +227,52 @@ impl Db {
         unimplemented!();
     }
 
-    pub fn get_dock_pane(&self, _workspace: WorkspaceId) -> Option<SerializedDockPane> {
-        None
+    pub fn get_dock_pane(&self, workspace: WorkspaceId) -> Option<SerializedDockPane> {
+        fn logic(conn: &Connection, workspace: WorkspaceId) -> anyhow::Result<Option<SerializedDockPane>> {
+
+            let mut stmt = conn.prepare("SELECT workspace_id, anchor_position, visible FROM dock_panes WHERE workspace_id = ?")?;
+            
+            let dock_panes = stmt.query_row([workspace.raw_id()], |row_ref| from_row::<DockRow>).optional();
+            
+            let mut dock_panes_iter = stmt.query_and_then([workspace.raw_id()], from_row::<DockRow>)?;
+            let dock_pane = dock_panes_iter
+                    .next()
+                    .and_then(|dock_row|
+                        dock_row
+                            .ok()
+                            .map(|dock_row| dock_row.to_pane()));
+            
+            Ok(dock_pane)
+        }
+
+        self.real()
+            .map(|db| {
+                let lock = db.connection.lock();
+                
+                match logic(&lock, workspace) {
+                    Ok(dock_pane) => dock_pane,
+                    Err(err) => {
+                        log::error!("Failed to get the dock pane: {}", err);
+                        None
+                    },
+                }
+            })
+            .unwrap_or(None)
+            
     }
 
-    pub fn save_dock_pane(&self, dock_pane: &SerializedDockPane) {
-        to_params_named(dock_pane)
+    pub fn save_dock_pane(&self, workspace: WorkspaceId, dock_pane: SerializedDockPane) {
+        to_params_named(dock_pane.to_row(workspace))
+            .map_err(|err| {
+                log::error!("Failed to parse params for the dock row: {}", err);
+                err
+            })
             .ok()
             .zip(self.real())
             .map(|(params, db)| {
                 // TODO: overwrite old dock panes if need be
                 let query = "INSERT INTO dock_panes (workspace_id, anchor_position, visible) VALUES (:workspace_id, :anchor_position, :visible);";
+                
                 db.connection
                     .lock()
                     .execute(query, params.to_slice().as_slice())

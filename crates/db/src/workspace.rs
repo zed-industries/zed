@@ -36,6 +36,12 @@ CREATE TABLE worktree_roots(
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default, Deserialize, Serialize)]
 pub struct WorkspaceId(i64);
 
+impl WorkspaceId {
+    pub fn raw_id(&self) -> i64 {
+        self.0
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct SerializedWorkspace {
     pub workspace_id: WorkspaceId,
