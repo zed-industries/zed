@@ -1566,7 +1566,7 @@ async fn test_tab(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tab_on_blank_line_auto_indents(cx: &mut gpui::TestAppContext) {
+async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx);
     let language = Arc::new(
         Language::new(
@@ -1620,6 +1620,43 @@ async fn test_tab_on_blank_line_auto_indents(cx: &mut gpui::TestAppContext) {
                 ˇ
             ˇ)
         );
+    "});
+}
+
+#[gpui::test]
+async fn test_tab_with_mixed_whitespace(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::language()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.update(|cx| {
+        cx.update_global::<Settings, _, _>(|settings, _| {
+            settings.editor_overrides.tab_size = Some(4.try_into().unwrap());
+        });
+    });
+
+    cx.set_state(indoc! {"
+        fn a() {
+            if b {
+        \t ˇc
+            }
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.tab(&Tab, cx));
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            if b {
+                ˇc
+            }
+        }
     "});
 }
 
