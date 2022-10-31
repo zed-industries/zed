@@ -30,15 +30,15 @@ export default function projectPanel(colorScheme: ColorScheme) {
     entry,
     ignoredEntry: {
       ...entry,
-      text: text(layer, "mono", "variant", { color: "#ff00cc" }),
+      text: text(layer, "mono", "disabled"),
     },
     cutEntry: {
       ...entry,
-      text: text(layer, "mono", "variant", { color: "#ff00cc" }),
+      text: text(layer, "mono", "disabled"),
     },
     ignoredAndCutEntry: {
       ...entry,
-      text: text(layer, "mono", "variant", { color: "#ffb700" }),
+      text: text(layer, "mono", "disabled"),
     },
     filenameEditor: {
       background: background(layer, "on"),
