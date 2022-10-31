@@ -204,12 +204,11 @@ impl Db {
     }
 
     pub fn get_dock_pane(&self, _workspace: WorkspaceId) -> Option<SerializedDockPane> {
-        unimplemented!()
+        None
     }
 
     pub fn save_dock_pane(&self, dock_pane: &SerializedDockPane) {
         to_params_named(dock_pane)
-            .map_err(|err| dbg!(err))
             .ok()
             .zip(self.real())
             .map(|(params, db)| {
@@ -220,8 +219,7 @@ impl Db {
                     .execute(query, params.to_slice().as_slice())
                     .map(|_| ()) // Eat the return value
                     .unwrap_or_else(|err| {
-                        dbg!(&err);
-                        log::error!("Failed to insert new workspace into DB: {}", err);
+                        log::error!("Failed to insert new dock pane into DB: {}", err);
                     })
             });
     }

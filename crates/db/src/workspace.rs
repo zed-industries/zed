@@ -1,4 +1,5 @@
 use anyhow::Result;
+
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +9,7 @@ use std::{
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::pane::SerializedDockPane;
@@ -20,7 +22,7 @@ use super::Db;
 pub(crate) const WORKSPACE_M_1: &str = "
 CREATE TABLE workspaces(
     workspace_id INTEGER PRIMARY KEY,
-    timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+    last_opened_timestamp INTEGER NOT NULL
 ) STRICT;
 
 CREATE TABLE worktree_roots(
@@ -77,11 +79,17 @@ impl Db {
             P: AsRef<Path> + Debug,
         {
             let tx = connection.transaction()?;
-            tx.execute("INSERT INTO workspaces DEFAULT VALUES", [])?;
+
+            tx.execute(
+                "INSERT INTO workspaces(last_opened_timestamp) VALUES (?)",
+                [current_millis()?],
+            )?;
 
             let id = WorkspaceId(tx.last_insert_rowid());
 
             update_worktree_roots(&tx, &id, worktree_roots)?;
+
+            tx.commit()?;
 
             Ok(SerializedWorkspace {
                 workspace_id: id,
@@ -116,7 +124,7 @@ impl Db {
                 match get_workspace_id(worktree_roots, &lock) {
                     Ok(workspace_id) => workspace_id,
                     Err(err) => {
-                        log::error!("Failed ot get workspace_id: {}", err);
+                        log::error!("Failed to get workspace_id: {}", err);
                         None
                     }
                 }
@@ -135,15 +143,26 @@ impl Db {
     where
         P: AsRef<Path> + Debug,
     {
+        fn logic<P>(
+            connection: &mut Connection,
+            workspace_id: &WorkspaceId,
+            worktree_roots: &[P],
+        ) -> Result<()>
+        where
+            P: AsRef<Path> + Debug,
+        {
+            let tx = connection.transaction()?;
+            update_worktree_roots(&tx, workspace_id, worktree_roots)?;
+            tx.commit()?;
+            Ok(())
+        }
+
         self.real().map(|db| {
             let mut lock = db.connection.lock();
 
-            let tx = lock.transaction();
-
-            match tx.map(|tx| update_worktree_roots(&tx, workspace_id, worktree_roots)) {
+            match logic(&mut lock, workspace_id, worktree_roots) {
                 Ok(_) => {}
                 Err(err) => {
-                    dbg!(&err);
                     log::error!(
                         "Failed to update the worktree roots for {:?}, roots: {:?}, error: {}",
                         workspace_id,
@@ -157,8 +176,9 @@ impl Db {
 
     fn last_workspace_id(&self) -> Option<WorkspaceId> {
         fn logic(connection: &mut Connection) -> Result<Option<WorkspaceId>> {
-            let mut stmt = connection
-                .prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT 1")?;
+            let mut stmt = connection.prepare(
+                "SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT 1",
+            )?;
 
             Ok(stmt
                 .query_row([], |row| Ok(WorkspaceId(row.get(0)?)))
@@ -189,7 +209,7 @@ impl Db {
             let tx = connection.transaction()?;
             let result = {
                 let mut stmt = tx.prepare(
-                    "SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?",
+                    "SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT ?",
                 )?;
 
                 let workspace_ids = stmt
@@ -234,6 +254,12 @@ impl Db {
     }
 }
 
+fn current_millis() -> Result<u64, anyhow::Error> {
+    // SQLite only supports u64 integers, which means this code will trigger
+    // undefined behavior in 584 million years. It's probably fine.
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
+}
+
 fn update_worktree_roots<P>(
     connection: &Connection,
     workspace_id: &WorkspaceId,
@@ -271,8 +297,8 @@ where
     }
 
     connection.execute(
-        "UPDATE workspaces SET timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?",
-        [workspace_id.0],
+        "UPDATE workspaces SET last_opened_timestamp = ? WHERE workspace_id = ?",
+        params![current_millis()?, workspace_id.0],
     )?;
 
     Ok(())
@@ -440,12 +466,16 @@ mod tests {
         let workspace_1 = db.workspace_for_roots::<String>(&[]);
         assert_eq!(workspace_1.workspace_id, WorkspaceId(1));
 
-        sleep(Duration::from_secs(1));
+        // Ensure the timestamps are different
+        sleep(Duration::from_millis(20));
         db.make_new_workspace::<String>(&[]);
 
         // Test pulling another value from recent workspaces
         let workspace_2 = db.workspace_for_roots::<String>(&[]);
         assert_eq!(workspace_2.workspace_id, WorkspaceId(2));
+
+        // Ensure the timestamps are different
+        sleep(Duration::from_millis(20));
 
         // Test creating a new workspace that doesn't exist already
         let workspace_3 = db.workspace_for_roots(&["/tmp", "/tmp2"]);
@@ -470,6 +500,7 @@ mod tests {
         db.make_new_workspace::<String>(&[]); //ID 2
         db.update_worktrees(&WorkspaceId(1), &["/tmp", "/tmp2"]);
 
+        db.write_to("test.db").unwrap();
         // Sanity check
         assert_eq!(db.workspace_id(&["/tmp", "/tmp2"]), Some(WorkspaceId(1)));
 
@@ -583,9 +614,6 @@ mod tests {
             db.make_new_workspace::<String>(&[]);
             db.update_worktrees(workspace_id, entries);
         }
-
-        // Make sure the timestamp updates
-        sleep(Duration::from_secs(1));
 
         // Execute the update
         db.update_worktrees(&WorkspaceId(2), &["/tmp2", "/tmp3"]);
