@@ -681,7 +681,7 @@ impl Buffer {
         self.diff_base.as_deref()
     }
 
-    pub fn update_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
         self.git_diff_recalc(cx);
     }
@@ -2294,8 +2294,10 @@ impl BufferSnapshot {
     pub fn git_diff_hunks_in_range<'a>(
         &'a self,
         query_row_range: Range<u32>,
+        reversed: bool,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
-        self.git_diff.hunks_in_range(query_row_range, self)
+        self.git_diff
+            .hunks_in_range(query_row_range, self, reversed)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(

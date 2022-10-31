@@ -11,6 +11,7 @@ use crate::test::{
     editor_test_context::EditorTestContext, select_ranges,
 };
 use gpui::{
+    executor::Deterministic,
     geometry::rect::RectF,
     platform::{WindowBounds, WindowOptions},
 };
@@ -5113,6 +5114,111 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
                 },
             ),
         ]
+    );
+}
+
+#[gpui::test]
+async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    let diff_base = r#"
+        use some::mod;
+
+        const A: u32 = 42;
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+
+    // Edits are modified, removed, modified, added
+    cx.set_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    deterministic.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        //Wrap around the bottom of the buffer
+        for _ in 0..3 {
+            editor.go_to_hunk(&GoToHunk, cx);
+        }
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        ˇuse some::modified;
+    
+    
+        fn main() {
+            println!("hello there");
+    
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        //Wrap around the top of the buffer
+        for _ in 0..2 {
+            editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+        }
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+
+        fn main() {
+        ˇ    println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.fold(&Fold, cx);
+
+        //Make sure that the fold only gets one hunk
+        for _ in 0..4 {
+            editor.go_to_hunk(&GoToHunk, cx);
+        }
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        ˇuse some::modified;
+
+
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
     );
 }
 

@@ -15,12 +15,12 @@ pub enum DiffHunkStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk<T> {
     pub buffer_range: Range<T>,
-    pub head_byte_range: Range<usize>,
+    pub diff_base_byte_range: Range<usize>,
 }
 
 impl DiffHunk<u32> {
     pub fn status(&self) -> DiffHunkStatus {
-        if self.head_byte_range.is_empty() {
+        if self.diff_base_byte_range.is_empty() {
             DiffHunkStatus::Added
         } else if self.buffer_range.is_empty() {
             DiffHunkStatus::Removed
@@ -75,6 +75,7 @@ impl BufferDiff {
         &'a self,
         query_row_range: Range<u32>,
         buffer: &'a BufferSnapshot,
+        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let start = buffer.anchor_before(Point::new(query_row_range.start, 0));
         let end = buffer.anchor_after(Point::new(query_row_range.end, 0));
@@ -86,7 +87,12 @@ impl BufferDiff {
         });
 
         std::iter::from_fn(move || {
-            cursor.next(buffer);
+            if reversed {
+                cursor.prev(buffer);
+            } else {
+                cursor.next(buffer);
+            }
+
             let hunk = cursor.item()?;
 
             let range = hunk.buffer_range.to_point(buffer);
@@ -98,7 +104,7 @@ impl BufferDiff {
 
             Some(DiffHunk {
                 buffer_range: range.start.row..end_row,
-                head_byte_range: hunk.head_byte_range.clone(),
+                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
             })
         })
     }
@@ -135,7 +141,7 @@ impl BufferDiff {
 
     #[cfg(test)]
     fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        self.hunks_in_range(0..u32::MAX, text)
+        self.hunks_in_range(0..u32::MAX, text, false)
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
@@ -171,7 +177,7 @@ impl BufferDiff {
 
         let mut first_deletion_buffer_row: Option<u32> = None;
         let mut buffer_row_range: Option<Range<u32>> = None;
-        let mut head_byte_range: Option<Range<usize>> = None;
+        let mut diff_base_byte_range: Option<Range<usize>> = None;
 
         for line_index in 0..line_item_count {
             let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
@@ -192,9 +198,9 @@ impl BufferDiff {
             if kind == GitDiffLineType::Deletion {
                 let end = content_offset + content_len;
 
-                match &mut head_byte_range {
+                match &mut diff_base_byte_range {
                     Some(head_byte_range) => head_byte_range.end = end as usize,
-                    None => head_byte_range = Some(content_offset as usize..end as usize),
+                    None => diff_base_byte_range = Some(content_offset as usize..end as usize),
                 }
 
                 if first_deletion_buffer_row.is_none() {
@@ -215,14 +221,14 @@ impl BufferDiff {
         });
 
         //unwrap_or addition without deletion
-        let head_byte_range = head_byte_range.unwrap_or(0..0);
+        let diff_base_byte_range = diff_base_byte_range.unwrap_or(0..0);
 
         let start = Point::new(buffer_row_range.start, 0);
         let end = Point::new(buffer_row_range.end, 0);
         let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
         DiffHunk {
             buffer_range,
-            head_byte_range,
+            diff_base_byte_range,
         }
     }
 }
@@ -242,7 +248,7 @@ pub fn assert_hunks<Iter>(
         .map(|hunk| {
             (
                 hunk.buffer_range.clone(),
-                &diff_base[hunk.head_byte_range],
+                &diff_base[hunk.diff_base_byte_range],
                 buffer
                     .text_for_range(
                         Point::new(hunk.buffer_range.start, 0)
@@ -349,7 +355,7 @@ mod tests {
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(
-            diff.hunks_in_range(7..12, &buffer),
+            diff.hunks_in_range(7..12, &buffer, false),
             &buffer,
             &diff_base,
             &[

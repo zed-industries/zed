@@ -1,6 +1,7 @@
 mod blink_manager;
 pub mod display_map;
 mod element;
+mod git;
 mod highlight_matching_bracket;
 mod hover_popover;
 pub mod items;
@@ -42,6 +43,7 @@ use gpui::{
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 pub use items::MAX_TAB_TITLE_LEN;
+use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
@@ -78,6 +80,8 @@ pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, Workspace};
+
+use crate::git::diff_hunk_to_display;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
@@ -162,6 +166,8 @@ actions!(
         NewlineBelow,
         GoToDiagnostic,
         GoToPrevDiagnostic,
+        GoToHunk,
+        GoToPrevHunk,
         Indent,
         Outdent,
         DeleteLine,
@@ -338,6 +344,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::redo_selection);
     cx.add_action(Editor::go_to_diagnostic);
     cx.add_action(Editor::go_to_prev_diagnostic);
+    cx.add_action(Editor::go_to_hunk);
+    cx.add_action(Editor::go_to_prev_hunk);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::go_to_type_definition);
     cx.add_action(Editor::fold);
@@ -5229,6 +5237,72 @@ impl Editor {
                     search_start = 0;
                 }
             }
+        }
+    }
+
+    fn go_to_hunk(&mut self, _: &GoToHunk, cx: &mut ViewContext<Self>) {
+        self.go_to_hunk_impl(Direction::Next, cx)
+    }
+
+    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
+        self.go_to_hunk_impl(Direction::Prev, cx)
+    }
+
+    pub fn go_to_hunk_impl(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let selection = self.selections.newest::<Point>(cx);
+
+        fn seek_in_direction(
+            this: &mut Editor,
+            snapshot: &DisplaySnapshot,
+            initial_point: Point,
+            is_wrapped: bool,
+            direction: Direction,
+            cx: &mut ViewContext<Editor>,
+        ) -> bool {
+            let hunks = if direction == Direction::Next {
+                snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range(initial_point.row..u32::MAX, false)
+            } else {
+                snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range(0..initial_point.row, true)
+            };
+
+            let display_point = initial_point.to_display_point(snapshot);
+            let mut hunks = hunks
+                .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
+                .skip_while(|hunk| {
+                    if is_wrapped {
+                        false
+                    } else {
+                        hunk.contains_display_row(display_point.row())
+                    }
+                })
+                .dedup();
+
+            if let Some(hunk) = hunks.next() {
+                this.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    let row = hunk.start_display_row();
+                    let point = DisplayPoint::new(row, 0);
+                    s.select_display_ranges([point..point]);
+                });
+
+                true
+            } else {
+                false
+            }
+        }
+
+        if !seek_in_direction(self, &snapshot, selection.head(), false, direction, cx) {
+            let wrapped_point = match direction {
+                Direction::Next => Point::zero(),
+                Direction::Prev => snapshot.buffer_snapshot.max_point(),
+            };
+            seek_in_direction(self, &snapshot, wrapped_point, true, direction, cx);
         }
     }
 

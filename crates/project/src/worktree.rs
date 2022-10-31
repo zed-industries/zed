@@ -3257,7 +3257,6 @@ mod tests {
                 }
             },
             "c.txt": "",
-
         }));
 
         let http_client = FakeHttpClient::with_404_response();
