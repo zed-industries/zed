@@ -63,7 +63,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         top: 4,
       },
       margin: {
-        left: 6
+        left: 6,
       },
     },
     userQueryEditorHeight: 33,
@@ -151,7 +151,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
       color: foreground(layer, "on"),
     },
     callingIndicator: {
-      ...text(layer, "mono", "variant", { size: "xs" })
+      ...text(layer, "mono", "variant", { size: "xs" }),
     },
     treeBranch: {
       color: borderColor(layer),
@@ -165,7 +165,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
     },
     projectRow: {
       ...projectRow,
-      background: background(layer, "on"),
+      background: background(layer),
       icon: {
         margin: { left: nameMargin },
         color: foreground(layer, "variant"),
@@ -176,11 +176,11 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         ...text(layer, "mono", { size: "sm" }),
       },
       hover: {
-        background: background(layer, "on", "hovered"),
+        background: background(layer, "hovered"),
       },
       active: {
-        background: background(layer, "on", "active"),
+        background: background(layer, "active"),
       },
     },
-  }
+  };
 }
