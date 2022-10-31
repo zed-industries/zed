@@ -90,6 +90,9 @@ fn main() {
     });
 
     app.run(move |cx| {
+        cx.set_global(*RELEASE_CHANNEL);
+        cx.set_global(HomeDir(zed::paths::HOME.to_path_buf()));
+
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
@@ -100,9 +103,6 @@ fn main() {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
-
-        cx.set_global(*RELEASE_CHANNEL);
-        cx.set_global(HomeDir(zed::paths::HOME.to_path_buf()));
 
         //Setup settings global before binding actions
         cx.set_global(SettingsFile::new(

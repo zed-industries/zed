@@ -10,6 +10,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
+use settings::ReleaseChannel;
 use std::{
     io::Write,
     mem,
@@ -32,6 +33,7 @@ struct TelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
+    release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
     queue: Vec<MixpanelEvent>,
@@ -67,9 +69,15 @@ struct MixpanelEventProperties {
     // Custom fields
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     event_properties: Option<Map<String, Value>>,
+    #[serde(rename = "OS Name")]
     os_name: &'static str,
+    #[serde(rename = "OS Version")]
     os_version: Option<Arc<str>>,
+    #[serde(rename = "Release Channel")]
+    release_channel: Option<&'static str>,
+    #[serde(rename = "App Version")]
     app_version: Option<Arc<str>>,
+    #[serde(rename = "Signed In")]
     signed_in: bool,
     platform: &'static str,
 }
@@ -99,6 +107,11 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
+        let release_channel = if cx.has_global::<ReleaseChannel>() {
+            Some(cx.global::<ReleaseChannel>().name())
+        } else {
+            None
+        };
         let this = Arc::new(Self {
             http_client: client,
             executor: cx.background().clone(),
@@ -106,6 +119,7 @@ impl Telemetry {
                 os_version: platform.os_version().ok().map(|v| v.to_string().into()),
                 os_name: platform.os_name().into(),
                 app_version: platform.app_version().ok().map(|v| v.to_string().into()),
+                release_channel,
                 device_id: None,
                 metrics_id: None,
                 queue: Default::default(),
@@ -188,7 +202,7 @@ impl Telemetry {
                         let json_bytes = serde_json::to_vec(&[MixpanelEngageRequest {
                             token,
                             distinct_id: device_id,
-                            set: json!({ "staff": is_staff, "id": metrics_id }),
+                            set: json!({ "Staff": is_staff, "ID": metrics_id }),
                         }])?;
                         let request = Request::post(MIXPANEL_ENGAGE_URL)
                             .header("Content-Type", "application/json")
@@ -221,6 +235,7 @@ impl Telemetry {
                 },
                 os_name: state.os_name,
                 os_version: state.os_version.clone(),
+                release_channel: state.release_channel,
                 app_version: state.app_version.clone(),
                 signed_in: state.metrics_id.is_some(),
                 platform: "Zed",
