@@ -6612,7 +6612,7 @@ impl TestClient {
                 .update(cx, |call, cx| call.share_project(project.clone(), cx))
                 .await
             {
-                log::error!("{}: error sharing project {:?}", username, error);
+                log::error!("{}: error sharing project, {:?}", username, error);
             }
 
             let buffers = client.buffers.entry(project.clone()).or_default();

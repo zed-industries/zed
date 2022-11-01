@@ -674,8 +674,13 @@ impl Store {
             .connected_users
             .get_mut(&recipient_user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
-        if let Some(active_call) = recipient.active_call.take() {
+        if let Some(active_call) = recipient.active_call {
             anyhow::ensure!(active_call.room_id == room_id, "no such room");
+            anyhow::ensure!(
+                active_call.connection_id.is_none(),
+                "cannot decline a call after joining room"
+            );
+            recipient.active_call.take();
             let recipient_connection_ids = self
                 .connection_ids_for_user(recipient_user_id)
                 .collect::<Vec<_>>();
@@ -1196,7 +1201,9 @@ impl Store {
                 assert!(
                     self.connections
                         .contains_key(&ConnectionId(participant.peer_id)),
-                    "room contains participant that has disconnected"
+                    "room {} contains participant {:?} that has disconnected",
+                    room_id,
+                    participant
                 );
 
                 for participant_project in &participant.projects {
