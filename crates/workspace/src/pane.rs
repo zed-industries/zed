@@ -200,6 +200,7 @@ pub enum Event {
 
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
+    activation_history: Vec<usize>,
     is_active: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
@@ -262,6 +263,7 @@ impl Pane {
         let context_menu = cx.add_view(ContextMenu::new);
         Self {
             items: Vec::new(),
+            activation_history: Vec::new(),
             is_active: true,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
@@ -467,22 +469,35 @@ impl Pane {
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
-            for item in pane.items.iter() {
+            for (index, item) in pane.items.iter().enumerate() {
                 if item.project_path(cx).is_some()
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
-                    return Some(item);
+                    return Some((index, item));
                 }
             }
             None
         });
 
-        // Even if the item exists, we re-add it to reorder it after the active item.
-        // We may revisit this behavior after adding an "activation history" for pane items.
-        let item = existing_item.unwrap_or_else(|| pane.update(cx, |_, cx| build_item(cx)));
-        Pane::add_item(workspace, &pane, item.clone(), true, focus_item, None, cx);
-        item
+        if let Some((index, existing_item)) = existing_item {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(index, focus_item, focus_item, cx);
+            });
+            existing_item
+        } else {
+            let new_item = pane.update(cx, |_, cx| build_item(cx));
+            Pane::add_item(
+                workspace,
+                &pane,
+                new_item.clone(),
+                true,
+                focus_item,
+                None,
+                cx,
+            );
+            new_item
+        }
     }
 
     pub(crate) fn add_item(
@@ -621,6 +636,7 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         use NavigationMode::{GoingBack, GoingForward};
+
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index
@@ -629,14 +645,26 @@ impl Pane {
                 if let Some(prev_item) = self.items.get(prev_active_item_ix) {
                     prev_item.deactivated(cx);
                 }
+
                 cx.emit(Event::ActivateItem {
                     local: activate_pane,
                 });
             }
+
+            if let Some(newly_active_item) = self.items.get(index) {
+                self.activation_history
+                    .retain(|&previously_active_item_id| {
+                        previously_active_item_id != newly_active_item.id()
+                    });
+                self.activation_history.push(newly_active_item.id());
+            }
+
             self.update_toolbar(cx);
+
             if focus_item {
                 self.focus_active_item(cx);
             }
+
             self.autoscroll = true;
             cx.notify();
         }
@@ -796,19 +824,28 @@ impl Pane {
         })
     }
 
-    fn remove_item(&mut self, item_ix: usize, activate_pane: bool, cx: &mut ViewContext<Self>) {
-        if item_ix == self.active_item_index {
-            // Activate the previous item if possible.
-            // This returns the user to the previously opened tab if they closed
-            // a new item they just navigated to.
-            if item_ix > 0 {
-                self.activate_prev_item(activate_pane, cx);
-            } else if item_ix + 1 < self.items.len() {
-                self.activate_next_item(activate_pane, cx);
-            }
+    fn remove_item(&mut self, item_index: usize, activate_pane: bool, cx: &mut ViewContext<Self>) {
+        self.activation_history
+            .retain(|&history_entry| history_entry != self.items[item_index].id());
+
+        if item_index == self.active_item_index {
+            let index_to_activate = self
+                .activation_history
+                .pop()
+                .and_then(|last_activated_item| {
+                    self.items.iter().enumerate().find_map(|(index, item)| {
+                        (item.id() == last_activated_item).then_some(index)
+                    })
+                })
+                // We didn't have a valid activation history entry, so fallback
+                // to activating the item to the left
+                .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
+
+            self.activate_item(index_to_activate, activate_pane, activate_pane, cx);
         }
 
-        let item = self.items.remove(item_ix);
+        let item = self.items.remove(item_index);
+
         cx.emit(Event::RemoveItem { item_id: item.id() });
         if self.items.is_empty() {
             item.deactivated(cx);
@@ -816,7 +853,7 @@ impl Pane {
             cx.emit(Event::Remove);
         }
 
-        if item_ix < self.active_item_index {
+        if item_index < self.active_item_index {
             self.active_item_index -= 1;
         }
 
@@ -1594,9 +1631,11 @@ impl NavHistory {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::tests::TestItem;
-    use gpui::TestAppContext;
+    use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
 
     #[gpui::test]
@@ -1874,6 +1913,77 @@ mod tests {
             ["buffer 1", "buffer 2", "multibuffer 1", "multibuffer 1b*"],
             cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_remove_item_ordering(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labled_item(&workspace, &pane, "A", cx);
+        add_labled_item(&workspace, &pane, "B", cx);
+        add_labled_item(&workspace, &pane, "C", cx);
+        add_labled_item(&workspace, &pane, "D", cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
+        add_labled_item(&workspace, &pane, "1", cx);
+        assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A", "C*"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    fn add_labled_item(
+        workspace: &ViewHandle<Workspace>,
+        pane: &ViewHandle<Pane>,
+        label: &str,
+        cx: &mut TestAppContext,
+    ) -> Box<ViewHandle<TestItem>> {
+        workspace.update(cx, |workspace, cx| {
+            let labeled_item = Box::new(cx.add_view(|_| TestItem::new().with_label(label)));
+
+            Pane::add_item(
+                workspace,
+                pane,
+                labeled_item.clone(),
+                false,
+                false,
+                None,
+                cx,
+            );
+
+            labeled_item
+        })
     }
 
     fn set_labeled_items<const COUNT: usize>(
