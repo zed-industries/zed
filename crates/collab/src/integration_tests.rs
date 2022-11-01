@@ -5792,20 +5792,6 @@ async fn test_random_collaboration(
     let mut server = TestServer::start(cx.foreground(), cx.background()).await;
     let db = server.app_state.db.clone();
 
-    let room_creator_user_id = db
-        .create_user(
-            "room-creator@example.com",
-            false,
-            NewUserParams {
-                github_login: "room-creator".into(),
-                github_user_id: 0,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
     let mut available_guests = Vec::new();
     for ix in 0..max_peers {
         let username = format!("guest-{}", ix + 1);
@@ -5822,23 +5808,25 @@ async fn test_random_collaboration(
             .await
             .unwrap()
             .user_id;
-        server
-            .app_state
-            .db
-            .send_contact_request(user_id, room_creator_user_id)
-            .await
-            .unwrap();
-        server
-            .app_state
-            .db
-            .respond_to_contact_request(room_creator_user_id, user_id, true)
-            .await
-            .unwrap();
-        available_guests.push(username);
+        available_guests.push((user_id, username));
     }
 
-    let _room_creator = server.create_client(cx, "room-creator").await;
-    let active_call = cx.read(ActiveCall::global);
+    for (ix, (user_id_a, _)) in available_guests.iter().enumerate() {
+        for (user_id_b, _) in &available_guests[ix + 1..] {
+            server
+                .app_state
+                .db
+                .send_contact_request(*user_id_a, *user_id_b)
+                .await
+                .unwrap();
+            server
+                .app_state
+                .db
+                .respond_to_contact_request(*user_id_b, *user_id_a, true)
+                .await
+                .unwrap();
+        }
+    }
 
     let mut clients = Vec::new();
     let mut user_ids = Vec::new();
@@ -5850,9 +5838,9 @@ async fn test_random_collaboration(
     while operations < max_operations {
         let distribution = rng.lock().gen_range(0..100);
         match distribution {
-            _ if !available_guests.is_empty() => {
+            0..=19 if !available_guests.is_empty() => {
                 let guest_ix = rng.lock().gen_range(0..available_guests.len());
-                let guest_username = available_guests.remove(guest_ix);
+                let (_, guest_username) = available_guests.remove(guest_ix);
                 log::info!("Adding new connection for {}", guest_username);
                 next_entity_id += 100000;
                 let mut guest_cx = TestAppContext::new(
@@ -5866,26 +5854,9 @@ async fn test_random_collaboration(
                     cx.function_name.clone(),
                 );
 
-                deterministic.start_waiting();
-                let guest = server.create_client(&mut guest_cx, &guest_username).await;
-                let guest_user_id = guest.current_user_id(&guest_cx);
-
-                active_call
-                    .update(cx, |call, cx| {
-                        call.invite(guest_user_id.to_proto(), None, cx)
-                    })
-                    .await
-                    .unwrap();
-                deterministic.run_until_parked();
-                guest_cx
-                    .read(ActiveCall::global)
-                    .update(&mut guest_cx, |call, cx| call.accept_incoming(cx))
-                    .await
-                    .unwrap();
-                deterministic.finish_waiting();
-
                 let op_start_signal = futures::channel::mpsc::unbounded();
-                user_ids.push(guest_user_id);
+                let guest = server.create_client(&mut guest_cx, &guest_username).await;
+                user_ids.push(guest.current_user_id(&guest_cx));
                 peer_ids.push(guest.peer_id().unwrap());
                 op_start_signals.push(op_start_signal.0);
                 clients.push(guest_cx.foreground().spawn(guest.simulate(
@@ -5898,21 +5869,7 @@ async fn test_random_collaboration(
                 log::info!("Added connection for {}", guest_username);
                 operations += 1;
             }
-            0..=69 if !op_start_signals.is_empty() => {
-                while operations < max_operations && rng.lock().gen_bool(0.7) {
-                    op_start_signals
-                        .choose(&mut *rng.lock())
-                        .unwrap()
-                        .unbounded_send(())
-                        .unwrap();
-                    operations += 1;
-                }
-
-                if rng.lock().gen_bool(0.8) {
-                    deterministic.run_until_parked();
-                }
-            }
-            70..=79 if clients.len() > 1 => {
+            20..=29 if clients.len() > 1 => {
                 let guest_ix = rng.lock().gen_range(1..clients.len());
                 log::info!("Removing guest {}", user_ids[guest_ix]);
                 let removed_guest_id = user_ids.remove(guest_ix);
@@ -5950,13 +5907,27 @@ async fn test_random_collaboration(
                 }
 
                 log::info!("{} removed", guest.username);
-                available_guests.push(guest.username.clone());
+                available_guests.push((removed_guest_id, guest.username.clone()));
                 guest_cx.update(|cx| {
                     cx.clear_globals();
                     drop(guest);
                 });
 
                 operations += 1;
+            }
+            _ if !op_start_signals.is_empty() => {
+                while operations < max_operations && rng.lock().gen_bool(0.7) {
+                    op_start_signals
+                        .choose(&mut *rng.lock())
+                        .unwrap()
+                        .unbounded_send(())
+                        .unwrap();
+                    operations += 1;
+                }
+
+                if rng.lock().gen_bool(0.8) {
+                    deterministic.run_until_parked();
+                }
             }
             _ => {}
         }
@@ -5980,63 +5951,73 @@ async fn test_random_collaboration(
                     Some((project, cx))
                 });
 
-                if let Some((host_project, host_cx)) = host_project {
-                    let host_worktree_snapshots =
-                        host_project.read_with(host_cx, |host_project, cx| {
-                            host_project
-                                .worktrees(cx)
-                                .map(|worktree| {
-                                    let worktree = worktree.read(cx);
-                                    (worktree.id(), worktree.snapshot())
-                                })
-                                .collect::<BTreeMap<_, _>>()
-                        });
-                    let guest_worktree_snapshots = guest_project
-                        .worktrees(cx)
-                        .map(|worktree| {
-                            let worktree = worktree.read(cx);
-                            (worktree.id(), worktree.snapshot())
-                        })
-                        .collect::<BTreeMap<_, _>>();
+                if !guest_project.is_read_only() {
+                    if let Some((host_project, host_cx)) = host_project {
+                        let host_worktree_snapshots =
+                            host_project.read_with(host_cx, |host_project, cx| {
+                                host_project
+                                    .worktrees(cx)
+                                    .map(|worktree| {
+                                        let worktree = worktree.read(cx);
+                                        (worktree.id(), worktree.snapshot())
+                                    })
+                                    .collect::<BTreeMap<_, _>>()
+                            });
+                        let guest_worktree_snapshots = guest_project
+                            .worktrees(cx)
+                            .map(|worktree| {
+                                let worktree = worktree.read(cx);
+                                (worktree.id(), worktree.snapshot())
+                            })
+                            .collect::<BTreeMap<_, _>>();
 
-                    assert_eq!(
-                        guest_worktree_snapshots.keys().collect::<Vec<_>>(),
-                        host_worktree_snapshots.keys().collect::<Vec<_>>(),
-                        "{} has different worktrees than the host",
-                        guest_client.username
-                    );
+                        assert_eq!(
+                            guest_worktree_snapshots.keys().collect::<Vec<_>>(),
+                            host_worktree_snapshots.keys().collect::<Vec<_>>(),
+                            "{} has different worktrees than the host",
+                            guest_client.username
+                        );
 
-                    for (id, host_snapshot) in &host_worktree_snapshots {
-                        let guest_snapshot = &guest_worktree_snapshots[id];
-                        assert_eq!(
-                            guest_snapshot.root_name(),
-                            host_snapshot.root_name(),
-                            "{} has different root name than the host for worktree {}",
-                            guest_client.username,
-                            id
-                        );
-                        assert_eq!(
-                            guest_snapshot.entries(false).collect::<Vec<_>>(),
-                            host_snapshot.entries(false).collect::<Vec<_>>(),
-                            "{} has different snapshot than the host for worktree {}",
-                            guest_client.username,
-                            id
-                        );
-                        assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
+                        for (id, host_snapshot) in &host_worktree_snapshots {
+                            let guest_snapshot = &guest_worktree_snapshots[id];
+                            assert_eq!(
+                                guest_snapshot.root_name(),
+                                host_snapshot.root_name(),
+                                "{} has different root name than the host for worktree {}",
+                                guest_client.username,
+                                id
+                            );
+                            assert_eq!(
+                                guest_snapshot.entries(false).collect::<Vec<_>>(),
+                                host_snapshot.entries(false).collect::<Vec<_>>(),
+                                "{} has different snapshot than the host for worktree {}",
+                                guest_client.username,
+                                id
+                            );
+                            assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
+                        }
                     }
-                } else {
-                    assert!(guest_project.is_read_only());
                 }
 
                 guest_project.check_invariants(cx);
             });
         }
 
-        for (project_id, guest_buffers) in &guest_client.buffers {
+        for (guest_project, guest_buffers) in &guest_client.buffers {
+            let project_id = if guest_project.read_with(guest_cx, |project, _| {
+                project.is_local() || project.is_read_only()
+            }) {
+                continue;
+            } else {
+                guest_project
+                    .read_with(guest_cx, |project, _| project.remote_id())
+                    .unwrap()
+            };
+
             let host_project = clients.iter().find_map(|(client, cx)| {
                 let project = client.local_projects.iter().find(|host_project| {
                     host_project.read_with(cx, |host_project, _| {
-                        host_project.remote_id() == Some(*project_id)
+                        host_project.remote_id() == Some(project_id)
                     })
                 })?;
                 Some((project, cx))
@@ -6383,7 +6364,7 @@ struct TestClient {
     pub project_store: ModelHandle<ProjectStore>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<FakeFs>,
-    buffers: HashMap<u64, HashSet<ModelHandle<language::Buffer>>>,
+    buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
 }
 
 impl Deref for TestClient {
@@ -6512,17 +6493,54 @@ impl TestClient {
             cx: &mut TestAppContext,
         ) -> anyhow::Result<()> {
             let active_call = cx.read(ActiveCall::global);
-            let room = active_call.read_with(cx, |call, _| {
-                call.room()
-                    .ok_or_else(|| anyhow!("no active call"))
-                    .cloned()
-            })?;
-            let remote_projects = room.read_with(cx, |room, _| {
-                room.remote_participants()
-                    .values()
-                    .flat_map(|participant| participant.projects.clone())
-                    .collect::<Vec<_>>()
-            });
+            if active_call.read_with(cx, |call, _| call.incoming().borrow().is_some()) {
+                if rng.lock().gen() {
+                    log::info!("{}: accepting incoming call", username);
+                    active_call
+                        .update(cx, |call, cx| call.accept_incoming(cx))
+                        .await?;
+                } else {
+                    log::info!("{}: declining incoming call", username);
+                    active_call.update(cx, |call, _| call.decline_incoming())?;
+                }
+            } else {
+                let available_contacts = client.user_store.read_with(cx, |user_store, _| {
+                    user_store
+                        .contacts()
+                        .iter()
+                        .filter(|contact| contact.online && !contact.busy)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+
+                let distribution = rng.lock().gen_range(0..100);
+                match distribution {
+                    0..=29 if !available_contacts.is_empty() => {
+                        let contact = available_contacts.choose(&mut *rng.lock()).unwrap();
+                        log::info!("{}: inviting {}", username, contact.user.github_login);
+                        active_call
+                            .update(cx, |call, cx| call.invite(contact.user.id, None, cx))
+                            .await?;
+                    }
+                    30..=39 if active_call.read_with(cx, |call, _| call.room().is_some()) => {
+                        log::info!("{}: hanging up", username);
+                        active_call.update(cx, |call, cx| call.hang_up(cx))?;
+                    }
+                    _ => {}
+                }
+            }
+
+            let remote_projects =
+                if let Some(room) = active_call.read_with(cx, |call, _| call.room().cloned()) {
+                    room.read_with(cx, |room, _| {
+                        room.remote_participants()
+                            .values()
+                            .flat_map(|participant| participant.projects.clone())
+                            .collect::<Vec<_>>()
+                    })
+                } else {
+                    Default::default()
+                };
             let project = if remote_projects.is_empty() || rng.lock().gen() {
                 if client.local_projects.is_empty() || rng.lock().gen() {
                     let dir_paths = client.fs.directories().await;
@@ -6590,11 +6608,14 @@ impl TestClient {
                         .clone()
                 }
             };
-            let project_id = active_call
+            if let Err(error) = active_call
                 .update(cx, |call, cx| call.share_project(project.clone(), cx))
-                .await?;
+                .await
+            {
+                log::error!("{}: error sharing project {:?}", username, error);
+            }
 
-            let buffers = client.buffers.entry(project_id).or_default();
+            let buffers = client.buffers.entry(project.clone()).or_default();
             let buffer = if buffers.is_empty() || rng.lock().gen() {
                 let worktree = if let Some(worktree) = project.read_with(cx, |project, cx| {
                     project
