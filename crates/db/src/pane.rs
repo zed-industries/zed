@@ -1,15 +1,14 @@
 
 use gpui::Axis;
+use indoc::indoc;
+use sqlez::migrations::Migration;
 
-use rusqlite::{OptionalExtension, Connection};
-use serde::{Deserialize, Serialize};
-use serde_rusqlite::{from_row, to_params_named};
 
 use crate::{items::ItemId, workspace::WorkspaceId};
 
 use super::Db;
 
-pub(crate) const PANE_M_1: &str = "
+pub(crate) const PANE_MIGRATIONS: Migration = Migration::new("pane", &[indoc! {"
 CREATE TABLE dock_panes(
     dock_pane_id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL,
@@ -64,7 +63,7 @@ CREATE TABLE dock_items(
     FOREIGN KEY(dock_pane_id) REFERENCES dock_panes(dock_pane_id) ON DELETE CASCADE,
     FOREIGN KEY(item_id) REFERENCES items(item_id)ON DELETE CASCADE
 ) STRICT;
-";
+"}]);
 
 // We have an many-branched, unbalanced tree with three types:
 // Pane Groups
@@ -140,7 +139,7 @@ pub struct SerializedPane {
 //********* CURRENTLY IN USE TYPES: *********
 
 
-#[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub enum DockAnchor {
     #[default]
     Bottom,
@@ -148,7 +147,7 @@ pub enum DockAnchor {
     Expanded,
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub struct SerializedDockPane {
     pub anchor_position: DockAnchor,
     pub visible: bool,
@@ -160,7 +159,7 @@ impl SerializedDockPane {
     }
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct DockRow {
     workspace_id: WorkspaceId,
     anchor_position: DockAnchor,
@@ -298,12 +297,11 @@ mod tests {
         let workspace = db.workspace_for_roots(&["/tmp"]);
 
         let dock_pane = SerializedDockPane {
-            workspace_id: workspace.workspace_id,
             anchor_position: DockAnchor::Expanded,
             visible: true,
         };
 
-        db.save_dock_pane(&dock_pane);
+        db.save_dock_pane(workspace.workspace_id, dock_pane);
 
         let new_workspace = db.workspace_for_roots(&["/tmp"]);
 

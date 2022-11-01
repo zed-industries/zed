@@ -53,6 +53,15 @@ impl Connection {
         self.persistent
     }
 
+    pub(crate) fn last_insert_id(&self) -> i64 {
+        unsafe { sqlite3_last_insert_rowid(self.sqlite3) }
+    }
+
+    pub fn insert(&self, query: impl AsRef<str>) -> Result<i64> {
+        self.exec(query)?;
+        Ok(self.last_insert_id())
+    }
+
     pub fn exec(&self, query: impl AsRef<str>) -> Result<()> {
         unsafe {
             sqlite3_exec(
@@ -140,9 +149,9 @@ mod test {
         connection
             .prepare("INSERT INTO text (text) VALUES (?);")
             .unwrap()
-            .bound(text)
+            .bind(text)
             .unwrap()
-            .run()
+            .exec()
             .unwrap();
 
         assert_eq!(
@@ -176,8 +185,8 @@ mod test {
             .prepare("INSERT INTO test (text, integer, blob) VALUES (?, ?, ?)")
             .unwrap();
 
-        insert.bound(tuple1.clone()).unwrap().run().unwrap();
-        insert.bound(tuple2.clone()).unwrap().run().unwrap();
+        insert.bind(tuple1.clone()).unwrap().exec().unwrap();
+        insert.bind(tuple2.clone()).unwrap().exec().unwrap();
 
         assert_eq!(
             connection
@@ -203,7 +212,7 @@ mod test {
             .prepare("INSERT INTO blobs (data) VALUES (?);")
             .unwrap();
         write.bind_blob(1, blob).unwrap();
-        write.run().unwrap();
+        write.exec().unwrap();
 
         // Backup connection1 to connection2
         let connection2 = Connection::open_memory("backup_works_other");

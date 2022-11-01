@@ -22,6 +22,7 @@ const MIGRATIONS_MIGRATION: Migration = Migration::new(
     "}],
 );
 
+#[derive(Debug)]
 pub struct Migration {
     domain: &'static str,
     migrations: &'static [&'static str],
@@ -46,7 +47,7 @@ impl Migration {
                 WHERE domain = ?
                 ORDER BY step
                 "})?
-            .bound(self.domain)?
+            .bind(self.domain)?
             .rows::<(String, usize, String)>()?;
 
         let mut store_completed_migration = connection
@@ -71,8 +72,8 @@ impl Migration {
 
             connection.exec(migration)?;
             store_completed_migration
-                .bound((self.domain, index, *migration))?
-                .run()?;
+                .bind((self.domain, index, *migration))?
+                .exec()?;
         }
 
         Ok(())
@@ -162,9 +163,9 @@ mod test {
                 .unwrap();
 
             store_completed_migration
-                .bound((domain, i, i.to_string()))
+                .bind((domain, i, i.to_string()))
                 .unwrap()
-                .run()
+                .exec()
                 .unwrap();
         }
     }

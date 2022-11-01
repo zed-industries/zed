@@ -1,55 +1,38 @@
-use anyhow::Result;
-use rusqlite::OptionalExtension;
-
 use super::Db;
+use anyhow::Result;
+use indoc::indoc;
+use sqlez::migrations::Migration;
 
-pub(crate) const KVP_M_1: &str = "
-CREATE TABLE kv_store(
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-) STRICT;
-";
+pub(crate) const KVP_MIGRATION: Migration = Migration::new(
+    "kvp",
+    &[indoc! {"
+    CREATE TABLE kv_store(
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    ) STRICT;
+    "}],
+);
 
 impl Db {
     pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-                let mut stmt = lock.prepare_cached("SELECT value FROM kv_store WHERE key = (?)")?;
-
-                Ok(stmt.query_row([key], |row| row.get(0)).optional()?)
-            })
-            .unwrap_or(Ok(None))
+        self.0
+            .prepare("SELECT value FROM kv_store WHERE key = (?)")?
+            .bind(key)?
+            .maybe_row()
     }
 
     pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-
-                let mut stmt = lock.prepare_cached(
-                    "INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))",
-                )?;
-
-                stmt.execute([key, value])?;
-
-                Ok(())
-            })
-            .unwrap_or(Ok(()))
+        self.0
+            .prepare("INSERT OR REPLACE INTO kv_store(key, value) VALUES (?, ?)")?
+            .bind((key, value))?
+            .exec()
     }
 
     pub fn delete_kvp(&self, key: &str) -> Result<()> {
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-
-                let mut stmt = lock.prepare_cached("DELETE FROM kv_store WHERE key = (?)")?;
-
-                stmt.execute([key])?;
-
-                Ok(())
-            })
-            .unwrap_or(Ok(()))
+        self.0
+            .prepare("DELETE FROM kv_store WHERE key = (?)")?
+            .bind(key)?
+            .exec()
     }
 }
 

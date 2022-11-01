@@ -3,12 +3,13 @@ use std::{ops::Deref, sync::Arc};
 use connection::Connection;
 use thread_local::ThreadLocal;
 
-use crate::connection;
+use crate::{connection, migrations::Migration};
 
 pub struct ThreadSafeConnection {
     uri: Arc<str>,
     persistent: bool,
     initialize_query: Option<&'static str>,
+    migrations: Option<&'static [Migration]>,
     connection: Arc<ThreadLocal<Connection>>,
 }
 
@@ -18,6 +19,7 @@ impl ThreadSafeConnection {
             uri: Arc::from(uri),
             persistent,
             initialize_query: None,
+            migrations: None,
             connection: Default::default(),
         }
     }
@@ -26,6 +28,11 @@ impl ThreadSafeConnection {
     /// be infallible (EG only use pragma statements)
     pub fn with_initialize_query(mut self, initialize_query: &'static str) -> Self {
         self.initialize_query = Some(initialize_query);
+        self
+    }
+
+    pub fn with_migrations(mut self, migrations: &'static [Migration]) -> Self {
+        self.migrations = Some(migrations);
         self
     }
 
@@ -49,6 +56,7 @@ impl Clone for ThreadSafeConnection {
             uri: self.uri.clone(),
             persistent: self.persistent,
             initialize_query: self.initialize_query.clone(),
+            migrations: self.migrations.clone(),
             connection: self.connection.clone(),
         }
     }
@@ -70,6 +78,14 @@ impl Deref for ThreadSafeConnection {
                     "Initialize query failed to execute: {}",
                     initialize_query
                 ));
+            }
+
+            if let Some(migrations) = self.migrations {
+                for migration in migrations {
+                    migration
+                        .run(&connection)
+                        .expect(&format!("Migrations failed to execute: {:?}", migration));
+                }
             }
 
             connection

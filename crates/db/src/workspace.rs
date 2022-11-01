@@ -6,12 +6,12 @@ use std::{
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::Result;
 use indoc::indoc;
-use sqlez::{connection::Connection, migrations::Migration};
+use sqlez::{
+    connection::Connection, migrations::Migration,
+};
 
 use crate::pane::SerializedDockPane;
 
@@ -20,8 +20,8 @@ use super::Db;
 // If you need to debug the worktree root code, change 'BLOB' here to 'TEXT' for easier debugging
 // you might want to update some of the parsing code as well, I've left the variations in but commented
 // out. This will panic if run on an existing db that has already been migrated
-const WORKSPACES_MIGRATION: Migration = Migration::new(
-    "migrations",
+pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
+    "workspace",
     &[indoc! {"
             CREATE TABLE workspaces(
                 workspace_id INTEGER PRIMARY KEY,
@@ -53,8 +53,8 @@ pub struct SerializedWorkspace {
 }
 
 impl Db {
-    /// Finds or creates a workspace id for the given set of worktree roots. If the passed worktree roots is empty, return the
-    /// the last workspace id
+    /// Finds or creates a workspace id for the given set of worktree roots. If the passed worktree roots is empty,
+    /// returns the last workspace which was updated
     pub fn workspace_for_roots<P>(&self, worktree_roots: &[P]) -> SerializedWorkspace
     where
         P: AsRef<Path> + Debug,
@@ -80,23 +80,21 @@ impl Db {
     where
         P: AsRef<Path> + Debug,
     {
-        let result = (|| {
-            let tx = self.transaction()?;
-            tx.execute("INSERT INTO workspaces(last_opened_timestamp) VALUES" (?), [current_millis()?])?;
+        let res = self.with_savepoint("make_new_workspace", |conn| {
+            let workspace_id = WorkspaceId(
+                conn.prepare("INSERT INTO workspaces DEFAULT VALUES")?
+                    .insert()?,
+            );
 
-            let id = WorkspaceId(tx.last_insert_rowid());
-
-            update_worktree_roots(&tx, &id, worktree_roots)?;
-
-            tx.commit()?;
+            update_worktree_roots(conn, &workspace_id, worktree_roots)?;
 
             Ok(SerializedWorkspace {
-                workspace_id: id,
+                workspace_id,
                 dock_pane: None,
             })
-        })();
+        });
 
-        match result {
+        match res {
             Ok(serialized_workspace) => serialized_workspace,
             Err(err) => {
                 log::error!("Failed to insert new workspace into DB: {}", err);
@@ -109,19 +107,13 @@ impl Db {
     where
         P: AsRef<Path> + Debug,
     {
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-
-                match get_workspace_id(worktree_roots, &lock) {
-                    Ok(workspace_id) => workspace_id,
-                    Err(err) => {
-                        log::error!("Failed to get workspace_id: {}", err);
-                        None
-                    }
-                }
-            })
-            .unwrap_or(None)
+        match get_workspace_id(worktree_roots, &self) {
+            Ok(workspace_id) => workspace_id,
+            Err(err) => {
+                log::error!("Failed to get workspace_id: {}", err);
+                None
+            }
+        }
     }
 
     // fn get_workspace_row(&self, workspace_id: WorkspaceId) -> WorkspaceRow {
@@ -135,121 +127,71 @@ impl Db {
     where
         P: AsRef<Path> + Debug,
     {
-        fn logic<P>(
-            connection: &mut Connection,
-            workspace_id: &WorkspaceId,
-            worktree_roots: &[P],
-        ) -> Result<()>
-        where
-            P: AsRef<Path> + Debug,
-        {
-            let tx = connection.transaction()?;
-            update_worktree_roots(&tx, workspace_id, worktree_roots)?;
-            tx.commit()?;
-            Ok(())
+        match self.with_savepoint("update_worktrees", |conn| {
+            update_worktree_roots(conn, workspace_id, worktree_roots)
+        }) {
+            Ok(_) => {}
+            Err(err) => log::error!(
+                "Failed to update workspace {:?} with roots {:?}, error: {}",
+                workspace_id,
+                worktree_roots,
+                err
+            ),
         }
-
-        self.real().map(|db| {
-            let mut lock = db.connection.lock();
-
-            match logic(&mut lock, workspace_id, worktree_roots) {
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!(
-                        "Failed to update the worktree roots for {:?}, roots: {:?}, error: {}",
-                        workspace_id,
-                        worktree_roots,
-                        err
-                    );
-                }
-            }
-        });
     }
 
     fn last_workspace_id(&self) -> Option<WorkspaceId> {
-        fn logic(connection: &mut Connection) -> Result<Option<WorkspaceId>> {
-            let mut stmt = connection.prepare(
+        let res = self
+            .prepare(
                 "SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT 1",
-            )?;
+            )
+            .and_then(|stmt| stmt.maybe_row())
+            .map(|row| row.map(|id| WorkspaceId(id)));
 
-            Ok(stmt
-                .query_row([], |row| Ok(WorkspaceId(row.get(0)?)))
-                .optional()?)
+        match res {
+            Ok(result) => result,
+            Err(err) => {
+                log::error!("Failed to get last workspace id, err: {}", err);
+                return None;
+            }
         }
-
-        self.real()
-            .map(|db| {
-                let mut lock = db.connection.lock();
-
-                match logic(&mut lock) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        log::error!("Failed to get last workspace id, err: {}", err);
-                        None
-                    }
-                }
-            })
-            .unwrap_or(None)
     }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
     pub fn recent_workspaces(&self, limit: usize) -> Vec<(WorkspaceId, Vec<Arc<Path>>)> {
-        fn logic(
-            connection: &mut Connection,
-            limit: usize,
-        ) -> Result<Vec<(WorkspaceId, Vec<Arc<Path>>)>, anyhow::Error> {
-            let tx = connection.transaction()?;
-            let result = {
-                let mut stmt = tx.prepare(
-                    "SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT ?",
-                )?;
-
-                let workspace_ids = stmt
-                    .query_map([limit], |row| Ok(WorkspaceId(row.get(0)?)))?
-                    .collect::<Result<Vec<_>, rusqlite::Error>>()?;
-
-                let mut result = Vec::new();
-                let mut stmt =
-                    tx.prepare("SELECT worktree_root FROM worktree_roots WHERE workspace_id = ?")?;
-                for workspace_id in workspace_ids {
-                    let roots = stmt
-                        .query_map([workspace_id.0], |row| {
-                            let row = row.get::<_, Vec<u8>>(0)?;
-                            Ok(PathBuf::from(OsStr::from_bytes(&row)).into())
-                            // If you need to debug this, here's the string parsing:
-                            // let row = row.get::<_, String>(0)?;
-                            // Ok(PathBuf::from(row).into())
-                        })?
-                        .collect::<Result<Vec<_>, rusqlite::Error>>()?;
-                    result.push((workspace_id, roots))
-                }
-
-                result
-            };
-            tx.commit()?;
-            return Ok(result);
-        }
-
-        self.real()
-            .map(|db| {
-                let mut lock = db.connection.lock();
-
-                match logic(&mut lock, limit) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        log::error!("Failed to get recent workspaces, err: {}", err);
-                        Vec::new()
-                    }
-                }
-            })
-            .unwrap_or_else(|| Vec::new())
+        let res = self.with_savepoint("recent_workspaces", |conn| {
+            let ids = conn.prepare("SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT ?")?
+                .bind(limit)?
+                .rows::<i64>()?
+                .iter()
+                .map(|row| WorkspaceId(*row));
+            
+            let result = Vec::new();
+            
+            let stmt = conn.prepare("SELECT worktree_root FROM worktree_roots WHERE workspace_id = ?")?;
+            for workspace_id in ids {
+                let roots = stmt.bind(workspace_id.0)?
+                    .rows::<Vec<u8>>()?
+                    .iter()
+                    .map(|row| {
+                        PathBuf::from(OsStr::from_bytes(&row)).into()
+                    })
+                    .collect();
+                result.push((workspace_id, roots))
+            }
+            
+            
+            Ok(result)
+        });
+        
+        match res {
+            Ok(result) => result,
+            Err(err) => {
+                log::error!("Failed to get recent workspaces, err: {}", err);
+                Vec::new()
+            }
+        }        
     }
-}
-
-fn current_millis() -> Result<u64, anyhow::Error> {
-    // SQLite only supports u64 integers, which means this code will trigger
-    // undefined behavior in 584 million years. It's probably fine.
-    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
 }
 
 fn update_worktree_roots<P>(
@@ -265,33 +207,32 @@ where
     if let Some(preexisting_id) = preexisting_id {
         if preexisting_id != *workspace_id {
             // Should also delete fields in other tables with cascading updates
-            connection.execute(
+            connection.prepare(
                 "DELETE FROM workspaces WHERE workspace_id = ?",
-                [preexisting_id.0],
-            )?;
+            )?
+            .bind(preexisting_id.0)?
+            .exec()?;
         }
     }
 
-    connection.execute(
-        "DELETE FROM worktree_roots WHERE workspace_id = ?",
-        [workspace_id.0],
-    )?;
+    connection
+        .prepare("DELETE FROM worktree_roots WHERE workspace_id = ?")?
+        .bind(workspace_id.0)?
+        .exec()?;
 
     for root in worktree_roots {
         let path = root.as_ref().as_os_str().as_bytes();
         // If you need to debug this, here's the string parsing:
         // let path = root.as_ref().to_string_lossy().to_string();
 
-        connection.execute(
-            "INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)",
-            params![workspace_id.0, path],
-        )?;
+        connection.prepare("INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)")?
+            .bind((workspace_id.0, path))?
+            .exec()?;
     }
 
-    connection.execute(
-        "UPDATE workspaces SET last_opened_timestamp = ? WHERE workspace_id = ?",
-        params![current_millis()?, workspace_id.0],
-    )?;
+    connection.prepare("UPDATE workspaces SET last_opened_timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?")?
+        .bind(workspace_id.0)?
+        .exec()?;
 
     Ok(())
 }
@@ -300,13 +241,6 @@ fn get_workspace_id<P>(worktree_roots: &[P], connection: &Connection) -> Result<
 where
     P: AsRef<Path> + Debug,
 {
-    // fn logic<P>(
-    //     worktree_roots: &[P],
-    //     connection: &Connection,
-    // ) -> Result<Option<WorkspaceId>, anyhow::Error>
-    // where
-    //     P: AsRef<Path> + Debug,
-    // {
     // Short circuit if we can
     if worktree_roots.len() == 0 {
         return Ok(None);
@@ -324,6 +258,7 @@ where
         }
     }
     array_binding_stmt.push(')');
+    
     // Any workspace can have multiple independent paths, and these paths
     // can overlap in the database. Take this test data for example:
     //
@@ -393,43 +328,19 @@ where
     // caching it.
     let mut stmt = connection.prepare(&query)?;
     // Make sure we bound the parameters correctly
-    debug_assert!(worktree_roots.len() + 1 == stmt.parameter_count());
+    debug_assert!(worktree_roots.len() as i32 + 1 == stmt.parameter_count());
 
     for i in 0..worktree_roots.len() {
         let path = &worktree_roots[i].as_ref().as_os_str().as_bytes();
         // If you need to debug this, here's the string parsing:
         // let path = &worktree_roots[i].as_ref().to_string_lossy().to_string()
-        stmt.raw_bind_parameter(i + 1, path)?
+        stmt.bind_value(*path, i as i32 + 1);
     }
     // No -1, because SQLite is 1 based
-    stmt.raw_bind_parameter(worktree_roots.len() + 1, worktree_roots.len())?;
+    stmt.bind_value(worktree_roots.len(), worktree_roots.len() as i32 + 1)?;
 
-    let mut rows = stmt.raw_query();
-    let row = rows.next();
-    let result = if let Ok(Some(row)) = row {
-        Ok(Some(WorkspaceId(row.get(0)?)))
-    } else {
-        Ok(None)
-    };
-
-    // Ensure that this query only returns one row. The PRIMARY KEY constraint should catch this case
-    // but this is here to catch if someone refactors that constraint out.
-    debug_assert!(matches!(rows.next(), Ok(None)));
-
-    result
-    // }
-
-    // match logic(worktree_roots, connection) {
-    //     Ok(result) => result,
-    //     Err(err) => {
-    //         log::error!(
-    //             "Failed to get the workspace ID for paths {:?}, err: {}",
-    //             worktree_roots,
-    //             err
-    //         );
-    //         None
-    //     }
-    // }
+    stmt.maybe_row()
+        .map(|row| row.map(|id| WorkspaceId(id)))
 }
 
 #[cfg(test)]

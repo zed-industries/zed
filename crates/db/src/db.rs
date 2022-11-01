@@ -10,6 +10,8 @@ use std::path::Path;
 
 use anyhow::Result;
 use indoc::indoc;
+use kvp::KVP_MIGRATION;
+use pane::PANE_MIGRATIONS;
 use sqlez::connection::Connection;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 
@@ -42,7 +44,8 @@ impl Db {
                     PRAGMA synchronous=NORMAL;
                     PRAGMA foreign_keys=TRUE;
                     PRAGMA case_sensitive_like=TRUE;
-                "}),
+                "})
+                .with_migrations(&[KVP_MIGRATION, WORKSPACES_MIGRATION, PANE_MIGRATIONS]),
         )
     }
 
@@ -64,7 +67,7 @@ impl Db {
 
     pub fn write_to<P: AsRef<Path>>(&self, dest: P) -> Result<()> {
         let destination = Connection::open_file(dest.as_ref().to_string_lossy().as_ref());
-        self.backup(&destination)
+        self.backup_main(&destination)
     }
 }
 

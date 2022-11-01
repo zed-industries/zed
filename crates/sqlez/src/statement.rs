@@ -60,6 +60,10 @@ impl<'a> Statement<'a> {
         }
     }
 
+    pub fn parameter_count(&self) -> i32 {
+        unsafe { sqlite3_bind_parameter_count(self.raw_statement) }
+    }
+
     pub fn bind_blob(&self, index: i32, blob: &[u8]) -> Result<()> {
         let index = index as c_int;
         let blob_pointer = blob.as_ptr() as *const _;
@@ -175,8 +179,9 @@ impl<'a> Statement<'a> {
         Ok(str::from_utf8(slice)?)
     }
 
-    pub fn bind<T: Bind>(&self, value: T) -> Result<()> {
-        value.bind(self, 1)?;
+    pub fn bind_value<T: Bind>(&self, value: T, idx: i32) -> Result<()> {
+        debug_assert!(idx > 0);
+        value.bind(self, idx)?;
         Ok(())
     }
 
@@ -198,8 +203,8 @@ impl<'a> Statement<'a> {
         }
     }
 
-    pub fn bound(&mut self, bindings: impl Bind) -> Result<&mut Self> {
-        self.bind(bindings)?;
+    pub fn bind(&mut self, bindings: impl Bind) -> Result<&mut Self> {
+        self.bind_value(bindings, 1)?;
         Ok(self)
     }
 
@@ -217,7 +222,12 @@ impl<'a> Statement<'a> {
         }
     }
 
-    pub fn run(&mut self) -> Result<()> {
+    pub fn insert(&mut self) -> Result<i64> {
+        self.exec()?;
+        Ok(self.connection.last_insert_id())
+    }
+
+    pub fn exec(&mut self) -> Result<()> {
         fn logic(this: &mut Statement) -> Result<()> {
             while this.step()? == StepResult::Row {}
             Ok(())
