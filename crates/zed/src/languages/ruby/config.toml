@@ -1,0 +1,11 @@
+name = "Ruby"
+path_suffixes = ["rb", "Gemfile"]
+line_comment = "# "
+autoclose_before = ";:.,=}])>"
+brackets = [
+  { start = "{", end = "}", close = true, newline = true },
+  { start = "[", end = "]", close = true, newline = true },
+  { start = "(", end = ")", close = true, newline = true },
+  { start = "\"", end = "\"", close = true, newline = false },
+  { start = "'", end = "'", close = false, newline = false },
+]

@@ -1151,6 +1151,49 @@ fn test_autoindent_with_injected_languages(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
+fn test_autoindent_query_with_outdent_captures(cx: &mut MutableAppContext) {
+    let mut settings = Settings::test(cx);
+    settings.editor_defaults.tab_size = Some(2.try_into().unwrap());
+    cx.set_global(settings);
+    cx.add_model(|cx| {
+        let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(ruby_lang()), cx);
+
+        let text = r#"
+            class C
+            def a(b, c)
+            puts b
+            puts c
+            rescue
+            puts "errored"
+            exit 1
+            end
+            end
+        "#
+        .unindent();
+
+        buffer.edit([(0..0, text)], Some(AutoindentMode::EachLine), cx);
+
+        assert_eq!(
+            buffer.text(),
+            r#"
+                class C
+                  def a(b, c)
+                    puts b
+                    puts c
+                  rescue
+                    puts "errored"
+                    exit 1
+                  end
+                end
+            "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_serialization(cx: &mut gpui::MutableAppContext) {
     let mut now = Instant::now();
 
@@ -1495,6 +1538,26 @@ impl Buffer {
                 (point_start, point_end)
             })
     }
+}
+
+fn ruby_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Ruby".into(),
+            path_suffixes: vec!["rb".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_ruby::language()),
+    )
+    .with_indents_query(
+        r#"
+            (class "end" @end) @indent
+            (method "end" @end) @indent
+            (rescue) @outdent
+            (then) @indent
+        "#,
+    )
+    .unwrap()
 }
 
 fn rust_lang() -> Language {

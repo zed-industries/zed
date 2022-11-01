@@ -1764,6 +1764,7 @@ impl BufferSnapshot {
             .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
+        let mut outdent_positions = Vec::<Point>::new();
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
@@ -1777,6 +1778,8 @@ impl BufferSnapshot {
                     start = Some(Point::from_ts_point(capture.node.end_position()));
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
+                } else if Some(capture.index) == config.outdent_capture_ix {
+                    outdent_positions.push(Point::from_ts_point(capture.node.start_position()));
                 }
             }
 
@@ -1794,6 +1797,19 @@ impl BufferSnapshot {
                         prev_range.end = prev_range.end.max(range.end);
                     }
                 }
+            }
+        }
+
+        outdent_positions.sort();
+        for outdent_position in outdent_positions {
+            // find the innermost indent range containing this outdent_position
+            // set its end to the outdent position
+            if let Some(range_to_truncate) = indent_ranges
+                .iter_mut()
+                .filter(|indent_range| indent_range.contains(&outdent_position))
+                .last()
+            {
+                range_to_truncate.end = outdent_position;
             }
         }
 

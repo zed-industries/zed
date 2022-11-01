@@ -312,6 +312,7 @@ struct IndentConfig {
     indent_capture_ix: u32,
     start_capture_ix: Option<u32>,
     end_capture_ix: Option<u32>,
+    outdent_capture_ix: Option<u32>,
 }
 
 struct OutlineConfig {
@@ -670,12 +671,14 @@ impl Language {
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
+        let mut outdent_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("indent", &mut indent_capture_ix),
                 ("start", &mut start_capture_ix),
                 ("end", &mut end_capture_ix),
+                ("outdent", &mut outdent_capture_ix),
             ],
         );
         if let Some(indent_capture_ix) = indent_capture_ix {
@@ -684,6 +687,7 @@ impl Language {
                 indent_capture_ix,
                 start_capture_ix,
                 end_capture_ix,
+                outdent_capture_ix,
             });
         }
         Ok(self)
