@@ -6892,7 +6892,7 @@ impl TestClient {
             },
             None,
         );
-        language
+        let _fake_language_servers = language
             .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
                 name: "the-fake-language-server",
                 capabilities: lsp::LanguageServer::full_capabilities(),
