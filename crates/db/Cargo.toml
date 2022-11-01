@@ -14,12 +14,13 @@ test-support = []
 indoc = "1.0.4"
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
+sqlez = { path = "../sqlez" }
 anyhow = "1.0.57"
 async-trait = "0.1"
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-sqlez = { git = "https://github.com/Kethku/sqlez", ref = "c8c01fe6b82085bbfe81b2a9406718454a7839c4c" }
+
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

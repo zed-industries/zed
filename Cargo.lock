@@ -5571,7 +5571,6 @@ checksum = "be6c3f39c37a4283ee4b43d1311c828f2e1fb0541e76ea0cb1a2abd9ef2f5b3b"
 [[package]]
 name = "sqlez"
 version = "0.1.0"
-source = "git+https://github.com/Kethku/sqlez#10a78dbe535a0c270b6b4bc469fbbffe9fc8c36f"
 dependencies = [
  "anyhow",
  "indoc",
