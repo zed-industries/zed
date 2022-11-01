@@ -6533,8 +6533,8 @@ impl TestClient {
             });
             let project = if remote_projects.is_empty() || rng.lock().gen() {
                 if client.local_projects.is_empty() || rng.lock().gen() {
-                    let paths = client.fs.paths().await;
-                    let local_project = if paths.is_empty() || rng.lock().gen() {
+                    let dir_paths = client.fs.directories().await;
+                    let local_project = if dir_paths.is_empty() || rng.lock().gen() {
                         let root_path = format!(
                             "/{}-root-{}",
                             username,
@@ -6550,7 +6550,7 @@ impl TestClient {
                         log::info!("{}: opening local project at {:?}", username, root_path);
                         client.build_local_project(root_path, cx).await.0
                     } else {
-                        let root_path = paths.choose(&mut *rng.lock()).unwrap();
+                        let root_path = dir_paths.choose(&mut *rng.lock()).unwrap();
                         log::info!("{}: opening local project at {:?}", username, root_path);
                         client.build_local_project(root_path, cx).await.0
                     };
@@ -6981,14 +6981,12 @@ impl TestClient {
                                     let mut highlights = Vec::new();
                                     let highlight_count = rng.lock().gen_range(1..=5);
                                     for _ in 0..highlight_count {
-                                        let start = PointUtf16::new(
-                                            rng.lock().gen_range(0..100),
-                                            rng.lock().gen_range(0..100),
-                                        );
-                                        let end = PointUtf16::new(
-                                            rng.lock().gen_range(0..100),
-                                            rng.lock().gen_range(0..100),
-                                        );
+                                        let start_row = rng.lock().gen_range(0..100);
+                                        let start_column = rng.lock().gen_range(0..100);
+                                        let start = PointUtf16::new(start_row, start_column);
+                                        let end_row = rng.lock().gen_range(0..100);
+                                        let end_column = rng.lock().gen_range(0..100);
+                                        let end = PointUtf16::new(end_row, end_column);
                                         let range =
                                             if start > end { end..start } else { start..end };
                                         highlights.push(lsp::DocumentHighlight {
@@ -7012,7 +7010,7 @@ impl TestClient {
 
         while op_start_signal.next().await.is_some() {
             if let Err(error) = tick(&mut self, &username, rng.clone(), &mut cx).await {
-                log::info!("{} error: {:?}", username, error);
+                log::error!("{} error: {:?}", username, error);
             }
 
             cx.background().simulate_random_delay().await;

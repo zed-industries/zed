@@ -631,7 +631,7 @@ impl FakeFs {
         }
     }
 
-    pub async fn paths(&self) -> Vec<PathBuf> {
+    pub async fn directories(&self) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
         queue.push_back((PathBuf::from("/"), self.state.lock().await.root.clone()));
@@ -640,8 +640,8 @@ impl FakeFs {
                 for (name, entry) in entries {
                     queue.push_back((path.join(name), entry.clone()));
                 }
+                result.push(path);
             }
-            result.push(path);
         }
         result
     }
