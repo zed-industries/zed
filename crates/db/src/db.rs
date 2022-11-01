@@ -5,26 +5,25 @@ pub mod pane;
 pub mod workspace;
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::ops::Deref;
+use std::path::Path;
 
 use anyhow::Result;
-use log::error;
-use parking_lot::Mutex;
-use rusqlite::{backup, Connection};
+use indoc::indoc;
+use sqlez::connection::Connection;
+use sqlez::thread_safe_connection::ThreadSafeConnection;
 
-use migrations::MIGRATIONS;
 pub use workspace::*;
 
 #[derive(Clone)]
-pub enum Db {
-    Real(Arc<RealDb>),
-    Null,
-}
+struct Db(ThreadSafeConnection);
 
-pub struct RealDb {
-    connection: Mutex<Connection>,
-    path: Option<PathBuf>,
+impl Deref for Db {
+    type Target = sqlez::connection::Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.deref()
+    }
 }
 
 impl Db {
@@ -36,104 +35,44 @@ impl Db {
             .expect("Should be able to create the database directory");
         let db_path = current_db_dir.join(Path::new("db.sqlite"));
 
-        Connection::open(db_path)
-            .map_err(Into::into)
-            .and_then(|connection| Self::initialize(connection))
-            .map(|connection| {
-                Db::Real(Arc::new(RealDb {
-                    connection,
-                    path: Some(db_dir.to_path_buf()),
-                }))
-            })
-            .unwrap_or_else(|e| {
-                error!(
-                    "Connecting to file backed db failed. Reverting to null db. {}",
-                    e
-                );
-                Self::Null
-            })
-    }
-
-    fn initialize(mut conn: Connection) -> Result<Mutex<Connection>> {
-        MIGRATIONS.to_latest(&mut conn)?;
-
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.pragma_update(None, "foreign_keys", true)?;
-        conn.pragma_update(None, "case_sensitive_like", true)?;
-
-        Ok(Mutex::new(conn))
+        Db(
+            ThreadSafeConnection::new(db_path.to_string_lossy().as_ref(), true)
+                .with_initialize_query(indoc! {"
+                    PRAGMA journal_mode=WAL;
+                    PRAGMA synchronous=NORMAL;
+                    PRAGMA foreign_keys=TRUE;
+                    PRAGMA case_sensitive_like=TRUE;
+                "}),
+        )
     }
 
     pub fn persisting(&self) -> bool {
-        self.real().and_then(|db| db.path.as_ref()).is_some()
-    }
-
-    pub fn real(&self) -> Option<&RealDb> {
-        match self {
-            Db::Real(db) => Some(&db),
-            _ => None,
-        }
+        self.persistent()
     }
 
     /// Open a in memory database for testing and as a fallback.
     pub fn open_in_memory() -> Self {
-        Connection::open_in_memory()
-            .map_err(Into::into)
-            .and_then(|connection| Self::initialize(connection))
-            .map(|connection| {
-                Db::Real(Arc::new(RealDb {
-                    connection,
-                    path: None,
-                }))
-            })
-            .unwrap_or_else(|e| {
-                error!(
-                    "Connecting to in memory db failed. Reverting to null db. {}",
-                    e
-                );
-                Self::Null
-            })
+        Db(
+            ThreadSafeConnection::new("Zed DB", false).with_initialize_query(indoc! {"
+                    PRAGMA journal_mode=WAL;
+                    PRAGMA synchronous=NORMAL;
+                    PRAGMA foreign_keys=TRUE;
+                    PRAGMA case_sensitive_like=TRUE;
+                    "}),
+        )
     }
 
     pub fn write_to<P: AsRef<Path>>(&self, dest: P) -> Result<()> {
-        self.real()
-            .map(|db| {
-                if db.path.is_some() {
-                    panic!("DB already exists");
-                }
-
-                let lock = db.connection.lock();
-                let mut dst = Connection::open(dest)?;
-                let backup = backup::Backup::new(&lock, &mut dst)?;
-                backup.step(-1)?;
-
-                Ok(())
-            })
-            .unwrap_or(Ok(()))
+        let destination = Connection::open_file(dest.as_ref().to_string_lossy().as_ref());
+        self.backup(&destination)
     }
 }
 
 impl Drop for Db {
     fn drop(&mut self) {
-        match self {
-            Db::Real(real_db) => {
-                let lock = real_db.connection.lock();
-
-                let _ = lock.pragma_update(None, "analysis_limit", "500");
-                let _ = lock.pragma_update(None, "optimize", "");
-            }
-            Db::Null => {}
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::migrations::MIGRATIONS;
-
-    #[test]
-    fn test_migrations() {
-        assert!(MIGRATIONS.validate().is_ok());
+        self.exec(indoc! {"
+            PRAGMA analysis_limit=500;
+            PRAGMA optimize"})
+            .ok();
     }
 }

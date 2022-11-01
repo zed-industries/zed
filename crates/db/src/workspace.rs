@@ -1,8 +1,5 @@
 use anyhow::Result;
 
-use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
-
 use std::{
     ffi::OsStr,
     fmt::Debug,
@@ -12,28 +9,34 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::Result;
+use indoc::indoc;
+use sqlez::{connection::Connection, migrations::Migration};
+
 use crate::pane::SerializedDockPane;
 
 use super::Db;
 
 // If you need to debug the worktree root code, change 'BLOB' here to 'TEXT' for easier debugging
 // you might want to update some of the parsing code as well, I've left the variations in but commented
-// out
-pub(crate) const WORKSPACE_M_1: &str = "
-CREATE TABLE workspaces(
-    workspace_id INTEGER PRIMARY KEY,
-    last_opened_timestamp INTEGER NOT NULL
-) STRICT;
+// out. This will panic if run on an existing db that has already been migrated
+const WORKSPACES_MIGRATION: Migration = Migration::new(
+    "migrations",
+    &[indoc! {"
+            CREATE TABLE workspaces(
+                workspace_id INTEGER PRIMARY KEY,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+            ) STRICT;
+            
+            CREATE TABLE worktree_roots(
+                worktree_root BLOB NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+                PRIMARY KEY(worktree_root, workspace_id)
+            ) STRICT;"}],
+);
 
-CREATE TABLE worktree_roots(
-    worktree_root BLOB NOT NULL,
-    workspace_id INTEGER NOT NULL,
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-    PRIMARY KEY(worktree_root, workspace_id)
-) STRICT;
-";
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 pub struct WorkspaceId(i64);
 
 impl WorkspaceId {
@@ -77,19 +80,9 @@ impl Db {
     where
         P: AsRef<Path> + Debug,
     {
-        fn logic<P>(
-            connection: &mut Connection,
-            worktree_roots: &[P],
-        ) -> Result<SerializedWorkspace>
-        where
-            P: AsRef<Path> + Debug,
-        {
-            let tx = connection.transaction()?;
-
-            tx.execute(
-                "INSERT INTO workspaces(last_opened_timestamp) VALUES (?)",
-                [current_millis()?],
-            )?;
+        let result = (|| {
+            let tx = self.transaction()?;
+            tx.execute("INSERT INTO workspaces(last_opened_timestamp) VALUES" (?), [current_millis()?])?;
 
             let id = WorkspaceId(tx.last_insert_rowid());
 
@@ -101,22 +94,15 @@ impl Db {
                 workspace_id: id,
                 dock_pane: None,
             })
+        })();
+
+        match result {
+            Ok(serialized_workspace) => serialized_workspace,
+            Err(err) => {
+                log::error!("Failed to insert new workspace into DB: {}", err);
+                Default::default()
+            }
         }
-
-        self.real()
-            .map(|db| {
-                let mut lock = db.connection.lock();
-
-                // No need to waste the memory caching this, should happen rarely.
-                match logic(&mut lock, worktree_roots) {
-                    Ok(serialized_workspace) => serialized_workspace,
-                    Err(err) => {
-                        log::error!("Failed to insert new workspace into DB: {}", err);
-                        Default::default()
-                    }
-                }
-            })
-            .unwrap_or_default()
     }
 
     fn workspace_id<P>(&self, worktree_roots: &[P]) -> Option<WorkspaceId>

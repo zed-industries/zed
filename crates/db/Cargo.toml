@@ -11,6 +11,7 @@ doctest = false
 test-support = []
 
 [dependencies]
+indoc = "1.0.4"
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 anyhow = "1.0.57"
@@ -18,10 +19,7 @@ async-trait = "0.1"
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-rusqlite = { version = "0.28.0", features = ["bundled", "serde_json", "backup"] }
-rusqlite_migration = { git = "https://github.com/cljoly/rusqlite_migration", rev = "c433555d7c1b41b103426e35756eb3144d0ebbc6" }
-serde = { workspace = true }
-serde_rusqlite = "0.31.0"
+sqlez = { git = "https://github.com/Kethku/sqlez", ref = "c8c01fe6b82085bbfe81b2a9406718454a7839c4c" }
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
