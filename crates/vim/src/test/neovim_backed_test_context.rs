@@ -8,7 +8,7 @@ use util::test::marked_text_offsets;
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
 
-pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[];
+pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[ExemptionFeatures::DeletionOnEmptyLine];
 
 /// Enum representing features we have tests for but which don't work, yet. Used
 /// to add exemptions and automatically
