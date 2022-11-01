@@ -5858,7 +5858,7 @@ async fn test_random_collaboration(
     while operations < max_operations {
         let distribution = rng.lock().gen_range(0..100);
         match distribution {
-            0..=19 if !available_guests.is_empty() => {
+            _ if !available_guests.is_empty() => {
                 let guest_ix = rng.lock().gen_range(0..available_guests.len());
                 let guest_username = available_guests.remove(guest_ix);
                 log::info!("Adding new connection for {}", guest_username);
@@ -5906,7 +5906,21 @@ async fn test_random_collaboration(
                 log::info!("Added connection for {}", guest_username);
                 operations += 1;
             }
-            20..=29 if clients.len() > 1 => {
+            0..=69 if !op_start_signals.is_empty() => {
+                while operations < max_operations && rng.lock().gen_bool(0.7) {
+                    op_start_signals
+                        .choose(&mut *rng.lock())
+                        .unwrap()
+                        .unbounded_send(())
+                        .unwrap();
+                    operations += 1;
+                }
+
+                if rng.lock().gen_bool(0.8) {
+                    deterministic.run_until_parked();
+                }
+            }
+            70..=79 if clients.len() > 1 => {
                 let guest_ix = rng.lock().gen_range(1..clients.len());
                 log::info!("Removing guest {}", user_ids[guest_ix]);
                 let removed_guest_id = user_ids.remove(guest_ix);
@@ -5918,13 +5932,9 @@ async fn test_random_collaboration(
                 deterministic.advance_clock(RECEIVE_TIMEOUT);
                 deterministic.start_waiting();
                 log::info!("Waiting for guest {} to exit...", removed_guest_id);
-                let (guest, mut guest_cx, guest_err) = guest.await;
+                let (guest, mut guest_cx) = guest.await;
                 deterministic.finish_waiting();
                 server.allow_connections();
-
-                if let Some(guest_err) = guest_err {
-                    log::error!("{} error - {:?}", guest.username, guest_err);
-                }
 
                 for project in &guest.remote_projects {
                     project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
@@ -5956,20 +5966,6 @@ async fn test_random_collaboration(
 
                 operations += 1;
             }
-            _ if !op_start_signals.is_empty() => {
-                while operations < max_operations && rng.lock().gen_bool(0.7) {
-                    op_start_signals
-                        .choose(&mut *rng.lock())
-                        .unwrap()
-                        .unbounded_send(())
-                        .unwrap();
-                    operations += 1;
-                }
-
-                if rng.lock().gen_bool(0.8) {
-                    deterministic.run_until_parked();
-                }
-            }
             _ => {}
         }
     }
@@ -5980,14 +5976,10 @@ async fn test_random_collaboration(
     deterministic.finish_waiting();
     deterministic.run_until_parked();
 
-    for (guest_client, guest_cx, guest_err) in &clients {
-        if let Some(guest_err) = guest_err {
-            panic!("{} error - {:?}", guest_client.username, guest_err);
-        }
-
+    for (guest_client, guest_cx) in &clients {
         for guest_project in &guest_client.remote_projects {
             guest_project.read_with(guest_cx, |guest_project, cx| {
-                let host_project = clients.iter().find_map(|(client, cx, _)| {
+                let host_project = clients.iter().find_map(|(client, cx)| {
                     let project = client.local_projects.iter().find(|host_project| {
                         host_project.read_with(cx, |host_project, _| {
                             host_project.remote_id() == guest_project.remote_id()
@@ -6049,7 +6041,7 @@ async fn test_random_collaboration(
         }
 
         for (project_id, guest_buffers) in &guest_client.buffers {
-            let host_project = clients.iter().find_map(|(client, cx, _)| {
+            let host_project = clients.iter().find_map(|(client, cx)| {
                 let project = client.local_projects.iter().find(|host_project| {
                     host_project.read_with(cx, |host_project, _| {
                         host_project.remote_id() == Some(*project_id)
@@ -6099,7 +6091,7 @@ async fn test_random_collaboration(
         }
     }
 
-    for (client, mut cx, _) in clients {
+    for (client, mut cx) in clients {
         cx.update(|cx| {
             cx.clear_globals();
             drop(client);
@@ -6517,490 +6509,517 @@ impl TestClient {
     pub async fn simulate(
         mut self,
         username: String,
-        op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
+        mut op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
         rng: Arc<Mutex<StdRng>>,
         mut cx: TestAppContext,
-    ) -> (Self, TestAppContext, Option<anyhow::Error>) {
-        async fn simulate_internal(
+    ) -> (Self, TestAppContext) {
+        async fn tick(
             client: &mut TestClient,
             username: &str,
-            mut op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
             rng: Arc<Mutex<StdRng>>,
             cx: &mut TestAppContext,
         ) -> anyhow::Result<()> {
-            // Setup language server
-            let mut language = Language::new(
-                LanguageConfig {
-                    name: "Rust".into(),
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                None,
-            );
-            language
-                .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                    name: "the-fake-language-server",
-                    capabilities: lsp::LanguageServer::full_capabilities(),
-                    initializer: Some(Box::new({
-                        let rng = rng.clone();
-                        let fs = client.fs.clone();
-                        move |fake_server: &mut FakeLanguageServer| {
-                            fake_server.handle_request::<lsp::request::Completion, _, _>(
-                                |_, _| async move {
-                                    Ok(Some(lsp::CompletionResponse::Array(vec![
-                                        lsp::CompletionItem {
-                                            text_edit: Some(lsp::CompletionTextEdit::Edit(
-                                                lsp::TextEdit {
-                                                    range: lsp::Range::new(
-                                                        lsp::Position::new(0, 0),
-                                                        lsp::Position::new(0, 0),
-                                                    ),
-                                                    new_text: "the-new-text".to_string(),
-                                                },
-                                            )),
-                                            ..Default::default()
-                                        },
-                                    ])))
-                                },
-                            );
-
-                            fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
-                                |_, _| async move {
-                                    Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                                        lsp::CodeAction {
-                                            title: "the-code-action".to_string(),
-                                            ..Default::default()
-                                        },
-                                    )]))
-                                },
-                            );
-
-                            fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
-                                |params, _| async move {
-                                    Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                                        params.position,
-                                        params.position,
-                                    ))))
-                                },
-                            );
-
-                            fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
-                                let fs = fs.clone();
-                                let rng = rng.clone();
-                                move |_, _| {
-                                    let fs = fs.clone();
-                                    let rng = rng.clone();
-                                    async move {
-                                        let files = fs.files().await;
-                                        let mut rng = rng.lock();
-                                        let count = rng.gen_range::<usize, _>(1..3);
-                                        let files = (0..count)
-                                            .map(|_| files.choose(&mut *rng).unwrap())
-                                            .collect::<Vec<_>>();
-                                        log::info!(
-                                            "LSP: Returning definitions in files {:?}",
-                                            &files
-                                        );
-                                        Ok(Some(lsp::GotoDefinitionResponse::Array(
-                                            files
-                                                .into_iter()
-                                                .map(|file| lsp::Location {
-                                                    uri: lsp::Url::from_file_path(file).unwrap(),
-                                                    range: Default::default(),
-                                                })
-                                                .collect(),
-                                        )))
-                                    }
-                                }
-                            });
-
-                            fake_server
-                                .handle_request::<lsp::request::DocumentHighlightRequest, _, _>({
-                                    let rng = rng.clone();
-                                    move |_, _| {
-                                        let mut highlights = Vec::new();
-                                        let highlight_count = rng.lock().gen_range(1..=5);
-                                        for _ in 0..highlight_count {
-                                            let start = PointUtf16::new(
-                                                rng.lock().gen_range(0..100),
-                                                rng.lock().gen_range(0..100),
-                                            );
-                                            let end = PointUtf16::new(
-                                                rng.lock().gen_range(0..100),
-                                                rng.lock().gen_range(0..100),
-                                            );
-                                            let range =
-                                                if start > end { end..start } else { start..end };
-                                            highlights.push(lsp::DocumentHighlight {
-                                                range: range_to_lsp(range.clone()),
-                                                kind: Some(lsp::DocumentHighlightKind::READ),
-                                            });
-                                        }
-                                        highlights.sort_unstable_by_key(|highlight| {
-                                            (highlight.range.start, highlight.range.end)
-                                        });
-                                        async move { Ok(Some(highlights)) }
-                                    }
-                                });
-                        }
-                    })),
-                    ..Default::default()
-                }))
-                .await;
-            client.language_registry.add(Arc::new(language));
-
-            while op_start_signal.next().await.is_some() {
-                let active_call = cx.read(ActiveCall::global);
-                let room = active_call.read_with(cx, |call, _| call.room().unwrap().clone());
-                let remote_projects = room.read_with(cx, |room, _| {
-                    room.remote_participants()
-                        .values()
-                        .flat_map(|participant| participant.projects.clone())
-                        .collect::<Vec<_>>()
-                });
-                let project = if remote_projects.is_empty() || rng.lock().gen() {
-                    if client.local_projects.is_empty() || rng.lock().gen() {
-                        let paths = client.fs.paths().await;
-                        let local_project = if paths.is_empty() || rng.lock().gen() {
-                            let root_path = format!(
-                                "/{}-root-{}",
-                                username,
-                                post_inc(&mut client.next_root_dir_id)
-                            );
-                            client.fs.create_dir(Path::new(&root_path)).await.unwrap();
-                            client.build_local_project(root_path, cx).await.0
-                        } else {
-                            let root_path = paths.choose(&mut *rng.lock()).unwrap();
-                            client.build_local_project(root_path, cx).await.0
-                        };
-                        client.local_projects.push(local_project.clone());
-                        local_project
-                    } else {
+            let active_call = cx.read(ActiveCall::global);
+            let room = active_call.read_with(cx, |call, _| {
+                call.room()
+                    .ok_or_else(|| anyhow!("no active call"))
+                    .cloned()
+            })?;
+            let remote_projects = room.read_with(cx, |room, _| {
+                room.remote_participants()
+                    .values()
+                    .flat_map(|participant| participant.projects.clone())
+                    .collect::<Vec<_>>()
+            });
+            let project = if remote_projects.is_empty() || rng.lock().gen() {
+                if client.local_projects.is_empty() || rng.lock().gen() {
+                    let paths = client.fs.paths().await;
+                    let local_project = if paths.is_empty() || rng.lock().gen() {
+                        let root_path = format!(
+                            "/{}-root-{}",
+                            username,
+                            post_inc(&mut client.next_root_dir_id)
+                        );
+                        let root_path = Path::new(&root_path);
+                        client.fs.create_dir(root_path).await.unwrap();
                         client
-                            .local_projects
-                            .choose(&mut *rng.lock())
-                            .unwrap()
-                            .clone()
-                    }
+                            .fs
+                            .create_file(&root_path.join("main.rs"), Default::default())
+                            .await
+                            .unwrap();
+                        log::info!("{}: opening local project at {:?}", username, root_path);
+                        client.build_local_project(root_path, cx).await.0
+                    } else {
+                        let root_path = paths.choose(&mut *rng.lock()).unwrap();
+                        log::info!("{}: opening local project at {:?}", username, root_path);
+                        client.build_local_project(root_path, cx).await.0
+                    };
+                    client.local_projects.push(local_project.clone());
+                    local_project
                 } else {
-                    if client.remote_projects.is_empty() || rng.lock().gen() {
-                        let remote_project_id =
-                            remote_projects.choose(&mut *rng.lock()).unwrap().id;
-                        let remote_project =
-                            client.build_remote_project(remote_project_id, cx).await;
+                    client
+                        .local_projects
+                        .choose(&mut *rng.lock())
+                        .unwrap()
+                        .clone()
+                }
+            } else {
+                if client.remote_projects.is_empty() || rng.lock().gen() {
+                    let remote_project_id = remote_projects.choose(&mut *rng.lock()).unwrap().id;
+                    let remote_project = if let Some(project) =
+                        client.remote_projects.iter().find(|project| {
+                            project.read_with(cx, |project, _| {
+                                project.remote_id() == Some(remote_project_id)
+                            })
+                        }) {
+                        project.clone()
+                    } else {
+                        log::info!("{}: opening remote project {}", username, remote_project_id);
+                        let remote_project = Project::remote(
+                            remote_project_id,
+                            client.client.clone(),
+                            client.user_store.clone(),
+                            client.project_store.clone(),
+                            client.language_registry.clone(),
+                            FakeFs::new(cx.background()),
+                            cx.to_async(),
+                        )
+                        .await?;
                         client.remote_projects.push(remote_project.clone());
                         remote_project
-                    } else {
-                        client
-                            .remote_projects
-                            .choose(&mut *rng.lock())
-                            .unwrap()
-                            .clone()
-                    }
-                };
-                let project_id = active_call
-                    .update(cx, |call, cx| call.share_project(project.clone(), cx))
-                    .await
-                    .unwrap();
-
-                let buffers = client.buffers.entry(project_id).or_default();
-                let buffer = if buffers.is_empty() || rng.lock().gen() {
-                    let worktree = if let Some(worktree) = project.read_with(cx, |project, cx| {
-                        project
-                            .worktrees(cx)
-                            .filter(|worktree| {
-                                let worktree = worktree.read(cx);
-                                worktree.is_visible()
-                                    && worktree.entries(false).any(|e| e.is_file())
-                            })
-                            .choose(&mut *rng.lock())
-                    }) {
-                        worktree
-                    } else {
-                        cx.background().simulate_random_delay().await;
-                        continue;
                     };
 
-                    let (worktree_root_name, project_path) =
-                        worktree.read_with(cx, |worktree, _| {
-                            let entry = worktree
-                                .entries(false)
-                                .filter(|e| e.is_file())
-                                .choose(&mut *rng.lock())
-                                .unwrap();
-                            (
-                                worktree.root_name().to_string(),
-                                (worktree.id(), entry.path.clone()),
-                            )
-                        });
-                    log::info!(
-                        "{}: opening path {:?} in worktree {} ({})",
-                        username,
-                        project_path.1,
-                        project_path.0,
-                        worktree_root_name,
-                    );
-                    let buffer = project
-                        .update(cx, |project, cx| {
-                            project.open_buffer(project_path.clone(), cx)
-                        })
-                        .await?;
-                    log::info!(
-                        "{}: opened path {:?} in worktree {} ({}) with buffer id {}",
-                        username,
-                        project_path.1,
-                        project_path.0,
-                        worktree_root_name,
-                        buffer.read_with(cx, |buffer, _| buffer.remote_id())
-                    );
-                    buffers.insert(buffer.clone());
-                    buffer
+                    remote_project
                 } else {
-                    buffers.iter().choose(&mut *rng.lock()).unwrap().clone()
+                    client
+                        .remote_projects
+                        .choose(&mut *rng.lock())
+                        .unwrap()
+                        .clone()
+                }
+            };
+            let project_id = active_call
+                .update(cx, |call, cx| call.share_project(project.clone(), cx))
+                .await?;
+
+            let buffers = client.buffers.entry(project_id).or_default();
+            let buffer = if buffers.is_empty() || rng.lock().gen() {
+                let worktree = if let Some(worktree) = project.read_with(cx, |project, cx| {
+                    project
+                        .worktrees(cx)
+                        .filter(|worktree| {
+                            let worktree = worktree.read(cx);
+                            worktree.is_visible() && worktree.entries(false).any(|e| e.is_file())
+                        })
+                        .choose(&mut *rng.lock())
+                }) {
+                    worktree
+                } else {
+                    cx.background().simulate_random_delay().await;
+                    return Ok(());
                 };
 
-                let choice = rng.lock().gen_range(0..100);
-                match choice {
-                    0..=9 => {
-                        cx.update(|cx| {
-                            log::info!(
-                                "{}: dropping buffer {:?}",
-                                username,
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            buffers.remove(&buffer);
-                            drop(buffer);
-                        });
-                    }
-                    10..=19 => {
-                        let completions = project.update(cx, |project, cx| {
-                            log::info!(
-                                "{}: requesting completions for buffer {} ({:?})",
-                                username,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.completions(&buffer, offset, cx)
-                        });
-                        let completions = cx.background().spawn(async move {
-                            completions
-                                .await
-                                .map_err(|err| anyhow!("completions request failed: {:?}", err))
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("{}: detaching completions request", username);
-                            cx.update(|cx| completions.detach_and_log_err(cx));
-                        } else {
-                            completions.await?;
-                        }
-                    }
-                    20..=29 => {
-                        let code_actions = project.update(cx, |project, cx| {
-                            log::info!(
-                                "{}: requesting code actions for buffer {} ({:?})",
-                                username,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
-                            project.code_actions(&buffer, range, cx)
-                        });
-                        let code_actions = cx.background().spawn(async move {
-                            code_actions
-                                .await
-                                .map_err(|err| anyhow!("code actions request failed: {:?}", err))
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("{}: detaching code actions request", username);
-                            cx.update(|cx| code_actions.detach_and_log_err(cx));
-                        } else {
-                            code_actions.await?;
-                        }
-                    }
-                    30..=39 if buffer.read_with(cx, |buffer, _| buffer.is_dirty()) => {
-                        let (requested_version, save) = buffer.update(cx, |buffer, cx| {
-                            log::info!(
-                                "{}: saving buffer {} ({:?})",
-                                username,
-                                buffer.remote_id(),
-                                buffer.file().unwrap().full_path(cx)
-                            );
-                            (buffer.version(), buffer.save(cx))
-                        });
-                        let save = cx.background().spawn(async move {
-                            let (saved_version, _, _) = save
-                                .await
-                                .map_err(|err| anyhow!("save request failed: {:?}", err))?;
-                            assert!(saved_version.observed_all(&requested_version));
-                            Ok::<_, anyhow::Error>(())
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("{}: detaching save request", username);
-                            cx.update(|cx| save.detach_and_log_err(cx));
-                        } else {
-                            save.await?;
-                        }
-                    }
-                    40..=44 => {
-                        let prepare_rename = project.update(cx, |project, cx| {
-                            log::info!(
-                                "{}: preparing rename for buffer {} ({:?})",
-                                username,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.prepare_rename(buffer, offset, cx)
-                        });
-                        let prepare_rename = cx.background().spawn(async move {
-                            prepare_rename
-                                .await
-                                .map_err(|err| anyhow!("prepare rename request failed: {:?}", err))
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("{}: detaching prepare rename request", username);
-                            cx.update(|cx| prepare_rename.detach_and_log_err(cx));
-                        } else {
-                            prepare_rename.await?;
-                        }
-                    }
-                    45..=49 => {
-                        let definitions = project.update(cx, |project, cx| {
-                            log::info!(
-                                "{}: requesting definitions for buffer {} ({:?})",
-                                username,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.definition(&buffer, offset, cx)
-                        });
-                        let definitions = cx.background().spawn(async move {
-                            definitions
-                                .await
-                                .map_err(|err| anyhow!("definitions request failed: {:?}", err))
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("{}: detaching definitions request", username);
-                            cx.update(|cx| definitions.detach_and_log_err(cx));
-                        } else {
-                            buffers.extend(
-                                definitions.await?.into_iter().map(|loc| loc.target.buffer),
-                            );
-                        }
-                    }
-                    50..=54 => {
-                        let highlights = project.update(cx, |project, cx| {
-                            log::info!(
-                                "{}: requesting highlights for buffer {} ({:?})",
-                                username,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.document_highlights(&buffer, offset, cx)
-                        });
-                        let highlights = cx.background().spawn(async move {
-                            highlights
-                                .await
-                                .map_err(|err| anyhow!("highlights request failed: {:?}", err))
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("{}: detaching highlights request", username);
-                            cx.update(|cx| highlights.detach_and_log_err(cx));
-                        } else {
-                            highlights.await?;
-                        }
-                    }
-                    55..=59 => {
-                        let search = project.update(cx, |project, cx| {
-                            let query = rng.lock().gen_range('a'..='z');
-                            log::info!("{}: project-wide search {:?}", username, query);
-                            project.search(SearchQuery::text(query, false, false), cx)
-                        });
-                        let search = cx.background().spawn(async move {
-                            search
-                                .await
-                                .map_err(|err| anyhow!("search request failed: {:?}", err))
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("{}: detaching search request", username);
-                            cx.update(|cx| search.detach_and_log_err(cx));
-                        } else {
-                            buffers.extend(search.await?.into_keys());
-                        }
-                    }
-                    60..=69 => {
-                        let worktree = project
-                            .read_with(cx, |project, cx| {
-                                project
-                                    .worktrees(cx)
-                                    .filter(|worktree| {
-                                        let worktree = worktree.read(cx);
-                                        worktree.is_visible()
-                                            && worktree.entries(false).any(|e| e.is_file())
-                                            && worktree.root_entry().map_or(false, |e| e.is_dir())
-                                    })
-                                    .choose(&mut *rng.lock())
-                            })
-                            .unwrap();
-                        let (worktree_id, worktree_root_name) = worktree
-                            .read_with(cx, |worktree, _| {
-                                (worktree.id(), worktree.root_name().to_string())
-                            });
+                let (worktree_root_name, project_path) = worktree.read_with(cx, |worktree, _| {
+                    let entry = worktree
+                        .entries(false)
+                        .filter(|e| e.is_file())
+                        .choose(&mut *rng.lock())
+                        .unwrap();
+                    (
+                        worktree.root_name().to_string(),
+                        (worktree.id(), entry.path.clone()),
+                    )
+                });
+                log::info!(
+                    "{}: opening path {:?} in worktree {} ({})",
+                    username,
+                    project_path.1,
+                    project_path.0,
+                    worktree_root_name,
+                );
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer(project_path.clone(), cx)
+                    })
+                    .await?;
+                log::info!(
+                    "{}: opened path {:?} in worktree {} ({}) with buffer id {}",
+                    username,
+                    project_path.1,
+                    project_path.0,
+                    worktree_root_name,
+                    buffer.read_with(cx, |buffer, _| buffer.remote_id())
+                );
+                buffers.insert(buffer.clone());
+                buffer
+            } else {
+                buffers.iter().choose(&mut *rng.lock()).unwrap().clone()
+            };
 
-                        let mut new_name = String::new();
-                        for _ in 0..10 {
-                            let letter = rng.lock().gen_range('a'..='z');
-                            new_name.push(letter);
-                        }
-
-                        let is_dir = rng.lock().gen::<bool>();
-                        let mut new_path = PathBuf::new();
-                        new_path.push(new_name);
-                        if !is_dir {
-                            new_path.set_extension("rs");
-                        }
+            let choice = rng.lock().gen_range(0..100);
+            match choice {
+                0..=9 => {
+                    cx.update(|cx| {
                         log::info!(
-                            "{}: creating {:?} in worktree {} ({})",
+                            "{}: dropping buffer {:?}",
                             username,
-                            new_path,
-                            worktree_id,
-                            worktree_root_name,
+                            buffer.read(cx).file().unwrap().full_path(cx)
                         );
-                        project
-                            .update(cx, |project, cx| {
-                                project.create_entry((worktree_id, new_path), is_dir, cx)
-                            })
-                            .unwrap()
-                            .await?;
-                    }
-                    _ => {
-                        buffer.update(cx, |buffer, cx| {
-                            log::info!(
-                                "{}: updating buffer {} ({:?})",
-                                username,
-                                buffer.remote_id(),
-                                buffer.file().unwrap().full_path(cx)
-                            );
-                            if rng.lock().gen_bool(0.7) {
-                                buffer.randomly_edit(&mut *rng.lock(), 5, cx);
-                            } else {
-                                buffer.randomly_undo_redo(&mut *rng.lock(), cx);
-                            }
-                        });
+                        buffers.remove(&buffer);
+                        drop(buffer);
+                    });
+                }
+                10..=19 => {
+                    let completions = project.update(cx, |project, cx| {
+                        log::info!(
+                            "{}: requesting completions for buffer {} ({:?})",
+                            username,
+                            buffer.read(cx).remote_id(),
+                            buffer.read(cx).file().unwrap().full_path(cx)
+                        );
+                        let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                        project.completions(&buffer, offset, cx)
+                    });
+                    let completions = cx.background().spawn(async move {
+                        completions
+                            .await
+                            .map_err(|err| anyhow!("completions request failed: {:?}", err))
+                    });
+                    if rng.lock().gen_bool(0.3) {
+                        log::info!("{}: detaching completions request", username);
+                        cx.update(|cx| completions.detach_and_log_err(cx));
+                    } else {
+                        completions.await?;
                     }
                 }
-                cx.background().simulate_random_delay().await;
+                20..=29 => {
+                    let code_actions = project.update(cx, |project, cx| {
+                        log::info!(
+                            "{}: requesting code actions for buffer {} ({:?})",
+                            username,
+                            buffer.read(cx).remote_id(),
+                            buffer.read(cx).file().unwrap().full_path(cx)
+                        );
+                        let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
+                        project.code_actions(&buffer, range, cx)
+                    });
+                    let code_actions = cx.background().spawn(async move {
+                        code_actions
+                            .await
+                            .map_err(|err| anyhow!("code actions request failed: {:?}", err))
+                    });
+                    if rng.lock().gen_bool(0.3) {
+                        log::info!("{}: detaching code actions request", username);
+                        cx.update(|cx| code_actions.detach_and_log_err(cx));
+                    } else {
+                        code_actions.await?;
+                    }
+                }
+                30..=39 if buffer.read_with(cx, |buffer, _| buffer.is_dirty()) => {
+                    let (requested_version, save) = buffer.update(cx, |buffer, cx| {
+                        log::info!(
+                            "{}: saving buffer {} ({:?})",
+                            username,
+                            buffer.remote_id(),
+                            buffer.file().unwrap().full_path(cx)
+                        );
+                        (buffer.version(), buffer.save(cx))
+                    });
+                    let save = cx.background().spawn(async move {
+                        let (saved_version, _, _) = save
+                            .await
+                            .map_err(|err| anyhow!("save request failed: {:?}", err))?;
+                        assert!(saved_version.observed_all(&requested_version));
+                        Ok::<_, anyhow::Error>(())
+                    });
+                    if rng.lock().gen_bool(0.3) {
+                        log::info!("{}: detaching save request", username);
+                        cx.update(|cx| save.detach_and_log_err(cx));
+                    } else {
+                        save.await?;
+                    }
+                }
+                40..=44 => {
+                    let prepare_rename = project.update(cx, |project, cx| {
+                        log::info!(
+                            "{}: preparing rename for buffer {} ({:?})",
+                            username,
+                            buffer.read(cx).remote_id(),
+                            buffer.read(cx).file().unwrap().full_path(cx)
+                        );
+                        let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                        project.prepare_rename(buffer, offset, cx)
+                    });
+                    let prepare_rename = cx.background().spawn(async move {
+                        prepare_rename
+                            .await
+                            .map_err(|err| anyhow!("prepare rename request failed: {:?}", err))
+                    });
+                    if rng.lock().gen_bool(0.3) {
+                        log::info!("{}: detaching prepare rename request", username);
+                        cx.update(|cx| prepare_rename.detach_and_log_err(cx));
+                    } else {
+                        prepare_rename.await?;
+                    }
+                }
+                45..=49 => {
+                    let definitions = project.update(cx, |project, cx| {
+                        log::info!(
+                            "{}: requesting definitions for buffer {} ({:?})",
+                            username,
+                            buffer.read(cx).remote_id(),
+                            buffer.read(cx).file().unwrap().full_path(cx)
+                        );
+                        let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                        project.definition(&buffer, offset, cx)
+                    });
+                    let definitions = cx.background().spawn(async move {
+                        definitions
+                            .await
+                            .map_err(|err| anyhow!("definitions request failed: {:?}", err))
+                    });
+                    if rng.lock().gen_bool(0.3) {
+                        log::info!("{}: detaching definitions request", username);
+                        cx.update(|cx| definitions.detach_and_log_err(cx));
+                    } else {
+                        buffers.extend(definitions.await?.into_iter().map(|loc| loc.target.buffer));
+                    }
+                }
+                50..=54 => {
+                    let highlights = project.update(cx, |project, cx| {
+                        log::info!(
+                            "{}: requesting highlights for buffer {} ({:?})",
+                            username,
+                            buffer.read(cx).remote_id(),
+                            buffer.read(cx).file().unwrap().full_path(cx)
+                        );
+                        let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                        project.document_highlights(&buffer, offset, cx)
+                    });
+                    let highlights = cx.background().spawn(async move {
+                        highlights
+                            .await
+                            .map_err(|err| anyhow!("highlights request failed: {:?}", err))
+                    });
+                    if rng.lock().gen_bool(0.3) {
+                        log::info!("{}: detaching highlights request", username);
+                        cx.update(|cx| highlights.detach_and_log_err(cx));
+                    } else {
+                        highlights.await?;
+                    }
+                }
+                55..=59 => {
+                    let search = project.update(cx, |project, cx| {
+                        let query = rng.lock().gen_range('a'..='z');
+                        log::info!("{}: project-wide search {:?}", username, query);
+                        project.search(SearchQuery::text(query, false, false), cx)
+                    });
+                    let search = cx.background().spawn(async move {
+                        search
+                            .await
+                            .map_err(|err| anyhow!("search request failed: {:?}", err))
+                    });
+                    if rng.lock().gen_bool(0.3) {
+                        log::info!("{}: detaching search request", username);
+                        cx.update(|cx| search.detach_and_log_err(cx));
+                    } else {
+                        buffers.extend(search.await?.into_keys());
+                    }
+                }
+                60..=69 => {
+                    let worktree = project
+                        .read_with(cx, |project, cx| {
+                            project
+                                .worktrees(cx)
+                                .filter(|worktree| {
+                                    let worktree = worktree.read(cx);
+                                    worktree.is_visible()
+                                        && worktree.entries(false).any(|e| e.is_file())
+                                        && worktree.root_entry().map_or(false, |e| e.is_dir())
+                                })
+                                .choose(&mut *rng.lock())
+                        })
+                        .unwrap();
+                    let (worktree_id, worktree_root_name) = worktree
+                        .read_with(cx, |worktree, _| {
+                            (worktree.id(), worktree.root_name().to_string())
+                        });
+
+                    let mut new_name = String::new();
+                    for _ in 0..10 {
+                        let letter = rng.lock().gen_range('a'..='z');
+                        new_name.push(letter);
+                    }
+
+                    let is_dir = rng.lock().gen::<bool>();
+                    let mut new_path = PathBuf::new();
+                    new_path.push(new_name);
+                    if !is_dir {
+                        new_path.set_extension("rs");
+                    }
+                    log::info!(
+                        "{}: creating {:?} in worktree {} ({})",
+                        username,
+                        new_path,
+                        worktree_id,
+                        worktree_root_name,
+                    );
+                    project
+                        .update(cx, |project, cx| {
+                            project.create_entry((worktree_id, new_path), is_dir, cx)
+                        })
+                        .unwrap()
+                        .await?;
+                }
+                _ => {
+                    buffer.update(cx, |buffer, cx| {
+                        log::info!(
+                            "{}: updating buffer {} ({:?})",
+                            username,
+                            buffer.remote_id(),
+                            buffer.file().unwrap().full_path(cx)
+                        );
+                        if rng.lock().gen_bool(0.7) {
+                            buffer.randomly_edit(&mut *rng.lock(), 5, cx);
+                        } else {
+                            buffer.randomly_undo_redo(&mut *rng.lock(), cx);
+                        }
+                    });
+                }
             }
+
             Ok(())
         }
 
-        let result = simulate_internal(&mut self, &username, op_start_signal, rng, &mut cx).await;
+        // Setup language server
+        let mut language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            None,
+        );
+        language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                name: "the-fake-language-server",
+                capabilities: lsp::LanguageServer::full_capabilities(),
+                initializer: Some(Box::new({
+                    let rng = rng.clone();
+                    let fs = self.fs.clone();
+                    move |fake_server: &mut FakeLanguageServer| {
+                        fake_server.handle_request::<lsp::request::Completion, _, _>(
+                            |_, _| async move {
+                                Ok(Some(lsp::CompletionResponse::Array(vec![
+                                    lsp::CompletionItem {
+                                        text_edit: Some(lsp::CompletionTextEdit::Edit(
+                                            lsp::TextEdit {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 0),
+                                                ),
+                                                new_text: "the-new-text".to_string(),
+                                            },
+                                        )),
+                                        ..Default::default()
+                                    },
+                                ])))
+                            },
+                        );
+
+                        fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                            |_, _| async move {
+                                Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                                    lsp::CodeAction {
+                                        title: "the-code-action".to_string(),
+                                        ..Default::default()
+                                    },
+                                )]))
+                            },
+                        );
+
+                        fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
+                            |params, _| async move {
+                                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                                    params.position,
+                                    params.position,
+                                ))))
+                            },
+                        );
+
+                        fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
+                            let fs = fs.clone();
+                            let rng = rng.clone();
+                            move |_, _| {
+                                let fs = fs.clone();
+                                let rng = rng.clone();
+                                async move {
+                                    let files = fs.files().await;
+                                    let mut rng = rng.lock();
+                                    let count = rng.gen_range::<usize, _>(1..3);
+                                    let files = (0..count)
+                                        .map(|_| files.choose(&mut *rng).unwrap())
+                                        .collect::<Vec<_>>();
+                                    log::info!("LSP: Returning definitions in files {:?}", &files);
+                                    Ok(Some(lsp::GotoDefinitionResponse::Array(
+                                        files
+                                            .into_iter()
+                                            .map(|file| lsp::Location {
+                                                uri: lsp::Url::from_file_path(file).unwrap(),
+                                                range: Default::default(),
+                                            })
+                                            .collect(),
+                                    )))
+                                }
+                            }
+                        });
+
+                        fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
+                            {
+                                let rng = rng.clone();
+                                move |_, _| {
+                                    let mut highlights = Vec::new();
+                                    let highlight_count = rng.lock().gen_range(1..=5);
+                                    for _ in 0..highlight_count {
+                                        let start = PointUtf16::new(
+                                            rng.lock().gen_range(0..100),
+                                            rng.lock().gen_range(0..100),
+                                        );
+                                        let end = PointUtf16::new(
+                                            rng.lock().gen_range(0..100),
+                                            rng.lock().gen_range(0..100),
+                                        );
+                                        let range =
+                                            if start > end { end..start } else { start..end };
+                                        highlights.push(lsp::DocumentHighlight {
+                                            range: range_to_lsp(range.clone()),
+                                            kind: Some(lsp::DocumentHighlightKind::READ),
+                                        });
+                                    }
+                                    highlights.sort_unstable_by_key(|highlight| {
+                                        (highlight.range.start, highlight.range.end)
+                                    });
+                                    async move { Ok(Some(highlights)) }
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..Default::default()
+            }))
+            .await;
+        self.language_registry.add(Arc::new(language));
+
+        while op_start_signal.next().await.is_some() {
+            if let Err(error) = tick(&mut self, &username, rng.clone(), &mut cx).await {
+                log::info!("{} error: {:?}", username, error);
+            }
+
+            cx.background().simulate_random_delay().await;
+        }
         log::info!("{}: done", username);
 
-        (self, cx, result.err())
+        (self, cx)
     }
 }
 
