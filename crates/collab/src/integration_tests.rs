@@ -5784,7 +5784,6 @@ async fn test_random_collaboration(
     let max_peers = env::var("MAX_PEERS")
         .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
         .unwrap_or(5);
-    assert!(max_peers <= 5);
 
     let max_operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -5806,24 +5805,16 @@ async fn test_random_collaboration(
         .await
         .unwrap()
         .user_id;
-    let mut available_guests = vec![
-        "guest-1".to_string(),
-        "guest-2".to_string(),
-        "guest-3".to_string(),
-        "guest-4".to_string(),
-    ];
 
-    for (ix, username) in Some(&"host".to_string())
-        .into_iter()
-        .chain(&available_guests)
-        .enumerate()
-    {
+    let mut available_guests = Vec::new();
+    for ix in 0..max_peers {
+        let username = format!("guest-{}", ix + 1);
         let user_id = db
             .create_user(
                 &format!("{username}@example.com"),
                 false,
                 NewUserParams {
-                    github_login: username.into(),
+                    github_login: username.clone(),
                     github_user_id: (ix + 1) as i32,
                     invite_count: 0,
                 },
@@ -5843,6 +5834,7 @@ async fn test_random_collaboration(
             .respond_to_contact_request(room_creator_user_id, user_id, true)
             .await
             .unwrap();
+        available_guests.push(username);
     }
 
     let _room_creator = server.create_client(cx, "room-creator").await;
