@@ -1631,9 +1631,11 @@ impl NavHistory {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::tests::TestItem;
-    use gpui::TestAppContext;
+    use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
 
     #[gpui::test]
@@ -1911,6 +1913,77 @@ mod tests {
             ["buffer 1", "buffer 2", "multibuffer 1", "multibuffer 1b*"],
             cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_remove_item_ordering(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labled_item(&workspace, &pane, "A", cx);
+        add_labled_item(&workspace, &pane, "B", cx);
+        add_labled_item(&workspace, &pane, "C", cx);
+        add_labled_item(&workspace, &pane, "D", cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
+        add_labled_item(&workspace, &pane, "1", cx);
+        assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A", "C*"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    fn add_labled_item(
+        workspace: &ViewHandle<Workspace>,
+        pane: &ViewHandle<Pane>,
+        label: &str,
+        cx: &mut TestAppContext,
+    ) -> Box<ViewHandle<TestItem>> {
+        workspace.update(cx, |workspace, cx| {
+            let labeled_item = Box::new(cx.add_view(|_| TestItem::new().with_label(label)));
+
+            Pane::add_item(
+                workspace,
+                pane,
+                labeled_item.clone(),
+                false,
+                false,
+                None,
+                cx,
+            );
+
+            labeled_item
+        })
     }
 
     fn set_labeled_items<const COUNT: usize>(
