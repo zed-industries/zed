@@ -11,11 +11,12 @@ doctest = false
 test-support = []
 
 [dependencies]
-indoc = "1.0.4"
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 sqlez = { path = "../sqlez" }
+util = { path = "../util" }
 anyhow = "1.0.57"
+indoc = "1.0.4"
 async-trait = "0.1"
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }

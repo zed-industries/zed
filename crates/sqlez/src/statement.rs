@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use libsqlite3_sys::*;
 
 use crate::bindable::{Bind, Column};
-use crate::connection::Connection;
+use crate::connection::{error_to_result, Connection};
 
 pub struct Statement<'a> {
     raw_statement: *mut sqlite3_stmt,
@@ -65,6 +65,7 @@ impl<'a> Statement<'a> {
     }
 
     pub fn bind_blob(&self, index: i32, blob: &[u8]) -> Result<()> {
+        // dbg!("bind blob", index);
         let index = index as c_int;
         let blob_pointer = blob.as_ptr() as *const _;
         let len = blob.len() as c_int;
@@ -94,6 +95,7 @@ impl<'a> Statement<'a> {
     }
 
     pub fn bind_double(&self, index: i32, double: f64) -> Result<()> {
+        // dbg!("bind double", index);
         let index = index as c_int;
 
         unsafe {
@@ -110,6 +112,7 @@ impl<'a> Statement<'a> {
     }
 
     pub fn bind_int(&self, index: i32, int: i32) -> Result<()> {
+        // dbg!("bind int", index);
         let index = index as c_int;
 
         unsafe {
@@ -126,6 +129,7 @@ impl<'a> Statement<'a> {
     }
 
     pub fn bind_int64(&self, index: i32, int: i64) -> Result<()> {
+        // dbg!("bind int64", index);
         let index = index as c_int;
         unsafe {
             sqlite3_bind_int64(self.raw_statement, index, int);
@@ -141,6 +145,7 @@ impl<'a> Statement<'a> {
     }
 
     pub fn bind_null(&self, index: i32) -> Result<()> {
+        // dbg!("bind null", index);
         let index = index as c_int;
         unsafe {
             sqlite3_bind_null(self.raw_statement, index);
@@ -149,11 +154,12 @@ impl<'a> Statement<'a> {
     }
 
     pub fn bind_text(&self, index: i32, text: &str) -> Result<()> {
+        // dbg!("bind text", index, text);
         let index = index as c_int;
         let text_pointer = text.as_ptr() as *const _;
         let len = text.len() as c_int;
         unsafe {
-            sqlite3_bind_blob(
+            sqlite3_bind_text(
                 self.raw_statement,
                 index,
                 text_pointer,
@@ -304,10 +310,8 @@ impl<'a> Statement<'a> {
 impl<'a> Drop for Statement<'a> {
     fn drop(&mut self) {
         unsafe {
-            sqlite3_finalize(self.raw_statement);
-            self.connection
-                .last_error()
-                .expect("sqlite3 finalize failed for statement :(");
+            let error = sqlite3_finalize(self.raw_statement);
+            error_to_result(error).expect("failed error");
         };
     }
 }

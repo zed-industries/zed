@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 use std::{
     ffi::OsStr,
@@ -10,7 +10,9 @@ use std::{
 
 use indoc::indoc;
 use sqlez::{
-    connection::Connection, migrations::Migration, bindable::{Column, Bind},
+    bindable::{Bind, Column},
+    connection::Connection,
+    migrations::Migration,
 };
 
 use crate::pane::SerializedDockPane;
@@ -47,13 +49,17 @@ impl WorkspaceId {
 
 impl Bind for WorkspaceId {
     fn bind(&self, statement: &sqlez::statement::Statement, start_index: i32) -> Result<i32> {
-        todo!();
+        statement.bind(self.raw_id(), start_index)
     }
 }
 
 impl Column for WorkspaceId {
-    fn column(statement: &mut sqlez::statement::Statement, start_index: i32) -> Result<(Self, i32)> {
-       todo!();
+    fn column(
+        statement: &mut sqlez::statement::Statement,
+        start_index: i32,
+    ) -> Result<(Self, i32)> {
+        <i64 as Column>::column(statement, start_index)
+            .map(|(id, next_index)| (WorkspaceId(id), next_index))
     }
 }
 
@@ -154,10 +160,8 @@ impl Db {
 
     fn last_workspace_id(&self) -> Option<WorkspaceId> {
         let res = self
-            .prepare(
-                "SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT 1",
-            )
-            .and_then(|stmt| stmt.maybe_row())
+            .prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT 1")
+            .and_then(|mut stmt| stmt.maybe_row())
             .map(|row| row.map(|id| WorkspaceId(id)));
 
         match res {
@@ -172,28 +176,30 @@ impl Db {
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
     pub fn recent_workspaces(&self, limit: usize) -> Vec<(WorkspaceId, Vec<Arc<Path>>)> {
         self.with_savepoint("recent_workspaces", |conn| {
-            let ids = conn.prepare("SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT ?")?
+            let rows = conn
+                .prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?")?
                 .with_bindings(limit)?
-                .rows::<i64>()?
-                .iter()
-                .map(|row| WorkspaceId(*row));
-            
-            let result = Vec::new();
-            
-            let stmt = conn.prepare("SELECT worktree_root FROM worktree_roots WHERE workspace_id = ?")?;
+                .rows::<i64>()?;
+
+            let ids = rows.iter().map(|row| WorkspaceId(*row));
+
+            let mut result = Vec::new();
+
+            let mut stmt =
+                conn.prepare("SELECT worktree_root FROM worktree_roots WHERE workspace_id = ?")?;
             for workspace_id in ids {
-                let roots = stmt.with_bindings(workspace_id.0)?
+                let roots = stmt
+                    .with_bindings(workspace_id.0)?
                     .rows::<Vec<u8>>()?
                     .iter()
-                    .map(|row| {
-                        PathBuf::from(OsStr::from_bytes(&row)).into()
-                    })
+                    .map(|row| PathBuf::from(OsStr::from_bytes(&row)).into())
                     .collect();
                 result.push((workspace_id, roots))
             }
-            
+
             Ok(result)
-        }).unwrap_or_else(|err| {
+        })
+        .unwrap_or_else(|err| {
             log::error!("Failed to get recent workspaces, err: {}", err);
             Vec::new()
         })
@@ -213,11 +219,10 @@ where
     if let Some(preexisting_id) = preexisting_id {
         if preexisting_id != *workspace_id {
             // Should also delete fields in other tables with cascading updates
-            connection.prepare(
-                "DELETE FROM workspaces WHERE workspace_id = ?",
-            )?
-            .with_bindings(preexisting_id.0)?
-            .exec()?;
+            connection
+                .prepare("DELETE FROM workspaces WHERE workspace_id = ?")?
+                .with_bindings(preexisting_id.0)?
+                .exec()?;
         }
     }
 
@@ -231,12 +236,14 @@ where
         // If you need to debug this, here's the string parsing:
         // let path = root.as_ref().to_string_lossy().to_string();
 
-        connection.prepare("INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)")?
+        connection
+            .prepare("INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)")?
             .with_bindings((workspace_id.0, path))?
             .exec()?;
     }
 
-    connection.prepare("UPDATE workspaces SET last_opened_timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?")?
+    connection
+        .prepare("UPDATE workspaces SET timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?")?
         .with_bindings(workspace_id.0)?
         .exec()?;
 
@@ -264,7 +271,7 @@ where
         }
     }
     array_binding_stmt.push(')');
-    
+
     // Any workspace can have multiple independent paths, and these paths
     // can overlap in the database. Take this test data for example:
     //
@@ -336,10 +343,14 @@ where
     // Make sure we bound the parameters correctly
     debug_assert!(worktree_roots.len() as i32 + 1 == stmt.parameter_count());
 
-    let root_bytes: Vec<&[u8]> = worktree_roots.iter()
-        .map(|root| root.as_ref().as_os_str().as_bytes()).collect();
-    
-    stmt.with_bindings((root_bytes, root_bytes.len()))?
+    let root_bytes: Vec<&[u8]> = worktree_roots
+        .iter()
+        .map(|root| root.as_ref().as_os_str().as_bytes())
+        .collect();
+
+    let len = root_bytes.len();
+
+    stmt.with_bindings((root_bytes, len))?
         .maybe_row()
         .map(|row| row.map(|id| WorkspaceId(id)))
 }
@@ -360,7 +371,8 @@ mod tests {
 
     #[test]
     fn test_new_worktrees_for_roots() {
-        let db = Db::open_in_memory();
+        env_logger::init();
+        let db = Db::open_in_memory("test_new_worktrees_for_roots");
 
         // Test creation in 0 case
         let workspace_1 = db.workspace_for_roots::<String>(&[]);
@@ -371,7 +383,7 @@ mod tests {
         assert_eq!(workspace_1.workspace_id, WorkspaceId(1));
 
         // Ensure the timestamps are different
-        sleep(Duration::from_millis(20));
+        sleep(Duration::from_secs(1));
         db.make_new_workspace::<String>(&[]);
 
         // Test pulling another value from recent workspaces
@@ -379,7 +391,7 @@ mod tests {
         assert_eq!(workspace_2.workspace_id, WorkspaceId(2));
 
         // Ensure the timestamps are different
-        sleep(Duration::from_millis(20));
+        sleep(Duration::from_secs(1));
 
         // Test creating a new workspace that doesn't exist already
         let workspace_3 = db.workspace_for_roots(&["/tmp", "/tmp2"]);
@@ -396,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_empty_worktrees() {
-        let db = Db::open_in_memory();
+        let db = Db::open_in_memory("test_empty_worktrees");
 
         assert_eq!(None, db.workspace_id::<String>(&[]));
 
@@ -404,7 +416,6 @@ mod tests {
         db.make_new_workspace::<String>(&[]); //ID 2
         db.update_worktrees(&WorkspaceId(1), &["/tmp", "/tmp2"]);
 
-        db.write_to("test.db").unwrap();
         // Sanity check
         assert_eq!(db.workspace_id(&["/tmp", "/tmp2"]), Some(WorkspaceId(1)));
 
@@ -436,7 +447,7 @@ mod tests {
             (WorkspaceId(7), vec!["/tmp2"]),
         ];
 
-        let db = Db::open_in_memory();
+        let db = Db::open_in_memory("test_more_workspace_ids");
 
         for (workspace_id, entries) in data {
             db.make_new_workspace::<String>(&[]);
@@ -470,7 +481,7 @@ mod tests {
             (WorkspaceId(3), vec!["/tmp", "/tmp2", "/tmp3"]),
         ];
 
-        let db = Db::open_in_memory();
+        let db = Db::open_in_memory("test_detect_workspace_id");
 
         for (workspace_id, entries) in data {
             db.make_new_workspace::<String>(&[]);
@@ -511,7 +522,7 @@ mod tests {
             (WorkspaceId(3), vec!["/tmp2", "/tmp3"]),
         ];
 
-        let db = Db::open_in_memory();
+        let db = Db::open_in_memory("test_tricky_overlapping_update");
 
         // Load in the test data
         for (workspace_id, entries) in data {
@@ -519,6 +530,7 @@ mod tests {
             db.update_worktrees(workspace_id, entries);
         }
 
+        sleep(Duration::from_secs(1));
         // Execute the update
         db.update_worktrees(&WorkspaceId(2), &["/tmp2", "/tmp3"]);
 

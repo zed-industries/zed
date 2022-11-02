@@ -4,10 +4,8 @@ const TEST_FILE: &'static str = "test-db.db";
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    let db = db::Db::open_in_memory();
-    if db.real().is_none() {
-        return Err(anyhow::anyhow!("Migrations failed"));
-    }
+    let db = db::Db::open_in_memory("db");
+
     let file = Path::new(TEST_FILE);
 
     let f = File::create(file)?;

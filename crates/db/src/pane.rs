@@ -1,16 +1,21 @@
-
 use std::str::FromStr;
 
 use gpui::Axis;
 use indoc::indoc;
-use sqlez::{migrations::Migration, bindable::{Bind, Column}, connection::Connection, statement::Statement};
-
+use sqlez::{
+    bindable::{Bind, Column},
+    migrations::Migration,
+    statement::Statement,
+};
+use util::{iife, ResultExt};
 
 use crate::{items::ItemId, workspace::WorkspaceId};
 
 use super::Db;
 
-pub(crate) const PANE_MIGRATIONS: Migration = Migration::new("pane", &[indoc! {"
+pub(crate) const PANE_MIGRATIONS: Migration = Migration::new(
+    "pane",
+    &[indoc! {"
 CREATE TABLE dock_panes(
     dock_pane_id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL,
@@ -19,7 +24,7 @@ CREATE TABLE dock_panes(
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 ) STRICT;
 
-CREATE TABLE pane_groups(
+CREATE TABLE pane_groups( -- Inner nodes
     group_id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL,
     parent_group INTEGER, -- NULL indicates that this is a root node
@@ -28,7 +33,8 @@ CREATE TABLE pane_groups(
     FOREIGN KEY(parent_group) REFERENCES pane_groups(group_id) ON DELETE CASCADE
 ) STRICT;
 
-CREATE TABLE grouped_panes(
+
+CREATE TABLE grouped_panes( -- Leaf nodes 
     pane_id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL,
     group_id INTEGER NOT NULL,
@@ -65,7 +71,8 @@ CREATE TABLE dock_items(
     FOREIGN KEY(dock_pane_id) REFERENCES dock_panes(dock_pane_id) ON DELETE CASCADE,
     FOREIGN KEY(item_id) REFERENCES items(item_id)ON DELETE CASCADE
 ) STRICT;
-"}]);
+"}],
+);
 
 // We have an many-branched, unbalanced tree with three types:
 // Pane Groups
@@ -137,10 +144,9 @@ pub struct SerializedPane {
     children: Vec<ItemId>,
 }
 
-
 //********* CURRENTLY IN USE TYPES: *********
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum DockAnchor {
     #[default]
     Bottom,
@@ -162,12 +168,25 @@ impl FromStr for DockAnchor {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> anyhow::Result<Self> {
-        match s { 
+        match s {
             "Bottom" => Ok(DockAnchor::Bottom),
             "Right" => Ok(DockAnchor::Right),
             "Expanded" => Ok(DockAnchor::Expanded),
-            _ => anyhow::bail!("Not a valid dock anchor")
+            _ => anyhow::bail!("Not a valid dock anchor"),
         }
+    }
+}
+
+impl Bind for DockAnchor {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        statement.bind(self.to_string(), start_index)
+    }
+}
+
+impl Column for DockAnchor {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        <String as Column>::column(statement, start_index)
+            .and_then(|(str, next_index)| Ok((DockAnchor::from_str(&str)?, next_index)))
     }
 }
 
@@ -178,11 +197,30 @@ pub struct SerializedDockPane {
 }
 
 impl SerializedDockPane {
-    pub fn to_row(&self, workspace: WorkspaceId) -> DockRow {
-        DockRow { workspace_id: workspace, anchor_position: self.anchor_position, visible: self.visible }
+    fn to_row(&self, workspace: &WorkspaceId) -> DockRow {
+        DockRow {
+            workspace_id: *workspace,
+            anchor_position: self.anchor_position,
+            visible: self.visible,
+        }
     }
 }
 
+impl Column for SerializedDockPane {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        <(DockAnchor, bool) as Column>::column(statement, start_index).map(
+            |((anchor_position, visible), next_index)| {
+                (
+                    SerializedDockPane {
+                        anchor_position,
+                        visible,
+                    },
+                    next_index,
+                )
+            },
+        )
+    }
+}
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct DockRow {
@@ -191,24 +229,16 @@ pub(crate) struct DockRow {
     visible: bool,
 }
 
-impl DockRow {
-    pub fn to_pane(&self) -> SerializedDockPane {
-        SerializedDockPane { anchor_position: self.anchor_position, visible: self.visible }
-    }
-}
-
 impl Bind for DockRow {
     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        statement.bind((self.workspace_id, self.anchor_position.to_string(), self.visible), start_index)
-    }
-}
-
-impl Column for DockRow {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        <(WorkspaceId, &str, bool) as Column>::column(statement, start_index)
-            .map(|((workspace_id, anchor_position, visible), next_index)| {
-                
-            })
+        statement.bind(
+            (
+                self.workspace_id,
+                self.anchor_position.to_string(),
+                self.visible,
+            ),
+            start_index,
+        )
     }
 }
 
@@ -267,75 +297,37 @@ impl Db {
     }
 
     pub fn get_dock_pane(&self, workspace: WorkspaceId) -> Option<SerializedDockPane> {
-        fn logic(conn: &Connection, workspace: WorkspaceId) -> anyhow::Result<Option<SerializedDockPane>> {
-
-            let mut stmt = conn.prepare("SELECT workspace_id, anchor_position, visible FROM dock_panes WHERE workspace_id = ?")?
-                .maybe_row()
-                .map(|row| DockRow::col);
-            
-            
-            let dock_panes = stmt.query_row([workspace.raw_id()], |row_ref| from_row::<DockRow>).optional();
-            
-            let mut dock_panes_iter = stmt.query_and_then([workspace.raw_id()], from_row::<DockRow>)?;
-            let dock_pane = dock_panes_iter
-                    .next()
-                    .and_then(|dock_row|
-                        dock_row
-                            .ok()
-                            .map(|dock_row| dock_row.to_pane()));
-            
-            Ok(dock_pane)
-        }
-
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-                
-                match logic(&lock, workspace) {
-                    Ok(dock_pane) => dock_pane,
-                    Err(err) => {
-                        log::error!("Failed to get the dock pane: {}", err);
-                        None
-                    },
-                }
-            })
-            .unwrap_or(None)
-            
+        iife!({
+            self.prepare("SELECT anchor_position, visible FROM dock_panes WHERE workspace_id = ?")?
+                .with_bindings(workspace)?
+                .maybe_row::<SerializedDockPane>()
+        })
+        .log_err()
+        .flatten()
     }
 
-    pub fn save_dock_pane(&self, workspace: WorkspaceId, dock_pane: SerializedDockPane) {
-        to_params_named(dock_pane.to_row(workspace))
-            .map_err(|err| {
-                log::error!("Failed to parse params for the dock row: {}", err);
-                err
-            })
-            .ok()
-            .zip(self.real())
-            .map(|(params, db)| {
-                // TODO: overwrite old dock panes if need be
-                let query = "INSERT INTO dock_panes (workspace_id, anchor_position, visible) VALUES (:workspace_id, :anchor_position, :visible);";
-                
-                db.connection
-                    .lock()
-                    .execute(query, params.to_slice().as_slice())
-                    .map(|_| ()) // Eat the return value
-                    .unwrap_or_else(|err| {
-                        log::error!("Failed to insert new dock pane into DB: {}", err);
-                    })
-            });
+    pub fn save_dock_pane(&self, workspace: &WorkspaceId, dock_pane: &SerializedDockPane) {
+        iife!({
+            self.prepare(
+                "INSERT INTO dock_panes (workspace_id, anchor_position, visible) VALUES (?, ?, ?);",
+            )?
+            .with_bindings(dock_pane.to_row(workspace))?
+            .insert()
+        })
+        .log_err();
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::Db;
+    use crate::{pane::SerializedPane, Db};
 
     use super::{DockAnchor, SerializedDockPane};
 
     #[test]
     fn test_basic_dock_pane() {
-        let db = Db::open_in_memory();
+        let db = Db::open_in_memory("basic_dock_pane");
 
         let workspace = db.workspace_for_roots(&["/tmp"]);
 
@@ -344,7 +336,28 @@ mod tests {
             visible: true,
         };
 
-        db.save_dock_pane(workspace.workspace_id, dock_pane);
+        db.save_dock_pane(&workspace.workspace_id, &dock_pane);
+
+        let new_workspace = db.workspace_for_roots(&["/tmp"]);
+
+        assert_eq!(new_workspace.dock_pane.unwrap(), dock_pane);
+    }
+
+    #[test]
+    fn test_dock_simple_split() {
+        let db = Db::open_in_memory("simple_split");
+
+        let workspace = db.workspace_for_roots(&["/tmp"]);
+
+        let center_pane = SerializedPane {
+            pane_id: crate::pane::PaneId {
+                workspace_id: workspace.workspace_id,
+                pane_id: 1,
+            },
+            children: vec![],
+        };
+
+        db.save_dock_pane(&workspace.workspace_id, &dock_pane);
 
         let new_workspace = db.workspace_for_roots(&["/tmp"]);
 

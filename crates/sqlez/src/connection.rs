@@ -32,6 +32,9 @@ impl Connection {
                 0 as *const _,
             );
 
+            // Turn on extended error codes
+            sqlite3_extended_result_codes(connection.sqlite3, 1);
+
             connection.last_error()?;
         }
 
@@ -71,6 +74,7 @@ impl Connection {
                 0 as *mut _,
                 0 as *mut _,
             );
+            sqlite3_errcode(self.sqlite3);
             self.last_error()?;
         }
         Ok(())
@@ -95,29 +99,7 @@ impl Connection {
     }
 
     pub(crate) fn last_error(&self) -> Result<()> {
-        const NON_ERROR_CODES: &[i32] = &[SQLITE_OK, SQLITE_ROW];
-        unsafe {
-            let code = sqlite3_errcode(self.sqlite3);
-            if NON_ERROR_CODES.contains(&code) {
-                return Ok(());
-            }
-
-            let message = sqlite3_errmsg(self.sqlite3);
-            let message = if message.is_null() {
-                None
-            } else {
-                Some(
-                    String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
-                        .into_owned(),
-                )
-            };
-
-            Err(anyhow!(
-                "Sqlite call failed with code {} and message: {:?}",
-                code as isize,
-                message
-            ))
-        }
+        unsafe { error_to_result(sqlite3_errcode(self.sqlite3)) }
     }
 }
 
@@ -127,12 +109,37 @@ impl Drop for Connection {
     }
 }
 
+pub(crate) fn error_to_result(code: std::os::raw::c_int) -> Result<()> {
+    const NON_ERROR_CODES: &[i32] = &[SQLITE_OK, SQLITE_ROW];
+    unsafe {
+        if NON_ERROR_CODES.contains(&code) {
+            return Ok(());
+        }
+
+        let message = sqlite3_errstr(code);
+        let message = if message.is_null() {
+            None
+        } else {
+            Some(
+                String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
+                    .into_owned(),
+            )
+        };
+
+        Err(anyhow!(
+            "Sqlite call failed with code {} and message: {:?}",
+            code as isize,
+            message
+        ))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use anyhow::Result;
     use indoc::indoc;
 
-    use crate::connection::Connection;
+    use crate::{connection::Connection, migrations::Migration};
 
     #[test]
     fn string_round_trips() -> Result<()> {
@@ -233,5 +240,35 @@ mod test {
             .rows::<Vec<u8>>()
             .unwrap();
         assert_eq!(read_blobs, vec![blob]);
+    }
+
+    #[test]
+    fn test_kv_store() -> anyhow::Result<()> {
+        let connection = Connection::open_memory("kv_store");
+
+        Migration::new(
+            "kv",
+            &["CREATE TABLE kv_store(
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            ) STRICT;"],
+        )
+        .run(&connection)
+        .unwrap();
+
+        let mut stmt = connection.prepare("INSERT INTO kv_store(key, value) VALUES(?, ?)")?;
+        stmt.bind_text(1, "a").unwrap();
+        stmt.bind_text(2, "b").unwrap();
+        stmt.exec().unwrap();
+        let id = connection.last_insert_id();
+
+        let res = connection
+            .prepare("SELECT key, value FROM kv_store WHERE rowid = ?")?
+            .with_bindings(id)?
+            .row::<(String, String)>()?;
+
+        assert_eq!(res, ("a".to_string(), "b".to_string()));
+
+        Ok(())
     }
 }

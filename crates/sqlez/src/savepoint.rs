@@ -6,9 +6,9 @@ impl Connection {
     // Run a set of commands within the context of a `SAVEPOINT name`. If the callback
     // returns Err(_), the savepoint will be rolled back. Otherwise, the save
     // point is released.
-    pub fn with_savepoint<R, F>(&mut self, name: impl AsRef<str>, f: F) -> Result<R>
+    pub fn with_savepoint<R, F>(&self, name: impl AsRef<str>, f: F) -> Result<R>
     where
-        F: FnOnce(&mut Connection) -> Result<R>,
+        F: FnOnce(&Connection) -> Result<R>,
     {
         let name = name.as_ref().to_owned();
         self.exec(format!("SAVEPOINT {}", &name))?;
@@ -28,13 +28,9 @@ impl Connection {
     // Run a set of commands within the context of a `SAVEPOINT name`. If the callback
     // returns Ok(None) or Err(_), the savepoint will be rolled back. Otherwise, the save
     // point is released.
-    pub fn with_savepoint_rollback<R, F>(
-        &mut self,
-        name: impl AsRef<str>,
-        f: F,
-    ) -> Result<Option<R>>
+    pub fn with_savepoint_rollback<R, F>(&self, name: impl AsRef<str>, f: F) -> Result<Option<R>>
     where
-        F: FnOnce(&mut Connection) -> Result<Option<R>>,
+        F: FnOnce(&Connection) -> Result<Option<R>>,
     {
         let name = name.as_ref().to_owned();
         self.exec(format!("SAVEPOINT {}", &name))?;
@@ -60,7 +56,7 @@ mod tests {
 
     #[test]
     fn test_nested_savepoints() -> Result<()> {
-        let mut connection = Connection::open_memory("nested_savepoints");
+        let connection = Connection::open_memory("nested_savepoints");
 
         connection
             .exec(indoc! {"

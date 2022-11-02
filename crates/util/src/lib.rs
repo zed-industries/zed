@@ -204,6 +204,13 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
     }
 }
 
+#[macro_export]
+macro_rules! iife {
+    ($block:block) => {
+        (|| $block)()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +227,19 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
+    }
+
+    #[test]
+    fn test_iife() {
+        fn option_returning_function() -> Option<()> {
+            None
+        }
+
+        let foo = iife!({
+            option_returning_function()?;
+            Some(())
+        });
+
+        assert_eq!(foo, None);
     }
 }

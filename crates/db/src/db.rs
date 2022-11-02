@@ -18,7 +18,7 @@ use sqlez::thread_safe_connection::ThreadSafeConnection;
 pub use workspace::*;
 
 #[derive(Clone)]
-struct Db(ThreadSafeConnection);
+pub struct Db(ThreadSafeConnection);
 
 impl Deref for Db {
     type Target = sqlez::connection::Connection;
@@ -54,15 +54,15 @@ impl Db {
     }
 
     /// Open a in memory database for testing and as a fallback.
-    pub fn open_in_memory() -> Self {
-        Db(
-            ThreadSafeConnection::new("Zed DB", false).with_initialize_query(indoc! {"
+    pub fn open_in_memory(db_name: &str) -> Self {
+        Db(ThreadSafeConnection::new(db_name, false)
+            .with_initialize_query(indoc! {"
                     PRAGMA journal_mode=WAL;
                     PRAGMA synchronous=NORMAL;
                     PRAGMA foreign_keys=TRUE;
                     PRAGMA case_sensitive_like=TRUE;
-                    "}),
-        )
+                    "})
+            .with_migrations(&[KVP_MIGRATION, WORKSPACES_MIGRATION, PANE_MIGRATIONS]))
     }
 
     pub fn write_to<P: AsRef<Path>>(&self, dest: P) -> Result<()> {

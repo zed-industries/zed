@@ -23,7 +23,7 @@ impl Db {
 
     pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
         self.0
-            .prepare("INSERT OR REPLACE INTO kv_store(key, value) VALUES (?, ?)")?
+            .prepare("INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))")?
             .with_bindings((key, value))?
             .exec()
     }
@@ -44,21 +44,21 @@ mod tests {
 
     #[test]
     fn test_kvp() -> Result<()> {
-        let db = Db::open_in_memory();
+        let db = Db::open_in_memory("test_kvp");
 
-        assert_eq!(db.read_kvp("key-1")?, None);
+        assert_eq!(db.read_kvp("key-1").unwrap(), None);
 
-        db.write_kvp("key-1", "one")?;
-        assert_eq!(db.read_kvp("key-1")?, Some("one".to_string()));
+        db.write_kvp("key-1", "one").unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), Some("one".to_string()));
 
-        db.write_kvp("key-1", "one-2")?;
-        assert_eq!(db.read_kvp("key-1")?, Some("one-2".to_string()));
+        db.write_kvp("key-1", "one-2").unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), Some("one-2".to_string()));
 
-        db.write_kvp("key-2", "two")?;
-        assert_eq!(db.read_kvp("key-2")?, Some("two".to_string()));
+        db.write_kvp("key-2", "two").unwrap();
+        assert_eq!(db.read_kvp("key-2").unwrap(), Some("two".to_string()));
 
-        db.delete_kvp("key-1")?;
-        assert_eq!(db.read_kvp("key-1")?, None);
+        db.delete_kvp("key-1").unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), None);
 
         Ok(())
     }

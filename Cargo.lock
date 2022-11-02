@@ -1559,6 +1559,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "sqlez",
  "tempdir",
+ "util",
 ]
 
 [[package]]
