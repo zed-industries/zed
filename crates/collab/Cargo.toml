@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
-version = "0.2.0"
+version = "0.2.1"
 
 [[bin]]
 name = "collab"
