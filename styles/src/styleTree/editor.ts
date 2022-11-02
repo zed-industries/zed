@@ -261,7 +261,7 @@ export default function editor(colorScheme: ColorScheme) {
       },
     },
     scrollbar: {
-      width: 8,
+      width: 12,
       minHeightFactor: 1.0,
       track: {
         border: border(layer, "variant", { left: true }),
