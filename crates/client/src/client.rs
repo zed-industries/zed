@@ -835,11 +835,14 @@ impl Client {
                             continue;
                         };
 
-                        if let Some(handler) = state.message_handlers.get(&payload_type_id).cloned()
-                        {
-                            drop(state); // Avoid deadlocks if the handler interacts with rpc::Client
-                            let future = handler(model, message, &this, cx.clone());
+                        let handler = state.message_handlers.get(&payload_type_id).cloned();
+                        // Dropping the state prevents deadlocks if the handler interacts with rpc::Client.
+                        // It also ensures we don't hold the lock while yielding back to the executor, as
+                        // that might cause the executor thread driving this future to block indefinitely.
+                        drop(state);
 
+                        if let Some(handler) = handler {
+                            let future = handler(model, message, &this, cx.clone());
                             let client_id = this.id;
                             log::debug!(
                                 "rpc message received. client_id:{}, message_id:{}, sender_id:{:?}, type:{}",

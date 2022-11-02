@@ -1041,17 +1041,19 @@ impl Server {
 
         for conn_id in project.connection_ids() {
             if conn_id != request.sender_id {
-                self.peer.send(
-                    conn_id,
-                    proto::AddProjectCollaborator {
-                        project_id: project_id.to_proto(),
-                        collaborator: Some(proto::Collaborator {
-                            peer_id: request.sender_id.0,
-                            replica_id: replica_id as u32,
-                            user_id: guest_user_id.to_proto(),
-                        }),
-                    },
-                )?;
+                self.peer
+                    .send(
+                        conn_id,
+                        proto::AddProjectCollaborator {
+                            project_id: project_id.to_proto(),
+                            collaborator: Some(proto::Collaborator {
+                                peer_id: request.sender_id.0,
+                                replica_id: replica_id as u32,
+                                user_id: guest_user_id.to_proto(),
+                            }),
+                        },
+                    )
+                    .trace_err();
             }
         }
 
