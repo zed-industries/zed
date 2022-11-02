@@ -1,4 +1,3 @@
-use anyhow::bail;
 use gpui::Axis;
 use indoc::indoc;
 use sqlez::{
@@ -8,7 +7,7 @@ use sqlez::{
 };
 use util::{iife, ResultExt};
 
-use crate::{items::ItemId, workspace::WorkspaceId};
+use crate::{items::ItemId, workspace::WorkspaceId, DockAnchor};
 
 use super::Db;
 
@@ -33,14 +32,15 @@ CREATE TABLE panes(
     FOREIGN KEY(group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
 ) STRICT;
 
-CREATE TABLE dock_panes(
-    pane_id INTEGER PRIMARY KEY,
-    workspace_id INTEGER NOT NULL,
-    anchor_position TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
-    visible INTEGER NOT NULL, -- Boolean
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-    FOREIGN KEY(pane_id) REFERENCES panes(pane_id) ON DELETE CASCADE
-) STRICT;
+-- MOVE TO WORKSPACE TABLE
+// CREATE TABLE dock_panes(
+//     pane_id INTEGER PRIMARY KEY,
+//     workspace_id INTEGER NOT NULL,
+//     anchor_position TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
+//     visible INTEGER NOT NULL, -- Boolean
+//     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+//     FOREIGN KEY(pane_id) REFERENCES panes(pane_id) ON DELETE CASCADE
+// ) STRICT;
 
 CREATE TABLE items(
     item_id INTEGER NOT NULL, -- This is the item's view id, so this is not unique
@@ -77,36 +77,34 @@ pub struct PaneId {
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct PaneGroupId {
     workspace_id: WorkspaceId,
-    group_id: usize,
 }
 
 impl PaneGroupId {
     pub fn root(workspace_id: WorkspaceId) -> Self {
         Self {
             workspace_id,
-            group_id: 0,
+            // group_id: 0,
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub struct SerializedPaneGroup {
-    group_id: PaneGroupId,
     axis: Axis,
     children: Vec<PaneGroupChild>,
 }
 
 impl SerializedPaneGroup {
-    pub fn empty_root(workspace_id: WorkspaceId) -> Self {
+    pub fn empty_root(_workspace_id: WorkspaceId) -> Self {
         Self {
-            group_id: PaneGroupId::root(workspace_id),
+            // group_id: PaneGroupId::root(workspace_id),
             axis: Default::default(),
             children: Default::default(),
         }
     }
 }
 
-struct PaneGroupChildRow {
+struct _PaneGroupChildRow {
     child_pane_id: Option<usize>,
     child_group_id: Option<usize>,
     index: usize,
@@ -120,46 +118,10 @@ pub enum PaneGroupChild {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SerializedPane {
-    pane_id: PaneId,
-    children: Vec<ItemId>,
+    items: Vec<ItemId>,
 }
 
 //********* CURRENTLY IN USE TYPES: *********
-
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
-pub enum DockAnchor {
-    #[default]
-    Bottom,
-    Right,
-    Expanded,
-}
-
-impl Bind for DockAnchor {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        match self {
-            DockAnchor::Bottom => "Bottom",
-            DockAnchor::Right => "Right",
-            DockAnchor::Expanded => "Expanded",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl Column for DockAnchor {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
-            Ok((
-                match anchor_text.as_ref() {
-                    "Bottom" => DockAnchor::Bottom,
-                    "Right" => DockAnchor::Right,
-                    "Expanded" => DockAnchor::Expanded,
-                    _ => bail!("Stored dock anchor is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
-}
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct SerializedDockPane {
@@ -227,56 +189,64 @@ impl Column for DockRow {
 }
 
 impl Db {
-    pub fn get_pane_group(&self, pane_group_id: PaneGroupId) -> SerializedPaneGroup {
-        let axis = self.get_pane_group_axis(pane_group_id);
-        let mut children: Vec<(usize, PaneGroupChild)> = Vec::new();
-        for child_row in self.get_pane_group_children(pane_group_id) {
-            if let Some(child_pane_id) = child_row.child_pane_id {
-                children.push((
-                    child_row.index,
-                    PaneGroupChild::Pane(self.get_pane(PaneId {
-                        workspace_id: pane_group_id.workspace_id,
-                        pane_id: child_pane_id,
-                    })),
-                ));
-            } else if let Some(child_group_id) = child_row.child_group_id {
-                children.push((
-                    child_row.index,
-                    PaneGroupChild::Group(self.get_pane_group(PaneGroupId {
-                        workspace_id: pane_group_id.workspace_id,
-                        group_id: child_group_id,
-                    })),
-                ));
-            }
-        }
-        children.sort_by_key(|(index, _)| *index);
-
-        SerializedPaneGroup {
-            group_id: pane_group_id,
-            axis,
-            children: children.into_iter().map(|(_, child)| child).collect(),
-        }
+    pub fn get_center_group(&self, _workspace: WorkspaceId) -> SerializedPaneGroup {
+        unimplemented!()
     }
 
-    fn get_pane_group_children(
+    pub fn get_pane_group(&self, _pane_group_id: PaneGroupId) -> SerializedPaneGroup {
+        unimplemented!()
+        // let axis = self.get_pane_group_axis(pane_group_id);
+        // let mut children: Vec<(usize, PaneGroupChild)> = Vec::new();
+        // for child_row in self.get_pane_group_children(pane_group_id) {
+        //     if let Some(child_pane_id) = child_row.child_pane_id {
+        //         children.push((
+        //             child_row.index,
+        //             PaneGroupChild::Pane(self.get_pane(PaneId {
+        //                 workspace_id: pane_group_id.workspace_id,
+        //                 pane_id: child_pane_id,
+        //             })),
+        //         ));
+        //     } else if let Some(child_group_id) = child_row.child_group_id {
+        //         children.push((
+        //             child_row.index,
+        //             PaneGroupChild::Group(self.get_pane_group(PaneGroupId {
+        //                 workspace_id: pane_group_id.workspace_id,
+        //                 group_id: child_group_id,
+        //             })),
+        //         ));
+        //     }
+        // }
+        // children.sort_by_key(|(index, _)| *index);
+
+        // SerializedPaneGroup {
+        //     group_id: pane_group_id,
+        //     axis,
+        //     children: children.into_iter().map(|(_, child)| child).collect(),
+        // }
+    }
+
+    fn _get_pane_group_children(
         &self,
         _pane_group_id: PaneGroupId,
-    ) -> impl Iterator<Item = PaneGroupChildRow> {
+    ) -> impl Iterator<Item = _PaneGroupChildRow> {
         Vec::new().into_iter()
     }
 
-    fn get_pane_group_axis(&self, _pane_group_id: PaneGroupId) -> Axis {
+    fn _get_pane_group_axis(&self, _pane_group_id: PaneGroupId) -> Axis {
         unimplemented!();
     }
 
-    pub fn save_pane_splits(&self, _center_pane_group: SerializedPaneGroup) {
+    pub fn save_pane_splits(
+        &self,
+        _workspace: &WorkspaceId,
+        _center_pane_group: &SerializedPaneGroup,
+    ) {
         // Delete the center pane group for this workspace and any of its children
         // Generate new pane group IDs as we go through
         // insert them
-        // Items garbage collect themselves when dropped
     }
 
-    pub(crate) fn get_pane(&self, _pane_id: PaneId) -> SerializedPane {
+    pub(crate) fn _get_pane(&self, _pane_id: PaneId) -> SerializedPane {
         unimplemented!();
     }
 
@@ -305,9 +275,9 @@ impl Db {
 #[cfg(test)]
 mod tests {
 
-    use crate::{pane::SerializedPane, Db};
+    use crate::{items::ItemId, pane::SerializedPane, Db, DockAnchor};
 
-    use super::{DockAnchor, SerializedDockPane};
+    use super::{PaneGroupChild, SerializedDockPane, SerializedPaneGroup};
 
     #[test]
     fn test_basic_dock_pane() {
@@ -333,18 +303,18 @@ mod tests {
 
         let workspace = db.workspace_for_roots(&["/tmp"]);
 
-        let center_pane = SerializedPane {
-            pane_id: crate::pane::PaneId {
-                workspace_id: workspace.workspace_id,
-                pane_id: 1,
-            },
-            children: vec![],
+        // Pane group -> Pane -> 10 , 20
+        let center_pane = SerializedPaneGroup {
+            axis: gpui::Axis::Horizontal,
+            children: vec![PaneGroupChild::Pane(SerializedPane {
+                items: vec![ItemId { item_id: 10 }, ItemId { item_id: 20 }],
+            })],
         };
 
-        db.save_dock_pane(&workspace.workspace_id, &dock_pane);
+        db.save_pane_splits(&workspace.workspace_id, &center_pane);
 
         let new_workspace = db.workspace_for_roots(&["/tmp"]);
 
-        assert_eq!(new_workspace.dock_pane.unwrap(), dock_pane);
+        assert_eq!(new_workspace.center_group, center_pane);
     }
 }

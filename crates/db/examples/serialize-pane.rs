@@ -1,6 +1,6 @@
 use std::{fs::File, path::Path};
 
-use db::pane::{DockAnchor, SerializedDockPane};
+use db::{pane::SerializedDockPane, DockAnchor};
 
 const TEST_FILE: &'static str = "test-db.db";
 

@@ -67,8 +67,7 @@
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ItemId {
-    workspace_id: usize,
-    item_id: usize,
+    pub item_id: usize,
 }
 
 // enum SerializedItemKind {

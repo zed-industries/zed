@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use std::{
     ffi::OsStr,
@@ -16,7 +16,7 @@ use sqlez::{
     statement::Statement,
 };
 
-use crate::pane::SerializedDockPane;
+use crate::pane::{SerializedDockPane, SerializedPaneGroup};
 
 use super::Db;
 
@@ -28,7 +28,11 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
     &[indoc! {"
         CREATE TABLE workspaces(
             workspace_id INTEGER PRIMARY KEY,
+            center_pane_group INTEGER NOT NULL,
+            dock_anchor TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
+            dock_visible INTEGER NOT NULL, -- Boolean
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+            FOREIGN KEY(center_pane_group) REFERENCES pane_groups(group_id)
         ) STRICT;
         
         CREATE TABLE worktree_roots(
@@ -54,10 +58,71 @@ impl Column for WorkspaceId {
     }
 }
 
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum DockAnchor {
+    #[default]
+    Bottom,
+    Right,
+    Expanded,
+}
+
+impl Bind for DockAnchor {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            DockAnchor::Bottom => "Bottom",
+            DockAnchor::Right => "Right",
+            DockAnchor::Expanded => "Expanded",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for DockAnchor {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
+            Ok((
+                match anchor_text.as_ref() {
+                    "Bottom" => DockAnchor::Bottom,
+                    "Right" => DockAnchor::Right,
+                    "Expanded" => DockAnchor::Expanded,
+                    _ => bail!("Stored dock anchor is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct WorkspaceRow {
+    pub workspace_id: WorkspaceId,
+    pub dock_anchor: DockAnchor,
+    pub dock_visible: bool,
+}
+
+impl Column for WorkspaceRow {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        <(WorkspaceId, DockAnchor, bool) as Column>::column(statement, start_index).map(
+            |((id, anchor, visible), next_index)| {
+                (
+                    WorkspaceRow {
+                        workspace_id: id,
+                        dock_anchor: anchor,
+                        dock_visible: visible,
+                    },
+                    next_index,
+                )
+            },
+        )
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct SerializedWorkspace {
     pub workspace_id: WorkspaceId,
-    // pub center_group: SerializedPaneGroup,
+    pub center_group: SerializedPaneGroup,
+    pub dock_anchor: DockAnchor,
+    pub dock_visible: bool,
     pub dock_pane: Option<SerializedDockPane>,
 }
 
@@ -70,15 +135,18 @@ impl Db {
     {
         // Find the workspace id which is uniquely identified by this set of paths
         // return it if found
-        let mut workspace_id = self.workspace_id(worktree_roots);
-        if workspace_id.is_none() && worktree_roots.len() == 0 {
-            workspace_id = self.last_workspace_id();
+        let mut workspace_row = self.workspace(worktree_roots);
+        if workspace_row.is_none() && worktree_roots.len() == 0 {
+            workspace_row = self.last_workspace_id();
         }
 
-        if let Some(workspace_id) = workspace_id {
+        if let Some(workspace_row) = workspace_row {
             SerializedWorkspace {
-                workspace_id,
-                dock_pane: self.get_dock_pane(workspace_id),
+                dock_pane: self.get_dock_pane(workspace_row.workspace_id),
+                center_group: self.get_center_group(workspace_row.workspace_id),
+                workspace_id: workspace_row.workspace_id,
+                dock_anchor: workspace_row.dock_anchor,
+                dock_visible: workspace_row.dock_visible,
             }
         } else {
             self.make_new_workspace(worktree_roots)
@@ -99,7 +167,7 @@ impl Db {
 
             Ok(SerializedWorkspace {
                 workspace_id,
-                dock_pane: None,
+                ..Default::default()
             })
         });
 
@@ -112,11 +180,11 @@ impl Db {
         }
     }
 
-    fn workspace_id<P>(&self, worktree_roots: &[P]) -> Option<WorkspaceId>
+    fn workspace<P>(&self, worktree_roots: &[P]) -> Option<WorkspaceRow>
     where
         P: AsRef<Path> + Debug,
     {
-        match get_workspace_id(worktree_roots, &self) {
+        match get_workspace(worktree_roots, &self) {
             Ok(workspace_id) => workspace_id,
             Err(err) => {
                 log::error!("Failed to get workspace_id: {}", err);
@@ -149,11 +217,10 @@ impl Db {
         }
     }
 
-    fn last_workspace_id(&self) -> Option<WorkspaceId> {
+    fn last_workspace_id(&self) -> Option<WorkspaceRow> {
         let res = self
-            .prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT 1")
-            .and_then(|mut stmt| stmt.maybe_row())
-            .map(|row| row.map(|id| WorkspaceId(id)));
+            .prepare("SELECT workspace_id, dock FROM workspaces ORDER BY timestamp DESC LIMIT 1")
+            .and_then(|mut stmt| stmt.maybe_row::<WorkspaceRow>());
 
         match res {
             Ok(result) => result,
@@ -206,13 +273,13 @@ where
     P: AsRef<Path> + Debug,
 {
     // Lookup any old WorkspaceIds which have the same set of roots, and delete them.
-    let preexisting_id = get_workspace_id(worktree_roots, &connection)?;
-    if let Some(preexisting_id) = preexisting_id {
-        if preexisting_id != *workspace_id {
+    let preexisting_workspace = get_workspace(worktree_roots, &connection)?;
+    if let Some(preexisting_workspace) = preexisting_workspace {
+        if preexisting_workspace.workspace_id != *workspace_id {
             // Should also delete fields in other tables with cascading updates
             connection
                 .prepare("DELETE FROM workspaces WHERE workspace_id = ?")?
-                .with_bindings(preexisting_id.0)?
+                .with_bindings(preexisting_workspace.workspace_id.0)?
                 .exec()?;
         }
     }
@@ -241,7 +308,7 @@ where
     Ok(())
 }
 
-fn get_workspace_id<P>(worktree_roots: &[P], connection: &Connection) -> Result<Option<WorkspaceId>>
+fn get_workspace<P>(worktree_roots: &[P], connection: &Connection) -> Result<Option<WorkspaceRow>>
 where
     P: AsRef<Path> + Debug,
 {
@@ -315,7 +382,7 @@ where
     //       parameters by number.
     let query = format!(
         r#"
-            SELECT workspace_id 
+            SELECT workspace_id, dock_anchor, dock_visible
             FROM (SELECT count(workspace_id) as num_matching, workspace_id FROM worktree_roots
                   WHERE worktree_root in {array_bind} AND workspace_id NOT IN
                     (SELECT wt1.workspace_id FROM worktree_roots as wt1
@@ -331,6 +398,7 @@ where
     // This will only be called on start up and when root workspaces change, no need to waste memory
     // caching it.
     let mut stmt = connection.prepare(&query)?;
+
     // Make sure we bound the parameters correctly
     debug_assert!(worktree_roots.len() as i32 + 1 == stmt.parameter_count());
 
@@ -339,11 +407,10 @@ where
         .map(|root| root.as_ref().as_os_str().as_bytes())
         .collect();
 
-    let len = root_bytes.len();
+    let num_of_roots = root_bytes.len();
 
-    stmt.with_bindings((root_bytes, len))?
-        .maybe_row()
-        .map(|row| row.map(|id| WorkspaceId(id)))
+    stmt.with_bindings((root_bytes, num_of_roots))?
+        .maybe_row::<WorkspaceRow>()
 }
 
 #[cfg(test)]
@@ -401,14 +468,17 @@ mod tests {
     fn test_empty_worktrees() {
         let db = Db::open_in_memory("test_empty_worktrees");
 
-        assert_eq!(None, db.workspace_id::<String>(&[]));
+        assert_eq!(None, db.workspace::<String>(&[]));
 
         db.make_new_workspace::<String>(&[]); //ID 1
         db.make_new_workspace::<String>(&[]); //ID 2
         db.update_worktrees(&WorkspaceId(1), &["/tmp", "/tmp2"]);
 
         // Sanity check
-        assert_eq!(db.workspace_id(&["/tmp", "/tmp2"]), Some(WorkspaceId(1)));
+        assert_eq!(
+            db.workspace(&["/tmp", "/tmp2"]).unwrap().workspace_id,
+            WorkspaceId(1)
+        );
 
         db.update_worktrees::<String>(&WorkspaceId(1), &[]);
 
@@ -416,9 +486,9 @@ mod tests {
         // call would be semantically correct (as those are the workspaces that
         // don't have roots) but I'd prefer that this API to either return exactly one
         // workspace, and None otherwise
-        assert_eq!(db.workspace_id::<String>(&[]), None,);
+        assert_eq!(db.workspace::<String>(&[]), None,);
 
-        assert_eq!(db.last_workspace_id(), Some(WorkspaceId(1)));
+        assert_eq!(db.last_workspace_id().unwrap().workspace_id, WorkspaceId(1));
 
         assert_eq!(
             db.recent_workspaces(2),
@@ -445,23 +515,42 @@ mod tests {
             db.update_worktrees(workspace_id, entries);
         }
 
-        assert_eq!(Some(WorkspaceId(1)), db.workspace_id(&["/tmp1"]));
-        assert_eq!(db.workspace_id(&["/tmp1", "/tmp2"]), Some(WorkspaceId(2)));
         assert_eq!(
-            db.workspace_id(&["/tmp1", "/tmp2", "/tmp3"]),
-            Some(WorkspaceId(3))
+            WorkspaceId(1),
+            db.workspace(&["/tmp1"]).unwrap().workspace_id
         );
-        assert_eq!(db.workspace_id(&["/tmp2", "/tmp3"]), Some(WorkspaceId(4)));
         assert_eq!(
-            db.workspace_id(&["/tmp2", "/tmp3", "/tmp4"]),
-            Some(WorkspaceId(5))
+            db.workspace(&["/tmp1", "/tmp2"]).unwrap().workspace_id,
+            WorkspaceId(2)
         );
-        assert_eq!(db.workspace_id(&["/tmp2", "/tmp4"]), Some(WorkspaceId(6)));
-        assert_eq!(db.workspace_id(&["/tmp2"]), Some(WorkspaceId(7)));
+        assert_eq!(
+            db.workspace(&["/tmp1", "/tmp2", "/tmp3"])
+                .unwrap()
+                .workspace_id,
+            WorkspaceId(3)
+        );
+        assert_eq!(
+            db.workspace(&["/tmp2", "/tmp3"]).unwrap().workspace_id,
+            WorkspaceId(4)
+        );
+        assert_eq!(
+            db.workspace(&["/tmp2", "/tmp3", "/tmp4"])
+                .unwrap()
+                .workspace_id,
+            WorkspaceId(5)
+        );
+        assert_eq!(
+            db.workspace(&["/tmp2", "/tmp4"]).unwrap().workspace_id,
+            WorkspaceId(6)
+        );
+        assert_eq!(
+            db.workspace(&["/tmp2"]).unwrap().workspace_id,
+            WorkspaceId(7)
+        );
 
-        assert_eq!(db.workspace_id(&["/tmp1", "/tmp5"]), None);
-        assert_eq!(db.workspace_id(&["/tmp5"]), None);
-        assert_eq!(db.workspace_id(&["/tmp2", "/tmp3", "/tmp4", "/tmp5"]), None);
+        assert_eq!(db.workspace(&["/tmp1", "/tmp5"]), None);
+        assert_eq!(db.workspace(&["/tmp5"]), None);
+        assert_eq!(db.workspace(&["/tmp2", "/tmp3", "/tmp4", "/tmp5"]), None);
     }
 
     #[test]
@@ -479,13 +568,21 @@ mod tests {
             db.update_worktrees(workspace_id, entries);
         }
 
-        assert_eq!(db.workspace_id(&["/tmp2"]), None);
-        assert_eq!(db.workspace_id(&["/tmp2", "/tmp3"]), None);
-        assert_eq!(db.workspace_id(&["/tmp"]), Some(WorkspaceId(1)));
-        assert_eq!(db.workspace_id(&["/tmp", "/tmp2"]), Some(WorkspaceId(2)));
+        assert_eq!(db.workspace(&["/tmp2"]), None);
+        assert_eq!(db.workspace(&["/tmp2", "/tmp3"]), None);
         assert_eq!(
-            db.workspace_id(&["/tmp", "/tmp2", "/tmp3"]),
-            Some(WorkspaceId(3))
+            db.workspace(&["/tmp"]).unwrap().workspace_id,
+            WorkspaceId(1)
+        );
+        assert_eq!(
+            db.workspace(&["/tmp", "/tmp2"]).unwrap().workspace_id,
+            WorkspaceId(2)
+        );
+        assert_eq!(
+            db.workspace(&["/tmp", "/tmp2", "/tmp3"])
+                .unwrap()
+                .workspace_id,
+            WorkspaceId(3)
         );
     }
 
@@ -526,15 +623,21 @@ mod tests {
         db.update_worktrees(&WorkspaceId(2), &["/tmp2", "/tmp3"]);
 
         // Make sure that workspace 3 doesn't exist
-        assert_eq!(db.workspace_id(&["/tmp2", "/tmp3"]), Some(WorkspaceId(2)));
+        assert_eq!(
+            db.workspace(&["/tmp2", "/tmp3"]).unwrap().workspace_id,
+            WorkspaceId(2)
+        );
 
         // And that workspace 1 was untouched
-        assert_eq!(db.workspace_id(&["/tmp"]), Some(WorkspaceId(1)));
+        assert_eq!(
+            db.workspace(&["/tmp"]).unwrap().workspace_id,
+            WorkspaceId(1)
+        );
 
         // And that workspace 2 is no longer registered under these roots
-        assert_eq!(db.workspace_id(&["/tmp", "/tmp2"]), None);
+        assert_eq!(db.workspace(&["/tmp", "/tmp2"]), None);
 
-        assert_eq!(Some(WorkspaceId(2)), db.last_workspace_id());
+        assert_eq!(db.last_workspace_id().unwrap().workspace_id, WorkspaceId(2));
 
         let recent_workspaces = db.recent_workspaces(10);
         assert_eq!(
