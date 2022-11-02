@@ -24,7 +24,9 @@ job_image_ids=$(
   kubectl \
     --namespace=${environment} \
     get jobs \
-    -o 'jsonpath={range .items[0:5]}{.spec.template.spec.containers[0].image}{"\n"}{end}'
+    -o 'jsonpath={range .items[0:5]}{.spec.template.spec.containers[0].image}{"\n"}{end}' \
+    2> /dev/null \
+    || true
 )
 
 echo "Deployed image version:"
