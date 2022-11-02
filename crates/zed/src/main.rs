@@ -150,6 +150,7 @@ fn main() {
         let project_store = cx.add_model(|_| ProjectStore::new());
         let db = cx.background().block(db);
         client.start_telemetry(db.clone());
+        client.report_event("start app", Default::default());
 
         let app_state = Arc::new(AppState {
             languages,

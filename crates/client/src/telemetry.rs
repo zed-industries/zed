@@ -157,16 +157,13 @@ impl Telemetry {
         self.executor
             .spawn(
                 async move {
-                    let (device_id, is_first_time_start) =
-                        if let Ok(Some(device_id)) = db.read_kvp("device_id") {
-                            (device_id, false)
-                        } else {
-                            let device_id = Uuid::new_v4().to_string();
-                            db.write_kvp("device_id", &device_id)?;
-                            (device_id, true)
-                        };
-
-                    this.report_start_app(is_first_time_start);
+                    let device_id = if let Ok(Some(device_id)) = db.read_kvp("device_id") {
+                        device_id
+                    } else {
+                        let device_id = Uuid::new_v4().to_string();
+                        db.write_kvp("device_id", &device_id)?;
+                        device_id
+                    };
 
                     let device_id: Arc<str> = device_id.into();
                     let mut state = this.state.lock();
@@ -261,13 +258,6 @@ impl Telemetry {
                 }));
             }
         }
-    }
-
-    pub fn report_start_app(self: &Arc<Self>, is_first_time_start: bool) {
-        self.report_event(
-            "start app",
-            json!({ "First Time Open": is_first_time_start }),
-        )
     }
 
     fn flush(self: &Arc<Self>) {
