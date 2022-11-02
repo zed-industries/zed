@@ -16,6 +16,7 @@ if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
 fi
 git pull -q --ff-only origin main
 git fetch --tags
+cargo check -q
 
 # Parse the current version
 version=$(script/get-crate-version zed)
@@ -75,6 +76,7 @@ git commit -q --all --message "${prev_minor_branch_name} stable"
 git tag ${stable_tag_name}
 
 echo "Creating new preview branch ${minor_branch_name}..."
+git checkout -q main
 git checkout -q -b ${minor_branch_name}
 echo -n preview > crates/zed/RELEASE_CHANNEL
 git commit -q --all --message "${minor_branch_name} preview"
