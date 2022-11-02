@@ -20,3 +20,4 @@ jobs:
           ### Changelog
           
           ${{ github.event.release.body }}
+          ```
