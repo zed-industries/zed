@@ -41,7 +41,7 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
 );
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
-pub struct WorkspaceId(i64);
+pub(crate) struct WorkspaceId(i64);
 
 impl Bind for WorkspaceId {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
@@ -103,7 +103,6 @@ pub struct SerializedWorkspace {
 impl Db {
     /// Finds or creates a workspace id for the given set of worktree roots. If the passed worktree roots is empty,
     /// returns the last workspace which was updated
-
     pub fn workspace_for_roots<P>(&self, worktree_roots: &[P]) -> Option<SerializedWorkspace>
     where
         P: AsRef<Path> + Debug,
@@ -114,7 +113,11 @@ impl Db {
             .log_err()
             .unwrap_or_default();
         if workspace_row.is_none() && worktree_roots.len() == 0 {
-            workspace_row = self.last_workspace();
+            workspace_row = self.prepare(
+                "SELECT workspace_id, dock_anchor, dock_visible FROM workspaces ORDER BY timestamp DESC LIMIT 1"
+            ).and_then(|mut stmt| stmt.maybe_row::<WorkspaceRow>())
+            .log_err()
+            .flatten()
         }
 
         workspace_row.and_then(|(workspace_id, dock_anchor, dock_visible)| {
@@ -127,6 +130,8 @@ impl Db {
         })
     }
 
+    /// TODO: Change to be 'update workspace' and to serialize the whole workspace in one go.
+    ///
     /// Updates the open paths for the given workspace id. Will garbage collect items from
     /// any workspace ids which are no replaced by the new workspace id. Updates the timestamps
     /// in the workspace id table
@@ -172,13 +177,6 @@ impl Db {
         })
         .context("Update workspace {workspace_id:?} with roots {worktree_roots:?}")
         .log_err();
-    }
-
-    fn last_workspace(&self) -> Option<WorkspaceRow> {
-        iife! ({
-            self.prepare("SELECT workspace_id, dock_anchor, dock_visible FROM workspaces ORDER BY timestamp DESC LIMIT 1")?
-                .maybe_row::<WorkspaceRow>()
-        }).log_err()?
     }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
