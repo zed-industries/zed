@@ -146,21 +146,11 @@ impl UserStore {
                                         Some(info.metrics_id.clone()),
                                         info.staff,
                                     );
-                                    client.amplitude_telemetry.set_authenticated_user_info(
-                                        Some(info.metrics_id),
-                                        info.staff,
-                                    );
                                 } else {
                                     client.telemetry.set_authenticated_user_info(None, false);
-                                    client
-                                        .amplitude_telemetry
-                                        .set_authenticated_user_info(None, false);
                                 }
 
                                 client.telemetry.report_event("sign in", Default::default());
-                                client
-                                    .amplitude_telemetry
-                                    .report_event("sign in", Default::default());
                                 current_user_tx.send(user).await.ok();
                             }
                         }
