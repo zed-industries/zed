@@ -1,7 +1,7 @@
 <svg width="8" height="8" viewBox="0 0 8 8" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_610_114)">
-<path fill-rule="evenodd" clip-rule="evenodd" d="M7 1H1V7H7V1ZM1 0C0.447715 0 0 0.447715 0 1V7C0 7.55228 0.447715 8 1 8H7C7.55228 8 8 7.55228 8 7V1C8 0.447715 7.55228 0 7 0H1Z" fill="white"/>
-<path d="M4 1C4 0.447715 4.44772 0 5 0H7C7.55228 0 8 0.447715 8 1V7C8 7.55228 7.55228 8 7 8H5C4.44772 8 4 7.55228 4 7V1Z" fill="white"/>
+<rect x="0.5" y="0.5" width="7" height="7" rx="0.5" stroke="white" stroke-opacity="0.4"/>
+<path d="M5 0H7C7.55228 0 8 0.447715 8 1V7C8 7.55228 7.55228 8 7 8H5V0Z" fill="white"/>
 </g>
 <defs>
 <clipPath id="clip0_610_114">

@@ -89,6 +89,7 @@ interface TextProperties {
   size?: keyof typeof fontSizes;
   weight?: FontWeight;
   underline?: boolean;
+  color?: string;
 }
 
 export function text(
@@ -132,11 +133,12 @@ export function text(
   }
 
   let size = fontSizes[properties?.size || "sm"];
+  let color = properties?.color || style.foreground;
 
   return {
     family: fontFamilies[fontFamily],
-    color: style.foreground,
     ...properties,
+    color,
     size,
   };
 }

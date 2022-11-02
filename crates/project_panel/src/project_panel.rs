@@ -1015,15 +1015,17 @@ impl ProjectPanel {
         let show_editor = details.is_editing && !details.is_processing;
         MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, cx| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
-            let mut style = theme.entry.style_for(state, details.is_selected).clone();
-            if details.is_ignored {
-                style.text.color.fade_out(theme.ignored_entry_fade);
-                style.icon_color.fade_out(theme.ignored_entry_fade);
-            }
-            if details.is_cut {
-                style.text.color.fade_out(theme.cut_entry_fade);
-                style.icon_color.fade_out(theme.cut_entry_fade);
-            }
+
+            let entry_style = if details.is_cut {
+                &theme.cut_entry
+            } else if details.is_ignored {
+                &theme.ignored_entry
+            } else {
+                &theme.entry
+            };
+
+            let style = entry_style.style_for(state, details.is_selected).clone();
+
             let row_container_style = if show_editor {
                 theme.filename_editor.container
             } else {

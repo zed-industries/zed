@@ -1261,7 +1261,7 @@ impl Pane {
                     ConstrainedBox::new(if hovered {
                         let item_id = item.id();
                         enum TabCloseButton {}
-                        let icon = Svg::new("icons/x_mark_thin_8.svg");
+                        let icon = Svg::new("icons/x_mark_8.svg");
                         MouseEventHandler::<TabCloseButton>::new(item_id, cx, |mouse_state, _| {
                             if mouse_state.hovered() {
                                 icon.with_color(tab_style.icon_close_active).boxed()
@@ -1324,7 +1324,7 @@ impl Pane {
             // Add the close dock button if this pane is a dock
             .with_children(
                 self.docked
-                    .map(|_| tab_bar_button(3, "icons/x_mark_thin_8.svg", cx, |_| HideDock)),
+                    .map(|_| tab_bar_button(3, "icons/x_mark_8.svg", cx, |_| HideDock)),
             )
             .contained()
             .with_style(theme.workspace.tab_bar.pane_button_container)
