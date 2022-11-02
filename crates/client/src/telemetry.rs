@@ -265,8 +265,8 @@ impl Telemetry {
 
     pub fn report_start_app(self: &Arc<Self>, is_first_time_start: bool) {
         self.report_event(
-            "Start App",
-            json!({ "is_first_time_start": is_first_time_start }),
+            "start app",
+            json!({ "First Time Open": is_first_time_start }),
         )
     }
 
