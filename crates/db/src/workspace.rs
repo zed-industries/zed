@@ -1,7 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use util::{iife, ResultExt};
 
 use std::{
-    ffi::OsStr,
     fmt::Debug,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
@@ -28,11 +28,9 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
     &[indoc! {"
         CREATE TABLE workspaces(
             workspace_id INTEGER PRIMARY KEY,
-            center_pane_group INTEGER NOT NULL,
-            dock_anchor TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
-            dock_visible INTEGER NOT NULL, -- Boolean
+            dock_anchor TEXT, -- Enum: 'Bottom' / 'Right' / 'Expanded'
+            dock_visible INTEGER, -- Boolean
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
-            FOREIGN KEY(center_pane_group) REFERENCES pane_groups(group_id)
         ) STRICT;
         
         CREATE TABLE worktree_roots(
@@ -93,43 +91,21 @@ impl Column for DockAnchor {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct WorkspaceRow {
-    pub workspace_id: WorkspaceId,
-    pub dock_anchor: DockAnchor,
-    pub dock_visible: bool,
-}
-
-impl Column for WorkspaceRow {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        <(WorkspaceId, DockAnchor, bool) as Column>::column(statement, start_index).map(
-            |((id, anchor, visible), next_index)| {
-                (
-                    WorkspaceRow {
-                        workspace_id: id,
-                        dock_anchor: anchor,
-                        dock_visible: visible,
-                    },
-                    next_index,
-                )
-            },
-        )
-    }
-}
+type WorkspaceRow = (WorkspaceId, DockAnchor, bool);
 
 #[derive(Default, Debug)]
 pub struct SerializedWorkspace {
-    pub workspace_id: WorkspaceId,
+    pub worktree_roots: Vec<Arc<Path>>,
     pub center_group: SerializedPaneGroup,
     pub dock_anchor: DockAnchor,
     pub dock_visible: bool,
-    pub dock_pane: Option<SerializedDockPane>,
+    pub dock_pane: SerializedDockPane,
 }
 
 impl Db {
     /// Finds or creates a workspace id for the given set of worktree roots. If the passed worktree roots is empty,
     /// returns the last workspace which was updated
-    pub fn workspace_for_roots<P>(&self, worktree_roots: &[P]) -> SerializedWorkspace
+    pub fn workspace_for_roots<P>(&self, worktree_roots: &[P]) -> Option<SerializedWorkspace>
     where
         P: AsRef<Path> + Debug,
     {
@@ -140,57 +116,23 @@ impl Db {
             workspace_row = self.last_workspace_id();
         }
 
-        if let Some(workspace_row) = workspace_row {
-            SerializedWorkspace {
-                dock_pane: self.get_dock_pane(workspace_row.workspace_id),
-                center_group: self.get_center_group(workspace_row.workspace_id),
-                workspace_id: workspace_row.workspace_id,
-                dock_anchor: workspace_row.dock_anchor,
-                dock_visible: workspace_row.dock_visible,
-            }
-        } else {
-            self.make_new_workspace(worktree_roots)
-        }
-    }
-
-    fn make_new_workspace<P>(&self, worktree_roots: &[P]) -> SerializedWorkspace
-    where
-        P: AsRef<Path> + Debug,
-    {
-        let res = self.with_savepoint("make_new_workspace", |conn| {
-            let workspace_id = WorkspaceId(
-                conn.prepare("INSERT INTO workspaces DEFAULT VALUES")?
-                    .insert()?,
-            );
-
-            update_worktree_roots(conn, &workspace_id, worktree_roots)?;
-
-            Ok(SerializedWorkspace {
-                workspace_id,
-                ..Default::default()
-            })
-        });
-
-        match res {
-            Ok(serialized_workspace) => serialized_workspace,
-            Err(err) => {
-                log::error!("Failed to insert new workspace into DB: {}", err);
-                Default::default()
-            }
-        }
+        workspace_row.and_then(
+            |(workspace_id, dock_anchor, dock_visible)| SerializedWorkspace {
+                dock_pane: self.get_dock_pane(workspace_id)?,
+                center_group: self.get_center_group(workspace_id),
+                dock_anchor,
+                dock_visible,
+            },
+        )
     }
 
     fn workspace<P>(&self, worktree_roots: &[P]) -> Option<WorkspaceRow>
     where
         P: AsRef<Path> + Debug,
     {
-        match get_workspace(worktree_roots, &self) {
-            Ok(workspace_id) => workspace_id,
-            Err(err) => {
-                log::error!("Failed to get workspace_id: {}", err);
-                None
-            }
-        }
+        get_workspace(worktree_roots, &self)
+            .log_err()
+            .unwrap_or_default()
     }
 
     // fn get_workspace_row(&self, workspace_id: WorkspaceId) -> WorkspaceRow {
@@ -204,63 +146,35 @@ impl Db {
     where
         P: AsRef<Path> + Debug,
     {
-        match self.with_savepoint("update_worktrees", |conn| {
+        self.with_savepoint("update_worktrees", |conn| {
             update_worktree_roots(conn, workspace_id, worktree_roots)
-        }) {
-            Ok(_) => {}
-            Err(err) => log::error!(
-                "Failed to update workspace {:?} with roots {:?}, error: {}",
-                workspace_id,
-                worktree_roots,
-                err
-            ),
-        }
+        })
+        .context("Update workspace {workspace_id:?} with roots {worktree_roots:?}")
+        .log_err();
     }
 
     fn last_workspace_id(&self) -> Option<WorkspaceRow> {
-        let res = self
-            .prepare("SELECT workspace_id, dock FROM workspaces ORDER BY timestamp DESC LIMIT 1")
-            .and_then(|mut stmt| stmt.maybe_row::<WorkspaceRow>());
-
-        match res {
-            Ok(result) => result,
-            Err(err) => {
-                log::error!("Failed to get last workspace id, err: {}", err);
-                return None;
-            }
-        }
+        iife! ({
+            self.prepare("SELECT workspace_id, dock_anchor, dock_visible FROM workspaces ORDER BY timestamp DESC LIMIT 1")?
+                .maybe_row::<WorkspaceRow>()
+        }).log_err()?
     }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
-    pub fn recent_workspaces(&self, limit: usize) -> Vec<(WorkspaceId, Vec<Arc<Path>>)> {
+    pub fn recent_workspaces(&self, limit: usize) -> Vec<Vec<PathBuf>> {
         self.with_savepoint("recent_workspaces", |conn| {
-            let rows = conn
-                .prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?")?
-                .with_bindings(limit)?
-                .rows::<i64>()?;
-
-            let ids = rows.iter().map(|row| WorkspaceId(*row));
-
-            let mut result = Vec::new();
-
             let mut stmt =
                 conn.prepare("SELECT worktree_root FROM worktree_roots WHERE workspace_id = ?")?;
-            for workspace_id in ids {
-                let roots = stmt
-                    .with_bindings(workspace_id.0)?
-                    .rows::<Vec<u8>>()?
-                    .iter()
-                    .map(|row| PathBuf::from(OsStr::from_bytes(&row)).into())
-                    .collect();
-                result.push((workspace_id, roots))
-            }
 
-            Ok(result)
+            conn.prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?")?
+                .with_bindings(limit)?
+                .rows::<WorkspaceId>()?
+                .iter()
+                .map(|workspace_id| stmt.with_bindings(workspace_id.0)?.rows::<PathBuf>())
+                .collect::<Result<_>>()
         })
-        .unwrap_or_else(|err| {
-            log::error!("Failed to get recent workspaces, err: {}", err);
-            Vec::new()
-        })
+        .log_err()
+        .unwrap_or_default()
     }
 }
 
@@ -274,12 +188,12 @@ where
 {
     // Lookup any old WorkspaceIds which have the same set of roots, and delete them.
     let preexisting_workspace = get_workspace(worktree_roots, &connection)?;
-    if let Some(preexisting_workspace) = preexisting_workspace {
-        if preexisting_workspace.workspace_id != *workspace_id {
+    if let Some((preexisting_workspace_id, _, _)) = preexisting_workspace {
+        if preexisting_workspace_id != *workspace_id {
             // Should also delete fields in other tables with cascading updates
             connection
                 .prepare("DELETE FROM workspaces WHERE workspace_id = ?")?
-                .with_bindings(preexisting_workspace.workspace_id.0)?
+                .with_bindings(preexisting_workspace_id)?
                 .exec()?;
         }
     }
@@ -319,16 +233,13 @@ where
 
     // Prepare the array binding string. SQL doesn't have syntax for this, so
     // we have to do it ourselves.
-    let mut array_binding_stmt = "(".to_string();
-    for i in 0..worktree_roots.len() {
-        // This uses ?NNN for numbered placeholder syntax
-        array_binding_stmt.push_str(&format!("?{}", (i + 1))); //sqlite is 1-based
-        if i < worktree_roots.len() - 1 {
-            array_binding_stmt.push(',');
-            array_binding_stmt.push(' ');
-        }
-    }
-    array_binding_stmt.push(')');
+    let array_binding_stmt = format!(
+        "({})",
+        (0..worktree_roots.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     // Any workspace can have multiple independent paths, and these paths
     // can overlap in the database. Take this test data for example:
@@ -382,15 +293,17 @@ where
     //       parameters by number.
     let query = format!(
         r#"
-            SELECT workspace_id, dock_anchor, dock_visible
-            FROM (SELECT count(workspace_id) as num_matching, workspace_id FROM worktree_roots
-                  WHERE worktree_root in {array_bind} AND workspace_id NOT IN
-                    (SELECT wt1.workspace_id FROM worktree_roots as wt1
-                     JOIN worktree_roots as wt2
-                     ON wt1.workspace_id = wt2.workspace_id
-                     WHERE wt1.worktree_root NOT in {array_bind} AND wt2.worktree_root in {array_bind})
-                  GROUP BY workspace_id)
-            WHERE num_matching = ?
+        SELECT workspaces.workspace_id, workspaces.dock_anchor, workspaces.dock_visible
+        FROM (SELECT workspace_id
+              FROM (SELECT count(workspace_id) as num_matching, workspace_id FROM worktree_roots
+                    WHERE worktree_root in {array_bind} AND workspace_id NOT IN
+                      (SELECT wt1.workspace_id FROM worktree_roots as wt1
+                       JOIN worktree_roots as wt2
+                       ON wt1.workspace_id = wt2.workspace_id
+                       WHERE wt1.worktree_root NOT in {array_bind} AND wt2.worktree_root in {array_bind})
+                    GROUP BY workspace_id)
+              WHERE num_matching = ?) as matching_workspace
+        JOIN workspaces ON workspaces.workspace_id = matching_workspace.workspace_id
         "#,
         array_bind = array_binding_stmt
     );
@@ -416,12 +329,7 @@ where
 #[cfg(test)]
 mod tests {
 
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-        thread::sleep,
-        time::Duration,
-    };
+    use std::{path::PathBuf, thread::sleep, time::Duration};
 
     use crate::Db;
 
@@ -475,10 +383,7 @@ mod tests {
         db.update_worktrees(&WorkspaceId(1), &["/tmp", "/tmp2"]);
 
         // Sanity check
-        assert_eq!(
-            db.workspace(&["/tmp", "/tmp2"]).unwrap().workspace_id,
-            WorkspaceId(1)
-        );
+        assert_eq!(db.workspace(&["/tmp", "/tmp2"]).unwrap().0, WorkspaceId(1));
 
         db.update_worktrees::<String>(&WorkspaceId(1), &[]);
 
@@ -488,11 +393,11 @@ mod tests {
         // workspace, and None otherwise
         assert_eq!(db.workspace::<String>(&[]), None,);
 
-        assert_eq!(db.last_workspace_id().unwrap().workspace_id, WorkspaceId(1));
+        assert_eq!(db.last_workspace_id().unwrap().0, WorkspaceId(1));
 
         assert_eq!(
             db.recent_workspaces(2),
-            vec![(WorkspaceId(1), vec![]), (WorkspaceId(2), vec![]),],
+            vec![Vec::<PathBuf>::new(), Vec::<PathBuf>::new()],
         )
     }
 
@@ -515,38 +420,19 @@ mod tests {
             db.update_worktrees(workspace_id, entries);
         }
 
+        assert_eq!(WorkspaceId(1), db.workspace(&["/tmp1"]).unwrap().0);
+        assert_eq!(db.workspace(&["/tmp1", "/tmp2"]).unwrap().0, WorkspaceId(2));
         assert_eq!(
-            WorkspaceId(1),
-            db.workspace(&["/tmp1"]).unwrap().workspace_id
-        );
-        assert_eq!(
-            db.workspace(&["/tmp1", "/tmp2"]).unwrap().workspace_id,
-            WorkspaceId(2)
-        );
-        assert_eq!(
-            db.workspace(&["/tmp1", "/tmp2", "/tmp3"])
-                .unwrap()
-                .workspace_id,
+            db.workspace(&["/tmp1", "/tmp2", "/tmp3"]).unwrap().0,
             WorkspaceId(3)
         );
+        assert_eq!(db.workspace(&["/tmp2", "/tmp3"]).unwrap().0, WorkspaceId(4));
         assert_eq!(
-            db.workspace(&["/tmp2", "/tmp3"]).unwrap().workspace_id,
-            WorkspaceId(4)
-        );
-        assert_eq!(
-            db.workspace(&["/tmp2", "/tmp3", "/tmp4"])
-                .unwrap()
-                .workspace_id,
+            db.workspace(&["/tmp2", "/tmp3", "/tmp4"]).unwrap().0,
             WorkspaceId(5)
         );
-        assert_eq!(
-            db.workspace(&["/tmp2", "/tmp4"]).unwrap().workspace_id,
-            WorkspaceId(6)
-        );
-        assert_eq!(
-            db.workspace(&["/tmp2"]).unwrap().workspace_id,
-            WorkspaceId(7)
-        );
+        assert_eq!(db.workspace(&["/tmp2", "/tmp4"]).unwrap().0, WorkspaceId(6));
+        assert_eq!(db.workspace(&["/tmp2"]).unwrap().0, WorkspaceId(7));
 
         assert_eq!(db.workspace(&["/tmp1", "/tmp5"]), None);
         assert_eq!(db.workspace(&["/tmp5"]), None);
@@ -570,24 +456,12 @@ mod tests {
 
         assert_eq!(db.workspace(&["/tmp2"]), None);
         assert_eq!(db.workspace(&["/tmp2", "/tmp3"]), None);
+        assert_eq!(db.workspace(&["/tmp"]).unwrap().0, WorkspaceId(1));
+        assert_eq!(db.workspace(&["/tmp", "/tmp2"]).unwrap().0, WorkspaceId(2));
         assert_eq!(
-            db.workspace(&["/tmp"]).unwrap().workspace_id,
-            WorkspaceId(1)
-        );
-        assert_eq!(
-            db.workspace(&["/tmp", "/tmp2"]).unwrap().workspace_id,
-            WorkspaceId(2)
-        );
-        assert_eq!(
-            db.workspace(&["/tmp", "/tmp2", "/tmp3"])
-                .unwrap()
-                .workspace_id,
+            db.workspace(&["/tmp", "/tmp2", "/tmp3"]).unwrap().0,
             WorkspaceId(3)
         );
-    }
-
-    fn arc_path(path: &'static str) -> Arc<Path> {
-        PathBuf::from(path).into()
     }
 
     #[test]
@@ -623,30 +497,24 @@ mod tests {
         db.update_worktrees(&WorkspaceId(2), &["/tmp2", "/tmp3"]);
 
         // Make sure that workspace 3 doesn't exist
-        assert_eq!(
-            db.workspace(&["/tmp2", "/tmp3"]).unwrap().workspace_id,
-            WorkspaceId(2)
-        );
+        assert_eq!(db.workspace(&["/tmp2", "/tmp3"]).unwrap().0, WorkspaceId(2));
 
         // And that workspace 1 was untouched
-        assert_eq!(
-            db.workspace(&["/tmp"]).unwrap().workspace_id,
-            WorkspaceId(1)
-        );
+        assert_eq!(db.workspace(&["/tmp"]).unwrap().0, WorkspaceId(1));
 
         // And that workspace 2 is no longer registered under these roots
         assert_eq!(db.workspace(&["/tmp", "/tmp2"]), None);
 
-        assert_eq!(db.last_workspace_id().unwrap().workspace_id, WorkspaceId(2));
+        assert_eq!(db.last_workspace_id().unwrap().0, WorkspaceId(2));
 
         let recent_workspaces = db.recent_workspaces(10);
         assert_eq!(
             recent_workspaces.get(0).unwrap(),
-            &(WorkspaceId(2), vec![arc_path("/tmp2"), arc_path("/tmp3")])
+            &vec![PathBuf::from("/tmp2"), PathBuf::from("/tmp3")]
         );
         assert_eq!(
             recent_workspaces.get(1).unwrap(),
-            &(WorkspaceId(1), vec![arc_path("/tmp")])
+            &vec![PathBuf::from("/tmp")]
         );
     }
 }

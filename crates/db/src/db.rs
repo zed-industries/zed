@@ -70,12 +70,3 @@ impl Db {
         self.backup_main(&destination)
     }
 }
-
-impl Drop for Db {
-    fn drop(&mut self) {
-        self.exec(indoc! {"
-            PRAGMA analysis_limit=500;
-            PRAGMA optimize"})
-            .ok();
-    }
-}
