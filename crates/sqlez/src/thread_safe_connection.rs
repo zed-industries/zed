@@ -31,6 +31,8 @@ impl ThreadSafeConnection {
         self
     }
 
+    /// Migrations have to be run per connection because we fallback to memory
+    /// so this needs
     pub fn with_migrations(mut self, migrations: &'static [Migration]) -> Self {
         self.migrations = Some(migrations);
         self

@@ -179,10 +179,9 @@ impl<'a> Statement<'a> {
         Ok(str::from_utf8(slice)?)
     }
 
-    pub fn bind_value<T: Bind>(&self, value: T, idx: i32) -> Result<()> {
-        debug_assert!(idx > 0);
-        value.bind(self, idx)?;
-        Ok(())
+    pub fn bind<T: Bind>(&self, value: T, index: i32) -> Result<i32> {
+        debug_assert!(index > 0);
+        value.bind(self, index)
     }
 
     pub fn column<T: Column>(&mut self) -> Result<T> {
@@ -203,8 +202,8 @@ impl<'a> Statement<'a> {
         }
     }
 
-    pub fn bind(&mut self, bindings: impl Bind) -> Result<&mut Self> {
-        self.bind_value(bindings, 1)?;
+    pub fn with_bindings(&mut self, bindings: impl Bind) -> Result<&mut Self> {
+        self.bind(bindings, 1)?;
         Ok(self)
     }
 

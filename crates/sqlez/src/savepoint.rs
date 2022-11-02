@@ -76,14 +76,14 @@ mod tests {
         connection.with_savepoint("first", |save1| {
             save1
                 .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                .bind((save1_text, 1))?
+                .with_bindings((save1_text, 1))?
                 .exec()?;
 
             assert!(save1
                 .with_savepoint("second", |save2| -> Result<Option<()>, anyhow::Error> {
                     save2
                         .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                        .bind((save2_text, 2))?
+                        .with_bindings((save2_text, 2))?
                         .exec()?;
 
                     assert_eq!(
@@ -108,7 +108,7 @@ mod tests {
             save1.with_savepoint_rollback::<(), _>("second", |save2| {
                 save2
                     .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                    .bind((save2_text, 2))?
+                    .with_bindings((save2_text, 2))?
                     .exec()?;
 
                 assert_eq!(
@@ -131,7 +131,7 @@ mod tests {
             save1.with_savepoint_rollback("second", |save2| {
                 save2
                     .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                    .bind((save2_text, 2))?
+                    .with_bindings((save2_text, 2))?
                     .exec()?;
 
                 assert_eq!(

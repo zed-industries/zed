@@ -207,3 +207,25 @@ impl<T: Column + Default + Copy, const COUNT: usize> Column for [T; COUNT] {
         Ok((array, current_index))
     }
 }
+
+impl<T: Bind> Bind for Vec<T> {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let mut current_index = start_index;
+        for binding in self.iter() {
+            current_index = binding.bind(statement, current_index)?
+        }
+
+        Ok(current_index)
+    }
+}
+
+impl<T: Bind> Bind for &[T] {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let mut current_index = start_index;
+        for binding in *self {
+            current_index = binding.bind(statement, current_index)?
+        }
+
+        Ok(current_index)
+    }
+}

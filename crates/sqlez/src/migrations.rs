@@ -47,7 +47,7 @@ impl Migration {
                 WHERE domain = ?
                 ORDER BY step
                 "})?
-            .bind(self.domain)?
+            .with_bindings(self.domain)?
             .rows::<(String, usize, String)>()?;
 
         let mut store_completed_migration = connection
@@ -72,7 +72,7 @@ impl Migration {
 
             connection.exec(migration)?;
             store_completed_migration
-                .bind((self.domain, index, *migration))?
+                .with_bindings((self.domain, index, *migration))?
                 .exec()?;
         }
 
@@ -163,7 +163,7 @@ mod test {
                 .unwrap();
 
             store_completed_migration
-                .bind((domain, i, i.to_string()))
+                .with_bindings((domain, i, i.to_string()))
                 .unwrap()
                 .exec()
                 .unwrap();

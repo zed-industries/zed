@@ -17,21 +17,21 @@ impl Db {
     pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
         self.0
             .prepare("SELECT value FROM kv_store WHERE key = (?)")?
-            .bind(key)?
+            .with_bindings(key)?
             .maybe_row()
     }
 
     pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
         self.0
             .prepare("INSERT OR REPLACE INTO kv_store(key, value) VALUES (?, ?)")?
-            .bind((key, value))?
+            .with_bindings((key, value))?
             .exec()
     }
 
     pub fn delete_kvp(&self, key: &str) -> Result<()> {
         self.0
             .prepare("DELETE FROM kv_store WHERE key = (?)")?
-            .bind(key)?
+            .with_bindings(key)?
             .exec()
     }
 }

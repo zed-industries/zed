@@ -23,17 +23,17 @@ use super::Db;
 pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
     "workspace",
     &[indoc! {"
-            CREATE TABLE workspaces(
-                workspace_id INTEGER PRIMARY KEY,
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
-            ) STRICT;
-            
-            CREATE TABLE worktree_roots(
-                worktree_root BLOB NOT NULL,
-                workspace_id INTEGER NOT NULL,
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-                PRIMARY KEY(worktree_root, workspace_id)
-            ) STRICT;"}],
+        CREATE TABLE workspaces(
+            workspace_id INTEGER PRIMARY KEY,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+        ) STRICT;
+        
+        CREATE TABLE worktree_roots(
+            worktree_root BLOB NOT NULL,
+            workspace_id INTEGER NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+            PRIMARY KEY(worktree_root, workspace_id)
+        ) STRICT;"}],
 );
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
@@ -159,9 +159,9 @@ impl Db {
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
     pub fn recent_workspaces(&self, limit: usize) -> Vec<(WorkspaceId, Vec<Arc<Path>>)> {
-        let res = self.with_savepoint("recent_workspaces", |conn| {
+        self.with_savepoint("recent_workspaces", |conn| {
             let ids = conn.prepare("SELECT workspace_id FROM workspaces ORDER BY last_opened_timestamp DESC LIMIT ?")?
-                .bind(limit)?
+                .with_bindings(limit)?
                 .rows::<i64>()?
                 .iter()
                 .map(|row| WorkspaceId(*row));
@@ -170,7 +170,7 @@ impl Db {
             
             let stmt = conn.prepare("SELECT worktree_root FROM worktree_roots WHERE workspace_id = ?")?;
             for workspace_id in ids {
-                let roots = stmt.bind(workspace_id.0)?
+                let roots = stmt.with_bindings(workspace_id.0)?
                     .rows::<Vec<u8>>()?
                     .iter()
                     .map(|row| {
@@ -180,17 +180,11 @@ impl Db {
                 result.push((workspace_id, roots))
             }
             
-            
             Ok(result)
-        });
-        
-        match res {
-            Ok(result) => result,
-            Err(err) => {
-                log::error!("Failed to get recent workspaces, err: {}", err);
-                Vec::new()
-            }
-        }        
+        }).unwrap_or_else(|err| {
+            log::error!("Failed to get recent workspaces, err: {}", err);
+            Vec::new()
+        })
     }
 }
 
@@ -210,14 +204,14 @@ where
             connection.prepare(
                 "DELETE FROM workspaces WHERE workspace_id = ?",
             )?
-            .bind(preexisting_id.0)?
+            .with_bindings(preexisting_id.0)?
             .exec()?;
         }
     }
 
     connection
         .prepare("DELETE FROM worktree_roots WHERE workspace_id = ?")?
-        .bind(workspace_id.0)?
+        .with_bindings(workspace_id.0)?
         .exec()?;
 
     for root in worktree_roots {
@@ -226,12 +220,12 @@ where
         // let path = root.as_ref().to_string_lossy().to_string();
 
         connection.prepare("INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)")?
-            .bind((workspace_id.0, path))?
+            .with_bindings((workspace_id.0, path))?
             .exec()?;
     }
 
     connection.prepare("UPDATE workspaces SET last_opened_timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?")?
-        .bind(workspace_id.0)?
+        .with_bindings(workspace_id.0)?
         .exec()?;
 
     Ok(())
@@ -330,16 +324,11 @@ where
     // Make sure we bound the parameters correctly
     debug_assert!(worktree_roots.len() as i32 + 1 == stmt.parameter_count());
 
-    for i in 0..worktree_roots.len() {
-        let path = &worktree_roots[i].as_ref().as_os_str().as_bytes();
-        // If you need to debug this, here's the string parsing:
-        // let path = &worktree_roots[i].as_ref().to_string_lossy().to_string()
-        stmt.bind_value(*path, i as i32 + 1);
-    }
-    // No -1, because SQLite is 1 based
-    stmt.bind_value(worktree_roots.len(), worktree_roots.len() as i32 + 1)?;
-
-    stmt.maybe_row()
+    let root_bytes: Vec<&[u8]> = worktree_roots.iter()
+        .map(|root| root.as_ref().as_os_str().as_bytes()).collect();
+    
+    stmt.with_bindings((root_bytes, root_bytes.len()))?
+        .maybe_row()
         .map(|row| row.map(|id| WorkspaceId(id)))
 }
 

@@ -149,7 +149,7 @@ mod test {
         connection
             .prepare("INSERT INTO text (text) VALUES (?);")
             .unwrap()
-            .bind(text)
+            .with_bindings(text)
             .unwrap()
             .exec()
             .unwrap();
@@ -185,8 +185,16 @@ mod test {
             .prepare("INSERT INTO test (text, integer, blob) VALUES (?, ?, ?)")
             .unwrap();
 
-        insert.bind(tuple1.clone()).unwrap().exec().unwrap();
-        insert.bind(tuple2.clone()).unwrap().exec().unwrap();
+        insert
+            .with_bindings(tuple1.clone())
+            .unwrap()
+            .exec()
+            .unwrap();
+        insert
+            .with_bindings(tuple2.clone())
+            .unwrap()
+            .exec()
+            .unwrap();
 
         assert_eq!(
             connection
