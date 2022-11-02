@@ -76,7 +76,7 @@ lazy_static! {
     pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => ReleaseChannel::Dev,
         "preview" => ReleaseChannel::Preview,
-        "stable" => ReleaseChannel::Preview,
+        "stable" => ReleaseChannel::Stable,
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     };
 }
