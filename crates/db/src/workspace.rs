@@ -5,7 +5,6 @@ use std::{
     fmt::Debug,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use indoc::indoc;
@@ -95,7 +94,6 @@ type WorkspaceRow = (WorkspaceId, DockAnchor, bool);
 
 #[derive(Default, Debug)]
 pub struct SerializedWorkspace {
-    pub worktree_roots: Vec<Arc<Path>>,
     pub center_group: SerializedPaneGroup,
     pub dock_anchor: DockAnchor,
     pub dock_visible: bool,
@@ -105,39 +103,29 @@ pub struct SerializedWorkspace {
 impl Db {
     /// Finds or creates a workspace id for the given set of worktree roots. If the passed worktree roots is empty,
     /// returns the last workspace which was updated
+
     pub fn workspace_for_roots<P>(&self, worktree_roots: &[P]) -> Option<SerializedWorkspace>
     where
         P: AsRef<Path> + Debug,
     {
         // Find the workspace id which is uniquely identified by this set of paths
         // return it if found
-        let mut workspace_row = self.workspace(worktree_roots);
+        let mut workspace_row = get_workspace(worktree_roots, &self)
+            .log_err()
+            .unwrap_or_default();
         if workspace_row.is_none() && worktree_roots.len() == 0 {
-            workspace_row = self.last_workspace_id();
+            workspace_row = self.last_workspace();
         }
 
-        workspace_row.and_then(
-            |(workspace_id, dock_anchor, dock_visible)| SerializedWorkspace {
+        workspace_row.and_then(|(workspace_id, dock_anchor, dock_visible)| {
+            Some(SerializedWorkspace {
                 dock_pane: self.get_dock_pane(workspace_id)?,
                 center_group: self.get_center_group(workspace_id),
                 dock_anchor,
                 dock_visible,
-            },
-        )
+            })
+        })
     }
-
-    fn workspace<P>(&self, worktree_roots: &[P]) -> Option<WorkspaceRow>
-    where
-        P: AsRef<Path> + Debug,
-    {
-        get_workspace(worktree_roots, &self)
-            .log_err()
-            .unwrap_or_default()
-    }
-
-    // fn get_workspace_row(&self, workspace_id: WorkspaceId) -> WorkspaceRow {
-    //     unimplemented!()
-    // }
 
     /// Updates the open paths for the given workspace id. Will garbage collect items from
     /// any workspace ids which are no replaced by the new workspace id. Updates the timestamps
@@ -147,13 +135,46 @@ impl Db {
         P: AsRef<Path> + Debug,
     {
         self.with_savepoint("update_worktrees", |conn| {
-            update_worktree_roots(conn, workspace_id, worktree_roots)
+            // Lookup any old WorkspaceIds which have the same set of roots, and delete them.
+            let preexisting_workspace = get_workspace(worktree_roots, &conn)?;
+            if let Some((preexisting_workspace_id, _, _)) = preexisting_workspace {
+                if preexisting_workspace_id != *workspace_id {
+                    // Should also delete fields in other tables with cascading updates
+                    conn.prepare("DELETE FROM workspaces WHERE workspace_id = ?")?
+                        .with_bindings(preexisting_workspace_id)?
+                        .exec()?;
+                }
+            }
+
+            conn.prepare("DELETE FROM worktree_roots WHERE workspace_id = ?")?
+                .with_bindings(workspace_id.0)?
+                .exec()?;
+
+            for root in worktree_roots {
+                let path = root.as_ref().as_os_str().as_bytes();
+                // If you need to debug this, here's the string parsing:
+                // let path = root.as_ref().to_string_lossy().to_string();
+
+                conn.prepare(
+                    "INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)",
+                )?
+                .with_bindings((workspace_id.0, path))?
+                .exec()?;
+            }
+
+            conn.prepare(
+                "UPDATE workspaces SET timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?",
+            )?
+            .with_bindings(workspace_id.0)?
+            .exec()?;
+
+            Ok(())
         })
         .context("Update workspace {workspace_id:?} with roots {worktree_roots:?}")
         .log_err();
     }
 
-    fn last_workspace_id(&self) -> Option<WorkspaceRow> {
+    fn last_workspace(&self) -> Option<WorkspaceRow> {
         iife! ({
             self.prepare("SELECT workspace_id, dock_anchor, dock_visible FROM workspaces ORDER BY timestamp DESC LIMIT 1")?
                 .maybe_row::<WorkspaceRow>()
@@ -176,50 +197,6 @@ impl Db {
         .log_err()
         .unwrap_or_default()
     }
-}
-
-fn update_worktree_roots<P>(
-    connection: &Connection,
-    workspace_id: &WorkspaceId,
-    worktree_roots: &[P],
-) -> Result<()>
-where
-    P: AsRef<Path> + Debug,
-{
-    // Lookup any old WorkspaceIds which have the same set of roots, and delete them.
-    let preexisting_workspace = get_workspace(worktree_roots, &connection)?;
-    if let Some((preexisting_workspace_id, _, _)) = preexisting_workspace {
-        if preexisting_workspace_id != *workspace_id {
-            // Should also delete fields in other tables with cascading updates
-            connection
-                .prepare("DELETE FROM workspaces WHERE workspace_id = ?")?
-                .with_bindings(preexisting_workspace_id)?
-                .exec()?;
-        }
-    }
-
-    connection
-        .prepare("DELETE FROM worktree_roots WHERE workspace_id = ?")?
-        .with_bindings(workspace_id.0)?
-        .exec()?;
-
-    for root in worktree_roots {
-        let path = root.as_ref().as_os_str().as_bytes();
-        // If you need to debug this, here's the string parsing:
-        // let path = root.as_ref().to_string_lossy().to_string();
-
-        connection
-            .prepare("INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)")?
-            .with_bindings((workspace_id.0, path))?
-            .exec()?;
-    }
-
-    connection
-        .prepare("UPDATE workspaces SET timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?")?
-        .with_bindings(workspace_id.0)?
-        .exec()?;
-
-    Ok(())
 }
 
 fn get_workspace<P>(worktree_roots: &[P], connection: &Connection) -> Result<Option<WorkspaceRow>>
@@ -393,7 +370,7 @@ mod tests {
         // workspace, and None otherwise
         assert_eq!(db.workspace::<String>(&[]), None,);
 
-        assert_eq!(db.last_workspace_id().unwrap().0, WorkspaceId(1));
+        assert_eq!(db.last_workspace().unwrap().0, WorkspaceId(1));
 
         assert_eq!(
             db.recent_workspaces(2),
@@ -505,7 +482,7 @@ mod tests {
         // And that workspace 2 is no longer registered under these roots
         assert_eq!(db.workspace(&["/tmp", "/tmp2"]), None);
 
-        assert_eq!(db.last_workspace_id().unwrap().0, WorkspaceId(2));
+        assert_eq!(db.last_workspace().unwrap().0, WorkspaceId(2));
 
         let recent_workspaces = db.recent_workspaces(10);
         assert_eq!(
