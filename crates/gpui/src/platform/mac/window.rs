@@ -514,7 +514,11 @@ impl Window {
                     );
                 }
             }
-            native_window.makeKeyAndOrderFront_(nil);
+            if options.focus {
+                native_window.makeKeyAndOrderFront_(nil);
+            } else {
+                native_window.orderFront_(nil);
+            }
 
             window.0.borrow().move_traffic_light();
             pool.drain();
