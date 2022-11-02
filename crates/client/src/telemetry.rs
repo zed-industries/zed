@@ -32,6 +32,7 @@ pub struct Telemetry {
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
+    app: &'static str,
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
@@ -119,6 +120,7 @@ impl Telemetry {
             state: Mutex::new(TelemetryState {
                 os_version: platform.os_version().ok().map(|v| v.to_string().into()),
                 os_name: platform.os_name().into(),
+                app: "Zed",
                 app_version: platform.app_version().ok().map(|v| v.to_string().into()),
                 release_channel,
                 device_id: None,
@@ -239,7 +241,7 @@ impl Telemetry {
                 release_channel: state.release_channel,
                 app_version: state.app_version.clone(),
                 signed_in: state.metrics_id.is_some(),
-                app: "Zed",
+                app: state.app,
             },
         };
         state.queue.push(event);
