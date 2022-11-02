@@ -41,6 +41,7 @@ pub fn init(cx: &mut MutableAppContext) {
                             )),
                             titlebar: None,
                             center: false,
+                            focus: false,
                             kind: WindowKind::PopUp,
                             is_movable: false,
                             screen: Some(screen),

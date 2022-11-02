@@ -354,6 +354,7 @@ pub fn build_window_options() -> WindowOptions<'static> {
             traffic_light_position: Some(vec2f(8., 8.)),
         }),
         center: false,
+        focus: true,
         kind: WindowKind::Normal,
         is_movable: true,
         screen: None,
