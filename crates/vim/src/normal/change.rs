@@ -1,27 +1,40 @@
 use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
-use editor::{char_kind, display_map::DisplaySnapshot, movement, Autoscroll, DisplayPoint};
+use editor::{
+    char_kind, display_map::DisplaySnapshot, movement, Autoscroll, CharKind, DisplayPoint,
+};
 use gpui::MutableAppContext;
 use language::Selection;
 
 pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
+    // Some motions ignore failure when switching to normal mode
+    let mut motion_succeeded = matches!(
+        motion,
+        Motion::Left | Motion::Right | Motion::EndOfLine | Motion::Backspace | Motion::StartOfLine
+    );
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
-                    if let Motion::NextWordStart { ignore_punctuation } = motion {
-                        expand_changed_word_selection(map, selection, times, ignore_punctuation);
+                    motion_succeeded |= if let Motion::NextWordStart { ignore_punctuation } = motion
+                    {
+                        expand_changed_word_selection(map, selection, times, ignore_punctuation)
                     } else {
-                        motion.expand_selection(map, selection, times, false);
-                    }
+                        motion.expand_selection(map, selection, times, false)
+                    };
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);
             editor.insert("", cx);
         });
     });
-    vim.switch_mode(Mode::Insert, false, cx)
+
+    if motion_succeeded {
+        vim.switch_mode(Mode::Insert, false, cx)
+    } else {
+        vim.switch_mode(Mode::Normal, false, cx)
+    }
 }
 
 pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut MutableAppContext) {
@@ -49,36 +62,45 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Mutab
     }
 }
 
-// From the docs https://vimhelp.org/change.txt.html#cw
-// Special case: When the cursor is in a word, "cw" and "cW" do not include the
-// white space after a word, they only change up to the end of the word. This is
-// because Vim interprets "cw" as change-word, and a word does not include the
-// following white space.
+// From the docs https://vimdoc.sourceforge.net/htmldoc/motion.html
+// Special case: "cw" and "cW" are treated like "ce" and "cE" if the cursor is
+// on a non-blank.  This is because "cw" is interpreted as change-word, and a
+// word does not include the following white space.  {Vi: "cw" when on a blank
+//     followed by other blanks changes only the first blank; this is probably a
+//     bug, because "dw" deletes all the blanks}
+//
+// NOT HANDLED YET
+// Another special case: When using the "w" motion in combination with an
+// operator and the last word moved over is at the end of a line, the end of
+// that word becomes the end of the operated text, not the first word in the
+// next line.
 fn expand_changed_word_selection(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
     times: usize,
     ignore_punctuation: bool,
-) {
-    if times > 1 {
-        Motion::NextWordStart { ignore_punctuation }.expand_selection(
-            map,
-            selection,
-            times - 1,
-            false,
-        );
+) -> bool {
+    if times == 1 {
+        let in_word = map
+            .chars_at(selection.head())
+            .next()
+            .map(|(c, _)| char_kind(c) != CharKind::Whitespace)
+            .unwrap_or_default();
+
+        if in_word {
+            selection.end = movement::find_boundary(map, selection.end, |left, right| {
+                let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
+                let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+
+                left_kind != right_kind && left_kind != CharKind::Whitespace
+            });
+            true
+        } else {
+            Motion::NextWordStart { ignore_punctuation }.expand_selection(map, selection, 1, false)
+        }
+    } else {
+        Motion::NextWordStart { ignore_punctuation }.expand_selection(map, selection, times, false)
     }
-
-    if times == 1 && selection.end.column() == map.line_len(selection.end.row()) {
-        return;
-    }
-
-    selection.end = movement::find_boundary(map, selection.end, |left, right| {
-        let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-        let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
-
-        left_kind != right_kind || left == '\n' || right == '\n'
-    });
 }
 
 #[cfg(test)]
