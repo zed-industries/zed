@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use std::{
     ffi::OsStr,
@@ -10,7 +10,7 @@ use std::{
 
 use indoc::indoc;
 use sqlez::{
-    connection::Connection, migrations::Migration,
+    connection::Connection, migrations::Migration, bindable::{Column, Bind},
 };
 
 use crate::pane::SerializedDockPane;
@@ -42,6 +42,18 @@ pub struct WorkspaceId(i64);
 impl WorkspaceId {
     pub fn raw_id(&self) -> i64 {
         self.0
+    }
+}
+
+impl Bind for WorkspaceId {
+    fn bind(&self, statement: &sqlez::statement::Statement, start_index: i32) -> Result<i32> {
+        todo!();
+    }
+}
+
+impl Column for WorkspaceId {
+    fn column(statement: &mut sqlez::statement::Statement, start_index: i32) -> Result<(Self, i32)> {
+       todo!();
     }
 }
 

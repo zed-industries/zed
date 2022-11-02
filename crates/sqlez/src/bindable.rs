@@ -10,6 +10,18 @@ pub trait Column: Sized {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)>;
 }
 
+impl Bind for bool {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        statement.bind(self.then_some(1).unwrap_or(0), start_index)
+    }
+}
+
+impl Column for bool {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        i32::column(statement, start_index).map(|(i, next_index)| (i != 0, next_index))
+    }
+}
+
 impl Bind for &[u8] {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_blob(start_index, self)?;

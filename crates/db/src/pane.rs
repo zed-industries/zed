@@ -1,7 +1,9 @@
 
+use std::str::FromStr;
+
 use gpui::Axis;
 use indoc::indoc;
-use sqlez::migrations::Migration;
+use sqlez::{migrations::Migration, bindable::{Bind, Column}, connection::Connection, statement::Statement};
 
 
 use crate::{items::ItemId, workspace::WorkspaceId};
@@ -138,13 +140,35 @@ pub struct SerializedPane {
 
 //********* CURRENTLY IN USE TYPES: *********
 
-
 #[derive(Default, Debug, PartialEq, Eq)]
 pub enum DockAnchor {
     #[default]
     Bottom,
     Right,
     Expanded,
+}
+
+impl ToString for DockAnchor {
+    fn to_string(&self) -> String {
+        match self {
+            DockAnchor::Bottom => "Bottom".to_string(),
+            DockAnchor::Right => "Right".to_string(),
+            DockAnchor::Expanded => "Expanded".to_string(),
+        }
+    }
+}
+
+impl FromStr for DockAnchor {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        match s { 
+            "Bottom" => Ok(DockAnchor::Bottom),
+            "Right" => Ok(DockAnchor::Right),
+            "Expanded" => Ok(DockAnchor::Expanded),
+            _ => anyhow::bail!("Not a valid dock anchor")
+        }
+    }
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -159,6 +183,7 @@ impl SerializedDockPane {
     }
 }
 
+
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct DockRow {
     workspace_id: WorkspaceId,
@@ -169,6 +194,21 @@ pub(crate) struct DockRow {
 impl DockRow {
     pub fn to_pane(&self) -> SerializedDockPane {
         SerializedDockPane { anchor_position: self.anchor_position, visible: self.visible }
+    }
+}
+
+impl Bind for DockRow {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        statement.bind((self.workspace_id, self.anchor_position.to_string(), self.visible), start_index)
+    }
+}
+
+impl Column for DockRow {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        <(WorkspaceId, &str, bool) as Column>::column(statement, start_index)
+            .map(|((workspace_id, anchor_position, visible), next_index)| {
+                
+            })
     }
 }
 
@@ -229,7 +269,10 @@ impl Db {
     pub fn get_dock_pane(&self, workspace: WorkspaceId) -> Option<SerializedDockPane> {
         fn logic(conn: &Connection, workspace: WorkspaceId) -> anyhow::Result<Option<SerializedDockPane>> {
 
-            let mut stmt = conn.prepare("SELECT workspace_id, anchor_position, visible FROM dock_panes WHERE workspace_id = ?")?;
+            let mut stmt = conn.prepare("SELECT workspace_id, anchor_position, visible FROM dock_panes WHERE workspace_id = ?")?
+                .maybe_row()
+                .map(|row| DockRow::col);
+            
             
             let dock_panes = stmt.query_row([workspace.raw_id()], |row_ref| from_row::<DockRow>).optional();
             

@@ -114,7 +114,7 @@ impl<'a> Statement<'a> {
 
         unsafe {
             sqlite3_bind_int(self.raw_statement, index, int);
-        }
+        };
         self.connection.last_error()
     }
 
