@@ -15,4 +15,4 @@ case $channel in
     ;;
 esac
 
-exec script/lib/bump-version.sh zed v $tag_suffix patch
+exec script/lib/bump-version.sh zed v "$tag_suffix" patch
