@@ -13,6 +13,7 @@ use sqlez::{
     bindable::{Bind, Column},
     connection::Connection,
     migrations::Migration,
+    statement::Statement,
 };
 
 use crate::pane::SerializedDockPane;
@@ -41,25 +42,15 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 pub struct WorkspaceId(i64);
 
-impl WorkspaceId {
-    pub fn raw_id(&self) -> i64 {
-        self.0
-    }
-}
-
 impl Bind for WorkspaceId {
-    fn bind(&self, statement: &sqlez::statement::Statement, start_index: i32) -> Result<i32> {
-        statement.bind(self.raw_id(), start_index)
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.0.bind(statement, start_index)
     }
 }
 
 impl Column for WorkspaceId {
-    fn column(
-        statement: &mut sqlez::statement::Statement,
-        start_index: i32,
-    ) -> Result<(Self, i32)> {
-        <i64 as Column>::column(statement, start_index)
-            .map(|(id, next_index)| (WorkspaceId(id), next_index))
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        i64::column(statement, start_index).map(|(id, next_index)| (Self(id), next_index))
     }
 }
 

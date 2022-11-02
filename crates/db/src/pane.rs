@@ -1,5 +1,4 @@
-use std::str::FromStr;
-
+use anyhow::bail;
 use gpui::Axis;
 use indoc::indoc;
 use sqlez::{
@@ -16,15 +15,7 @@ use super::Db;
 pub(crate) const PANE_MIGRATIONS: Migration = Migration::new(
     "pane",
     &[indoc! {"
-CREATE TABLE dock_panes(
-    dock_pane_id INTEGER PRIMARY KEY,
-    workspace_id INTEGER NOT NULL,
-    anchor_position TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
-    visible INTEGER NOT NULL, -- Boolean
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE pane_groups( -- Inner nodes
+CREATE TABLE pane_groups(
     group_id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL,
     parent_group INTEGER, -- NULL indicates that this is a root node
@@ -33,43 +24,32 @@ CREATE TABLE pane_groups( -- Inner nodes
     FOREIGN KEY(parent_group) REFERENCES pane_groups(group_id) ON DELETE CASCADE
 ) STRICT;
 
-
-CREATE TABLE grouped_panes( -- Leaf nodes 
+CREATE TABLE panes(
     pane_id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL,
-    group_id INTEGER NOT NULL,
+    group_id INTEGER, -- If null, this is a dock pane
     idx INTEGER NOT NULL,
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
     FOREIGN KEY(group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
 ) STRICT;
 
+CREATE TABLE dock_panes(
+    pane_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    anchor_position TEXT NOT NULL, -- Enum: 'Bottom' / 'Right' / 'Expanded'
+    visible INTEGER NOT NULL, -- Boolean
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+    FOREIGN KEY(pane_id) REFERENCES panes(pane_id) ON DELETE CASCADE
+) STRICT;
+
 CREATE TABLE items(
-    item_id INTEGER PRIMARY KEY,
+    item_id INTEGER NOT NULL, -- This is the item's view id, so this is not unique
+    pane_id INTEGER NOT NULL,
     workspace_id INTEGER NOT NULL,
     kind TEXT NOT NULL,
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE group_items(
-    workspace_id INTEGER NOT NULL,
-    pane_id INTEGER NOT NULL,
-    item_id INTEGER NOT NULL,
-    idx INTEGER NOT NULL,
-    PRIMARY KEY (workspace_id, pane_id, item_id)
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY(pane_id) REFERENCES grouped_panes(pane_id) ON DELETE CASCADE,
-    FOREIGN KEY(item_id) REFERENCES items(item_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE dock_items(
-    workspace_id INTEGER NOT NULL,
-    dock_pane_id INTEGER NOT NULL,
-    item_id INTEGER NOT NULL,
-    idx INTEGER NOT NULL,
-    PRIMARY KEY (workspace_id, dock_pane_id, item_id)
-    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    FOREIGN KEY(dock_pane_id) REFERENCES dock_panes(dock_pane_id) ON DELETE CASCADE,
-    FOREIGN KEY(item_id) REFERENCES items(item_id)ON DELETE CASCADE
+    FOREIGN KEY(pane_id) REFERENCES panes(pane_id) ON DELETE CASCADE
+    PRIMARY KEY(item_id, workspace_id)
 ) STRICT;
 "}],
 );
@@ -154,39 +134,30 @@ pub enum DockAnchor {
     Expanded,
 }
 
-impl ToString for DockAnchor {
-    fn to_string(&self) -> String {
-        match self {
-            DockAnchor::Bottom => "Bottom".to_string(),
-            DockAnchor::Right => "Right".to_string(),
-            DockAnchor::Expanded => "Expanded".to_string(),
-        }
-    }
-}
-
-impl FromStr for DockAnchor {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> anyhow::Result<Self> {
-        match s {
-            "Bottom" => Ok(DockAnchor::Bottom),
-            "Right" => Ok(DockAnchor::Right),
-            "Expanded" => Ok(DockAnchor::Expanded),
-            _ => anyhow::bail!("Not a valid dock anchor"),
-        }
-    }
-}
-
 impl Bind for DockAnchor {
     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        statement.bind(self.to_string(), start_index)
+        match self {
+            DockAnchor::Bottom => "Bottom",
+            DockAnchor::Right => "Right",
+            DockAnchor::Expanded => "Expanded",
+        }
+        .bind(statement, start_index)
     }
 }
 
 impl Column for DockAnchor {
     fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        <String as Column>::column(statement, start_index)
-            .and_then(|(str, next_index)| Ok((DockAnchor::from_str(&str)?, next_index)))
+        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
+            Ok((
+                match anchor_text.as_ref() {
+                    "Bottom" => DockAnchor::Bottom,
+                    "Right" => DockAnchor::Right,
+                    "Expanded" => DockAnchor::Expanded,
+                    _ => bail!("Stored dock anchor is incorrect"),
+                },
+                next_index,
+            ))
+        })
     }
 }
 
@@ -232,12 +203,25 @@ pub(crate) struct DockRow {
 impl Bind for DockRow {
     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
         statement.bind(
-            (
-                self.workspace_id,
-                self.anchor_position.to_string(),
-                self.visible,
-            ),
+            (self.workspace_id, self.anchor_position, self.visible),
             start_index,
+        )
+    }
+}
+
+impl Column for DockRow {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        <(WorkspaceId, DockAnchor, bool) as Column>::column(statement, start_index).map(
+            |((workspace_id, anchor_position, visible), next_index)| {
+                (
+                    DockRow {
+                        workspace_id,
+                        anchor_position,
+                        visible,
+                    },
+                    next_index,
+                )
+            },
         )
     }
 }
