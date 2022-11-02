@@ -52,7 +52,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 .with_child(
                     MouseEventHandler::<Dismiss>::new(user.id as usize, cx, |state, _| {
                         let style = theme.dismiss_button.style_for(state, false);
-                        Svg::new("icons/x_mark_thin_8.svg")
+                        Svg::new("icons/x_mark_8.svg")
                             .with_color(style.color)
                             .constrained()
                             .with_width(style.icon_width)

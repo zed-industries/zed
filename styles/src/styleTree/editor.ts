@@ -137,7 +137,7 @@ export default function editor(colorScheme: ColorScheme) {
   return {
     textColor: syntax.primary.color,
     background: background(layer),
-    activeLineBackground: background(layer, "on"),
+    activeLineBackground: withOpacity(background(layer, "on"), 0.75),
     highlightedLineBackground: background(layer, "on"),
     codeActions: {
       indicator: foreground(layer, "variant"),
@@ -162,7 +162,7 @@ export default function editor(colorScheme: ColorScheme) {
     errorColor: background(layer, "negative"),
     gutterBackground: background(layer),
     gutterPaddingFactor: 3.5,
-    lineNumber: foreground(layer, "disabled"),
+    lineNumber: withOpacity(foreground(layer), 0.35),
     lineNumberActive: foreground(layer),
     renameFade: 0.6,
     unnecessaryCodeFade: 0.5,
@@ -267,11 +267,11 @@ export default function editor(colorScheme: ColorScheme) {
         border: border(layer, "variant", { left: true }),
       },
       thumb: {
-        background: withOpacity(borderColor(layer, "variant"), 0.5),
+        background: withOpacity(background(layer, "inverted"), 0.4),
         border: {
           width: 1,
-          color: withOpacity(borderColor(layer, 'variant'), 0.5),
-        }
+          color: borderColor(layer, 'variant'),
+        },
       }
     },
     compositionMark: {
