@@ -170,8 +170,8 @@ impl View for GoToLine {
                             .boxed(),
                     )
                     .with_child(
-                        Container::new(Label::new(label, theme.empty.label.clone()).boxed())
-                            .with_style(theme.empty.container)
+                        Container::new(Label::new(label, theme.no_matches.label.clone()).boxed())
+                            .with_style(theme.no_matches.container)
                             .boxed(),
                     )
                     .boxed(),

@@ -427,8 +427,10 @@ pub struct ChannelName {
 pub struct Picker {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub empty: ContainedLabel,
+    pub empty_container: ContainerStyle,
     pub input_editor: FieldEditor,
+    pub empty_input_editor: FieldEditor,
+    pub no_matches: ContainedLabel,
     pub item: Interactive<ContainedLabel>,
 }
 
