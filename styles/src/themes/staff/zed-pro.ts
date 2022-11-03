@@ -39,15 +39,8 @@ export const theme: ThemeConfig = {
   syntax: {},
 };
 
-export const dark = createColorScheme(
-  `${theme.meta.name} Dark`,
-  false,
-  ramps,
-  theme
-);
-export const light = createColorScheme(
-  `${theme.meta.name} Light`,
-  true,
-  ramps,
-  theme
-);
+export const variants = [
+  createColorScheme(`${theme.meta.name} Midnight`, false, ramps, theme),
+  createColorScheme(`${theme.meta.name} Dark`, false, ramps, theme),
+  createColorScheme(`${theme.meta.name} Light`, true, ramps, theme)
+]

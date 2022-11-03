@@ -23,7 +23,13 @@ function for_all_color_schemes_in(themesPath: string, callback: (module: any, pa
 
     if (fs.statSync(filePath).isFile()) {
       const colorScheme = require(filePath);
-      callback(colorScheme, path.basename(filePath));
+      if (colorScheme.dark) colorSchemes.push(colorScheme.dark);
+      if (colorScheme.light) colorSchemes.push(colorScheme.light);
+      if (colorScheme.variants) {
+        colorScheme.variants.map((variant: ColorScheme) => {
+          colorSchemes.push(variant)
+        })
+      };
     }
   }
 }
