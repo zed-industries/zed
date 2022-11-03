@@ -31,4 +31,9 @@ jobs:
           architecture: "x64"
           cache: "pip"
       - run: pip install -r script/mixpanel_release/requirements.txt
-      - run: python script/mixpanel_release/main.py ${{ github.event.release.tag_name }} ${{ secrets.MIXPANEL_PROJECT_ID }} ${{ secrets.MIXPANEL_SERVICE_ACCOUNT_USERNAME }} ${{ secrets.MIXPANEL_SERVICE_ACCOUNT_SECRET }}
+      - run: > 
+          python script/mixpanel_release/main.py
+          ${{ github.event.release.tag_name }}
+          ${{ secrets.MIXPANEL_PROJECT_ID }}
+          ${{ secrets.MIXPANEL_SERVICE_ACCOUNT_USERNAME }}
+          ${{ secrets.MIXPANEL_SERVICE_ACCOUNT_SECRET }}
