@@ -961,7 +961,7 @@ fn get_injections(
             }
             prev_match = Some((mat.pattern_index, content_range.clone()));
 
-            let language_name = config.languages_by_pattern_ix[mat.pattern_index]
+            let language_name = config.patterns[mat.pattern_index].language
                 .as_ref()
                 .map(|s| Cow::Borrowed(s.as_ref()))
                 .or_else(|| {

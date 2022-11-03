@@ -326,7 +326,13 @@ struct InjectionConfig {
     query: Query,
     content_capture_ix: u32,
     language_capture_ix: Option<u32>,
-    languages_by_pattern_ix: Vec<Option<Box<str>>>,
+    patterns: Vec<InjectionPatternConfig>,
+}
+
+#[derive(Default, Clone)]
+struct InjectionPatternConfig {
+    language: Option<Box<str>>,
+    combined: bool,
 }
 
 struct BracketConfig {
@@ -730,15 +736,21 @@ impl Language {
                 ("content", &mut content_capture_ix),
             ],
         );
-        let languages_by_pattern_ix = (0..query.pattern_count())
+        let patterns = (0..query.pattern_count())
             .map(|ix| {
-                query.property_settings(ix).iter().find_map(|setting| {
-                    if setting.key.as_ref() == "language" {
-                        return setting.value.clone();
-                    } else {
-                        None
+                let mut config = InjectionPatternConfig::default();
+                for setting in query.property_settings(ix) {
+                    match setting.key.as_ref() {
+                        "language" => {
+                            config.language = setting.value.clone();
+                        }
+                        "combined" => {
+                            config.combined = true;
+                        }
+                        _ => {}
                     }
-                })
+                }
+                config
             })
             .collect();
         if let Some(content_capture_ix) = content_capture_ix {
@@ -746,7 +758,7 @@ impl Language {
                 query,
                 language_capture_ix,
                 content_capture_ix,
-                languages_by_pattern_ix,
+                patterns,
             });
         }
         Ok(self)
