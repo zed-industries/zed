@@ -97,7 +97,7 @@ tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev 
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "05e3631c6a0701c1fa518b0fee7be95a2ceef5e2" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "137e1ce6a02698fc246cdb9c6b886ed1de9a1ed8" }
-tree-sitter-rust = "0.20.1"
+tree-sitter-rust = "0.20.3"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-python = "0.20.2"
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
