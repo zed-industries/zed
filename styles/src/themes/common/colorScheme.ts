@@ -14,6 +14,7 @@ export interface ColorScheme {
   modalShadow: Shadow;
 
   players: Players;
+  syntax?: any
 }
 
 export interface Meta {

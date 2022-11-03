@@ -8,6 +8,8 @@ import {
   Styles,
   StyleSet,
 } from "./colorScheme";
+import buildSyntax from "./syntax";
+import { ThemeConfig } from "./themeConfig";
 
 export function colorRamp(color: Color): Scale {
   let endColor = color.desaturate(1).brighten(5);
@@ -18,7 +20,8 @@ export function colorRamp(color: Color): Scale {
 export function createColorScheme(
   name: string,
   isLight: boolean,
-  colorRamps: { [rampName: string]: Scale }
+  colorRamps: { [rampName: string]: Scale },
+  theme?: ThemeConfig
 ): ColorScheme {
   // Chromajs scales from 0 to 1 flipped if isLight is true
   let ramps: RampSet = {} as any;
@@ -78,6 +81,8 @@ export function createColorScheme(
     "7": player(ramps.yellow),
   };
 
+  let syntax = buildSyntax(ramps, theme)
+
   return {
     name,
     isLight,
@@ -92,6 +97,7 @@ export function createColorScheme(
     modalShadow,
 
     players,
+    syntax
   };
 }
 
