@@ -13,10 +13,27 @@ jobs:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
         content: |
           📣 Zed ${{ github.event.release.tag_name }} was just released!
-          
+
           Restart your Zed or head to https://zed.dev/releases to grab it.
-        
+
           ```md
           ### Changelog
-          
+
           ${{ github.event.release.body }}
+          ```
+  mixpanel_release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10.5"
+          architecture: "x64"
+          cache: "pip"
+      - run: pip install -r script/mixpanel_release/requirements.txt
+      - run: >
+          python script/mixpanel_release/main.py
+          ${{ github.event.release.tag_name }}
+          ${{ secrets.MIXPANEL_PROJECT_ID }}
+          ${{ secrets.MIXPANEL_SERVICE_ACCOUNT_USERNAME }}
+          ${{ secrets.MIXPANEL_SERVICE_ACCOUNT_SECRET }}
