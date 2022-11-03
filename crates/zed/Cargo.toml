@@ -102,6 +102,7 @@ tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown",
 tree-sitter-python = "0.20.2"
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = "0.20.1"
+tree-sitter-ruby = "0.20.0"
 tree-sitter-html = "0.19.0"
 url = "2.2"
 

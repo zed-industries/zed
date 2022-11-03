@@ -3009,6 +3009,7 @@ dependencies = [
  "tree-sitter-javascript",
  "tree-sitter-json 0.19.0",
  "tree-sitter-python",
+ "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "unindent",
@@ -6492,6 +6493,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-ruby"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ac30cbb1560363ae76e1ccde543d6d99087421e228cc47afcec004b86bb711a"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-rust"
 version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7712,6 +7723,7 @@ dependencies = [
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
  "tree-sitter-python",
+ "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-toml",
  "tree-sitter-typescript",

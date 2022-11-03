@@ -1,10 +1,6 @@
 import { fontWeights } from "../common";
 import { withOpacity } from "../utils/color";
-import {
-  ColorScheme,
-  Layer,
-  StyleSets,
-} from "../themes/common/colorScheme";
+import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme";
 import {
   background,
   border,
@@ -48,6 +44,11 @@ export default function editor(colorScheme: ColorScheme) {
   const syntax = {
     primary: {
       color: colorScheme.ramps.neutral(1).hex(),
+      weight: fontWeights.normal,
+    },
+    "variable.special": {
+      // Highlights for self, this, etc
+      color: colorScheme.ramps.blue(0.7).hex(),
       weight: fontWeights.normal,
     },
     comment: {
@@ -270,9 +271,9 @@ export default function editor(colorScheme: ColorScheme) {
         background: withOpacity(background(layer, "inverted"), 0.4),
         border: {
           width: 1,
-          color: borderColor(layer, 'variant'),
+          color: borderColor(layer, "variant"),
         },
-      }
+      },
     },
     compositionMark: {
       underline: {
