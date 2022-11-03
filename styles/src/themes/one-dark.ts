@@ -3,6 +3,18 @@ import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
 import { ThemeConfig } from "./common/themeConfig";
 
+const color = {
+  white: "#ACB2BE",
+  grey: "#5D636F",
+  red: "#D07277",
+  orange: "#C0966B",
+  yellow: "#DFC184",
+  green: "#A1C181",
+  teal: "#6FB4C0",
+  blue: "#74ADE9",
+  purple: "#B478CF",
+};
+
 const ramps = {
   neutral: chroma
     .scale([
@@ -16,26 +28,14 @@ const ramps = {
       "#c8ccd4",
     ])
     .domain([0.05, 0.22, 0.25, 0.45, 0.62, 0.8, 0.9, 1]),
-  red: colorRamp(chroma("#e06c75")),
-  orange: colorRamp(chroma("#d19a66")),
-  yellow: colorRamp(chroma("#e5c07b")),
-  green: colorRamp(chroma("#98c379")),
-  cyan: colorRamp(chroma("#56b6c2")),
-  blue: colorRamp(chroma("#61afef")),
-  violet: colorRamp(chroma("#c678dd")),
+  red: colorRamp(chroma(color.red)),
+  orange: colorRamp(chroma(color.orange)),
+  yellow: colorRamp(chroma(color.yellow)),
+  green: colorRamp(chroma(color.green)),
+  cyan: colorRamp(chroma(color.teal)),
+  blue: colorRamp(chroma(color.blue)),
+  violet: colorRamp(chroma(color.purple)),
   magenta: colorRamp(chroma("#be5046")),
-};
-
-const color = {
-  white: "#ACB2BE",
-  grey: "#5D636F",
-  red: "#D07277",
-  orange: "#C0966B",
-  yellow: "#DFC184",
-  green: "#A1C181",
-  teal: "#6FB4C0",
-  blue: "#74ADE9",
-  purple: "#B478CF",
 };
 
 export const theme: ThemeConfig = {
@@ -62,6 +62,7 @@ export const theme: ThemeConfig = {
     punctuation: { color: color.white },
     operator: { color: color.teal }
   },
+  override: {}
 };
 
 export const variants = [

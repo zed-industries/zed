@@ -1,5 +1,5 @@
 import { Color, Scale } from "chroma-js";
-import { Syntax, SyntaxHighlightStyle } from "./theme";
+import { SyntaxHighlightStyle } from "./theme";
 
 interface Meta {
   /**
@@ -13,6 +13,8 @@ interface Meta {
 
   /**
    * Name of the theme's author, or the author who ported the theme
+   *
+   * Github handle > full name, if both are available format like "@handle (Full Name)"
    */
   author: string;
   url: string;
@@ -36,6 +38,24 @@ interface Colors {
   magenta: Scale<Color>;
 }
 
+interface ThemeOverrides {
+  accent: string;
+  ui: {
+    scrollbar: string,
+  }
+  status: {
+    positive: string,
+    negative: string,
+    warning: string,
+    info: string,
+  }
+  versionControl: {
+    added: string,
+    removed: string,
+    modified: string
+  }
+}
+
 export interface SyntaxOverrides {
   [key: string]: SyntaxHighlightStyle
 }
@@ -43,5 +63,7 @@ export interface SyntaxOverrides {
 export interface ThemeConfig {
   meta: Meta;
   color: Colors;
+  // Syntax probably moves inside of override
   syntax: SyntaxOverrides;
+  override: Partial<ThemeOverrides>
 }
