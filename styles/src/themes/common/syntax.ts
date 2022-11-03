@@ -130,6 +130,12 @@ export default function buildSyntax(ramps: RampSet, theme: ThemeConfig) {
         weight: fontWeights.normal,
         italic: true,
       },
+    method: theme.syntax.method
+      ? theme.syntax.method
+      : {
+        color: ramps.blue(0.5).hex(),
+        weight: fontWeights.normal,
+      },
   };
 
   return syntax;
