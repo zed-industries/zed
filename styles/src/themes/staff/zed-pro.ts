@@ -37,6 +37,7 @@ export const theme: ThemeConfig = {
   },
   color: ramps,
   syntax: {},
+  override: {},
 };
 
 export const variants = [
