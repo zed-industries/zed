@@ -2,18 +2,6 @@ import chroma from "chroma-js";
 import { colorRamp, createColorScheme } from "../common/ramps";
 import { ThemeConfig } from "../common/themeConfig";
 
-const name = "Zed Pro";
-const author = "Nate Butler"
-const url = "https://github.com/iamnbutler"
-const license = {
-  type: "?",
-  url: "?",
-};
-
-const red = "#DC604F"
-const violet = "#5874C1"
-const cyan = "#215050"
-
 const ramps = {
   neutral: chroma
     .scale([
@@ -45,17 +33,21 @@ export const theme: ThemeConfig = {
     license: {
       type: "MIT",
       url: "",
-    }
+    },
   },
   color: ramps,
-  syntax: {
-    primary: "#E6E6E6",
-    comment: violet,
-    punctuation: "#E6E6E6",
-    constant: cyan,
-    keyword: red,
-  }
-}
+  syntax: {},
+};
 
-export const dark = createColorScheme(`${name} Dark`, false, ramps, theme);
-export const light = createColorScheme(`${name} Light`, true, ramps, theme);
+export const dark = createColorScheme(
+  `${theme.meta.name} Dark`,
+  false,
+  ramps,
+  theme
+);
+export const light = createColorScheme(
+  `${theme.meta.name} Light`,
+  true,
+  ramps,
+  theme
+);

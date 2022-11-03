@@ -1,4 +1,5 @@
 import { Scale } from "chroma-js";
+import { Syntax } from "./theme";
 
 export interface ColorScheme {
   name: string;
@@ -14,7 +15,7 @@ export interface ColorScheme {
   modalShadow: Shadow;
 
   players: Players;
-  syntax?: any
+  syntax: Syntax;
 }
 
 export interface Meta {

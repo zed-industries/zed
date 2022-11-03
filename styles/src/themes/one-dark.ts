@@ -1,10 +1,10 @@
 import chroma from "chroma-js";
 import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
+import { SyntaxHighlightStyle } from "./common/theme";
+import { SyntaxOverrides, ThemeConfig } from "./common/themeConfig";
 
-const name = "One Dark";
-
-export const dark = createColorScheme(`${name}`, false, {
+const ramps = {
   neutral: chroma
     .scale([
       "#282c34",
@@ -17,7 +17,6 @@ export const dark = createColorScheme(`${name}`, false, {
       "#c8ccd4",
     ])
     .domain([0.05, 0.22, 0.25, 0.45, 0.62, 0.8, 0.9, 1]),
-
   red: colorRamp(chroma("#e06c75")),
   orange: colorRamp(chroma("#d19a66")),
   yellow: colorRamp(chroma("#e5c07b")),
@@ -26,15 +25,49 @@ export const dark = createColorScheme(`${name}`, false, {
   blue: colorRamp(chroma("#61afef")),
   violet: colorRamp(chroma("#c678dd")),
   magenta: colorRamp(chroma("#be5046")),
-});
+};
 
-export const meta: Meta = {
-  name,
-  author: "simurai",
-  license: {
-    SPDX: "MIT",
-    https_url: "https://raw.githubusercontent.com/atom/atom/master/packages/one-light-ui/LICENSE.md",
-    license_checksum: "d5af8fc171f6f600c0ab4e7597dca398dda80dbe6821ce01cef78e859e7a00f8"
+const color = {
+  white: "#ACB2BE",
+  grey: "#5D636F",
+  red: "#D07277",
+  orange: "#C0966B",
+  yellow: "#DFC184",
+  green: "#A1C181",
+  teal: "#6FB4C0",
+  blue: "#74ADE9",
+  purple: "#B478CF",
+};
+
+export const theme: ThemeConfig = {
+  meta: {
+    name: "One Dark",
+    author: "simurai",
+    url: "https://github.com/atom/atom/tree/master/packages/one-dark-ui",
+    license: {
+      type: "MIT",
+      url: "https://github.com/atom/atom/blob/master/packages/one-dark-ui/LICENSE.md",
+    },
   },
-  url: "https://github.com/atom/atom/tree/master/packages/one-dark-ui"
-}
+  color: ramps,
+  syntax: {
+    primary: { color: color.white },
+    comment: { color: color.grey },
+    function: { color: color.blue },
+    type: { color: color.cyan },
+    property: { color: color.red },
+    number: { color: color.orange },
+    string: { color: color.green },
+    keyword: { color: color.purple },
+    boolean: { color: color.orange },
+    punctuation: { color: color.white },
+    operator: { color: color.teal }
+  },
+};
+
+export const dark = createColorScheme(
+  `${theme.meta.name}`,
+  false,
+  ramps,
+  theme
+);

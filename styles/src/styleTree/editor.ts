@@ -1,4 +1,3 @@
-import { fontWeights } from "../common";
 import { withOpacity } from "../utils/color";
 import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme";
 import {
@@ -9,8 +8,6 @@ import {
   text,
 } from "./components";
 import hoverPopover from "./hoverPopover";
-import { Syntax } from "../themes/common/theme";
-import buildSyntax from "../themes/common/syntax";
 
 export default function editor(colorScheme: ColorScheme) {
   let layer = colorScheme.highest;
@@ -43,7 +40,7 @@ export default function editor(colorScheme: ColorScheme) {
     };
   }
 
-  const syntax = colorScheme.syntax
+  const syntax = colorScheme.syntax;
 
   return {
     textColor: syntax.primary.color,

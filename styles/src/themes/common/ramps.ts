@@ -21,7 +21,7 @@ export function createColorScheme(
   name: string,
   isLight: boolean,
   colorRamps: { [rampName: string]: Scale },
-  theme?: ThemeConfig
+  theme: ThemeConfig
 ): ColorScheme {
   // Chromajs scales from 0 to 1 flipped if isLight is true
   let ramps: RampSet = {} as any;
@@ -81,7 +81,7 @@ export function createColorScheme(
     "7": player(ramps.yellow),
   };
 
-  let syntax = buildSyntax(ramps, theme)
+  let syntax = buildSyntax(ramps, theme);
 
   return {
     name,
@@ -97,7 +97,7 @@ export function createColorScheme(
     modalShadow,
 
     players,
-    syntax
+    syntax,
   };
 }
 
