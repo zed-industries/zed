@@ -65,11 +65,6 @@
 // ) STRICT;
 // ";
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ItemId {
-    pub item_id: usize,
-}
-
 // enum SerializedItemKind {
 //     Editor,
 //     Diagnostics,

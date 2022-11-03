@@ -1,3 +1,9 @@
+use std::{
+    ffi::{CString, OsStr},
+    os::unix::prelude::OsStrExt,
+    path::{Path, PathBuf},
+};
+
 use anyhow::Result;
 
 use crate::statement::{SqlType, Statement};
@@ -239,5 +245,22 @@ impl<T: Bind> Bind for &[T] {
         }
 
         Ok(current_index)
+    }
+}
+
+impl Bind for &Path {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.as_os_str().as_bytes().bind(statement, start_index)
+    }
+}
+
+impl Column for PathBuf {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let blob = statement.column_blob(start_index)?;
+
+        Ok((
+            PathBuf::from(OsStr::from_bytes(blob).to_owned()),
+            start_index + 1,
+        ))
     }
 }

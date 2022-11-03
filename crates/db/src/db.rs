@@ -1,7 +1,5 @@
-pub mod items;
 pub mod kvp;
 mod migrations;
-pub mod pane;
 pub mod workspace;
 
 use std::fs;
@@ -11,10 +9,10 @@ use std::path::Path;
 use anyhow::Result;
 use indoc::indoc;
 use kvp::KVP_MIGRATION;
-use pane::PANE_MIGRATIONS;
 use sqlez::connection::Connection;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 
+use workspace::pane::PANE_MIGRATIONS;
 pub use workspace::*;
 
 #[derive(Clone)]
