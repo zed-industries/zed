@@ -678,6 +678,19 @@ impl<'a> MutableSelectionsCollection<'a> {
         });
     }
 
+    pub fn maybe_move_cursors_with(
+        &mut self,
+        mut update_cursor_position: impl FnMut(
+            &DisplaySnapshot,
+            DisplayPoint,
+            SelectionGoal,
+        ) -> Option<(DisplayPoint, SelectionGoal)>,
+    ) {
+        self.move_cursors_with(|map, point, goal| {
+            update_cursor_position(map, point, goal).unwrap_or((point, goal))
+        })
+    }
+
     pub fn replace_cursors_with(
         &mut self,
         mut find_replacement_cursors: impl FnMut(&DisplaySnapshot) -> Vec<DisplayPoint>,

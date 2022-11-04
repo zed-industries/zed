@@ -8,7 +8,10 @@ use util::test::marked_text_offsets;
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
 
-pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[];
+pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[
+    ExemptionFeatures::DeletionOnEmptyLine,
+    ExemptionFeatures::OperatorAbortsOnFailedMotion,
+];
 
 /// Enum representing features we have tests for but which don't work, yet. Used
 /// to add exemptions and automatically
@@ -19,6 +22,10 @@ pub enum ExemptionFeatures {
     DeletionOnEmptyLine,
     // When a motion fails, it should should not apply linewise operations
     OperatorAbortsOnFailedMotion,
+    // When an operator completes at the end of the file, an extra newline is left
+    OperatorLastNewlineRemains,
+    // Deleting a word on an empty line doesn't remove the newline
+    DeleteWordOnEmptyLine,
 
     // OBJECTS
     // Resulting position after the operation is slightly incorrect for unintuitive reasons.
