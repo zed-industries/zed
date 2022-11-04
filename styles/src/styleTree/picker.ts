@@ -3,13 +3,39 @@ import { background, border, text } from "./components";
 
 export default function picker(colorScheme: ColorScheme) {
   let layer = colorScheme.lowest;
-  return {
+  const container = {
     background: background(layer),
     border: border(layer),
     shadow: colorScheme.modalShadow,
     cornerRadius: 12,
     padding: {
       bottom: 4,
+    }
+  };
+  const inputEditor = {
+    placeholderText: text(layer, "sans", "on", "disabled"),
+    selection: colorScheme.players[0],
+    text: text(layer, "mono", "on"),
+    border: border(layer, { bottom: true }),
+    padding: {
+      bottom: 8,
+      left: 16,
+      right: 16,
+      top: 8,
+    },
+    margin: {
+      bottom: 4,
+    },
+  };
+  const emptyInputEditor = { ...inputEditor };
+  delete emptyInputEditor.border;
+  delete emptyInputEditor.margin;
+
+  return {
+    ...container,
+    emptyContainer: {
+      ...container,
+      padding: {}
     },
     item: {
       padding: {
@@ -37,28 +63,15 @@ export default function picker(colorScheme: ColorScheme) {
         background: background(layer, "hovered"),
       },
     },
-    empty: {
+    inputEditor,
+    emptyInputEditor,
+    noMatches: {
       text: text(layer, "sans", "variant"),
       padding: {
         bottom: 8,
         left: 16,
         right: 16,
         top: 8,
-      },
-    },
-    inputEditor: {
-      placeholderText: text(layer, "sans", "on", "disabled"),
-      selection: colorScheme.players[0],
-      text: text(layer, "mono", "on"),
-      border: border(layer, { bottom: true }),
-      padding: {
-        bottom: 8,
-        left: 16,
-        right: 16,
-        top: 8,
-      },
-      margin: {
-        bottom: 4,
       },
     },
   };

@@ -1,25 +1,22 @@
 use editor::Editor;
 use gpui::{
-    elements::{
-        ChildView, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget, UniformList,
-        UniformListState,
-    },
+    elements::*,
     geometry::vector::{vec2f, Vector2F},
     keymap,
     platform::CursorStyle,
-    AnyViewHandle, AppContext, Axis, Element, ElementBox, Entity, MouseButton, MouseState,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, Axis, Entity, MouseButton, MouseState, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
-use settings::Settings;
-use std::cmp;
+use parking_lot::Mutex;
+use std::{cmp, sync::Arc};
 
 pub struct Picker<D: PickerDelegate> {
     delegate: WeakViewHandle<D>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     max_size: Vector2F,
-    theme: Box<dyn FnMut(&AppContext) -> &theme::Picker>,
+    theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
     confirmed: bool,
 }
 
@@ -52,8 +49,8 @@ impl<D: PickerDelegate> View for Picker<D> {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
-        let theme = (self.theme)(cx);
-        let container_style = theme.container;
+        let theme = (self.theme.lock())(&cx.global::<settings::Settings>().theme);
+        let query = self.query(cx);
         let delegate = self.delegate.clone();
         let match_count = if let Some(delegate) = delegate.upgrade(cx.app) {
             delegate.read(cx).match_count()
@@ -61,19 +58,36 @@ impl<D: PickerDelegate> View for Picker<D> {
             0
         };
 
+        let container_style;
+        let editor_style;
+        if query.is_empty() && match_count == 0 {
+            container_style = theme.empty_container;
+            editor_style = theme.empty_input_editor.container;
+        } else {
+            container_style = theme.container;
+            editor_style = theme.input_editor.container;
+        };
+
         Flex::new(Axis::Vertical)
             .with_child(
                 ChildView::new(&self.query_editor, cx)
                     .contained()
-                    .with_style(theme.input_editor.container)
+                    .with_style(editor_style)
                     .boxed(),
             )
-            .with_child(
-                if match_count == 0 {
-                    Label::new("No matches".into(), theme.empty.label.clone())
-                        .contained()
-                        .with_style(theme.empty.container)
+            .with_children(if match_count == 0 {
+                if query.is_empty() {
+                    None
                 } else {
+                    Some(
+                        Label::new("No matches".into(), theme.no_matches.label.clone())
+                            .contained()
+                            .with_style(theme.no_matches.container)
+                            .boxed(),
+                    )
+                }
+            } else {
+                Some(
                     UniformList::new(
                         self.list_state.clone(),
                         match_count,
@@ -98,10 +112,10 @@ impl<D: PickerDelegate> View for Picker<D> {
                     )
                     .contained()
                     .with_margin_top(6.0)
-                }
-                .flex(1., false)
-                .boxed(),
-            )
+                    .flex(1., false)
+                    .boxed(),
+                )
+            })
             .contained()
             .with_style(container_style)
             .constrained()
@@ -134,9 +148,26 @@ impl<D: PickerDelegate> Picker<D> {
         cx.add_action(Self::cancel);
     }
 
-    pub fn new(delegate: WeakViewHandle<D>, cx: &mut ViewContext<Self>) -> Self {
-        let query_editor = cx.add_view(|cx| {
-            Editor::single_line(Some(|theme| theme.picker.input_editor.clone()), cx)
+    pub fn new<P>(placeholder: P, delegate: WeakViewHandle<D>, cx: &mut ViewContext<Self>) -> Self
+    where
+        P: Into<Arc<str>>,
+    {
+        let theme = Arc::new(Mutex::new(
+            Box::new(|theme: &theme::Theme| theme.picker.clone())
+                as Box<dyn Fn(&theme::Theme) -> theme::Picker>,
+        ));
+        let query_editor = cx.add_view({
+            let picker_theme = theme.clone();
+            |cx| {
+                let mut editor = Editor::single_line(
+                    Some(Arc::new(move |theme| {
+                        (picker_theme.lock())(theme).input_editor.clone()
+                    })),
+                    cx,
+                );
+                editor.set_placeholder_text(placeholder, cx);
+                editor
+            }
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
@@ -145,7 +176,7 @@ impl<D: PickerDelegate> Picker<D> {
             list_state: Default::default(),
             delegate,
             max_size: vec2f(540., 420.),
-            theme: Box::new(|cx| &cx.global::<Settings>().theme.picker),
+            theme,
             confirmed: false,
         };
         cx.defer(|this, cx| {
@@ -162,11 +193,11 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn with_theme<F>(mut self, theme: F) -> Self
+    pub fn with_theme<F>(self, theme: F) -> Self
     where
-        F: 'static + FnMut(&AppContext) -> &theme::Picker,
+        F: 'static + Fn(&theme::Theme) -> theme::Picker,
     {
-        self.theme = Box::new(theme);
+        *self.theme.lock() = Box::new(theme);
         self
     }
 

@@ -63,7 +63,7 @@ impl ProjectSymbolsView {
         let handle = cx.weak_handle();
         Self {
             project,
-            picker: cx.add_view(|cx| Picker::new(handle, cx)),
+            picker: cx.add_view(|cx| Picker::new("Search project symbols...", handle, cx)),
             selected_match_index: 0,
             symbols: Default::default(),
             visible_match_candidates: Default::default(),

@@ -93,6 +93,9 @@ impl BlinkManager {
 
     pub fn enable(&mut self, cx: &mut ModelContext<Self>) {
         self.enabled = true;
+        // Set cursors as invisible and start blinking: this causes cursors
+        // to be visible during the next render.
+        self.visible = false;
         self.blink_cursors(self.blink_epoch, cx);
     }
 

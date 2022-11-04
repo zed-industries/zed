@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use editor::{display_map::ToDisplayPoint, Autoscroll, DisplayPoint, Editor};
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, Axis, Entity,
@@ -31,7 +33,10 @@ pub enum Event {
 impl GoToLine {
     pub fn new(active_editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) -> Self {
         let line_editor = cx.add_view(|cx| {
-            Editor::single_line(Some(|theme| theme.picker.input_editor.clone()), cx)
+            Editor::single_line(
+                Some(Arc::new(|theme| theme.picker.input_editor.clone())),
+                cx,
+            )
         });
         cx.subscribe(&line_editor, Self::on_line_editor_event)
             .detach();
@@ -170,8 +175,8 @@ impl View for GoToLine {
                             .boxed(),
                     )
                     .with_child(
-                        Container::new(Label::new(label, theme.empty.label.clone()).boxed())
-                            .with_style(theme.empty.container)
+                        Container::new(Label::new(label, theme.no_matches.label.clone()).boxed())
+                            .with_style(theme.no_matches.container)
                             .boxed(),
                     )
                     .boxed(),

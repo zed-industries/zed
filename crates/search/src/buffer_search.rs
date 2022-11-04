@@ -12,7 +12,7 @@ use gpui::{
 use project::search::SearchQuery;
 use serde::Deserialize;
 use settings::Settings;
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 use workspace::{
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
     ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView,
@@ -232,7 +232,11 @@ impl ToolbarItemView for BufferSearchBar {
 impl BufferSearchBar {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::auto_height(2, Some(|theme| theme.search.editor.input.clone()), cx)
+            Editor::auto_height(
+                2,
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            )
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();

@@ -67,7 +67,9 @@ impl OutlineView {
     ) -> Self {
         let handle = cx.weak_handle();
         Self {
-            picker: cx.add_view(|cx| Picker::new(handle, cx).with_max_size(800., 1200.)),
+            picker: cx.add_view(|cx| {
+                Picker::new("Search buffer symbols...", handle, cx).with_max_size(800., 1200.)
+            }),
             last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,

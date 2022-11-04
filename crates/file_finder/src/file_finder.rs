@@ -119,7 +119,7 @@ impl FileFinder {
         cx.observe(&project, Self::project_updated).detach();
         Self {
             project,
-            picker: cx.add_view(|cx| Picker::new(handle, cx)),
+            picker: cx.add_view(|cx| Picker::new("Search project files...", handle, cx)),
             search_count: 0,
             latest_search_id: 0,
             latest_search_did_cancel: false,

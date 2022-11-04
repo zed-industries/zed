@@ -20,6 +20,7 @@ use std::{
     any::{Any, TypeId},
     ops::Range,
     path::PathBuf,
+    sync::Arc,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -378,8 +379,10 @@ impl ProjectSearchView {
             .detach();
 
         let query_editor = cx.add_view(|cx| {
-            let mut editor =
-                Editor::single_line(Some(|theme| theme.search.editor.input.clone()), cx);
+            let mut editor = Editor::single_line(
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            );
             editor.set_text(query_text, cx);
             editor
         });

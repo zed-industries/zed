@@ -23,6 +23,7 @@ use std::{
     ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use unicase::UniCase;
 use workspace::Workspace;
@@ -175,11 +176,11 @@ impl ProjectPanel {
 
             let filename_editor = cx.add_view(|cx| {
                 Editor::single_line(
-                    Some(|theme| {
+                    Some(Arc::new(|theme| {
                         let mut style = theme.project_panel.filename_editor.clone();
                         style.container.background_color.take();
                         style
-                    }),
+                    })),
                     cx,
                 )
             });
