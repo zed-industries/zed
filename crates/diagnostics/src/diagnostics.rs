@@ -100,7 +100,7 @@ impl View for ProjectDiagnosticsEditor {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if !self.path_states.is_empty() {
+        if cx.is_self_focused() && !self.path_states.is_empty() {
             cx.focus(&self.editor);
         }
     }
