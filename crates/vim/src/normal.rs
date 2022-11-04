@@ -851,4 +851,10 @@ mod test {
             .await;
         }
     }
+
+    #[gpui::test]
+    async fn test_h_through_unicode(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["h"]);
+        cx.assert_all("Testˇ├ˇ──ˇ┐ˇTest").await;
+    }
 }

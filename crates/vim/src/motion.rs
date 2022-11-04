@@ -266,7 +266,7 @@ impl Motion {
 fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
         *point.column_mut() = point.column().saturating_sub(1);
-        point = map.clip_point(point, Bias::Right);
+        point = map.clip_point(point, Bias::Left);
         if point.column() == 0 {
             break;
         }
