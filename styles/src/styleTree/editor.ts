@@ -36,8 +36,8 @@ export default function editor(colorScheme: ColorScheme) {
         }),
       },
       message: {
-        text: text(layer, "sans", styleSet, "inverted", { size: "sm" }),
-        highlightText: text(layer, "sans", styleSet, "inverted", {
+        text: text(layer, "sans", styleSet, "default", { size: "sm" }),
+        highlightText: text(layer, "sans", styleSet, "default", {
           size: "sm",
           weight: "bold",
         }),
