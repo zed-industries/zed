@@ -70,7 +70,7 @@ impl CommandPalette {
             })
             .collect();
 
-        let picker = cx.add_view(|cx| Picker::new(this, cx));
+        let picker = cx.add_view(|cx| Picker::new("Execute a command...", this, cx));
         Self {
             picker,
             actions,

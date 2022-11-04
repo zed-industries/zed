@@ -53,7 +53,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
       background: background(layer, "on"),
       cornerRadius: 6,
       text: text(layer, "mono", "on"),
-      placeholderText: text(layer, "mono", "on", "disabled", { size: "sm" }),
+      placeholderText: text(layer, "mono", "on", "disabled", { size: "xs" }),
       selection: colorScheme.players[0],
       border: border(layer, "on"),
       padding: {

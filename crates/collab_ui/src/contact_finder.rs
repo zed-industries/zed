@@ -170,8 +170,8 @@ impl ContactFinder {
         let this = cx.weak_handle();
         Self {
             picker: cx.add_view(|cx| {
-                Picker::new(this, cx)
-                    .with_theme(|cx| &cx.global::<Settings>().theme.contact_finder.picker)
+                Picker::new("Search collaborator by username...", this, cx)
+                    .with_theme(|theme| theme.contact_finder.picker.clone())
             }),
             potential_contacts: Arc::from([]),
             user_store,

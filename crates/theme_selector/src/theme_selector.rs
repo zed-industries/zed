@@ -38,7 +38,7 @@ pub enum Event {
 impl ThemeSelector {
     fn new(registry: Arc<ThemeRegistry>, cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
-        let picker = cx.add_view(|cx| Picker::new(handle, cx));
+        let picker = cx.add_view(|cx| Picker::new("Select Theme...", handle, cx));
         let settings = cx.global::<Settings>();
 
         let original_theme = settings.theme.clone();

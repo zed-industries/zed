@@ -423,7 +423,7 @@ pub struct ChannelName {
     pub name: TextStyle,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct Picker {
     #[serde(flatten)]
     pub container: ContainerStyle,

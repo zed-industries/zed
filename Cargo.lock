@@ -4012,6 +4012,7 @@ dependencies = [
  "env_logger",
  "gpui",
  "menu",
+ "parking_lot 0.11.2",
  "serde_json",
  "settings",
  "theme",

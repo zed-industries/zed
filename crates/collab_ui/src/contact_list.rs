@@ -175,7 +175,9 @@ impl ContactList {
     ) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
-                Some(|theme| theme.contact_list.user_query_editor.clone()),
+                Some(Arc::new(|theme| {
+                    theme.contact_list.user_query_editor.clone()
+                })),
                 cx,
             );
             editor.set_placeholder_text("Filter contacts", cx);

@@ -1186,7 +1186,7 @@ impl EditorElement {
         }
 
         // When the editor is empty and unfocused, then show the placeholder.
-        if snapshot.is_empty() && !snapshot.is_focused() {
+        if snapshot.is_empty() {
             let placeholder_style = self
                 .style
                 .placeholder_text

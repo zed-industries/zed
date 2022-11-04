@@ -437,8 +437,7 @@ pub struct EditorStyle {
 
 type CompletionId = usize;
 
-pub type GetFieldEditorTheme = fn(&theme::Theme) -> theme::FieldEditor;
-
+type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 #[derive(Clone, Copy)]
@@ -523,7 +522,7 @@ pub struct Editor {
     scroll_top_anchor: Anchor,
     autoscroll_request: Option<(Autoscroll, bool)>,
     soft_wrap_mode_override: Option<settings::SoftWrap>,
-    get_field_editor_theme: Option<GetFieldEditorTheme>,
+    get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
     focused: bool,
@@ -1070,7 +1069,7 @@ enum GotoDefinitionKind {
 
 impl Editor {
     pub fn single_line(
-        field_editor_style: Option<GetFieldEditorTheme>,
+        field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
@@ -1080,7 +1079,7 @@ impl Editor {
 
     pub fn auto_height(
         max_lines: usize,
-        field_editor_style: Option<GetFieldEditorTheme>,
+        field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
@@ -1116,7 +1115,7 @@ impl Editor {
             self.mode,
             self.buffer.clone(),
             self.project.clone(),
-            self.get_field_editor_theme,
+            self.get_field_editor_theme.clone(),
             cx,
         );
         self.display_map.update(cx, |display_map, cx| {
@@ -1136,12 +1135,12 @@ impl Editor {
         mode: EditorMode,
         buffer: ModelHandle<MultiBuffer>,
         project: Option<ModelHandle<Project>>,
-        get_field_editor_theme: Option<GetFieldEditorTheme>,
+        get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let display_map = cx.add_model(|cx| {
             let settings = cx.global::<Settings>();
-            let style = build_style(&*settings, get_field_editor_theme, None, cx);
+            let style = build_style(&*settings, get_field_editor_theme.as_deref(), None, cx);
             DisplayMap::new(
                 buffer.clone(),
                 style.text.font_id,
@@ -1289,7 +1288,7 @@ impl Editor {
     fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
             cx.global::<Settings>(),
-            self.get_field_editor_theme,
+            self.get_field_editor_theme.as_deref(),
             self.override_text_style.as_deref(),
             cx,
         )
@@ -6846,7 +6845,7 @@ impl View for Editor {
 
 fn build_style(
     settings: &Settings,
-    get_field_editor_theme: Option<GetFieldEditorTheme>,
+    get_field_editor_theme: Option<&GetFieldEditorTheme>,
     override_text_style: Option<&OverrideTextStyle>,
     cx: &AppContext,
 ) -> EditorStyle {

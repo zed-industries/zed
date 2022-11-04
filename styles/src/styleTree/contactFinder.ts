@@ -19,7 +19,7 @@ export default function contactFinder(colorScheme: ColorScheme) {
     background: background(layer, "on"),
     cornerRadius: 6,
     text: text(layer, "mono",),
-    placeholderText: text(layer, "mono", "variant", { size: "sm" }),
+    placeholderText: text(layer, "mono", "on", "disabled", { size: "xs" }),
     selection: colorScheme.players[0],
     border: border(layer),
     padding: {
