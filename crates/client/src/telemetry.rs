@@ -32,7 +32,6 @@ pub struct Telemetry {
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
-    app: &'static str,
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
@@ -80,8 +79,6 @@ struct MixpanelEventProperties {
     app_version: Option<Arc<str>>,
     #[serde(rename = "Signed In")]
     signed_in: bool,
-    #[serde(rename = "App")]
-    app: &'static str,
 }
 
 #[derive(Serialize)]
@@ -120,7 +117,6 @@ impl Telemetry {
             state: Mutex::new(TelemetryState {
                 os_version: platform.os_version().ok().map(|v| v.to_string().into()),
                 os_name: platform.os_name().into(),
-                app: "Zed",
                 app_version: platform.app_version().ok().map(|v| v.to_string().into()),
                 release_channel,
                 device_id: None,
@@ -205,7 +201,11 @@ impl Telemetry {
                         let json_bytes = serde_json::to_vec(&[MixpanelEngageRequest {
                             token,
                             distinct_id: device_id,
-                            set: json!({ "Staff": is_staff, "ID": metrics_id }),
+                            set: json!({
+                                "Staff": is_staff,
+                                "ID": metrics_id,
+                                "App": true
+                            }),
                         }])?;
                         let request = Request::post(MIXPANEL_ENGAGE_URL)
                             .header("Content-Type", "application/json")
@@ -241,7 +241,6 @@ impl Telemetry {
                 release_channel: state.release_channel,
                 app_version: state.app_version.clone(),
                 signed_in: state.metrics_id.is_some(),
-                app: state.app,
             },
         };
         state.queue.push(event);
