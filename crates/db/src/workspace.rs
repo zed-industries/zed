@@ -2,7 +2,7 @@ mod items;
 pub mod model;
 pub(crate) mod pane;
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use util::{iife, ResultExt};
 
 use std::path::{Path, PathBuf};
@@ -10,9 +10,6 @@ use std::path::{Path, PathBuf};
 use indoc::indoc;
 use sqlez::migrations::Migration;
 
-// If you need to debug the worktree root code, change 'BLOB' here to 'TEXT' for easier debugging
-// you might want to update some of the parsing code as well, I've left the variations in but commented
-// out. This will panic if run on an existing db that has already been migrated
 pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
     "workspace",
     &[indoc! {"
@@ -39,7 +36,9 @@ impl Db {
     ) -> Option<SerializedWorkspace> {
         let workspace_id: WorkspaceId = worktree_roots.into();
 
-        let (_, dock_anchor, dock_visible) = iife!({
+        // Note that we re-assign the workspace_id here in case it's empty
+        // and we've grabbed the most recent workspace
+        let (workspace_id, dock_anchor, dock_visible) = iife!({
             if worktree_roots.len() == 0 {
                 self.prepare(indoc! {"
                         SELECT workspace_id, dock_anchor, dock_visible 
@@ -51,7 +50,7 @@ impl Db {
                         SELECT workspace_id, dock_anchor, dock_visible 
                         FROM workspaces 
                         WHERE workspace_id = ?"})?
-                    .with_bindings(workspace_id)?
+                    .with_bindings(&workspace_id)?
                     .maybe_row::<WorkspaceRow>()
             }
         })
@@ -59,8 +58,8 @@ impl Db {
         .flatten()?;
 
         Some(SerializedWorkspace {
-            dock_pane: self.get_dock_pane(workspace_id)?,
-            center_group: self.get_center_group(workspace_id),
+            dock_pane: self.get_dock_pane(&workspace_id)?,
+            center_group: self.get_center_group(&workspace_id),
             dock_anchor,
             dock_visible,
         })
@@ -82,12 +81,12 @@ impl Db {
             self.prepare(indoc!{"
                 DELETE FROM workspaces WHERE workspace_id = ?1;
                 INSERT INTO workspaces(workspace_id, dock_anchor, dock_visible) VALUES (?1, ?, ?)"})?
-            .with_bindings((workspace_id, workspace.dock_anchor, workspace.dock_visible))?
+            .with_bindings((&workspace_id, workspace.dock_anchor, workspace.dock_visible))?
             .exec()?;
             
             // Save center pane group and dock pane
-            Self::save_center_group(workspace_id, &workspace.center_group, conn)?;
-            Self::save_dock_pane(workspace_id, &workspace.dock_pane, conn)?;
+            Self::save_center_group(&workspace_id, &workspace.center_group, conn)?;
+            Self::save_dock_pane(&workspace_id, &workspace.dock_pane, conn)?;
 
             Ok(())
         })
@@ -98,11 +97,12 @@ impl Db {
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
     pub fn recent_workspaces(&self, limit: usize) -> Vec<Vec<PathBuf>> {
         iife!({
-            self.prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?")?
+            Ok::<_, anyhow::Error>(self.prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?")?
                 .with_bindings(limit)?
                 .rows::<WorkspaceId>()?
                 .into_iter().map(|id| id.0)
-                .collect()
+                .collect::<Vec<Vec<PathBuf>>>())
+            
         }).log_err().unwrap_or_default()
     }
 }

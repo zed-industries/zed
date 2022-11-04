@@ -1,10 +1,11 @@
-use gpui::Axis;
+use anyhow::Result;
 use indoc::indoc;
 use sqlez::{connection::Connection, migrations::Migration};
-use util::{iife, ResultExt};
+
+use crate::model::SerializedPane;
 
 use super::{
-    model::{PaneGroupId, PaneId, SerializedDockPane, SerializedPaneGroup, WorkspaceId},
+    model::{SerializedPaneGroup, WorkspaceId},
     Db,
 };
 
@@ -44,11 +45,11 @@ pub(crate) const PANE_MIGRATIONS: Migration = Migration::new(
 );
 
 impl Db {
-    pub(crate) fn get_center_group(&self, _workspace: WorkspaceId) -> SerializedPaneGroup {
+    pub(crate) fn get_center_group(&self, _workspace: &WorkspaceId) -> SerializedPaneGroup {
         unimplemented!()
     }
 
-    pub fn get_pane_group(&self, _pane_group_id: PaneGroupId) -> SerializedPaneGroup {
+    pub(crate) fn _get_pane_group(&self, _workspace: &WorkspaceId) -> SerializedPaneGroup {
         unimplemented!()
         // let axis = self.get_pane_group_axis(pane_group_id);
         // let mut children: Vec<(usize, PaneGroupChild)> = Vec::new();
@@ -91,31 +92,22 @@ impl Db {
         _workspace: &WorkspaceId,
         _center_pane_group: &SerializedPaneGroup,
         _connection: &Connection,
-    ) {
+    ) -> Result<()> {
         // Delete the center pane group for this workspace and any of its children
         // Generate new pane group IDs as we go through
         // insert them
+        Ok(())
     }
 
-    pub fn _get_pane(&self, _pane_id: PaneId) -> SerializedPane {
-        unimplemented!();
-    }
-
-    pub(crate) fn get_dock_pane(&self, workspace: WorkspaceId) -> Option<SerializedDockPane> {
-        iife!({
-            self.prepare("SELECT anchor_position, visible FROM dock_panes WHERE workspace_id = ?")?
-                .with_bindings(workspace)?
-                .maybe_row::<SerializedDockPane>()
-        })
-        .log_err()
-        .flatten()
+    pub(crate) fn get_dock_pane(&self, _workspace: &WorkspaceId) -> Option<SerializedPane> {
+        unimplemented!()
     }
 
     pub(crate) fn save_dock_pane(
-        workspace: &WorkspaceId,
-        dock_pane: &SerializedDockPane,
-        connection: &Connection,
-    ) {
+        _workspace: &WorkspaceId,
+        _dock_pane: &SerializedPane,
+        _connection: &Connection,
+    ) -> Result<()> {
         // iife!({
         //     self.prepare(
         //         "INSERT INTO dock_panes (workspace_id, anchor_position, visible) VALUES (?, ?, ?);",
@@ -124,6 +116,7 @@ impl Db {
         //     .insert()
         // })
         // .log_err();
+        Ok(())
     }
 }
 

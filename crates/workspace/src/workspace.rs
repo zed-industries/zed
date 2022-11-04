@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::{Db, SerializedWorkspace, WorkspaceId};
+use db::{model::SerializedWorkspace, Db};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -1073,7 +1073,7 @@ pub enum Event {
 
 pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
-    _db_id: WorkspaceId,
+    // _db_id: WorkspaceId,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<client::Subscription>,
@@ -1120,7 +1120,7 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(
-        serialized_workspace: SerializedWorkspace,
+        _serialized_workspace: Option<SerializedWorkspace>,
         project: ModelHandle<Project>,
         dock_default_factory: DefaultItemFactory,
         cx: &mut ViewContext<Self>,
@@ -1217,7 +1217,7 @@ impl Workspace {
         let mut this = Workspace {
             modal: None,
             weak_self: weak_handle,
-            _db_id: serialized_workspace.workspace_id,
+            // _db_id: serialized_workspace.workspace_id,
             center: PaneGroup::new(center_pane.clone()),
             dock,
             // When removing an item, the last element remaining in this array

@@ -9,7 +9,7 @@ use sqlez::{
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct WorkspaceId(Vec<PathBuf>);
+pub(crate) struct WorkspaceId(pub(crate) Vec<PathBuf>);
 
 impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceId {
     fn from(iterator: T) -> Self {
@@ -22,7 +22,7 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceId {
     }
 }
 
-impl Bind for WorkspaceId {
+impl Bind for &WorkspaceId {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         bincode::serialize(&self.0)
             .expect("Bincode serialization of paths should not fail")
@@ -85,13 +85,16 @@ pub struct SerializedWorkspace {
 #[derive(Debug, PartialEq, Eq)]
 pub struct SerializedPaneGroup {
     axis: Axis,
-    children: Vec<PaneGroupChild>,
+    children: Vec<SerializedPaneGroup>,
 }
 
+#[derive(Debug)]
 pub struct SerializedPane {
-    children: Vec<SerializedItem>,
+    _children: Vec<SerializedItem>,
 }
 
+#[derive(Debug)]
 pub enum SerializedItemKind {}
 
+#[derive(Debug)]
 pub enum SerializedItem {}
