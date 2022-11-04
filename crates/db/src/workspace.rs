@@ -3,12 +3,12 @@ pub mod model;
 pub(crate) mod pane;
 
 use anyhow::{Context, Result};
-use util::ResultExt;
+use util::{iife, ResultExt};
 
 use std::path::{Path, PathBuf};
 
-use indoc::{formatdoc, indoc};
-use sqlez::{connection::Connection, migrations::Migration};
+use indoc::indoc;
+use sqlez::migrations::Migration;
 
 // If you need to debug the worktree root code, change 'BLOB' here to 'TEXT' for easier debugging
 // you might want to update some of the parsing code as well, I've left the variations in but commented
@@ -17,17 +17,10 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
     "workspace",
     &[indoc! {"
         CREATE TABLE workspaces(
-            workspace_id INTEGER PRIMARY KEY,
+            workspace_id BLOB PRIMARY KEY,
             dock_anchor TEXT, -- Enum: 'Bottom' / 'Right' / 'Expanded'
             dock_visible INTEGER, -- Boolean
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
-        ) STRICT;
-        
-        CREATE TABLE worktree_roots(
-            worktree_root BLOB NOT NULL,
-            workspace_id INTEGER NOT NULL,
-            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-            PRIMARY KEY(worktree_root, workspace_id)
         ) STRICT;
     "}],
 );
@@ -37,34 +30,39 @@ use self::model::{SerializedWorkspace, WorkspaceId, WorkspaceRow};
 use super::Db;
 
 impl Db {
-    /// Finds or creates a workspace id for the given set of worktree roots. If the passed worktree roots is empty,
-    /// returns the last workspace which was updated
+    /// Returns a serialized workspace for the given worktree_roots. If the passed array
+    /// is empty, the most recent workspace is returned instead. If no workspace for the
+    /// passed roots is stored, returns none.
     pub fn workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
-        // Find the workspace id which is uniquely identified by this set of paths
-        // return it if found
-        let mut workspace_row = get_workspace(worktree_roots, &self)
-            .log_err()
-            .unwrap_or_default();
+        let workspace_id: WorkspaceId = worktree_roots.into();
 
-        if workspace_row.is_none() && worktree_roots.len() == 0 {
-            // Return last workspace if no roots passed
-            workspace_row = self.prepare(
-                "SELECT workspace_id, dock_anchor, dock_visible FROM workspaces ORDER BY timestamp DESC LIMIT 1"
-            ).and_then(|mut stmt| stmt.maybe_row::<WorkspaceRow>())
-            .log_err()
-            .flatten();
-        }
+        let (_, dock_anchor, dock_visible) = iife!({
+            if worktree_roots.len() == 0 {
+                self.prepare(indoc! {"
+                        SELECT workspace_id, dock_anchor, dock_visible 
+                        FROM workspaces 
+                        ORDER BY timestamp DESC LIMIT 1"})?
+                    .maybe_row::<WorkspaceRow>()
+            } else {
+                self.prepare(indoc! {"
+                        SELECT workspace_id, dock_anchor, dock_visible 
+                        FROM workspaces 
+                        WHERE workspace_id = ?"})?
+                    .with_bindings(workspace_id)?
+                    .maybe_row::<WorkspaceRow>()
+            }
+        })
+        .log_err()
+        .flatten()?;
 
-        workspace_row.and_then(|(workspace_id, dock_anchor, dock_visible)| {
-            Some(SerializedWorkspace {
-                dock_pane: self.get_dock_pane(workspace_id)?,
-                center_group: self.get_center_group(workspace_id),
-                dock_anchor,
-                dock_visible,
-            })
+        Some(SerializedWorkspace {
+            dock_pane: self.get_dock_pane(workspace_id)?,
+            center_group: self.get_center_group(workspace_id),
+            dock_anchor,
+            dock_visible,
         })
     }
 
@@ -75,144 +73,38 @@ impl Db {
         worktree_roots: &[P],
         workspace: SerializedWorkspace,
     ) {
+        let workspace_id: WorkspaceId = worktree_roots.into();
+
         self.with_savepoint("update_worktrees", |conn| {
-            // Lookup any old WorkspaceIds which have the same set of roots, and delete them.
-            if let Some((id_to_delete, _, _)) = get_workspace(worktree_roots, &conn)? {
-                // Should also delete fields in other tables with cascading updates and insert
-                // new entry
-                conn.prepare("DELETE FROM workspaces WHERE workspace_id = ?")?
-                    .with_bindings(id_to_delete)?
-                    .exec()?;
-            }
-
+            // Delete any previous workspaces with the same roots. This cascades to all
+            // other tables that are based on the same roots set.
             // Insert new workspace into workspaces table if none were found
-            let workspace_id = WorkspaceId(
-                conn.prepare("INSERT INTO workspaces(dock_anchor, dock_visible) VALUES (?, ?)")?
-                    .with_bindings((workspace.dock_anchor, workspace.dock_visible))?
-                    .insert()?,
-            );
-
-            // Write worktree_roots with new workspace_id
-            for root in worktree_roots {
-                conn.prepare(
-                    "INSERT INTO worktree_roots(workspace_id, worktree_root) VALUES (?, ?)",
-                )?
-                .with_bindings((workspace_id, root.as_ref()))?
-                .exec()?;
-            }
+            self.prepare(indoc!{"
+                DELETE FROM workspaces WHERE workspace_id = ?1;
+                INSERT INTO workspaces(workspace_id, dock_anchor, dock_visible) VALUES (?1, ?, ?)"})?
+            .with_bindings((workspace_id, workspace.dock_anchor, workspace.dock_visible))?
+            .exec()?;
+            
+            // Save center pane group and dock pane
+            Self::save_center_group(workspace_id, &workspace.center_group, conn)?;
+            Self::save_dock_pane(workspace_id, &workspace.dock_pane, conn)?;
 
             Ok(())
         })
-        .context("Update workspace with roots {worktree_roots:?}")
+        .with_context(|| format!("Update workspace with roots {:?}", worktree_roots.iter().map(|p| p.as_ref()).collect::<Vec<_>>()))
         .log_err();
     }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
     pub fn recent_workspaces(&self, limit: usize) -> Vec<Vec<PathBuf>> {
-        self.with_savepoint("recent_workspaces", |conn| {
-            let mut roots_by_id =
-                conn.prepare("SELECT worktree_root FROM worktree_roots WHERE workspace_id = ?")?;
-
-            conn.prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?")?
+        iife!({
+            self.prepare("SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?")?
                 .with_bindings(limit)?
                 .rows::<WorkspaceId>()?
-                .iter()
-                .map(|workspace_id| roots_by_id.with_bindings(workspace_id.0)?.rows::<PathBuf>())
-                .collect::<Result<_>>()
-        })
-        .log_err()
-        .unwrap_or_default()
+                .into_iter().map(|id| id.0)
+                .collect()
+        }).log_err().unwrap_or_default()
     }
-}
-
-fn get_workspace<P: AsRef<Path>>(
-    worktree_roots: &[P],
-    connection: &Connection,
-) -> Result<Option<WorkspaceRow>> {
-    // Short circuit if we can
-    if worktree_roots.len() == 0 {
-        return Ok(None);
-    }
-
-    // Any workspace can have multiple independent paths, and these paths
-    // can overlap in the database. Take this test data for example:
-    //
-    // [/tmp, /tmp2] -> 1
-    // [/tmp] -> 2
-    // [/tmp2, /tmp3] -> 3
-    //
-    // This would be stred in the database like so:
-    //
-    // ID PATH
-    // 1  /tmp
-    // 1  /tmp2
-    // 2  /tmp
-    // 3  /tmp2
-    // 3  /tmp3
-    //
-    // Note how both /tmp and /tmp2 are associated with multiple workspace IDs.
-    // So, given an array of worktree roots, how can we find the exactly matching ID?
-    // Let's analyze what happens when querying for [/tmp, /tmp2], from the inside out:
-    //  - We start with a join of this table on itself, generating every possible
-    //    pair of ((path, ID), (path, ID)), and filtering the join down to just the
-    //    *overlapping but non-matching* workspace IDs. For this small data set,
-    //    this would look like:
-    //
-    //    wt1.ID wt1.PATH | wt2.ID wt2.PATH
-    //    3      /tmp3      3      /tmp2
-    //
-    //  - Moving one SELECT out, we use the first pair's ID column to invert the selection,
-    //    meaning we now have a list of all the entries for our array, minus overlapping sets,
-    //    but including *subsets* of our worktree roots:
-    //
-    //    ID PATH
-    //    1  /tmp
-    //    1  /tmp2
-    //    2  /tmp
-    //
-    // - To trim out the subsets, we can to exploit the PRIMARY KEY constraint that there are no
-    //   duplicate entries in this table. Using a GROUP BY and a COUNT we can find the subsets of
-    //   our keys:
-    //
-    //    ID num_matching
-    //    1  2
-    //    2  1
-    //
-    // - And with one final WHERE num_matching = $num_of_worktree_roots, we're done! We've found the
-    //   matching ID correctly :D
-    //
-    // Note: due to limitations in SQLite's query binding, we have to generate the prepared
-    //       statement with string substitution (the {array_bind}) below, and then bind the
-    //       parameters by number.
-    connection
-        .prepare(formatdoc! {"
-            SELECT workspaces.workspace_id, workspaces.dock_anchor, workspaces.dock_visible
-            FROM (SELECT workspace_id
-                FROM (SELECT count(workspace_id) as num_matching, workspace_id FROM worktree_roots
-                        WHERE worktree_root in ({roots}) AND workspace_id NOT IN
-                        (SELECT wt1.workspace_id FROM worktree_roots as wt1
-                        JOIN worktree_roots as wt2
-                        ON wt1.workspace_id = wt2.workspace_id
-                        WHERE wt1.worktree_root NOT in ({roots}) AND wt2.worktree_root in ({roots}))
-                        GROUP BY workspace_id)
-                WHERE num_matching = ?) as matching_workspace
-            JOIN workspaces ON workspaces.workspace_id = matching_workspace.workspace_id",
-            roots =
-            // Prepare the array binding string. SQL doesn't have syntax for this, so
-            // we have to do it ourselves.
-            (0..worktree_roots.len())
-                .map(|index| format!("?{}", index + 1))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })?
-        .with_bindings((
-            worktree_roots
-                .into_iter()
-                .map(|p| p.as_ref())
-                .collect::<Vec<&Path>>(),
-            worktree_roots.len(),
-        ))?
-        .maybe_row::<WorkspaceRow>()
 }
 
 #[cfg(test)]

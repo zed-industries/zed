@@ -1,6 +1,6 @@
 use gpui::Axis;
 use indoc::indoc;
-use sqlez::migrations::Migration;
+use sqlez::{connection::Connection, migrations::Migration};
 use util::{iife, ResultExt};
 
 use super::{
@@ -13,26 +13,28 @@ pub(crate) const PANE_MIGRATIONS: Migration = Migration::new(
     &[indoc! {"
         CREATE TABLE pane_groups(
             group_id INTEGER PRIMARY KEY,
-            workspace_id INTEGER NOT NULL,
+            workspace_id BLOB NOT NULL,
             parent_group INTEGER, -- NULL indicates that this is a root node
             axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
             FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
             FOREIGN KEY(parent_group) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+            PRIMARY KEY(group_id, workspace_id)
         ) STRICT;
         
         CREATE TABLE panes(
             pane_id INTEGER PRIMARY KEY,
-            workspace_id INTEGER NOT NULL,
+            workspace_id BLOB NOT NULL,
             group_id INTEGER, -- If null, this is a dock pane
             idx INTEGER NOT NULL,
             FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
             FOREIGN KEY(group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+            PRIMARY KEY(pane_id, workspace_id)
         ) STRICT;
         
         CREATE TABLE items(
             item_id INTEGER NOT NULL, -- This is the item's view id, so this is not unique
             pane_id INTEGER NOT NULL,
-            workspace_id INTEGER NOT NULL,
+            workspace_id BLOB NOT NULL,
             kind TEXT NOT NULL,
             FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
             FOREIGN KEY(pane_id) REFERENCES panes(pane_id) ON DELETE CASCADE
@@ -46,7 +48,7 @@ impl Db {
         unimplemented!()
     }
 
-    pub(crate) fn get_pane_group(&self, _pane_group_id: PaneGroupId) -> SerializedPaneGroup {
+    pub fn get_pane_group(&self, _pane_group_id: PaneGroupId) -> SerializedPaneGroup {
         unimplemented!()
         // let axis = self.get_pane_group_axis(pane_group_id);
         // let mut children: Vec<(usize, PaneGroupChild)> = Vec::new();
@@ -85,17 +87,17 @@ impl Db {
     //     Vec::new().into_iter()
     // }
 
-    pub(crate) fn save_pane_splits(
-        &self,
+    pub(crate) fn save_center_group(
         _workspace: &WorkspaceId,
         _center_pane_group: &SerializedPaneGroup,
+        _connection: &Connection,
     ) {
         // Delete the center pane group for this workspace and any of its children
         // Generate new pane group IDs as we go through
         // insert them
     }
 
-    pub(crate) fn _get_pane(&self, _pane_id: PaneId) -> SerializedPane {
+    pub fn _get_pane(&self, _pane_id: PaneId) -> SerializedPane {
         unimplemented!();
     }
 
@@ -109,7 +111,11 @@ impl Db {
         .flatten()
     }
 
-    pub(crate) fn save_dock_pane(&self, workspace: &WorkspaceId, dock_pane: &SerializedDockPane) {
+    pub(crate) fn save_dock_pane(
+        workspace: &WorkspaceId,
+        dock_pane: &SerializedDockPane,
+        connection: &Connection,
+    ) {
         // iife!({
         //     self.prepare(
         //         "INSERT INTO dock_panes (workspace_id, anchor_position, visible) VALUES (?, ?, ?);",

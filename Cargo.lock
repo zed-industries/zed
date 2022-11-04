@@ -1550,6 +1550,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
  "collections",
  "env_logger",
  "gpui",
@@ -1557,6 +1558,7 @@ dependencies = [
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
+ "serde",
  "sqlez",
  "tempdir",
  "util",
