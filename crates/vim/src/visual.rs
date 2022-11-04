@@ -30,20 +30,23 @@ pub fn visual_motion(motion: Motion, times: usize, cx: &mut MutableAppContext) {
                 s.move_with(|map, selection| {
                     let was_reversed = selection.reversed;
 
-                    let (new_head, goal) =
-                        motion.move_point(map, selection.head(), selection.goal, times);
-                    selection.set_head(new_head, goal);
+                    if let Some((new_head, goal)) =
+                        motion.move_point(map, selection.head(), selection.goal, times)
+                    {
+                        selection.set_head(new_head, goal);
 
-                    if was_reversed && !selection.reversed {
-                        // Head was at the start of the selection, and now is at the end. We need to move the start
-                        // back by one if possible in order to compensate for this change.
-                        *selection.start.column_mut() = selection.start.column().saturating_sub(1);
-                        selection.start = map.clip_point(selection.start, Bias::Left);
-                    } else if !was_reversed && selection.reversed {
-                        // Head was at the end of the selection, and now is at the start. We need to move the end
-                        // forward by one if possible in order to compensate for this change.
-                        *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = map.clip_point(selection.end, Bias::Right);
+                        if was_reversed && !selection.reversed {
+                            // Head was at the start of the selection, and now is at the end. We need to move the start
+                            // back by one if possible in order to compensate for this change.
+                            *selection.start.column_mut() =
+                                selection.start.column().saturating_sub(1);
+                            selection.start = map.clip_point(selection.start, Bias::Left);
+                        } else if !was_reversed && selection.reversed {
+                            // Head was at the end of the selection, and now is at the start. We need to move the end
+                            // forward by one if possible in order to compensate for this change.
+                            *selection.end.column_mut() = selection.end.column() + 1;
+                            selection.end = map.clip_point(selection.end, Bias::Right);
+                        }
                     }
                 });
             });

@@ -115,7 +115,11 @@ pub fn normal_object(object: Object, cx: &mut MutableAppContext) {
 fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-            s.move_cursors_with(|map, cursor, goal| motion.move_point(map, cursor, goal, times))
+            s.move_cursors_with(|map, cursor, goal| {
+                motion
+                    .move_point(map, cursor, goal, times)
+                    .unwrap_or((cursor, goal))
+            })
         })
     });
 }
@@ -125,7 +129,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
+                s.maybe_move_cursors_with(|map, cursor, goal| {
                     Motion::Right.move_point(map, cursor, goal, 1)
                 });
             });
@@ -142,7 +146,7 @@ fn insert_first_non_whitespace(
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
+                s.maybe_move_cursors_with(|map, cursor, goal| {
                     Motion::FirstNonWhitespace.move_point(map, cursor, goal, 1)
                 });
             });
@@ -155,7 +159,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
+                s.maybe_move_cursors_with(|map, cursor, goal| {
                     Motion::EndOfLine.move_point(map, cursor, goal, 1)
                 });
             });
@@ -215,7 +219,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                     (end_of_line..end_of_line, new_text)
                 });
                 editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                    s.move_cursors_with(|map, cursor, goal| {
+                    s.maybe_move_cursors_with(|map, cursor, goal| {
                         Motion::EndOfLine.move_point(map, cursor, goal, 1)
                     });
                 });

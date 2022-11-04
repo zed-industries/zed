@@ -137,6 +137,11 @@ impl Motion {
         )
     }
 
+    pub fn infallible(self) -> bool {
+        use Motion::*;
+        matches!(self, StartOfDocument | CurrentLine | EndOfDocument)
+    }
+
     pub fn inclusive(self) -> bool {
         use Motion::*;
         match self {
@@ -164,9 +169,9 @@ impl Motion {
         point: DisplayPoint,
         goal: SelectionGoal,
         times: usize,
-    ) -> (DisplayPoint, SelectionGoal) {
+    ) -> Option<(DisplayPoint, SelectionGoal)> {
         use Motion::*;
-        match self {
+        let (new_point, goal) = match self {
             Left => (left(map, point, times), SelectionGoal::None),
             Backspace => (backspace(map, point, times), SelectionGoal::None),
             Down => down(map, point, goal, times),
@@ -191,7 +196,9 @@ impl Motion {
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (end_of_document(map, point, times), SelectionGoal::None),
             Matching => (matching(map, point), SelectionGoal::None),
-        }
+        };
+
+        (new_point != point || self.infallible()).then_some((new_point, goal))
     }
 
     // Expands a selection using self motion for an operator
@@ -201,12 +208,13 @@ impl Motion {
         selection: &mut Selection<DisplayPoint>,
         times: usize,
         expand_to_surrounding_newline: bool,
-    ) {
-        let (new_head, goal) = self.move_point(map, selection.head(), selection.goal, times);
-        selection.set_head(new_head, goal);
+    ) -> bool {
+        if let Some((new_head, goal)) =
+            self.move_point(map, selection.head(), selection.goal, times)
+        {
+            selection.set_head(new_head, goal);
 
-        if self.linewise() {
-            if selection.start != selection.end {
+            if self.linewise() {
                 selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
 
                 if expand_to_surrounding_newline {
@@ -215,7 +223,7 @@ impl Motion {
                         *selection.end.column_mut() = 0;
                         selection.end = map.clip_point(selection.end, Bias::Right);
                         // Don't reset the end here
-                        return;
+                        return true;
                     } else if selection.start.row() > 0 {
                         *selection.start.row_mut() -= 1;
                         *selection.start.column_mut() = map.line_len(selection.start.row());
@@ -224,31 +232,33 @@ impl Motion {
                 }
 
                 (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
-            }
-        } else {
-            // If the motion is exclusive and the end of the motion is in column 1, the
-            // end of the motion is moved to the end of the previous line and the motion
-            // becomes inclusive. Example: "}" moves to the first line after a paragraph,
-            // but "d}" will not include that line.
-            let mut inclusive = self.inclusive();
-            if !inclusive
-                && self != Motion::Backspace
-                && selection.end.row() > selection.start.row()
-                && selection.end.column() == 0
-                && selection.end.row() > 0
-            {
-                inclusive = true;
-                *selection.end.row_mut() -= 1;
-                *selection.end.column_mut() = 0;
-                selection.end = map.clip_point(
-                    map.next_line_boundary(selection.end.to_point(map)).1,
-                    Bias::Left,
-                );
-            }
+            } else {
+                // If the motion is exclusive and the end of the motion is in column 1, the
+                // end of the motion is moved to the end of the previous line and the motion
+                // becomes inclusive. Example: "}" moves to the first line after a paragraph,
+                // but "d}" will not include that line.
+                let mut inclusive = self.inclusive();
+                if !inclusive
+                    && self != Motion::Backspace
+                    && selection.end.row() > selection.start.row()
+                    && selection.end.column() == 0
+                {
+                    inclusive = true;
+                    *selection.end.row_mut() -= 1;
+                    *selection.end.column_mut() = 0;
+                    selection.end = map.clip_point(
+                        map.next_line_boundary(selection.end.to_point(map)).1,
+                        Bias::Left,
+                    );
+                }
 
-            if inclusive && selection.end.column() < map.line_len(selection.end.row()) {
-                *selection.end.column_mut() += 1;
+                if inclusive && selection.end.column() < map.line_len(selection.end.row()) {
+                    *selection.end.column_mut() += 1;
+                }
             }
+            true
+        } else {
+            false
         }
     }
 }
@@ -325,9 +335,7 @@ pub(crate) fn next_word_start(
                 || at_newline && crossed_newline
                 || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
-            if at_newline {
-                crossed_newline = true;
-            }
+            crossed_newline |= at_newline;
             found
         })
     }
@@ -350,7 +358,7 @@ fn next_word_end(
         });
 
         // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
-        // we have backtraced already
+        // we have backtracked already
         if !map
             .chars_at(point)
             .nth(1)
