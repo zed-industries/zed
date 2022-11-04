@@ -178,8 +178,29 @@ impl<T1: Column, T2: Column, T3: Column, T4: Column> Column for (T1, T2, T3, T4)
         let (first, next_index) = T1::column(statement, start_index)?;
         let (second, next_index) = T2::column(statement, next_index)?;
         let (third, next_index) = T3::column(statement, next_index)?;
-        let (forth, next_index) = T4::column(statement, next_index)?;
-        Ok(((first, second, third, forth), next_index))
+        let (fourth, next_index) = T4::column(statement, next_index)?;
+        Ok(((first, second, third, fourth), next_index))
+    }
+}
+
+impl<T1: Bind, T2: Bind, T3: Bind, T4: Bind, T5: Bind> Bind for (T1, T2, T3, T4, T5) {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = self.0.bind(statement, start_index)?;
+        let next_index = self.1.bind(statement, next_index)?;
+        let next_index = self.2.bind(statement, next_index)?;
+        let next_index = self.3.bind(statement, next_index)?;
+        self.4.bind(statement, next_index)
+    }
+}
+
+impl<T1: Column, T2: Column, T3: Column, T4: Column, T5: Column> Column for (T1, T2, T3, T4, T5) {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (first, next_index) = T1::column(statement, start_index)?;
+        let (second, next_index) = T2::column(statement, next_index)?;
+        let (third, next_index) = T3::column(statement, next_index)?;
+        let (fourth, next_index) = T4::column(statement, next_index)?;
+        let (fifth, next_index) = T5::column(statement, next_index)?;
+        Ok(((first, second, third, fourth, fifth), next_index))
     }
 }
 

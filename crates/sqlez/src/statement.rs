@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use libsqlite3_sys::*;
 
 use crate::bindable::{Bind, Column};
-use crate::connection::{error_to_result, Connection};
+use crate::connection::Connection;
 
 pub struct Statement<'a> {
     raw_statement: *mut sqlite3_stmt,
@@ -48,7 +48,9 @@ impl<'a> Statement<'a> {
                 0 as *mut _,
             );
 
-            connection.last_error().context("Prepare call failed.")?;
+            connection
+                .last_error()
+                .with_context(|| format!("Prepare call failed for query:\n{}", query.as_ref()))?;
         }
 
         Ok(statement)
@@ -309,10 +311,7 @@ impl<'a> Statement<'a> {
 
 impl<'a> Drop for Statement<'a> {
     fn drop(&mut self) {
-        unsafe {
-            let error = sqlite3_finalize(self.raw_statement);
-            error_to_result(error).expect("failed error");
-        };
+        unsafe { sqlite3_finalize(self.raw_statement) };
     }
 }
 
@@ -327,9 +326,9 @@ mod test {
         let connection1 = Connection::open_memory("blob_round_trips");
         connection1
             .exec(indoc! {"
-            CREATE TABLE blobs (
-            data BLOB
-            );"})
+                CREATE TABLE blobs (
+                data BLOB
+                );"})
             .unwrap();
 
         let blob = &[0, 1, 2, 4, 8, 16, 32, 64];
@@ -351,5 +350,42 @@ mod test {
         connection2.exec("DELETE FROM blobs;").unwrap();
         let mut read = connection1.prepare("SELECT * FROM blobs;").unwrap();
         assert_eq!(read.step().unwrap(), StepResult::Done);
+    }
+
+    #[test]
+    pub fn maybe_returns_options() {
+        let connection = Connection::open_memory("maybe_returns_options");
+        connection
+            .exec(indoc! {"
+                CREATE TABLE texts (
+                    text TEXT 
+                );"})
+            .unwrap();
+
+        assert!(connection
+            .prepare("SELECT text FROM texts")
+            .unwrap()
+            .maybe_row::<String>()
+            .unwrap()
+            .is_none());
+
+        let text_to_insert = "This is a test";
+
+        connection
+            .prepare("INSERT INTO texts VALUES (?)")
+            .unwrap()
+            .with_bindings(text_to_insert)
+            .unwrap()
+            .exec()
+            .unwrap();
+
+        assert_eq!(
+            connection
+                .prepare("SELECT text FROM texts")
+                .unwrap()
+                .maybe_row::<String>()
+                .unwrap(),
+            Some(text_to_insert.to_string())
+        );
     }
 }

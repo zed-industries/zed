@@ -1,8 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use indoc::indoc;
-use sqlez::{connection::Connection, migrations::Migration};
+use sqlez::migrations::Migration;
+use util::unzip_option;
 
-use crate::model::SerializedPane;
+use crate::model::{GroupId, PaneId, SerializedPane};
 
 use super::{
     model::{SerializedPaneGroup, WorkspaceId},
@@ -19,79 +20,31 @@ pub(crate) const PANE_MIGRATIONS: Migration = Migration::new(
             axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
             FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
             FOREIGN KEY(parent_group) REFERENCES pane_groups(group_id) ON DELETE CASCADE
-            PRIMARY KEY(group_id, workspace_id)
         ) STRICT;
         
         CREATE TABLE panes(
             pane_id INTEGER PRIMARY KEY,
             workspace_id BLOB NOT NULL,
             group_id INTEGER, -- If null, this is a dock pane
-            idx INTEGER NOT NULL,
+            position INTEGER, -- If null, this is a dock pane
             FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
             FOREIGN KEY(group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
-            PRIMARY KEY(pane_id, workspace_id)
-        ) STRICT;
-        
-        CREATE TABLE items(
-            item_id INTEGER NOT NULL, -- This is the item's view id, so this is not unique
-            pane_id INTEGER NOT NULL,
-            workspace_id BLOB NOT NULL,
-            kind TEXT NOT NULL,
-            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-            FOREIGN KEY(pane_id) REFERENCES panes(pane_id) ON DELETE CASCADE
-            PRIMARY KEY(item_id, workspace_id)
         ) STRICT;
     "}],
 );
 
 impl Db {
-    pub(crate) fn get_center_group(&self, _workspace: &WorkspaceId) -> SerializedPaneGroup {
-        unimplemented!()
+    pub(crate) fn get_center_group(
+        &self,
+        _workspace_id: &WorkspaceId,
+    ) -> Result<SerializedPaneGroup> {
+        Ok(SerializedPaneGroup::new())
     }
-
-    pub(crate) fn _get_pane_group(&self, _workspace: &WorkspaceId) -> SerializedPaneGroup {
-        unimplemented!()
-        // let axis = self.get_pane_group_axis(pane_group_id);
-        // let mut children: Vec<(usize, PaneGroupChild)> = Vec::new();
-        // for child_row in self.get_pane_group_children(pane_group_id) {
-        //     if let Some(child_pane_id) = child_row.child_pane_id {
-        //         children.push((
-        //             child_row.index,
-        //             PaneGroupChild::Pane(self.get_pane(PaneId {
-        //                 workspace_id: pane_group_id.workspace_id,
-        //                 pane_id: child_pane_id,
-        //             })),
-        //         ));
-        //     } else if let Some(child_group_id) = child_row.child_group_id {
-        //         children.push((
-        //             child_row.index,
-        //             PaneGroupChild::Group(self.get_pane_group(PaneGroupId {
-        //                 workspace_id: pane_group_id.workspace_id,
-        //                 group_id: child_group_id,
-        //             })),
-        //         ));
-        //     }
-        // }
-        // children.sort_by_key(|(index, _)| *index);
-
-        // SerializedPaneGroup {
-        //     group_id: pane_group_id,
-        //     axis,
-        //     children: children.into_iter().map(|(_, child)| child).collect(),
-        // }
-    }
-
-    // fn _get_pane_group_children(
-    //     &self,
-    //     _pane_group_id: PaneGroupId,
-    // ) -> impl Iterator<Item = PaneGroupChildRow> {
-    //     Vec::new().into_iter()
-    // }
 
     pub(crate) fn save_center_group(
-        _workspace: &WorkspaceId,
+        &self,
+        _workspace_id: &WorkspaceId,
         _center_pane_group: &SerializedPaneGroup,
-        _connection: &Connection,
     ) -> Result<()> {
         // Delete the center pane group for this workspace and any of its children
         // Generate new pane group IDs as we go through
@@ -99,51 +52,86 @@ impl Db {
         Ok(())
     }
 
-    pub(crate) fn get_dock_pane(&self, _workspace: &WorkspaceId) -> Option<SerializedPane> {
-        unimplemented!()
+    pub(crate) fn get_dock_pane(&self, workspace_id: &WorkspaceId) -> Result<SerializedPane> {
+        let pane_id = self
+            .prepare(indoc! {"
+                SELECT pane_id FROM panes 
+                WHERE workspace_id = ? AND group_id IS NULL AND position IS NULL"})?
+            .with_bindings(workspace_id)?
+            .row::<PaneId>()?;
+
+        Ok(SerializedPane::new(
+            self.get_items(pane_id).context("Reading items")?,
+        ))
     }
 
     pub(crate) fn save_dock_pane(
-        _workspace: &WorkspaceId,
-        _dock_pane: &SerializedPane,
-        _connection: &Connection,
+        &self,
+        workspace: &WorkspaceId,
+        dock_pane: &SerializedPane,
     ) -> Result<()> {
-        // iife!({
-        //     self.prepare(
-        //         "INSERT INTO dock_panes (workspace_id, anchor_position, visible) VALUES (?, ?, ?);",
-        //     )?
-        //     .with_bindings(dock_pane.to_row(workspace))?
-        //     .insert()
-        // })
-        // .log_err();
-        Ok(())
+        self.save_pane(workspace, &dock_pane, None)
+    }
+
+    pub(crate) fn save_pane(
+        &self,
+        workspace_id: &WorkspaceId,
+        pane: &SerializedPane,
+        parent: Option<(GroupId, usize)>,
+    ) -> Result<()> {
+        let (parent_id, order) = unzip_option(parent);
+
+        let pane_id = self
+            .prepare("INSERT INTO panes(workspace_id, group_id, position) VALUES (?, ?, ?)")?
+            .with_bindings((workspace_id, parent_id, order))?
+            .insert()? as PaneId;
+
+        self.save_items(workspace_id, pane_id, &pane.children)
+            .context("Saving items")
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    // use crate::{items::ItemId, pane::SerializedPane, Db, DockAnchor};
+    use crate::{
+        model::{SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace},
+        Db,
+    };
 
-    // use super::{PaneGroupChild, SerializedDockPane, SerializedPaneGroup};
+    fn default_workspace(
+        dock_pane: SerializedPane,
+        center_group: SerializedPaneGroup,
+    ) -> SerializedWorkspace {
+        SerializedWorkspace {
+            dock_anchor: crate::model::DockAnchor::Right,
+            dock_visible: false,
+            center_group,
+            dock_pane,
+        }
+    }
 
-    // #[test]
-    // fn test_basic_dock_pane() {
-    //     let db = Db::open_in_memory("basic_dock_pane");
+    #[test]
+    fn test_basic_dock_pane() {
+        let db = Db::open_in_memory("basic_dock_pane");
 
-    //     let workspace = db.workspace_for_roots(&["/tmp"]);
+        let dock_pane = crate::model::SerializedPane {
+            children: vec![
+                SerializedItem::Terminal { item_id: 1 },
+                SerializedItem::Terminal { item_id: 4 },
+                SerializedItem::Terminal { item_id: 2 },
+                SerializedItem::Terminal { item_id: 3 },
+            ],
+        };
 
-    //     let dock_pane = SerializedDockPane {
-    //         anchor_position: DockAnchor::Expanded,
-    //         visible: true,
-    //     };
+        let workspace = default_workspace(dock_pane, SerializedPaneGroup::new());
 
-    //     db.save_dock_pane(&workspace.workspace_id, &dock_pane);
+        db.save_workspace(&["/tmp"], None, &workspace);
 
-    //     let new_workspace = db.workspace_for_roots(&["/tmp"]);
+        let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
-    //     assert_eq!(new_workspace.dock_pane.unwrap(), dock_pane);
-    // }
+        assert_eq!(workspace.dock_pane, new_workspace.dock_pane);
+    }
 
     // #[test]
     // fn test_dock_simple_split() {

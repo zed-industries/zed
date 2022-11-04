@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{bail, Result};
 
@@ -8,8 +11,14 @@ use sqlez::{
     statement::Statement,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct WorkspaceId(pub(crate) Vec<PathBuf>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkspaceId(Vec<PathBuf>);
+
+impl WorkspaceId {
+    pub fn paths(self) -> Vec<PathBuf> {
+        self.0
+    }
+}
 
 impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceId {
     fn from(iterator: T) -> Self {
@@ -74,7 +83,7 @@ impl Column for DockAnchor {
 
 pub(crate) type WorkspaceRow = (WorkspaceId, DockAnchor, bool);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SerializedWorkspace {
     pub dock_anchor: DockAnchor,
     pub dock_visible: bool,
@@ -82,19 +91,134 @@ pub struct SerializedWorkspace {
     pub dock_pane: SerializedPane,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub struct SerializedPaneGroup {
     axis: Axis,
     children: Vec<SerializedPaneGroup>,
 }
 
-#[derive(Debug)]
-pub struct SerializedPane {
-    _children: Vec<SerializedItem>,
+impl SerializedPaneGroup {
+    pub fn new() -> Self {
+        SerializedPaneGroup {
+            axis: Axis::Horizontal,
+            children: Vec::new(),
+        }
+    }
 }
 
-#[derive(Debug)]
-pub enum SerializedItemKind {}
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct SerializedPane {
+    pub(crate) children: Vec<SerializedItem>,
+}
 
-#[derive(Debug)]
-pub enum SerializedItem {}
+impl SerializedPane {
+    pub fn new(children: Vec<SerializedItem>) -> Self {
+        SerializedPane { children }
+    }
+}
+
+pub type GroupId = i64;
+pub type PaneId = i64;
+pub type ItemId = usize;
+
+pub(crate) enum SerializedItemKind {
+    Editor,
+    Diagnostics,
+    ProjectSearch,
+    Terminal,
+}
+
+impl Bind for SerializedItemKind {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            SerializedItemKind::Editor => "Editor",
+            SerializedItemKind::Diagnostics => "Diagnostics",
+            SerializedItemKind::ProjectSearch => "ProjectSearch",
+            SerializedItemKind::Terminal => "Terminal",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for SerializedItemKind {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
+            Ok((
+                match anchor_text.as_ref() {
+                    "Editor" => SerializedItemKind::Editor,
+                    "Diagnostics" => SerializedItemKind::Diagnostics,
+                    "ProjectSearch" => SerializedItemKind::ProjectSearch,
+                    "Terminal" => SerializedItemKind::Terminal,
+                    _ => bail!("Stored serialized item kind is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SerializedItem {
+    Editor { item_id: usize, path: Arc<Path> },
+    Diagnostics { item_id: usize },
+    ProjectSearch { item_id: usize, query: String },
+    Terminal { item_id: usize },
+}
+
+impl SerializedItem {
+    pub fn item_id(&self) -> usize {
+        match self {
+            SerializedItem::Editor { item_id, .. } => *item_id,
+            SerializedItem::Diagnostics { item_id } => *item_id,
+            SerializedItem::ProjectSearch { item_id, .. } => *item_id,
+            SerializedItem::Terminal { item_id } => *item_id,
+        }
+    }
+
+    pub(crate) fn kind(&self) -> SerializedItemKind {
+        match self {
+            SerializedItem::Editor { .. } => SerializedItemKind::Editor,
+            SerializedItem::Diagnostics { .. } => SerializedItemKind::Diagnostics,
+            SerializedItem::ProjectSearch { .. } => SerializedItemKind::ProjectSearch,
+            SerializedItem::Terminal { .. } => SerializedItemKind::Terminal,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlez::connection::Connection;
+
+    use crate::model::DockAnchor;
+
+    use super::WorkspaceId;
+
+    #[test]
+    fn test_workspace_round_trips() {
+        let db = Connection::open_memory("workspace_id_round_trips");
+
+        db.exec(indoc::indoc! {"
+            CREATE TABLE workspace_id_test(
+                workspace_id BLOB,
+                dock_anchor TEXT
+            );"})
+            .unwrap();
+
+        let workspace_id: WorkspaceId = WorkspaceId::from(&["\test2", "\test1"]);
+
+        db.prepare("INSERT INTO workspace_id_test(workspace_id, dock_anchor) VALUES (?,?)")
+            .unwrap()
+            .with_bindings((&workspace_id, DockAnchor::Bottom))
+            .unwrap()
+            .exec()
+            .unwrap();
+
+        assert_eq!(
+            db.prepare("SELECT workspace_id, dock_anchor FROM workspace_id_test LIMIT 1")
+                .unwrap()
+                .row::<(WorkspaceId, DockAnchor)>()
+                .unwrap(),
+            (WorkspaceId::from(&["\test1", "\test2"]), DockAnchor::Bottom)
+        );
+    }
+}

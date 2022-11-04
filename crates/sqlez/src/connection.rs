@@ -99,38 +99,35 @@ impl Connection {
     }
 
     pub(crate) fn last_error(&self) -> Result<()> {
-        unsafe { error_to_result(sqlite3_errcode(self.sqlite3)) }
+        unsafe {
+            let code = sqlite3_errcode(self.sqlite3);
+            const NON_ERROR_CODES: &[i32] = &[SQLITE_OK, SQLITE_ROW];
+            if NON_ERROR_CODES.contains(&code) {
+                return Ok(());
+            }
+
+            let message = sqlite3_errmsg(self.sqlite3);
+            let message = if message.is_null() {
+                None
+            } else {
+                Some(
+                    String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
+                        .into_owned(),
+                )
+            };
+
+            Err(anyhow!(
+                "Sqlite call failed with code {} and message: {:?}",
+                code as isize,
+                message
+            ))
+        }
     }
 }
 
 impl Drop for Connection {
     fn drop(&mut self) {
         unsafe { sqlite3_close(self.sqlite3) };
-    }
-}
-
-pub(crate) fn error_to_result(code: std::os::raw::c_int) -> Result<()> {
-    const NON_ERROR_CODES: &[i32] = &[SQLITE_OK, SQLITE_ROW];
-    unsafe {
-        if NON_ERROR_CODES.contains(&code) {
-            return Ok(());
-        }
-
-        let message = sqlite3_errstr(code);
-        let message = if message.is_null() {
-            None
-        } else {
-            Some(
-                String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
-                    .into_owned(),
-            )
-        };
-
-        Err(anyhow!(
-            "Sqlite call failed with code {} and message: {:?}",
-            code as isize,
-            message
-        ))
     }
 }
 
@@ -210,6 +207,35 @@ mod test {
                 .rows::<(String, usize, Vec<u8>)>()
                 .unwrap(),
             vec![tuple1, tuple2]
+        );
+    }
+
+    #[test]
+    fn bool_round_trips() {
+        let connection = Connection::open_memory("bool_round_trips");
+        connection
+            .exec(indoc! {"
+                CREATE TABLE bools (
+                    t INTEGER,
+                    f INTEGER
+                );"})
+            .unwrap();
+
+        connection
+            .prepare("INSERT INTO bools(t, f) VALUES (?, ?);")
+            .unwrap()
+            .with_bindings((true, false))
+            .unwrap()
+            .exec()
+            .unwrap();
+
+        assert_eq!(
+            &connection
+                .prepare("SELECT * FROM bools;")
+                .unwrap()
+                .row::<(bool, bool)>()
+                .unwrap(),
+            &(true, false)
         );
     }
 

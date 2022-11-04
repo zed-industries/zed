@@ -204,6 +204,16 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
     }
 }
 
+// copy unstable standard feature option unzip
+// https://github.com/rust-lang/rust/issues/87800
+// Remove when this ship in Rust 1.66 or 1.67
+pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
+    match option {
+        Some((a, b)) => (Some(a), Some(b)),
+        None => (None, None),
+    }
+}
+
 #[macro_export]
 macro_rules! iife {
     ($block:block) => {
