@@ -143,7 +143,7 @@ mod test {
             Test test
             ˇ
             test"},
-            ExemptionFeatures::DeletionOnEmptyLine,
+            ExemptionFeatures::DeleteWordOnEmptyLine,
         )
         .await;
 
@@ -169,7 +169,7 @@ mod test {
             Test test
             ˇ
             test"},
-            ExemptionFeatures::DeletionOnEmptyLine,
+            ExemptionFeatures::OperatorLastNewlineRemains,
         )
         .await;
 
