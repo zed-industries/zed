@@ -104,6 +104,9 @@ tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", re
 tree-sitter-typescript = "0.20.1"
 tree-sitter-ruby = "0.20.0"
 tree-sitter-html = "0.19.0"
+tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"}
+tree-sitter-racket = { git = "https://github.com/6cdh/tree-sitter-racket", rev = "69ca563af3bcf9d67220532e0814786f2dc34db1"}
+tree-sitter-commonlisp = { git = "https://github.com/theHamsta/tree-sitter-commonlisp", rev = "c7e814975ab0d0d04333d1f32391c41180c58919" }
 url = "2.2"
 
 [dev-dependencies]

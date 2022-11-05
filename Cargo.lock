@@ -6462,6 +6462,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-commonlisp"
+version = "0.3.0"
+source = "git+https://github.com/theHamsta/tree-sitter-commonlisp?rev=c7e814975ab0d0d04333d1f32391c41180c58919#c7e814975ab0d0d04333d1f32391c41180c58919"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-cpp"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6567,6 +6576,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-racket"
+version = "0.0.1"
+source = "git+https://github.com/6cdh/tree-sitter-racket?rev=69ca563af3bcf9d67220532e0814786f2dc34db1#69ca563af3bcf9d67220532e0814786f2dc34db1"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-ruby"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6581,6 +6599,15 @@ name = "tree-sitter-rust"
 version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "797842733e252dc11ae5d403a18060bf337b822fc2ae5ddfaa6ff4d9cc20bda6"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-scheme"
+version = "0.2.0"
+source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=af0fd1fa452cb2562dc7b5c8a8c55551c39273b9#af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -7796,6 +7823,7 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-c",
+ "tree-sitter-commonlisp",
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-elixir",
@@ -7805,8 +7833,10 @@ dependencies = [
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
  "tree-sitter-python",
+ "tree-sitter-racket",
  "tree-sitter-ruby",
  "tree-sitter-rust",
+ "tree-sitter-scheme",
  "tree-sitter-toml",
  "tree-sitter-typescript",
  "unindent",

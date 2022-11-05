@@ -35,6 +35,18 @@ pub(crate) struct GithubReleaseAsset {
     pub browser_download_url: String,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct CodebergReleaseAsset {
+    pub name: String,
+    pub assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CodebergRelease {
+    pub name: String,
+    pub browser_download_url: String,
+}
+
 pub async fn npm_package_latest_version(name: &str) -> Result<String> {
     let output = smol::process::Command::new("npm")
         .args(["info", name, "--json"])
@@ -103,3 +115,12 @@ pub(crate) async fn latest_github_release(
         serde_json::from_slice(body.as_slice()).context("error deserializing latest release")?;
     Ok(release)
 }
+
+// pub(crate) async fn latest_codeberg_release(
+//     repo_name_with_owner: &str,
+//     http: Arc<dyn HttpClient>,
+// ) -> anyhow::Result<CodebergRelease> {
+//     let mut response = http.get(uri, body, follow_redirects);
+
+//     bail!("unimplemented :(");
+// }

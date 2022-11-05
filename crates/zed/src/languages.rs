@@ -14,6 +14,7 @@ mod language_plugin;
 mod python;
 mod ruby;
 mod rust;
+
 mod typescript;
 
 // 1. Add tree-sitter-{language} parser to zed crate
@@ -127,6 +128,9 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             tree_sitter_embedded_template::language(),
             Some(CachedLspAdapter::new(ruby::RubyLanguageServer).await),
         ),
+        ("scheme", tree_sitter_scheme::language(), None),
+        // ("racket", tree_sitter_racket::language(), None),
+        ("commonlisp", tree_sitter_commonlisp::language(), None),
     ] {
         languages.add(language(name, grammar, lsp_adapter));
     }
