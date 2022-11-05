@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use indoc::indoc;
-use sqlez::migrations::Migration;
+use sqlez::{migrations::Migration, statement::Statement};
 use util::unzip_option;
 
 use crate::model::{Axis, GroupId, PaneId, SerializedPane};
@@ -39,19 +39,7 @@ impl Db {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<SerializedPaneGroup> {
-        self.get_pane_group_children(workspace_id, None)?
-            .into_iter()
-            .next()
-            .context("No center pane group")
-    }
-
-    fn get_pane_group_children(
-        &self,
-        workspace_id: &WorkspaceId,
-        group_id: Option<GroupId>,
-    ) -> Result<Vec<SerializedPaneGroup>> {
-        let children = self
-            .prepare(indoc! {"
+        let mut query = self.prepare(indoc! {"
             SELECT group_id, axis, pane_id
             FROM (SELECT group_id, axis, NULL as pane_id, position,  parent_group_id, workspace_id
                   FROM pane_groups
@@ -62,9 +50,25 @@ impl Db {
                   WHERE parent_group_id IS NOT NULL and position IS NOT NULL) 
             WHERE parent_group_id IS ? AND workspace_id = ?
             ORDER BY position
-        "})?
-            .with_bindings((group_id, workspace_id))?
-            .rows::<(Option<GroupId>, Option<Axis>, Option<PaneId>)>()?;
+            "})?;
+
+        self.get_pane_group_children(workspace_id, None, &mut query)?
+            .into_iter()
+            .next()
+            .context("No center pane group")
+    }
+
+    fn get_pane_group_children(
+        &self,
+        workspace_id: &WorkspaceId,
+        group_id: Option<GroupId>,
+        query: &mut Statement,
+    ) -> Result<Vec<SerializedPaneGroup>> {
+        let children = query.with_bindings((group_id, workspace_id))?.rows::<(
+            Option<GroupId>,
+            Option<Axis>,
+            Option<PaneId>,
+        )>()?;
 
         children
             .into_iter()
@@ -72,7 +76,11 @@ impl Db {
                 if let Some((group_id, axis)) = group_id.zip(axis) {
                     Ok(SerializedPaneGroup::Group {
                         axis,
-                        children: self.get_pane_group_children(workspace_id, Some(group_id))?,
+                        children: self.get_pane_group_children(
+                            workspace_id,
+                            Some(group_id),
+                            query,
+                        )?,
                     })
                 } else if let Some(pane_id) = pane_id {
                     Ok(SerializedPaneGroup::Pane(SerializedPane {
