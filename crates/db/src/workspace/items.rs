@@ -6,63 +6,11 @@ use crate::{
     model::{ItemId, PaneId, SerializedItem, SerializedItemKind, WorkspaceId},
     Db,
 };
-// use collections::HashSet;
-// use rusqlite::{named_params, params, types::FromSql};
 
-// use crate::workspace::WorkspaceId;
-
-// use super::Db;
-
-// /// Current design makes the cut at the item level,
-// ///   - Maybe A little more bottom up, serialize 'Terminals' and 'Editors' directly, and then make a seperate
-// ///   - items table, with a kind, and an integer that acts as a key to one of these other tables
-// /// This column is a foreign key to ONE OF: editors, terminals, searches
-// ///   -
-
-// // (workspace_id, item_id)
-// // kind -> ::Editor::
-
-// // ->
-// // At the workspace level
-// // -> (Workspace_ID, item_id)
-// // -> One shot, big query, load everything up:
-
-// // -> SerializedWorkspace::deserialize(tx, itemKey)
-// //     -> SerializedEditor::deserialize(tx, itemKey)
-
-// //         ->
-// // -> Workspace::new(SerializedWorkspace)
-// //     -> Editor::new(serialized_workspace[???]serializedEditor)
-
-// // //Pros: Keeps sql out of every body elese, makes changing it easier (e.g. for loading from a network or RocksDB)
-// // //Cons: DB has to know the internals of the entire rest of the app
-
-// // Workspace
-// // Worktree roots
-// // Pane groups
-// // Dock
-// // Items
-// // Sidebars
-
-// // Things I'm doing: finding about nullability for foreign keys
-// pub(crate) const ITEMS_M_1: &str = "
-// CREATE TABLE project_searches(
-//     workspace_id INTEGER,
-//     item_id INTEGER,
-//     query TEXT,
-//     PRIMARY KEY (workspace_id, item_id)
-//     FOREIGN KEY(workspace_id) REFERENCES workspace_ids(workspace_id)
-// ) STRICT;
-
-// CREATE TABLE editors(
-//     workspace_id INTEGER,
-//     item_id INTEGER,
-//     path BLOB NOT NULL,
-//     PRIMARY KEY (workspace_id, item_id)
-//     FOREIGN KEY(workspace_id) REFERENCES workspace_ids(workspace_id)
-// ) STRICT;
-// ";
-
+// 1) Move all of this into Workspace crate
+// 2) Deserialize items fully
+// 3) Typed prepares (including how you expect to pull data out)
+// 4) Investigate Tree column impls
 pub(crate) const ITEM_MIGRATIONS: Migration = Migration::new(
     "item",
     &[indoc! {"

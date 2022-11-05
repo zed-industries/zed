@@ -63,7 +63,7 @@ impl Db {
                 .context("Getting dock pane")
                 .log_err()?,
             center_group: self
-                .get_center_group(&workspace_id)
+                .get_center_pane_group(&workspace_id)
                 .context("Getting center group")
                 .log_err()?,
             dock_anchor,
@@ -104,8 +104,8 @@ impl Db {
             .exec()?;
 
             // Save center pane group and dock pane
-            self.save_center_group(&workspace_id, &workspace.center_group)?;
-            self.save_dock_pane(&workspace_id, &workspace.dock_pane)?;
+            self.save_pane_group(&workspace_id, &workspace.center_group, None)?;
+            self.save_pane(&workspace_id, &workspace.dock_pane, None)?;
 
             Ok(())
         })
@@ -152,8 +152,8 @@ mod tests {
     };
 
     #[test]
-    fn test_basic_functionality() {
-        env_logger::init();
+    fn test_workspace_assignment() {
+        env_logger::try_init().ok();
 
         let db = Db::open_in_memory("test_basic_functionality");
 

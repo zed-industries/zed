@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::{bail, Result};
 
-use gpui::Axis;
 use sqlez::{
     bindable::{Bind, Column},
     statement::Statement,
@@ -91,22 +90,61 @@ pub struct SerializedWorkspace {
     pub dock_pane: SerializedPane,
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct SerializedPaneGroup {
-    axis: Axis,
-    children: Vec<SerializedPaneGroup>,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Axis {
+    #[default]
+    Horizontal,
+    Vertical,
 }
 
-impl SerializedPaneGroup {
-    pub fn new() -> Self {
-        SerializedPaneGroup {
+impl Bind for Axis {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            Axis::Horizontal => "Horizontal",
+            Axis::Vertical => "Vertical",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for Axis {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
+            Ok((
+                match axis_text.as_str() {
+                    "Horizontal" => Axis::Horizontal,
+                    "Vertical" => Axis::Vertical,
+                    _ => bail!("Stored serialized item kind is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum SerializedPaneGroup {
+    Group {
+        axis: Axis,
+        children: Vec<SerializedPaneGroup>,
+    },
+    Pane(SerializedPane),
+}
+
+// Dock panes, and grouped panes combined?
+// AND we're collapsing PaneGroup::Pane
+// In the case where
+
+impl Default for SerializedPaneGroup {
+    fn default() -> Self {
+        Self::Group {
             axis: Axis::Horizontal,
-            children: Vec::new(),
+            children: vec![Self::Pane(Default::default())],
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct SerializedPane {
     pub(crate) children: Vec<SerializedItem>,
 }
@@ -142,9 +180,9 @@ impl Bind for SerializedItemKind {
 
 impl Column for SerializedItemKind {
     fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
+        String::column(statement, start_index).and_then(|(kind_text, next_index)| {
             Ok((
-                match anchor_text.as_ref() {
+                match kind_text.as_ref() {
                     "Editor" => SerializedItemKind::Editor,
                     "Diagnostics" => SerializedItemKind::Diagnostics,
                     "ProjectSearch" => SerializedItemKind::ProjectSearch,
@@ -157,7 +195,7 @@ impl Column for SerializedItemKind {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SerializedItem {
     Editor { item_id: usize, path: Arc<Path> },
     Diagnostics { item_id: usize },
