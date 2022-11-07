@@ -1,5 +1,5 @@
 use context_menu::{ContextMenu, ContextMenuItem};
-use drag_and_drop::Draggable;
+use drag_and_drop::{shared_payloads::DraggedProjectEntry, DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
 use futures::stream::StreamExt;
 use gpui::{
@@ -72,8 +72,8 @@ pub enum ClipboardEntry {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct EntryDetails {
+#[derive(Debug, PartialEq, Eq)]
+pub struct EntryDetails {
     filename: String,
     path: Arc<Path>,
     depth: usize,
@@ -605,6 +605,10 @@ impl ProjectPanel {
                     cx.notify();
                 }
             }
+
+            cx.update_global(|drag_and_drop: &mut DragAndDrop<Workspace>, cx| {
+                drag_and_drop.cancel_dragging::<DraggedProjectEntry>(cx);
+            })
         }
     }
 
@@ -1014,8 +1018,8 @@ impl ProjectPanel {
     }
 
     fn render_entry_visual_element<V: View>(
-        details: EntryDetails,
-        editor: &ViewHandle<Editor>,
+        details: &EntryDetails,
+        editor: Option<&ViewHandle<Editor>>,
         padding: f32,
         row_container_style: ContainerStyle,
         style: &ProjectPanelEntry,
@@ -1046,8 +1050,8 @@ impl ProjectPanel {
                 .with_width(style.icon_size)
                 .boxed(),
             )
-            .with_child(if show_editor {
-                ChildView::new(editor.clone(), cx)
+            .with_child(if show_editor && editor.is_some() {
+                ChildView::new(editor.unwrap().clone(), cx)
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()
@@ -1099,8 +1103,8 @@ impl ProjectPanel {
             };
 
             Self::render_entry_visual_element(
-                details.clone(),
-                editor,
+                &details,
+                Some(editor),
                 padding,
                 row_container_style,
                 &style,
@@ -1123,22 +1127,26 @@ impl ProjectPanel {
                 position: e.position,
             })
         })
-        .as_draggable(details.clone(), {
-            let editor = editor.clone();
-            let row_container_style = theme.dragged_entry.container;
+        .as_draggable(
+            DraggedProjectEntry {
+                path: details.path.clone(),
+            },
+            {
+                let row_container_style = theme.dragged_entry.container;
 
-            move |payload, cx: &mut RenderContext<Workspace>| {
-                let theme = cx.global::<Settings>().theme.clone();
-                Self::render_entry_visual_element(
-                    payload.clone(),
-                    &editor,
-                    padding,
-                    row_container_style,
-                    &theme.project_panel.dragged_entry,
-                    cx,
-                )
-            }
-        })
+                move |_, cx: &mut RenderContext<Workspace>| {
+                    let theme = cx.global::<Settings>().theme.clone();
+                    Self::render_entry_visual_element(
+                        &details,
+                        None,
+                        padding,
+                        row_container_style,
+                        &theme.project_panel.dragged_entry,
+                        cx,
+                    )
+                }
+            },
+        )
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }

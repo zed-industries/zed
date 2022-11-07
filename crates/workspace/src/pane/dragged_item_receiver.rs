@@ -1,4 +1,4 @@
-use drag_and_drop::DragAndDrop;
+use drag_and_drop::{shared_payloads::DraggedProjectEntry, DragAndDrop};
 use gpui::{
     color::Color,
     elements::{Canvas, MouseEventHandler, ParentElement, Stack},
@@ -28,12 +28,18 @@ where
     MouseEventHandler::<Tag>::above(region_id, cx, |state, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
         // of if mouse position was accessed before
-        let hovered = state.hovered();
-        let drag_position = cx
-            .global::<DragAndDrop<Workspace>>()
-            .currently_dragged::<DraggedItem>(cx.window_id())
-            .filter(|_| hovered)
-            .map(|(drag_position, _)| drag_position);
+        let drag_position = if state.hovered() {
+            cx.global::<DragAndDrop<Workspace>>()
+                .currently_dragged::<DraggedItem>(cx.window_id())
+                .map(|(drag_position, _)| drag_position)
+                .or_else(|| {
+                    cx.global::<DragAndDrop<Workspace>>()
+                        .currently_dragged::<DraggedProjectEntry>(cx.window_id())
+                        .map(|(drag_position, _)| drag_position)
+                })
+        } else {
+            None
+        };
 
         Stack::new()
             .with_child(render_child(state, cx))
@@ -70,10 +76,14 @@ where
         }
     })
     .on_move(|_, cx| {
-        if cx
-            .global::<DragAndDrop<Workspace>>()
+        let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
+
+        if drag_and_drop
             .currently_dragged::<DraggedItem>(cx.window_id())
             .is_some()
+            || drag_and_drop
+                .currently_dragged::<DraggedProjectEntry>(cx.window_id())
+                .is_some()
         {
             cx.notify();
         } else {

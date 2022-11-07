@@ -1,32 +1,47 @@
+pub mod shared_payloads;
+
 use std::{any::Any, rc::Rc};
 
 use collections::HashSet;
 use gpui::{
-    elements::{MouseEventHandler, Overlay},
+    elements::{Empty, MouseEventHandler, Overlay},
     geometry::{rect::RectF, vector::Vector2F},
     scene::MouseDrag,
     CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
     View, WeakViewHandle,
 };
 
-struct State<V: View> {
-    window_id: usize,
-    position: Vector2F,
-    region_offset: Vector2F,
-    region: RectF,
-    payload: Rc<dyn Any + 'static>,
-    render: Rc<dyn Fn(Rc<dyn Any>, &mut RenderContext<V>) -> ElementBox>,
+enum State<V: View> {
+    Dragging {
+        window_id: usize,
+        position: Vector2F,
+        region_offset: Vector2F,
+        region: RectF,
+        payload: Rc<dyn Any + 'static>,
+        render: Rc<dyn Fn(Rc<dyn Any>, &mut RenderContext<V>) -> ElementBox>,
+    },
+    Canceled,
 }
 
 impl<V: View> Clone for State<V> {
     fn clone(&self) -> Self {
-        Self {
-            window_id: self.window_id.clone(),
-            position: self.position.clone(),
-            region_offset: self.region_offset.clone(),
-            region: self.region.clone(),
-            payload: self.payload.clone(),
-            render: self.render.clone(),
+        match self {
+            State::Dragging {
+                window_id,
+                position,
+                region_offset,
+                region,
+                payload,
+                render,
+            } => Self::Dragging {
+                window_id: window_id.clone(),
+                position: position.clone(),
+                region_offset: region_offset.clone(),
+                region: region.clone(),
+                payload: payload.clone(),
+                render: render.clone(),
+            },
+            State::Canceled => State::Canceled,
         }
     }
 }
@@ -51,24 +66,27 @@ impl<V: View> DragAndDrop<V> {
     }
 
     pub fn currently_dragged<T: Any>(&self, window_id: usize) -> Option<(Vector2F, Rc<T>)> {
-        self.currently_dragged.as_ref().and_then(
-            |State {
-                 position,
-                 payload,
-                 window_id: window_dragged_from,
-                 ..
-             }| {
+        self.currently_dragged.as_ref().and_then(|state| {
+            if let State::Dragging {
+                position,
+                payload,
+                window_id: window_dragged_from,
+                ..
+            } = state
+            {
                 if &window_id != window_dragged_from {
                     return None;
                 }
 
                 payload
-                    .clone()
-                    .downcast::<T>()
-                    .ok()
+                    .is::<T>()
+                    .then(|| payload.clone().downcast::<T>().ok())
+                    .flatten()
                     .map(|payload| (position.clone(), payload))
-            },
-        )
+            } else {
+                None
+            }
+        })
     }
 
     pub fn dragging<T: Any>(
@@ -79,17 +97,27 @@ impl<V: View> DragAndDrop<V> {
     ) {
         let window_id = cx.window_id();
         cx.update_global::<Self, _, _>(|this, cx| {
-            let (region_offset, region) =
-                if let Some(previous_state) = this.currently_dragged.as_ref() {
-                    (previous_state.region_offset, previous_state.region)
-                } else {
-                    (
-                        event.region.origin() - event.prev_mouse_position,
-                        event.region,
-                    )
-                };
+            this.notify_containers_for_window(window_id, cx);
 
-            this.currently_dragged = Some(State {
+            if matches!(this.currently_dragged, Some(State::Canceled)) {
+                return;
+            }
+
+            let (region_offset, region) = if let Some(State::Dragging {
+                region_offset,
+                region,
+                ..
+            }) = this.currently_dragged.as_ref()
+            {
+                (*region_offset, *region)
+            } else {
+                (
+                    event.region.origin() - event.prev_mouse_position,
+                    event.region,
+                )
+            };
+
+            this.currently_dragged = Some(State::Dragging {
                 window_id,
                 region_offset,
                 region,
@@ -99,63 +127,114 @@ impl<V: View> DragAndDrop<V> {
                     render(payload.downcast_ref::<T>().unwrap(), cx)
                 }),
             });
-
-            this.notify_containers_for_window(window_id, cx);
         });
     }
 
     pub fn render(cx: &mut RenderContext<V>) -> Option<ElementBox> {
-        let currently_dragged = cx.global::<Self>().currently_dragged.clone();
+        enum DraggedElementHandler {}
+        cx.global::<Self>()
+            .currently_dragged
+            .clone()
+            .and_then(|state| {
+                match state {
+                    State::Dragging {
+                        window_id,
+                        region_offset,
+                        position,
+                        region,
+                        payload,
+                        render,
+                    } => {
+                        if cx.window_id() != window_id {
+                            return None;
+                        }
 
-        currently_dragged.and_then(
-            |State {
-                 window_id,
-                 region_offset,
-                 position,
-                 region,
-                 payload,
-                 render,
-             }| {
-                if cx.window_id() != window_id {
-                    return None;
+                        dbg!("Rendered dragging state");
+                        let position = position + region_offset;
+                        Some(
+                            Overlay::new(
+                                MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, cx| {
+                                    render(payload, cx)
+                                })
+                                .with_cursor_style(CursorStyle::Arrow)
+                                .on_up(MouseButton::Left, |_, cx| {
+                                    cx.defer(|cx| {
+                                        cx.update_global::<Self, _, _>(|this, cx| {
+                                            dbg!("Up with dragging state");
+                                            this.finish_dragging(cx)
+                                        });
+                                    });
+                                    cx.propagate_event();
+                                })
+                                .on_up_out(MouseButton::Left, |_, cx| {
+                                    cx.defer(|cx| {
+                                        cx.update_global::<Self, _, _>(|this, cx| {
+                                            dbg!("Up out with dragging state");
+                                            this.finish_dragging(cx)
+                                        });
+                                    });
+                                })
+                                // Don't block hover events or invalidations
+                                .with_hoverable(false)
+                                .constrained()
+                                .with_width(region.width())
+                                .with_height(region.height())
+                                .boxed(),
+                            )
+                            .with_anchor_position(position)
+                            .boxed(),
+                        )
+                    }
+
+                    State::Canceled => {
+                        dbg!("Rendered canceled state");
+                        Some(
+                            MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, _| {
+                                Empty::new()
+                                    .constrained()
+                                    .with_width(0.)
+                                    .with_height(0.)
+                                    .boxed()
+                            })
+                            .on_up(MouseButton::Left, |_, cx| {
+                                cx.defer(|cx| {
+                                    cx.update_global::<Self, _, _>(|this, _| {
+                                        dbg!("Up with canceled state");
+                                        this.currently_dragged = None;
+                                    });
+                                });
+                            })
+                            .on_up_out(MouseButton::Left, |_, cx| {
+                                cx.defer(|cx| {
+                                    cx.update_global::<Self, _, _>(|this, _| {
+                                        dbg!("Up out with canceled state");
+                                        this.currently_dragged = None;
+                                    });
+                                });
+                            })
+                            .boxed(),
+                        )
+                    }
                 }
-
-                let position = position + region_offset;
-
-                enum DraggedElementHandler {}
-                Some(
-                    Overlay::new(
-                        MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, cx| {
-                            render(payload, cx)
-                        })
-                        .with_cursor_style(CursorStyle::Arrow)
-                        .on_up(MouseButton::Left, |_, cx| {
-                            cx.defer(|cx| {
-                                cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
-                            });
-                            cx.propagate_event();
-                        })
-                        .on_up_out(MouseButton::Left, |_, cx| {
-                            cx.defer(|cx| {
-                                cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
-                            });
-                        })
-                        // Don't block hover events or invalidations
-                        .with_hoverable(false)
-                        .constrained()
-                        .with_width(region.width())
-                        .with_height(region.height())
-                        .boxed(),
-                    )
-                    .with_anchor_position(position)
-                    .boxed(),
-                )
-            },
-        )
+            })
     }
 
-    fn stop_dragging(&mut self, cx: &mut MutableAppContext) {
-        if let Some(State { window_id, .. }) = self.currently_dragged.take() {
+    pub fn cancel_dragging<P: Any>(&mut self, cx: &mut MutableAppContext) {
+        if let Some(State::Dragging {
+            payload, window_id, ..
+        }) = &self.currently_dragged
+        {
+            if payload.is::<P>() {
+                let window_id = *window_id;
+                self.currently_dragged = Some(State::Canceled);
+                dbg!("Canceled");
+                self.notify_containers_for_window(window_id, cx);
+            }
+        }
+    }
+
+    fn finish_dragging(&mut self, cx: &mut MutableAppContext) {
+        if let Some(State::Dragging { window_id, .. }) = self.currently_dragged.take() {
             self.notify_containers_for_window(window_id, cx);
         }
     }
