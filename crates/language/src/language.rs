@@ -28,6 +28,7 @@ use std::{
     any::Any,
     cell::RefCell,
     fmt::Debug,
+    hash::Hash,
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -643,6 +644,10 @@ impl Language {
         self.adapter.clone()
     }
 
+    pub fn id(&self) -> Option<usize> {
+        self.grammar.as_ref().map(|g| g.id)
+    }
+
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
         grammar.highlights_query = Some(Query::new(grammar.ts_language, source)?);
@@ -894,6 +899,20 @@ impl Language {
         self.grammar.as_ref()
     }
 }
+
+impl Hash for Language {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id().hash(state)
+    }
+}
+
+impl PartialEq for Language {
+    fn eq(&self, other: &Self) -> bool {
+        self.id().eq(&other.id())
+    }
+}
+
+impl Eq for Language {}
 
 impl Debug for Language {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
