@@ -1,5 +1,5 @@
 import { Color, Scale } from "chroma-js";
-import { SyntaxHighlightStyle } from "./theme";
+import { Syntax, SyntaxHighlightStyle } from "./theme";
 
 interface Meta {
   /**
@@ -64,6 +64,6 @@ export interface ThemeConfig {
   meta: Meta;
   color: Colors;
   // Syntax probably moves inside of override
-  syntax: SyntaxOverrides;
+  syntax: Partial<Syntax>;
   override: Partial<ThemeOverrides>
 }

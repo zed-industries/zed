@@ -1,6 +1,7 @@
 import chroma from "chroma-js";
 import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
+import { Syntax } from "./common/theme";
 import { ThemeConfig } from "./common/themeConfig";
 
 const color = {
@@ -38,6 +39,20 @@ const ramps = {
   magenta: colorRamp(chroma("#be5046")),
 };
 
+const syntax: Partial<Syntax> = {
+  primary: { color: color.white },
+  comment: { color: color.grey },
+  function: { color: color.blue },
+  type: { color: color.teal },
+  property: { color: color.red },
+  number: { color: color.orange },
+  string: { color: color.green },
+  keyword: { color: color.purple },
+  boolean: { color: color.orange },
+  punctuation: { color: color.white },
+  operator: { color: color.teal }
+}
+
 export const theme: ThemeConfig = {
   meta: {
     name: "One Dark",
@@ -49,55 +64,13 @@ export const theme: ThemeConfig = {
     },
   },
   color: ramps,
-  syntax: {
-    primary: { color: color.white },
-    comment: { color: color.grey },
-    function: { color: color.blue },
-    type: { color: color.teal },
-    property: { color: color.red },
-    number: { color: color.orange },
-    string: { color: color.green },
-    keyword: { color: color.purple },
-    boolean: { color: color.orange },
-    punctuation: { color: color.white },
-    operator: { color: color.teal }
-  },
+  syntax,
   override: {}
 };
 
 export const variants = [
   createColorScheme(
-    `${theme.meta.name} Alpha`,
-    false,
-    ramps,
-    theme
-  ),
-  createColorScheme(
-    `${theme.meta.name} Beta`,
-    false,
-    ramps,
-    theme
-  ),
-  createColorScheme(
-    `${theme.meta.name} Gamma`,
-    false,
-    ramps,
-    theme
-  ),
-  createColorScheme(
-    `${theme.meta.name} Delta`,
-    false,
-    ramps,
-    theme
-  ),
-  createColorScheme(
-    `${theme.meta.name} Foo`,
-    false,
-    ramps,
-    theme
-  ),
-  createColorScheme(
-    `${theme.meta.name} Baz`,
+    `${theme.meta.name}`,
     false,
     ramps,
     theme

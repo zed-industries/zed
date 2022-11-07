@@ -41,9 +41,6 @@ export interface Syntax {
   punctuation: SyntaxHighlightStyle;
   constant: SyntaxHighlightStyle;
   keyword: SyntaxHighlightStyle;
-  function: SyntaxHighlightStyle;
-  type: SyntaxHighlightStyle;
-  constructor: SyntaxHighlightStyle;
   property: SyntaxHighlightStyle;
   enum: SyntaxHighlightStyle;
   operator: SyntaxHighlightStyle;
