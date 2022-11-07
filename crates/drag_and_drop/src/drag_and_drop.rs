@@ -3,7 +3,7 @@ use std::{any::Any, rc::Rc};
 use collections::HashSet;
 use gpui::{
     elements::{MouseEventHandler, Overlay},
-    geometry::vector::Vector2F,
+    geometry::{rect::RectF, vector::Vector2F},
     scene::MouseDrag,
     CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
     View, WeakViewHandle,
@@ -13,6 +13,7 @@ struct State<V: View> {
     window_id: usize,
     position: Vector2F,
     region_offset: Vector2F,
+    region: RectF,
     payload: Rc<dyn Any + 'static>,
     render: Rc<dyn Fn(Rc<dyn Any>, &mut RenderContext<V>) -> ElementBox>,
 }
@@ -23,6 +24,7 @@ impl<V: View> Clone for State<V> {
             window_id: self.window_id.clone(),
             position: self.position.clone(),
             region_offset: self.region_offset.clone(),
+            region: self.region.clone(),
             payload: self.payload.clone(),
             render: self.render.clone(),
         }
@@ -77,15 +79,20 @@ impl<V: View> DragAndDrop<V> {
     ) {
         let window_id = cx.window_id();
         cx.update_global::<Self, _, _>(|this, cx| {
-            let region_offset = if let Some(previous_state) = this.currently_dragged.as_ref() {
-                previous_state.region_offset
-            } else {
-                event.region.origin() - event.prev_mouse_position
-            };
+            let (region_offset, region) =
+                if let Some(previous_state) = this.currently_dragged.as_ref() {
+                    (previous_state.region_offset, previous_state.region)
+                } else {
+                    (
+                        event.region.origin() - event.prev_mouse_position,
+                        event.region,
+                    )
+                };
 
             this.currently_dragged = Some(State {
                 window_id,
                 region_offset,
+                region,
                 position: event.position,
                 payload,
                 render: Rc::new(move |payload, cx| {
@@ -105,6 +112,7 @@ impl<V: View> DragAndDrop<V> {
                  window_id,
                  region_offset,
                  position,
+                 region,
                  payload,
                  render,
              }| {
@@ -134,6 +142,9 @@ impl<V: View> DragAndDrop<V> {
                         })
                         // Don't block hover events or invalidations
                         .with_hoverable(false)
+                        .constrained()
+                        .with_width(region.width())
+                        .with_height(region.height())
                         .boxed(),
                     )
                     .with_anchor_position(position)

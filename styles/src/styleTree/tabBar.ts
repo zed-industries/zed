@@ -67,7 +67,7 @@ export default function tabBar(colorScheme: ColorScheme) {
 
   const draggedTab = {
     ...activePaneActiveTab,
-    background: withOpacity(tab.background, 0.95),
+    background: withOpacity(tab.background, 0.9),
     border: undefined as any,
     shadow: colorScheme.popoverShadow,
   };

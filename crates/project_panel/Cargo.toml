@@ -9,6 +9,7 @@ doctest = false
 
 [dependencies]
 context_menu = { path = "../context_menu" }
+drag_and_drop = { path = "../drag_and_drop" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }

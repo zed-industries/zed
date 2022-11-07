@@ -4265,6 +4265,7 @@ name = "project_panel"
 version = "0.1.0"
 dependencies = [
  "context_menu",
+ "drag_and_drop",
  "editor",
  "futures 0.3.24",
  "gpui",
