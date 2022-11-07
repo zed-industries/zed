@@ -1,4 +1,5 @@
 use anyhow::Result;
+use indoc::{formatdoc, indoc};
 
 use crate::connection::Connection;
 
@@ -10,16 +11,17 @@ impl Connection {
     where
         F: FnOnce() -> Result<R>,
     {
-        let name = name.as_ref().to_owned();
-        self.exec(format!("SAVEPOINT {}", &name))?;
+        let name = name.as_ref();
+        self.exec(&format!("SAVEPOINT {name}"))?()?;
         let result = f();
         match result {
             Ok(_) => {
-                self.exec(format!("RELEASE {}", name))?;
+                self.exec(&format!("RELEASE {name}"))?()?;
             }
             Err(_) => {
-                self.exec(format!("ROLLBACK TO {}", name))?;
-                self.exec(format!("RELEASE {}", name))?;
+                self.exec(&formatdoc! {"
+                    ROLLBACK TO {name};
+                    RELEASE {name}"})?()?;
             }
         }
         result
@@ -32,16 +34,17 @@ impl Connection {
     where
         F: FnOnce() -> Result<Option<R>>,
     {
-        let name = name.as_ref().to_owned();
-        self.exec(format!("SAVEPOINT {}", &name))?;
+        let name = name.as_ref();
+        self.exec(&format!("SAVEPOINT {name}"))?()?;
         let result = f();
         match result {
             Ok(Some(_)) => {
-                self.exec(format!("RELEASE {}", name))?;
+                self.exec(&format!("RELEASE {name}"))?()?;
             }
             Ok(None) | Err(_) => {
-                self.exec(format!("ROLLBACK TO {}", name))?;
-                self.exec(format!("RELEASE {}", name))?;
+                self.exec(&formatdoc! {"
+                    ROLLBACK TO {name};
+                    RELEASE {name}"})?()?;
             }
         }
         result
@@ -64,28 +67,25 @@ mod tests {
                 text TEXT,
                 idx INTEGER
             );"})
-            .unwrap();
+            .unwrap()()
+        .unwrap();
 
         let save1_text = "test save1";
         let save2_text = "test save2";
 
         connection.with_savepoint("first", || {
-            connection
-                .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                .with_bindings((save1_text, 1))?
-                .exec()?;
+            connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((save1_text, 1))?;
 
             assert!(connection
                 .with_savepoint("second", || -> Result<Option<()>, anyhow::Error> {
-                    connection
-                        .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                        .with_bindings((save2_text, 2))?
-                        .exec()?;
+                    connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((
+                        save2_text, 2,
+                    ))?;
 
                     assert_eq!(
                         connection
-                            .prepare("SELECT text FROM text ORDER BY text.idx ASC")?
-                            .rows::<String>()?,
+                            .select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?(
+                        )?,
                         vec![save1_text, save2_text],
                     );
 
@@ -95,22 +95,17 @@ mod tests {
                 .is_some());
 
             assert_eq!(
-                connection
-                    .prepare("SELECT text FROM text ORDER BY text.idx ASC")?
-                    .rows::<String>()?,
+                connection.select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?()?,
                 vec![save1_text],
             );
 
             connection.with_savepoint_rollback::<(), _>("second", || {
-                connection
-                    .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                    .with_bindings((save2_text, 2))?
-                    .exec()?;
+                connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((
+                    save2_text, 2,
+                ))?;
 
                 assert_eq!(
-                    connection
-                        .prepare("SELECT text FROM text ORDER BY text.idx ASC")?
-                        .rows::<String>()?,
+                    connection.select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?()?,
                     vec![save1_text, save2_text],
                 );
 
@@ -118,22 +113,17 @@ mod tests {
             })?;
 
             assert_eq!(
-                connection
-                    .prepare("SELECT text FROM text ORDER BY text.idx ASC")?
-                    .rows::<String>()?,
+                connection.select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?()?,
                 vec![save1_text],
             );
 
             connection.with_savepoint_rollback("second", || {
-                connection
-                    .prepare("INSERT INTO text(text, idx) VALUES (?, ?)")?
-                    .with_bindings((save2_text, 2))?
-                    .exec()?;
+                connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((
+                    save2_text, 2,
+                ))?;
 
                 assert_eq!(
-                    connection
-                        .prepare("SELECT text FROM text ORDER BY text.idx ASC")?
-                        .rows::<String>()?,
+                    connection.select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?()?,
                     vec![save1_text, save2_text],
                 );
 
@@ -141,9 +131,7 @@ mod tests {
             })?;
 
             assert_eq!(
-                connection
-                    .prepare("SELECT text FROM text ORDER BY text.idx ASC")?
-                    .rows::<String>()?,
+                connection.select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?()?,
                 vec![save1_text, save2_text],
             );
 
@@ -151,9 +139,7 @@ mod tests {
         })?;
 
         assert_eq!(
-            connection
-                .prepare("SELECT text FROM text ORDER BY text.idx ASC")?
-                .rows::<String>()?,
+            connection.select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?()?,
             vec![save1_text, save2_text],
         );
 

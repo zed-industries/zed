@@ -22,7 +22,7 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
     "}],
 );
 
-use self::model::{SerializedWorkspace, WorkspaceId, WorkspaceRow};
+use self::model::{SerializedWorkspace, WorkspaceId};
 
 use super::Db;
 
@@ -40,21 +40,19 @@ impl Db {
         // and we've grabbed the most recent workspace
         let (workspace_id, dock_anchor, dock_visible) = iife!({
             if worktree_roots.len() == 0 {
-                self.prepare(indoc! {"
+                self.select_row(indoc! {"
                         SELECT workspace_id, dock_anchor, dock_visible 
                         FROM workspaces 
-                        ORDER BY timestamp DESC LIMIT 1"})?
-                    .maybe_row::<WorkspaceRow>()
+                        ORDER BY timestamp DESC LIMIT 1"})?()?
             } else {
-                self.prepare(indoc! {"
+                self.select_row_bound(indoc! {"
                         SELECT workspace_id, dock_anchor, dock_visible 
                         FROM workspaces 
-                        WHERE workspace_id = ?"})?
-                    .with_bindings(&workspace_id)?
-                    .maybe_row::<WorkspaceRow>()
+                        WHERE workspace_id = ?"})?(&workspace_id)?
             }
+            .context("No workspaces found")
         })
-        .log_err()
+        .warn_on_err()
         .flatten()?;
 
         Some(SerializedWorkspace {
@@ -85,23 +83,17 @@ impl Db {
             if let Some(old_roots) = old_roots {
                 let old_id: WorkspaceId = old_roots.into();
 
-                self.prepare("DELETE FROM WORKSPACES WHERE workspace_id = ?")?
-                    .with_bindings(&old_id)?
-                    .exec()?;
+                self.exec_bound("DELETE FROM WORKSPACES WHERE workspace_id = ?")?(&old_id)?;
             }
 
             // Delete any previous workspaces with the same roots. This cascades to all
             // other tables that are based on the same roots set.
             // Insert new workspace into workspaces table if none were found
-            self.prepare("DELETE FROM workspaces WHERE workspace_id = ?;")?
-                .with_bindings(&workspace_id)?
-                .exec()?;
+            self.exec_bound("DELETE FROM workspaces WHERE workspace_id = ?;")?(&workspace_id)?;
 
-            self.prepare(
+            self.exec_bound(
                 "INSERT INTO workspaces(workspace_id, dock_anchor, dock_visible) VALUES (?, ?, ?)",
-            )?
-            .with_bindings((&workspace_id, workspace.dock_anchor, workspace.dock_visible))?
-            .exec()?;
+            )?((&workspace_id, workspace.dock_anchor, workspace.dock_visible))?;
 
             // Save center pane group and dock pane
             self.save_pane_group(&workspace_id, &workspace.center_group, None)?;
@@ -126,11 +118,9 @@ impl Db {
         iife!({
             // TODO, upgrade anyhow: https://docs.rs/anyhow/1.0.66/anyhow/fn.Ok.html
             Ok::<_, anyhow::Error>(
-                self.prepare(
+                self.select_bound::<usize, WorkspaceId>(
                     "SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?",
-                )?
-                .with_bindings(limit)?
-                .rows::<WorkspaceId>()?
+                )?(limit)?
                 .into_iter()
                 .map(|id| id.paths())
                 .collect::<Vec<Vec<PathBuf>>>(),

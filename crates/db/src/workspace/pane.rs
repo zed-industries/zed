@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use indoc::indoc;
-use sqlez::{migrations::Migration, statement::Statement};
+use sqlez::migrations::Migration;
 use util::unzip_option;
 
 use crate::model::{Axis, GroupId, PaneId, SerializedPane};
@@ -39,38 +39,29 @@ impl Db {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<SerializedPaneGroup> {
-        let mut query = self.prepare(indoc! {"
-            SELECT group_id, axis, pane_id
-            FROM (SELECT group_id, axis, NULL as pane_id, position,  parent_group_id, workspace_id
-                  FROM pane_groups
-                 UNION
-                  SELECT NULL, NULL,  pane_id,  position,  parent_group_id, workspace_id
-                  FROM panes
-                  -- Remove the dock panes from the union
-                  WHERE parent_group_id IS NOT NULL and position IS NOT NULL) 
-            WHERE parent_group_id IS ? AND workspace_id = ?
-            ORDER BY position
-            "})?;
-
-        self.get_pane_group_children(workspace_id, None, &mut query)?
+        self.get_pane_group_children(workspace_id, None)?
             .into_iter()
             .next()
             .context("No center pane group")
     }
 
-    fn get_pane_group_children(
+    fn get_pane_group_children<'a>(
         &self,
         workspace_id: &WorkspaceId,
         group_id: Option<GroupId>,
-        query: &mut Statement,
     ) -> Result<Vec<SerializedPaneGroup>> {
-        let children = query.with_bindings((group_id, workspace_id))?.rows::<(
-            Option<GroupId>,
-            Option<Axis>,
-            Option<PaneId>,
-        )>()?;
-
-        children
+        self.select_bound::<(Option<GroupId>, &WorkspaceId), (Option<GroupId>, Option<Axis>, Option<PaneId>)>(indoc! {"
+            SELECT group_id, axis, pane_id
+                FROM (SELECT group_id, axis, NULL as pane_id, position,  parent_group_id, workspace_id
+                FROM pane_groups
+                  UNION
+                SELECT NULL, NULL,  pane_id,  position,  parent_group_id, workspace_id
+                FROM panes
+                -- Remove the dock panes from the union
+                WHERE parent_group_id IS NOT NULL and position IS NOT NULL) 
+            WHERE parent_group_id IS ? AND workspace_id = ?
+            ORDER BY position
+            "})?((group_id, workspace_id))?
             .into_iter()
             .map(|(group_id, axis, pane_id)| {
                 if let Some((group_id, axis)) = group_id.zip(axis) {
@@ -79,7 +70,6 @@ impl Db {
                         children: self.get_pane_group_children(
                             workspace_id,
                             Some(group_id),
-                            query,
                         )?,
                     })
                 } else if let Some(pane_id) = pane_id {
@@ -107,9 +97,8 @@ impl Db {
 
         match pane_group {
             SerializedPaneGroup::Group { axis, children } => {
-                let parent_id = self.prepare("INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) VALUES (?, ?, ?, ?)")?
-                    .with_bindings((workspace_id, parent_id, position, *axis))?
-                    .insert()? as GroupId;
+                let parent_id = self.insert_bound("INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) VALUES (?, ?, ?, ?)")?
+                    ((workspace_id, parent_id, position, *axis))?;
 
                 for (position, group) in children.iter().enumerate() {
                     self.save_pane_group(workspace_id, group, Some((parent_id, position)))?
@@ -121,12 +110,12 @@ impl Db {
     }
 
     pub(crate) fn get_dock_pane(&self, workspace_id: &WorkspaceId) -> Result<SerializedPane> {
-        let pane_id = self
-            .prepare(indoc! {"
+        let pane_id = self.select_row_bound(indoc! {"
                 SELECT pane_id FROM panes 
-                WHERE workspace_id = ? AND parent_group_id IS NULL AND position IS NULL"})?
-            .with_bindings(workspace_id)?
-            .row::<PaneId>()?;
+                WHERE workspace_id = ? AND parent_group_id IS NULL AND position IS NULL"})?(
+            workspace_id,
+        )?
+        .context("No dock pane for workspace")?;
 
         Ok(SerializedPane::new(
             self.get_items(pane_id).context("Reading items")?,
@@ -141,10 +130,9 @@ impl Db {
     ) -> Result<()> {
         let (parent_id, order) = unzip_option(parent);
 
-        let pane_id = self
-            .prepare("INSERT INTO panes(workspace_id, parent_group_id, position) VALUES (?, ?, ?)")?
-            .with_bindings((workspace_id, parent_id, order))?
-            .insert()? as PaneId;
+        let pane_id = self.insert_bound(
+            "INSERT INTO panes(workspace_id, parent_group_id, position) VALUES (?, ?, ?)",
+        )?((workspace_id, parent_id, order))?;
 
         self.save_items(workspace_id, pane_id, &pane.children)
             .context("Saving items")

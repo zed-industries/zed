@@ -79,7 +79,8 @@ impl Deref for ThreadSafeConnection {
                 connection.exec(initialize_query).expect(&format!(
                     "Initialize query failed to execute: {}",
                     initialize_query
-                ));
+                ))()
+                .unwrap();
             }
 
             if let Some(migrations) = self.migrations {

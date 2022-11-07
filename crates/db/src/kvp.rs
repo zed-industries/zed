@@ -15,24 +15,19 @@ pub(crate) const KVP_MIGRATION: Migration = Migration::new(
 
 impl Db {
     pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
-        self.0
-            .prepare("SELECT value FROM kv_store WHERE key = (?)")?
-            .with_bindings(key)?
-            .maybe_row()
+        self.select_row_bound("SELECT value FROM kv_store WHERE key = (?)")?(key)
     }
 
     pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
-        self.0
-            .prepare("INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))")?
-            .with_bindings((key, value))?
-            .exec()
+        self.exec_bound("INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))")?((
+            key, value,
+        ))?;
+
+        Ok(())
     }
 
     pub fn delete_kvp(&self, key: &str) -> Result<()> {
-        self.0
-            .prepare("DELETE FROM kv_store WHERE key = (?)")?
-            .with_bindings(key)?
-            .exec()
+        self.exec_bound("DELETE FROM kv_store WHERE key = (?)")?(key)
     }
 }
 

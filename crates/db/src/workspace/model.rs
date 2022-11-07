@@ -80,8 +80,6 @@ impl Column for DockAnchor {
     }
 }
 
-pub(crate) type WorkspaceRow = (WorkspaceId, DockAnchor, bool);
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct SerializedWorkspace {
     pub dock_anchor: DockAnchor,
@@ -240,23 +238,20 @@ mod tests {
                 workspace_id BLOB,
                 dock_anchor TEXT
             );"})
-            .unwrap();
+            .unwrap()()
+        .unwrap();
 
         let workspace_id: WorkspaceId = WorkspaceId::from(&["\test2", "\test1"]);
 
-        db.prepare("INSERT INTO workspace_id_test(workspace_id, dock_anchor) VALUES (?,?)")
-            .unwrap()
-            .with_bindings((&workspace_id, DockAnchor::Bottom))
-            .unwrap()
-            .exec()
-            .unwrap();
+        db.exec_bound("INSERT INTO workspace_id_test(workspace_id, dock_anchor) VALUES (?,?)")
+            .unwrap()((&workspace_id, DockAnchor::Bottom))
+        .unwrap();
 
         assert_eq!(
-            db.prepare("SELECT workspace_id, dock_anchor FROM workspace_id_test LIMIT 1")
-                .unwrap()
-                .row::<(WorkspaceId, DockAnchor)>()
-                .unwrap(),
-            (WorkspaceId::from(&["\test1", "\test2"]), DockAnchor::Bottom)
+            db.select_row("SELECT workspace_id, dock_anchor FROM workspace_id_test LIMIT 1")
+                .unwrap()()
+            .unwrap(),
+            Some((WorkspaceId::from(&["\test1", "\test2"]), DockAnchor::Bottom))
         );
     }
 }

@@ -18,7 +18,7 @@ const MIGRATIONS_MIGRATION: Migration = Migration::new(
             domain TEXT,
             step INTEGER,
             migration TEXT
-        );
+        )
     "}],
 );
 
@@ -34,24 +34,26 @@ impl Migration {
     }
 
     fn run_unchecked(&self, connection: &Connection) -> Result<()> {
-        connection.exec(self.migrations.join(";\n"))
+        for migration in self.migrations {
+            connection.exec(migration)?()?;
+        }
+
+        Ok(())
     }
 
     pub fn run(&self, connection: &Connection) -> Result<()> {
         // Setup the migrations table unconditionally
         MIGRATIONS_MIGRATION.run_unchecked(connection)?;
 
-        let completed_migrations = connection
-            .prepare(indoc! {"
-                SELECT domain, step, migration FROM migrations
-                WHERE domain = ?
-                ORDER BY step
-                "})?
-            .with_bindings(self.domain)?
-            .rows::<(String, usize, String)>()?;
+        let completed_migrations =
+            connection.select_bound::<&str, (String, usize, String)>(indoc! {"
+                    SELECT domain, step, migration FROM migrations
+                    WHERE domain = ?
+                    ORDER BY step
+                "})?(self.domain)?;
 
         let mut store_completed_migration = connection
-            .prepare("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
+            .insert_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
 
         for (index, migration) in self.migrations.iter().enumerate() {
             if let Some((_, _, completed_migration)) = completed_migrations.get(index) {
@@ -70,10 +72,8 @@ impl Migration {
                 }
             }
 
-            connection.exec(migration)?;
-            store_completed_migration
-                .with_bindings((self.domain, index, *migration))?
-                .exec()?;
+            connection.exec(migration)?()?;
+            store_completed_migration((self.domain, index, *migration))?;
         }
 
         Ok(())
@@ -97,17 +97,16 @@ mod test {
             CREATE TABLE test1 (
                 a TEXT,
                 b TEXT
-            );"}],
+            )"}],
         );
         migration.run(&connection).unwrap();
 
         // Verify it got added to the migrations table
         assert_eq!(
             &connection
-                .prepare("SELECT (migration) FROM migrations")
-                .unwrap()
-                .rows::<String>()
-                .unwrap()[..],
+                .select::<String>("SELECT (migration) FROM migrations")
+                .unwrap()()
+            .unwrap()[..],
             migration.migrations
         );
 
@@ -117,22 +116,21 @@ mod test {
                 CREATE TABLE test1 (
                     a TEXT,
                     b TEXT
-                );"},
+                )"},
             indoc! {"
                 CREATE TABLE test2 (
                     c TEXT,
                     d TEXT
-                );"},
+                )"},
         ];
         migration.run(&connection).unwrap();
 
         // Verify it is also added to the migrations table
         assert_eq!(
             &connection
-                .prepare("SELECT (migration) FROM migrations")
-                .unwrap()
-                .rows::<String>()
-                .unwrap()[..],
+                .select::<String>("SELECT (migration) FROM migrations")
+                .unwrap()()
+            .unwrap()[..],
             migration.migrations
         );
     }
@@ -142,15 +140,17 @@ mod test {
         let connection = Connection::open_memory("migration_setup_works");
 
         connection
-            .exec(indoc! {"CREATE TABLE IF NOT EXISTS migrations (
+            .exec(indoc! {"
+                CREATE TABLE IF NOT EXISTS migrations (
                     domain TEXT,
                     step INTEGER,
                     migration TEXT
                 );"})
-            .unwrap();
+            .unwrap()()
+        .unwrap();
 
         let mut store_completed_migration = connection
-            .prepare(indoc! {"
+            .insert_bound::<(&str, usize, String)>(indoc! {"
                 INSERT INTO migrations (domain, step, migration)
                 VALUES (?, ?, ?)"})
             .unwrap();
@@ -159,14 +159,11 @@ mod test {
         for i in 0..5 {
             // Create a table forcing a schema change
             connection
-                .exec(format!("CREATE TABLE table{} ( test TEXT );", i))
-                .unwrap();
+                .exec(&format!("CREATE TABLE table{} ( test TEXT );", i))
+                .unwrap()()
+            .unwrap();
 
-            store_completed_migration
-                .with_bindings((domain, i, i.to_string()))
-                .unwrap()
-                .exec()
-                .unwrap();
+            store_completed_migration((domain, i, i.to_string())).unwrap();
         }
     }
 
@@ -180,46 +177,49 @@ mod test {
         // Manually create the table for that migration with a row
         connection
             .exec(indoc! {"
-            CREATE TABLE test_table (
-                test_column INTEGER
-            );
-            INSERT INTO test_table (test_column) VALUES (1)"})
-            .unwrap();
+                CREATE TABLE test_table (
+                    test_column INTEGER
+                );"})
+            .unwrap()()
+        .unwrap();
+        connection
+            .exec(indoc! {"
+            INSERT INTO test_table (test_column) VALUES (1);"})
+            .unwrap()()
+        .unwrap();
 
         assert_eq!(
             connection
-                .prepare("SELECT * FROM test_table")
-                .unwrap()
-                .row::<usize>()
-                .unwrap(),
-            1
+                .select_row::<usize>("SELECT * FROM test_table")
+                .unwrap()()
+            .unwrap(),
+            Some(1)
         );
 
         // Run the migration verifying that the row got dropped
         migration.run(&connection).unwrap();
         assert_eq!(
             connection
-                .prepare("SELECT * FROM test_table")
-                .unwrap()
-                .rows::<usize>()
-                .unwrap(),
-            Vec::new()
+                .select_row::<usize>("SELECT * FROM test_table")
+                .unwrap()()
+            .unwrap(),
+            None
         );
 
         // Recreate the dropped row
         connection
             .exec("INSERT INTO test_table (test_column) VALUES (2)")
-            .unwrap();
+            .unwrap()()
+        .unwrap();
 
         // Run the same migration again and verify that the table was left unchanged
         migration.run(&connection).unwrap();
         assert_eq!(
             connection
-                .prepare("SELECT * FROM test_table")
-                .unwrap()
-                .row::<usize>()
-                .unwrap(),
-            2
+                .select_row::<usize>("SELECT * FROM test_table")
+                .unwrap()()
+            .unwrap(),
+            Some(2)
         );
     }
 

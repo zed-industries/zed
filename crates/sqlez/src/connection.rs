@@ -6,8 +6,6 @@ use std::{
 use anyhow::{anyhow, Result};
 use libsqlite3_sys::*;
 
-use crate::statement::Statement;
-
 pub struct Connection {
     pub(crate) sqlite3: *mut sqlite3,
     persistent: bool,
@@ -58,30 +56,6 @@ impl Connection {
 
     pub(crate) fn last_insert_id(&self) -> i64 {
         unsafe { sqlite3_last_insert_rowid(self.sqlite3) }
-    }
-
-    pub fn insert(&self, query: impl AsRef<str>) -> Result<i64> {
-        self.exec(query)?;
-        Ok(self.last_insert_id())
-    }
-
-    pub fn exec(&self, query: impl AsRef<str>) -> Result<()> {
-        unsafe {
-            sqlite3_exec(
-                self.sqlite3,
-                CString::new(query.as_ref())?.as_ptr(),
-                None,
-                0 as *mut _,
-                0 as *mut _,
-            );
-            sqlite3_errcode(self.sqlite3);
-            self.last_error()?;
-        }
-        Ok(())
-    }
-
-    pub fn prepare<T: AsRef<str>>(&self, query: T) -> Result<Statement> {
-        Statement::prepare(&self, query)
     }
 
     pub fn backup_main(&self, destination: &Connection) -> Result<()> {
@@ -136,7 +110,7 @@ mod test {
     use anyhow::Result;
     use indoc::indoc;
 
-    use crate::{connection::Connection, migrations::Migration};
+    use crate::connection::Connection;
 
     #[test]
     fn string_round_trips() -> Result<()> {
@@ -146,25 +120,19 @@ mod test {
             CREATE TABLE text (
                 text TEXT
             );"})
-            .unwrap();
+            .unwrap()()
+        .unwrap();
 
         let text = "Some test text";
 
         connection
-            .prepare("INSERT INTO text (text) VALUES (?);")
-            .unwrap()
-            .with_bindings(text)
-            .unwrap()
-            .exec()
-            .unwrap();
+            .insert_bound("INSERT INTO text (text) VALUES (?);")
+            .unwrap()(text)
+        .unwrap();
 
         assert_eq!(
-            &connection
-                .prepare("SELECT text FROM text;")
-                .unwrap()
-                .row::<String>()
-                .unwrap(),
-            text
+            connection.select_row("SELECT text FROM text;").unwrap()().unwrap(),
+            Some(text.to_string())
         );
 
         Ok(())
@@ -180,32 +148,26 @@ mod test {
                     integer INTEGER,
                     blob BLOB
                 );"})
-            .unwrap();
+            .unwrap()()
+        .unwrap();
 
         let tuple1 = ("test".to_string(), 64, vec![0, 1, 2, 4, 8, 16, 32, 64]);
         let tuple2 = ("test2".to_string(), 32, vec![64, 32, 16, 8, 4, 2, 1, 0]);
 
         let mut insert = connection
-            .prepare("INSERT INTO test (text, integer, blob) VALUES (?, ?, ?)")
+            .insert_bound::<(String, usize, Vec<u8>)>(
+                "INSERT INTO test (text, integer, blob) VALUES (?, ?, ?)",
+            )
             .unwrap();
 
-        insert
-            .with_bindings(tuple1.clone())
-            .unwrap()
-            .exec()
-            .unwrap();
-        insert
-            .with_bindings(tuple2.clone())
-            .unwrap()
-            .exec()
-            .unwrap();
+        insert(tuple1.clone()).unwrap();
+        insert(tuple2.clone()).unwrap();
 
         assert_eq!(
             connection
-                .prepare("SELECT * FROM test")
-                .unwrap()
-                .rows::<(String, usize, Vec<u8>)>()
-                .unwrap(),
+                .select::<(String, usize, Vec<u8>)>("SELECT * FROM test")
+                .unwrap()()
+            .unwrap(),
             vec![tuple1, tuple2]
         );
     }
@@ -219,23 +181,20 @@ mod test {
                     t INTEGER,
                     f INTEGER
                 );"})
-            .unwrap();
+            .unwrap()()
+        .unwrap();
 
         connection
-            .prepare("INSERT INTO bools(t, f) VALUES (?, ?);")
-            .unwrap()
-            .with_bindings((true, false))
-            .unwrap()
-            .exec()
-            .unwrap();
+            .insert_bound("INSERT INTO bools(t, f) VALUES (?, ?);")
+            .unwrap()((true, false))
+        .unwrap();
 
         assert_eq!(
-            &connection
-                .prepare("SELECT * FROM bools;")
-                .unwrap()
-                .row::<(bool, bool)>()
-                .unwrap(),
-            &(true, false)
+            connection
+                .select_row::<(bool, bool)>("SELECT * FROM bools;")
+                .unwrap()()
+            .unwrap(),
+            Some((true, false))
         );
     }
 
@@ -247,13 +206,13 @@ mod test {
                 CREATE TABLE blobs (
                     data BLOB
                 );"})
-            .unwrap();
-        let blob = &[0, 1, 2, 4, 8, 16, 32, 64];
-        let mut write = connection1
-            .prepare("INSERT INTO blobs (data) VALUES (?);")
-            .unwrap();
-        write.bind_blob(1, blob).unwrap();
-        write.exec().unwrap();
+            .unwrap()()
+        .unwrap();
+        let blob = vec![0, 1, 2, 4, 8, 16, 32, 64];
+        connection1
+            .insert_bound::<Vec<u8>>("INSERT INTO blobs (data) VALUES (?);")
+            .unwrap()(blob.clone())
+        .unwrap();
 
         // Backup connection1 to connection2
         let connection2 = Connection::open_memory("backup_works_other");
@@ -261,40 +220,36 @@ mod test {
 
         // Delete the added blob and verify its deleted on the other side
         let read_blobs = connection1
-            .prepare("SELECT * FROM blobs;")
-            .unwrap()
-            .rows::<Vec<u8>>()
-            .unwrap();
+            .select::<Vec<u8>>("SELECT * FROM blobs;")
+            .unwrap()()
+        .unwrap();
         assert_eq!(read_blobs, vec![blob]);
     }
 
     #[test]
-    fn test_kv_store() -> anyhow::Result<()> {
-        let connection = Connection::open_memory("kv_store");
+    fn multi_step_statement_works() {
+        let connection = Connection::open_memory("multi_step_statement_works");
 
-        Migration::new(
-            "kv",
-            &["CREATE TABLE kv_store(
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            ) STRICT;"],
-        )
-        .run(&connection)
+        connection
+            .exec(indoc! {"
+                CREATE TABLE test (
+                    col INTEGER
+                )"})
+            .unwrap()()
         .unwrap();
 
-        let mut stmt = connection.prepare("INSERT INTO kv_store(key, value) VALUES(?, ?)")?;
-        stmt.bind_text(1, "a").unwrap();
-        stmt.bind_text(2, "b").unwrap();
-        stmt.exec().unwrap();
-        let id = connection.last_insert_id();
+        connection
+            .exec(indoc! {"
+            INSERT INTO test(col) VALUES (2)"})
+            .unwrap()()
+        .unwrap();
 
-        let res = connection
-            .prepare("SELECT key, value FROM kv_store WHERE rowid = ?")?
-            .with_bindings(id)?
-            .row::<(String, String)>()?;
-
-        assert_eq!(res, ("a".to_string(), "b".to_string()));
-
-        Ok(())
+        assert_eq!(
+            connection
+                .select_row::<usize>("SELECt * FROM test")
+                .unwrap()()
+            .unwrap(),
+            Some(2)
+        );
     }
 }

@@ -3,7 +3,7 @@ use indoc::indoc;
 use sqlez::migrations::Migration;
 
 use crate::{
-    model::{ItemId, PaneId, SerializedItem, SerializedItemKind, WorkspaceId},
+    model::{PaneId, SerializedItem, SerializedItemKind, WorkspaceId},
     Db,
 };
 
@@ -29,19 +29,16 @@ pub(crate) const ITEM_MIGRATIONS: Migration = Migration::new(
 
 impl Db {
     pub(crate) fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
-        Ok(self
-            .prepare(indoc! {"
+        Ok(self.select_bound(indoc! {"
                 SELECT item_id, kind FROM items
                 WHERE pane_id = ?
-                ORDER BY position"})?
-            .with_bindings(pane_id)?
-            .rows::<(ItemId, SerializedItemKind)>()?
-            .into_iter()
-            .map(|(item_id, kind)| match kind {
-                SerializedItemKind::Terminal => SerializedItem::Terminal { item_id },
-                _ => unimplemented!(),
-            })
-            .collect())
+                ORDER BY position"})?(pane_id)?
+        .into_iter()
+        .map(|(item_id, kind)| match kind {
+            SerializedItemKind::Terminal => SerializedItem::Terminal { item_id },
+            _ => unimplemented!(),
+        })
+        .collect())
     }
 
     pub(crate) fn save_items(
@@ -51,19 +48,14 @@ impl Db {
         items: &[SerializedItem],
     ) -> Result<()> {
         let mut delete_old = self
-            .prepare("DELETE FROM items WHERE workspace_id = ? AND pane_id = ? AND item_id = ?")
+            .exec_bound("DELETE FROM items WHERE workspace_id = ? AND pane_id = ? AND item_id = ?")
             .context("Preparing deletion")?;
-        let mut insert_new = self.prepare(
+        let mut insert_new = self.exec_bound(
             "INSERT INTO items(item_id, workspace_id, pane_id, kind, position) VALUES (?, ?, ?, ?, ?)",
         ).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
-            delete_old
-                .with_bindings((workspace_id, pane_id, item.item_id()))?
-                .exec()?;
-
-            insert_new
-                .with_bindings((item.item_id(), workspace_id, pane_id, item.kind(), position))?
-                .exec()?;
+            delete_old((workspace_id, pane_id, item.item_id()))?;
+            insert_new((item.item_id(), workspace_id, pane_id, item.kind(), position))?;
         }
 
         Ok(())
