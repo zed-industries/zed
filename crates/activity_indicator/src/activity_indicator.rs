@@ -254,9 +254,7 @@ impl ActivityIndicator {
                     "Installing Zed update…".to_string(),
                     None,
                 ),
-                AutoUpdateStatus::Updated => {
-                    (Some(DONE_ICON), "Restart to update Zed".to_string(), None)
-                }
+                AutoUpdateStatus::Updated => (None, "Restart to update Zed".to_string(), None),
                 AutoUpdateStatus::Errored => (
                     Some(WARNING_ICON),
                     "Auto update failed".to_string(),
