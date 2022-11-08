@@ -187,7 +187,7 @@ actions!(
         Paste,
         Undo,
         Redo,
-        CenterScreen,
+        NextScreen,
         MoveUp,
         PageUp,
         MoveDown,
@@ -307,7 +307,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::move_down);
     cx.add_action(Editor::move_page_down);
     cx.add_action(Editor::page_down);
-    cx.add_action(Editor::center_screen);
+    cx.add_action(Editor::next_screen);
+
     cx.add_action(Editor::move_left);
     cx.add_action(Editor::move_right);
     cx.add_action(Editor::move_to_previous_word_start);
@@ -407,11 +408,25 @@ pub enum SelectMode {
     All,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Default)]
 pub enum Autoscroll {
     Fit,
-    Center,
     Newest,
+    #[default]
+    Center,
+    Top,
+    Bottom,
+    Next,
+}
+
+impl Autoscroll {
+    fn next(&self) -> Self {
+        match self {
+            Autoscroll::Center => Autoscroll::Top,
+            Autoscroll::Top => Autoscroll::Bottom,
+            _ => Autoscroll::Center,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -553,6 +568,7 @@ pub struct Editor {
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
     visible_line_count: Option<f32>,
+    last_autoscroll: Option<(Vector2F, f32, f32, Autoscroll)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1205,6 +1221,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             visible_line_count: None,
+            last_autoscroll: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1424,7 +1441,7 @@ impl Editor {
             self.set_scroll_position(scroll_position, cx);
         }
 
-        let (autoscroll, local) = if let Some(autoscroll) = self.autoscroll_request.take() {
+        let (mut autoscroll, local) = if let Some(autoscroll) = self.autoscroll_request.take() {
             autoscroll
         } else {
             return false;
@@ -1465,6 +1482,22 @@ impl Editor {
             return false;
         }
 
+        if matches!(autoscroll, Autoscroll::Next) {
+            let last_autoscroll = &self.last_autoscroll;
+            autoscroll = if let Some(last_autoscroll) = last_autoscroll {
+                if self.scroll_position == last_autoscroll.0
+                    && first_cursor_top == last_autoscroll.1
+                    && last_cursor_bottom == last_autoscroll.2
+                {
+                    last_autoscroll.3.next()
+                } else {
+                    Autoscroll::default()
+                }
+            } else {
+                Autoscroll::default()
+            }
+        }
+
         match autoscroll {
             Autoscroll::Fit | Autoscroll::Newest => {
                 let margin = margin.min(self.vertical_scroll_margin);
@@ -1485,7 +1518,25 @@ impl Editor {
                 scroll_position.set_y((first_cursor_top - margin).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, cx);
             }
+            Autoscroll::Next => {
+                unreachable!("This should be handled above")
+            }
+            Autoscroll::Top => {
+                scroll_position.set_y((first_cursor_top).max(0.0));
+                self.set_scroll_position_internal(scroll_position, local, cx);
+            }
+            Autoscroll::Bottom => {
+                scroll_position.set_y((last_cursor_bottom - visible_lines).max(0.0));
+                self.set_scroll_position_internal(scroll_position, local, cx);
+            }
         }
+
+        self.last_autoscroll = Some((
+            self.scroll_position,
+            first_cursor_top,
+            last_cursor_bottom,
+            autoscroll,
+        ));
 
         true
     }
@@ -4003,7 +4054,7 @@ impl Editor {
         })
     }
 
-    pub fn center_screen(&mut self, _: &CenterScreen, cx: &mut ViewContext<Self>) {
+    pub fn next_screen(&mut self, _: &NextScreen, cx: &mut ViewContext<Editor>) {
         if self.take_rename(true, cx).is_some() {
             return;
         }
@@ -4017,7 +4068,7 @@ impl Editor {
             return;
         }
 
-        self.request_autoscroll(Autoscroll::Center, cx);
+        self.request_autoscroll(Autoscroll::Next, cx);
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {

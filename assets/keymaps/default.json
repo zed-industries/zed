@@ -75,7 +75,7 @@
             "ctrl-n": "editor::MoveDown",
             "ctrl-b": "editor::MoveLeft",
             "ctrl-f": "editor::MoveRight",
-            "ctrl-l": "editor::CenterScreen",
+            "ctrl-l": "editor::NextScreen",
             "alt-left": "editor::MoveToPreviousWordStart",
             "alt-b": "editor::MoveToPreviousWordStart",
             "alt-right": "editor::MoveToNextWordEnd",
