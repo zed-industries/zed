@@ -236,12 +236,12 @@ impl SyntaxSnapshot {
 
             // Preserve any layers at this depth that precede the first edit.
             if let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) {
-                let position = ChangeStartPosition {
+                let target = ChangeStartPosition {
                     depth,
                     position: edit_range.start,
                 };
-                if position.cmp(&cursor.start(), text).is_gt() {
-                    let slice = cursor.slice(&position, Bias::Left, text);
+                if target.cmp(&cursor.start(), text).is_gt() {
+                    let slice = cursor.slice(&target, Bias::Left, text);
                     layers.push_tree(slice, text);
                 }
             }
@@ -261,24 +261,17 @@ impl SyntaxSnapshot {
                 continue;
             };
 
-            let layer = if let Some(layer) = cursor.item() {
-                layer
-            } else {
-                break;
-            };
+            let Some(layer) = cursor.item() else { break };
             let (start_byte, start_point) = layer.range.start.summary::<(usize, Point)>(text);
 
             // Ignore edits that end before the start of this layer, and don't consider them
             // for any subsequent layers at this same depth.
             loop {
-                if let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) {
-                    if edit_range.end.cmp(&layer.range.start, text).is_le() {
-                        first_edit_ix_for_depth += 1;
-                    } else {
-                        break;
-                    }
+                let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) else { continue 'outer };
+                if edit_range.end.cmp(&layer.range.start, text).is_le() {
+                    first_edit_ix_for_depth += 1;
                 } else {
-                    continue 'outer;
+                    break;
                 }
             }
 
@@ -1895,7 +1888,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test(iterations = 50)]
     fn test_random_syntax_map_edits(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1921,6 +1914,89 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
         let language = Arc::new(rust_lang());
         registry.add(language.clone());
+        let mut buffer = Buffer::new(0, 0, text);
+
+        let mut syntax_map = SyntaxMap::new();
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(language.clone(), &buffer);
+
+        let mut reference_syntax_map = SyntaxMap::new();
+        reference_syntax_map.set_language_registry(registry.clone());
+
+        log::info!("initial text:\n{}", buffer.text());
+
+        for _ in 0..operations {
+            let prev_buffer = buffer.snapshot();
+            let prev_syntax_map = syntax_map.snapshot();
+
+            buffer.randomly_edit(&mut rng, 3);
+            log::info!("text:\n{}", buffer.text());
+
+            syntax_map.interpolate(&buffer);
+            check_interpolation(&prev_syntax_map, &syntax_map, &prev_buffer, &buffer);
+
+            syntax_map.reparse(language.clone(), &buffer);
+
+            reference_syntax_map.clear();
+            reference_syntax_map.reparse(language.clone(), &buffer);
+        }
+
+        for i in 0..operations {
+            let i = operations - i - 1;
+            buffer.undo();
+            log::info!("undoing operation {}", i);
+            log::info!("text:\n{}", buffer.text());
+
+            syntax_map.interpolate(&buffer);
+            syntax_map.reparse(language.clone(), &buffer);
+
+            reference_syntax_map.clear();
+            reference_syntax_map.reparse(language.clone(), &buffer);
+            assert_eq!(
+                syntax_map.layers(&buffer).len(),
+                reference_syntax_map.layers(&buffer).len(),
+                "wrong number of layers after undoing edit {i}"
+            );
+        }
+
+        let layers = syntax_map.layers(&buffer);
+        let reference_layers = reference_syntax_map.layers(&buffer);
+        for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter())
+        {
+            assert_eq!(edited_layer.node.to_sexp(), reference_layer.node.to_sexp());
+            assert_eq!(edited_layer.node.range(), reference_layer.node.range());
+        }
+    }
+
+    #[gpui::test(iterations = 50)]
+    fn test_random_syntax_map_edits_with_combined_injections(mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let text = r#"
+          <div id="main">
+            <% if one?(:two) %>
+              <p class="three" four>
+                <%= yield :five %>
+              </p>
+            <% elsif Six.seven(8) %>
+              <p id="three" four>
+                <%= yield :five %>
+              </p>
+            <% else %>
+              <span>Ok</span>
+            <% end %>
+          </div>
+        "#
+        .unindent()
+        .repeat(2);
+
+        let registry = Arc::new(LanguageRegistry::test());
+        let language = Arc::new(erb_lang());
+        registry.add(language.clone());
+        registry.add(Arc::new(ruby_lang()));
+        registry.add(Arc::new(html_lang()));
         let mut buffer = Buffer::new(0, 0, text);
 
         let mut syntax_map = SyntaxMap::new();
