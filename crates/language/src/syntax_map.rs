@@ -91,7 +91,6 @@ struct SyntaxLayer {
     range: Range<Anchor>,
     tree: tree_sitter::Tree,
     language: Arc<Language>,
-    combined: bool,
 }
 
 #[derive(Debug)]
@@ -118,12 +117,15 @@ struct SyntaxLayerPosition {
 }
 
 #[derive(Clone, Debug)]
-struct DepthAndMaxPosition(usize, Anchor);
+struct ChangeStartPosition {
+    depth: usize,
+    position: Anchor,
+}
 
 #[derive(Clone, Debug)]
 struct SyntaxLayerPositionBeforeChange {
     position: SyntaxLayerPosition,
-    change: DepthAndMaxPosition,
+    change: ChangeStartPosition,
 }
 
 struct ParseStep {
@@ -234,9 +236,12 @@ impl SyntaxSnapshot {
 
             // Preserve any layers at this depth that precede the first edit.
             if let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) {
-                let target = DepthAndMaxPosition(depth, edit_range.start);
-                if target.cmp(&cursor.start(), text).is_gt() {
-                    let slice = cursor.slice(&target, Bias::Left, text);
+                let position = ChangeStartPosition {
+                    depth,
+                    position: edit_range.start,
+                };
+                if position.cmp(&cursor.start(), text).is_gt() {
+                    let slice = cursor.slice(&position, Bias::Left, text);
                     layers.push_tree(slice, text);
                 }
             }
@@ -359,7 +364,7 @@ impl SyntaxSnapshot {
 
         loop {
             let step = queue.pop();
-            let target = if let Some(step) = &step {
+            let position = if let Some(step) = &step {
                 SyntaxLayerPosition {
                     depth: step.depth,
                     range: step.range.clone(),
@@ -374,15 +379,15 @@ impl SyntaxSnapshot {
             };
 
             let mut done = cursor.item().is_none();
-            while !done && target.cmp(&cursor.end(text), &text).is_gt() {
+            while !done && position.cmp(&cursor.end(text), &text).is_gt() {
                 done = true;
 
-                let bounded_target = SyntaxLayerPositionBeforeChange {
-                    position: target.clone(),
+                let bounded_position = SyntaxLayerPositionBeforeChange {
+                    position: position.clone(),
                     change: changed_regions.start_position(),
                 };
-                if bounded_target.cmp(&cursor.start(), &text).is_gt() {
-                    let slice = cursor.slice(&bounded_target, Bias::Left, text);
+                if bounded_position.cmp(&cursor.start(), &text).is_gt() {
+                    let slice = cursor.slice(&bounded_position, Bias::Left, text);
                     if !slice.is_empty() {
                         layers.push_tree(slice, &text);
                         if changed_regions.prune(cursor.end(text), text) {
@@ -391,10 +396,10 @@ impl SyntaxSnapshot {
                     }
                 }
 
-                while target.cmp(&cursor.end(text), text).is_gt() {
+                while position.cmp(&cursor.end(text), text).is_gt() {
                     let Some(layer) = cursor.item() else { break };
 
-                    if changed_regions.intersects(&layer, text) && !layer.combined {
+                    if changed_regions.intersects(&layer, text) {
                         changed_regions.insert(
                             ChangedRegion {
                                 depth: layer.depth + 1,
@@ -430,11 +435,9 @@ impl SyntaxSnapshot {
                 }
             }
 
-            let combined = matches!(step.mode, ParseMode::Combined { .. });
-            let mut included_ranges = step.included_ranges;
-
             let tree;
             let changed_ranges;
+            let mut included_ranges = step.included_ranges;
             if let Some(old_layer) = old_layer {
                 if let ParseMode::Combined {
                     parent_layer_changed_ranges,
@@ -484,7 +487,6 @@ impl SyntaxSnapshot {
                     range: step.range,
                     tree: tree.clone(),
                     language: step.language.clone(),
-                    combined,
                 },
                 &text,
             );
@@ -1074,7 +1076,8 @@ fn splice_included_ranges(
         let new_range = new_ranges.peek();
         let mut changed_range = changed_ranges.peek();
 
-        // process changed ranges before any overlapping new ranges
+        // Remove ranges that have changed before inserting any new ranges
+        // into those ranges.
         if let Some((changed, new)) = changed_range.zip(new_range) {
             if new.end_byte < changed.start {
                 changed_range = None;
@@ -1093,7 +1096,7 @@ fn splice_included_ranges(
                 };
 
             // If there are empty ranges, then there may be multiple ranges with the same
-            // start or end. Expand the splice to include any adjacent ranges. That touch
+            // start or end. Expand the splice to include any adjacent ranges that touch
             // the changed range.
             while start_ix > 0 {
                 if ranges[start_ix - 1].end_byte == changed.start {
@@ -1191,12 +1194,17 @@ impl ChangedRegion {
 }
 
 impl ChangeRegionSet {
-    fn start_position(&self) -> DepthAndMaxPosition {
-        self.0
-            .first()
-            .map_or(DepthAndMaxPosition(usize::MAX, Anchor::MAX), |region| {
-                DepthAndMaxPosition(region.depth, region.range.start)
-            })
+    fn start_position(&self) -> ChangeStartPosition {
+        self.0.first().map_or(
+            ChangeStartPosition {
+                depth: usize::MAX,
+                position: Anchor::MAX,
+            },
+            |region| ChangeStartPosition {
+                depth: region.depth,
+                position: region.range.start,
+            },
+        )
     }
 
     fn intersects(&self, layer: &SyntaxLayer, text: &BufferSnapshot) -> bool {
@@ -1289,10 +1297,10 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for SyntaxLayerP
     }
 }
 
-impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for DepthAndMaxPosition {
+impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for ChangeStartPosition {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, text: &BufferSnapshot) -> Ordering {
-        Ord::cmp(&self.0, &cursor_location.max_depth)
-            .then_with(|| self.1.cmp(&cursor_location.range.end, text))
+        Ord::cmp(&self.depth, &cursor_location.max_depth)
+            .then_with(|| self.position.cmp(&cursor_location.range.end, text))
     }
 }
 
