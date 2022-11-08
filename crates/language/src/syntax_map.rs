@@ -1082,15 +1082,34 @@ fn splice_included_ranges(
         }
 
         if let Some(changed) = changed_range {
-            let start_ix = ranges_ix
+            let mut start_ix = ranges_ix
                 + match ranges[ranges_ix..].binary_search_by_key(&changed.start, |r| r.end_byte) {
                     Ok(ix) | Err(ix) => ix,
                 };
-            let end_ix = ranges_ix
+            let mut end_ix = ranges_ix
                 + match ranges[ranges_ix..].binary_search_by_key(&changed.end, |r| r.start_byte) {
                     Ok(ix) => ix + 1,
                     Err(ix) => ix,
                 };
+
+            // If there are empty ranges, then there may be multiple ranges with the same
+            // start or end. Expand the splice to include any adjacent ranges. That touch
+            // the changed range.
+            while start_ix > 0 {
+                if ranges[start_ix - 1].end_byte == changed.start {
+                    start_ix -= 1;
+                } else {
+                    break;
+                }
+            }
+            while let Some(range) = ranges.get(end_ix) {
+                if range.start_byte == changed.end {
+                    end_ix += 1;
+                } else {
+                    break;
+                }
+            }
+
             if end_ix > start_ix {
                 ranges.splice(start_ix..end_ix, []);
             }
@@ -1847,6 +1866,24 @@ mod tests {
                     </«div»>
                 </«body»>
             ",
+        );
+    }
+
+    #[gpui::test]
+    fn test_combined_injections_empty_ranges() {
+        test_edit_sequence(
+            "ERB",
+            &[
+                "
+                    <% if @one %>
+                    <% else %>
+                    <% end %>
+                ",
+                "
+                    <% if @one %>
+                    ˇ<% end %>
+                ",
+            ],
         );
     }
 
