@@ -17,7 +17,6 @@ actions!(lsp_status, [ShowErrorMessage]);
 
 const DOWNLOAD_ICON: &str = "icons/download_12.svg";
 const WARNING_ICON: &str = "icons/triangle_exclamation_12.svg";
-const DONE_ICON: &str = "icons/circle_check_12.svg";
 
 pub enum Event {
     ShowError { lsp_name: Arc<str>, error: String },
@@ -237,7 +236,6 @@ impl ActivityIndicator {
 
         // Show any application auto-update info.
         if let Some(updater) = &self.auto_updater {
-            // let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => (
                     Some(DOWNLOAD_ICON),
@@ -254,9 +252,7 @@ impl ActivityIndicator {
                     "Installing Zed update…".to_string(),
                     None,
                 ),
-                AutoUpdateStatus::Updated => {
-                    (Some(DONE_ICON), "Restart to update Zed".to_string(), None)
-                }
+                AutoUpdateStatus::Updated => (None, "Restart to update Zed".to_string(), None),
                 AutoUpdateStatus::Errored => (
                     Some(WARNING_ICON),
                     "Auto update failed".to_string(),
