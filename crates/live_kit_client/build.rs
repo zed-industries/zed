@@ -44,9 +44,6 @@ fn main() {
 
         // Register exported Objective-C selectors, protocols, etc when building example binaries.
         println!("cargo:rustc-link-arg=-Wl,-ObjC");
-
-        // Weakly link ReplayKit to ensure this library can be used on macOS 10.15+.
-        println!("cargo:rustc-link-arg=-Wl,-weak_framework ReplayKit");
     }
 }
 
