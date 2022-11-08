@@ -204,7 +204,7 @@ impl FollowableItem for Editor {
 
                 if !selections.is_empty() {
                     self.set_selections_from_remote(selections, cx);
-                    self.request_autoscroll_remotely(Autoscroll::Newest, cx);
+                    self.request_autoscroll_remotely(Autoscroll::newest(), cx);
                 } else if let Some(anchor) = message.scroll_top_anchor {
                     self.set_scroll_top_anchor(
                         Anchor {
@@ -294,7 +294,7 @@ impl Item for Editor {
                 let nav_history = self.nav_history.take();
                 self.scroll_position = data.scroll_position;
                 self.scroll_top_anchor = scroll_top_anchor;
-                self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([offset..offset])
                 });
                 self.nav_history = nav_history;
@@ -466,7 +466,7 @@ impl Item for Editor {
         cx.spawn(|this, mut cx| async move {
             let transaction = reload_buffers.log_err().await;
             this.update(&mut cx, |editor, cx| {
-                editor.request_autoscroll(Autoscroll::Fit, cx)
+                editor.request_autoscroll(Autoscroll::fit(), cx)
             });
             buffer.update(&mut cx, |buffer, _| {
                 if let Some(transaction) = transaction {
@@ -619,7 +619,7 @@ impl SearchableItem for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.unfold_ranges([matches[index].clone()], false, cx);
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges([matches[index].clone()])
         });
     }

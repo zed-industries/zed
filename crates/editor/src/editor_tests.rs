@@ -5011,7 +5011,7 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
     // Update the selections and scroll position
     leader.update(cx, |leader, cx| {
         leader.change_selections(None, cx, |s| s.select_ranges([0..0]));
-        leader.request_autoscroll(Autoscroll::Newest, cx);
+        leader.request_autoscroll(Autoscroll::newest(), cx);
         leader.set_scroll_position(vec2f(1.5, 3.5), cx);
     });
     follower.update(cx, |follower, cx| {

@@ -1365,7 +1365,7 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
         editor1.update(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)])
             });
         });
@@ -1384,7 +1384,7 @@ mod tests {
 
         editor3
             .update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_display_ranges([DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)])
                 });
                 editor.newline(&Default::default(), cx);

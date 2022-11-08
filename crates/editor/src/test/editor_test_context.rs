@@ -169,7 +169,7 @@ impl<'a> EditorTestContext<'a> {
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(self.cx, |editor, cx| {
             editor.set_text(unmarked_text, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         });
