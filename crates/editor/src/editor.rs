@@ -6394,7 +6394,7 @@ impl Editor {
     }
 
     fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
-        let editor = workspace.open_path(action.path.clone(), true, cx);
+        let editor = workspace.open_path(action.path.clone(), None, true, cx);
         let position = action.position;
         let anchor = action.anchor;
         cx.spawn_weak(|_, mut cx| async move {

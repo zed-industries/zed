@@ -76,7 +76,9 @@ impl<'a> EditorLspTestContext<'a> {
 
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
-            .update(cx, |workspace, cx| workspace.open_path(file, true, cx))
+            .update(cx, |workspace, cx| {
+                workspace.open_path(file, None, true, cx)
+            })
             .await
             .expect("Could not open test file");
 

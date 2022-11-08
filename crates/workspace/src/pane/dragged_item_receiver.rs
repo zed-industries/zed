@@ -1,4 +1,4 @@
-use drag_and_drop::{shared_payloads::DraggedProjectEntry, DragAndDrop};
+use drag_and_drop::DragAndDrop;
 use gpui::{
     color::Color,
     elements::{Canvas, MouseEventHandler, ParentElement, Stack},
@@ -7,9 +7,13 @@ use gpui::{
     AppContext, Element, ElementBox, EventContext, MouseButton, MouseState, Quad, RenderContext,
     WeakViewHandle,
 };
+use project::ProjectEntryId;
 use settings::Settings;
 
-use crate::{MoveItem, Pane, SplitDirection, SplitWithItem, Workspace};
+use crate::{
+    MoveItem, OpenProjectEntryInPane, Pane, SplitDirection, SplitWithItem, SplitWithProjectEntry,
+    Workspace,
+};
 
 use super::DraggedItem;
 
@@ -34,7 +38,7 @@ where
                 .map(|(drag_position, _)| drag_position)
                 .or_else(|| {
                     cx.global::<DragAndDrop<Workspace>>()
-                        .currently_dragged::<DraggedProjectEntry>(cx.window_id())
+                        .currently_dragged::<ProjectEntryId>(cx.window_id())
                         .map(|(drag_position, _)| drag_position)
                 })
         } else {
@@ -82,7 +86,7 @@ where
             .currently_dragged::<DraggedItem>(cx.window_id())
             .is_some()
             || drag_and_drop
-                .currently_dragged::<DraggedProjectEntry>(cx.window_id())
+                .currently_dragged::<ProjectEntryId>(cx.window_id())
                 .is_some()
         {
             cx.notify();
@@ -100,30 +104,59 @@ pub fn handle_dropped_item(
     split_margin: Option<f32>,
     cx: &mut EventContext,
 ) {
-    if let Some((_, dragged_item)) = cx
-        .global::<DragAndDrop<Workspace>>()
-        .currently_dragged::<DraggedItem>(cx.window_id)
+    enum Action {
+        Move(WeakViewHandle<Pane>, usize),
+        Open(ProjectEntryId),
+    }
+    let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
+    let action = if let Some((_, dragged_item)) =
+        drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id)
     {
-        if let Some(split_direction) = split_margin
-            .and_then(|margin| drop_split_direction(event.position, event.region, margin))
-        {
-            cx.dispatch_action(SplitWithItem {
-                from: dragged_item.pane.clone(),
-                item_id_to_move: dragged_item.item.id(),
-                pane_to_split: pane.clone(),
-                split_direction,
-            });
-        } else if pane != &dragged_item.pane || allow_same_pane {
-            // If no split margin or not close enough to the edge, just move the item
-            cx.dispatch_action(MoveItem {
-                item_id: dragged_item.item.id(),
-                from: dragged_item.pane.clone(),
-                to: pane.clone(),
-                destination_index: index,
-            })
-        }
+        Action::Move(dragged_item.pane.clone(), dragged_item.item.id())
+    } else if let Some((_, project_entry)) =
+        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id)
+    {
+        Action::Open(*project_entry)
     } else {
-        cx.propagate_event();
+        return;
+    };
+
+    if let Some(split_direction) =
+        split_margin.and_then(|margin| drop_split_direction(event.position, event.region, margin))
+    {
+        let pane_to_split = pane.clone();
+        match action {
+            Action::Move(from, item_id_to_move) => cx.dispatch_action(SplitWithItem {
+                from,
+                item_id_to_move,
+                pane_to_split,
+                split_direction,
+            }),
+            Action::Open(project_entry) => cx.dispatch_action(SplitWithProjectEntry {
+                pane_to_split,
+                split_direction,
+                project_entry,
+            }),
+        };
+    } else {
+        match action {
+            Action::Move(from, item_id) => {
+                if pane != &from || allow_same_pane {
+                    cx.dispatch_action(MoveItem {
+                        item_id,
+                        from,
+                        to: pane.clone(),
+                        destination_index: index,
+                    })
+                } else {
+                    cx.propagate_event();
+                }
+            }
+            Action::Open(project_entry) => cx.dispatch_action(OpenProjectEntryInPane {
+                pane: pane.clone(),
+                project_entry,
+            }),
+        }
     }
 }
 

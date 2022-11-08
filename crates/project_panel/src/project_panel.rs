@@ -1,5 +1,5 @@
 use context_menu::{ContextMenu, ContextMenuItem};
-use drag_and_drop::{shared_payloads::DraggedProjectEntry, DragAndDrop, Draggable};
+use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
 use futures::stream::StreamExt;
 use gpui::{
@@ -239,6 +239,7 @@ impl ProjectPanel {
                                         worktree_id: worktree.read(cx).id(),
                                         path: entry.path.clone(),
                                     },
+                                    None,
                                     focus_opened_item,
                                     cx,
                                 )
@@ -607,7 +608,7 @@ impl ProjectPanel {
             }
 
             cx.update_global(|drag_and_drop: &mut DragAndDrop<Workspace>, cx| {
-                drag_and_drop.cancel_dragging::<DraggedProjectEntry>(cx);
+                drag_and_drop.cancel_dragging::<ProjectEntryId>(cx);
             })
         }
     }
@@ -1127,26 +1128,21 @@ impl ProjectPanel {
                 position: e.position,
             })
         })
-        .as_draggable(
-            DraggedProjectEntry {
-                path: details.path.clone(),
-            },
-            {
-                let row_container_style = theme.dragged_entry.container;
+        .as_draggable(entry_id, {
+            let row_container_style = theme.dragged_entry.container;
 
-                move |_, cx: &mut RenderContext<Workspace>| {
-                    let theme = cx.global::<Settings>().theme.clone();
-                    Self::render_entry_visual_element(
-                        &details,
-                        None,
-                        padding,
-                        row_container_style,
-                        &theme.project_panel.dragged_entry,
-                        cx,
-                    )
-                }
-            },
-        )
+            move |_, cx: &mut RenderContext<Workspace>| {
+                let theme = cx.global::<Settings>().theme.clone();
+                Self::render_entry_visual_element(
+                    &details,
+                    None,
+                    padding,
+                    row_container_style,
+                    &theme.project_panel.dragged_entry,
+                    cx,
+                )
+            }
+        })
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }

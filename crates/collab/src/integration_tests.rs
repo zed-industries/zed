@@ -908,7 +908,7 @@ async fn test_host_disconnect(
         cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "b.txt"), true, cx)
+            workspace.open_path((worktree_id, "b.txt"), None, true, cx)
         })
         .await
         .unwrap()
@@ -3704,7 +3704,7 @@ async fn test_collaborating_with_code_actions(
         cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "main.rs"), true, cx)
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
         })
         .await
         .unwrap()
@@ -3925,7 +3925,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "one.rs"), true, cx)
+            workspace.open_path((worktree_id, "one.rs"), None, true, cx)
         })
         .await
         .unwrap()
@@ -5134,7 +5134,7 @@ async fn test_following(
     let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
     let editor_a1 = workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id, "1.txt"), true, cx)
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
         })
         .await
         .unwrap()
@@ -5142,7 +5142,7 @@ async fn test_following(
         .unwrap();
     let editor_a2 = workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id, "2.txt"), true, cx)
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
         })
         .await
         .unwrap()
@@ -5153,7 +5153,7 @@ async fn test_following(
     let workspace_b = client_b.build_workspace(&project_b, cx_b);
     let editor_b1 = workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "1.txt"), true, cx)
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
         })
         .await
         .unwrap()
@@ -5411,7 +5411,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     let pane_a1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
     let _editor_a1 = workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id, "1.txt"), true, cx)
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
         })
         .await
         .unwrap()
@@ -5423,7 +5423,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     let pane_b1 = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
     let _editor_b1 = workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "2.txt"), true, cx)
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
         })
         .await
         .unwrap()
@@ -5474,7 +5474,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id, "3.txt"), true, cx)
+            workspace.open_path((worktree_id, "3.txt"), None, true, cx)
         })
         .await
         .unwrap();
@@ -5485,7 +5485,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     workspace_b
         .update(cx_b, |workspace, cx| {
             assert_eq!(*workspace.active_pane(), pane_b1);
-            workspace.open_path((worktree_id, "4.txt"), true, cx)
+            workspace.open_path((worktree_id, "4.txt"), None, true, cx)
         })
         .await
         .unwrap();
@@ -5586,7 +5586,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
     let _editor_a1 = workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id, "1.txt"), true, cx)
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
         })
         .await
         .unwrap()
@@ -5699,7 +5699,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     // When client B activates a different item in the original pane, it automatically stops following client A.
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "2.txt"), true, cx)
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
         })
         .await
         .unwrap();

@@ -1,5 +1,3 @@
-pub mod shared_payloads;
-
 use std::{any::Any, rc::Rc};
 
 use collections::HashSet;
@@ -149,7 +147,6 @@ impl<V: View> DragAndDrop<V> {
                             return None;
                         }
 
-                        dbg!("Rendered dragging state");
                         let position = position + region_offset;
                         Some(
                             Overlay::new(
@@ -160,7 +157,6 @@ impl<V: View> DragAndDrop<V> {
                                 .on_up(MouseButton::Left, |_, cx| {
                                     cx.defer(|cx| {
                                         cx.update_global::<Self, _, _>(|this, cx| {
-                                            dbg!("Up with dragging state");
                                             this.finish_dragging(cx)
                                         });
                                     });
@@ -169,7 +165,6 @@ impl<V: View> DragAndDrop<V> {
                                 .on_up_out(MouseButton::Left, |_, cx| {
                                     cx.defer(|cx| {
                                         cx.update_global::<Self, _, _>(|this, cx| {
-                                            dbg!("Up out with dragging state");
                                             this.finish_dragging(cx)
                                         });
                                     });
@@ -186,35 +181,30 @@ impl<V: View> DragAndDrop<V> {
                         )
                     }
 
-                    State::Canceled => {
-                        dbg!("Rendered canceled state");
-                        Some(
-                            MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, _| {
-                                Empty::new()
-                                    .constrained()
-                                    .with_width(0.)
-                                    .with_height(0.)
-                                    .boxed()
-                            })
-                            .on_up(MouseButton::Left, |_, cx| {
-                                cx.defer(|cx| {
-                                    cx.update_global::<Self, _, _>(|this, _| {
-                                        dbg!("Up with canceled state");
-                                        this.currently_dragged = None;
-                                    });
+                    State::Canceled => Some(
+                        MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, _| {
+                            Empty::new()
+                                .constrained()
+                                .with_width(0.)
+                                .with_height(0.)
+                                .boxed()
+                        })
+                        .on_up(MouseButton::Left, |_, cx| {
+                            cx.defer(|cx| {
+                                cx.update_global::<Self, _, _>(|this, _| {
+                                    this.currently_dragged = None;
                                 });
-                            })
-                            .on_up_out(MouseButton::Left, |_, cx| {
-                                cx.defer(|cx| {
-                                    cx.update_global::<Self, _, _>(|this, _| {
-                                        dbg!("Up out with canceled state");
-                                        this.currently_dragged = None;
-                                    });
+                            });
+                        })
+                        .on_up_out(MouseButton::Left, |_, cx| {
+                            cx.defer(|cx| {
+                                cx.update_global::<Self, _, _>(|this, _| {
+                                    this.currently_dragged = None;
                                 });
-                            })
-                            .boxed(),
-                        )
-                    }
+                            });
+                        })
+                        .boxed(),
+                    ),
                 }
             })
     }
@@ -227,7 +217,6 @@ impl<V: View> DragAndDrop<V> {
             if payload.is::<P>() {
                 let window_id = *window_id;
                 self.currently_dragged = Some(State::Canceled);
-                dbg!("Canceled");
                 self.notify_containers_for_window(window_id, cx);
             }
         }
