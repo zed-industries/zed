@@ -16,6 +16,9 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
     }
 
+    // Weakly link ReplayKit to ensure Zed can be used on macOS 10.15+.
+    println!("cargo:rustc-link-arg=-Wl,-weak_framework,ReplayKit");
+
     // Seems to be required to enable Swift concurrency
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 
