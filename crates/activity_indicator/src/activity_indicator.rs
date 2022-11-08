@@ -237,7 +237,6 @@ impl ActivityIndicator {
 
         // Show any application auto-update info.
         if let Some(updater) = &self.auto_updater {
-            // let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => (
                     Some(DOWNLOAD_ICON),
