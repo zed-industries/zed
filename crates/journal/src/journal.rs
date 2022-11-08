@@ -61,7 +61,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 if let Some(editor) = item.downcast::<Editor>() {
                     editor.update(&mut cx, |editor, cx| {
                         let len = editor.buffer().read(cx).len(cx);
-                        editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                             s.select_ranges([len..len])
                         });
                         if len > 0 {

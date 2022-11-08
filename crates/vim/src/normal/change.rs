@@ -15,7 +15,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut Mutab
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     motion_succeeded |= if let Motion::NextWordStart { ignore_punctuation } = motion
                     {
@@ -43,7 +43,7 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Mutab
         // We are swapping to insert mode anyway. Just set the line end clipping behavior now
         editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     objects_found |= object.expand_selection(map, selection, around);
                 });

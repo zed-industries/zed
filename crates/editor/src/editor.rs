@@ -187,7 +187,7 @@ actions!(
         Paste,
         Undo,
         Redo,
-        CenterScreen,
+        NextScreen,
         MoveUp,
         PageUp,
         MoveDown,
@@ -307,7 +307,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::move_down);
     cx.add_action(Editor::move_page_down);
     cx.add_action(Editor::page_down);
-    cx.add_action(Editor::center_screen);
+    cx.add_action(Editor::next_screen);
+
     cx.add_action(Editor::move_left);
     cx.add_action(Editor::move_right);
     cx.add_action(Editor::move_to_previous_word_start);
@@ -409,9 +410,42 @@ pub enum SelectMode {
 
 #[derive(PartialEq, Eq)]
 pub enum Autoscroll {
+    Next,
+    Strategy(AutoscrollStrategy),
+}
+
+impl Autoscroll {
+    pub fn fit() -> Self {
+        Self::Strategy(AutoscrollStrategy::Fit)
+    }
+
+    pub fn newest() -> Self {
+        Self::Strategy(AutoscrollStrategy::Newest)
+    }
+
+    pub fn center() -> Self {
+        Self::Strategy(AutoscrollStrategy::Center)
+    }
+}
+
+#[derive(PartialEq, Eq, Default)]
+pub enum AutoscrollStrategy {
     Fit,
-    Center,
     Newest,
+    #[default]
+    Center,
+    Top,
+    Bottom,
+}
+
+impl AutoscrollStrategy {
+    fn next(&self) -> Self {
+        match self {
+            AutoscrollStrategy::Center => AutoscrollStrategy::Top,
+            AutoscrollStrategy::Top => AutoscrollStrategy::Bottom,
+            _ => AutoscrollStrategy::Center,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -553,6 +587,7 @@ pub struct Editor {
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
     visible_line_count: Option<f32>,
+    last_autoscroll: Option<(Vector2F, f32, f32, AutoscrollStrategy)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1205,6 +1240,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             visible_line_count: None,
+            last_autoscroll: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1435,7 +1471,7 @@ impl Editor {
         if let Some(highlighted_rows) = &self.highlighted_rows {
             first_cursor_top = highlighted_rows.start as f32;
             last_cursor_bottom = first_cursor_top + 1.;
-        } else if autoscroll == Autoscroll::Newest {
+        } else if autoscroll == Autoscroll::newest() {
             let newest_selection = self.selections.newest::<Point>(cx);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
@@ -1465,8 +1501,27 @@ impl Editor {
             return false;
         }
 
-        match autoscroll {
-            Autoscroll::Fit | Autoscroll::Newest => {
+        let strategy = match autoscroll {
+            Autoscroll::Strategy(strategy) => strategy,
+            Autoscroll::Next => {
+                let last_autoscroll = &self.last_autoscroll;
+                if let Some(last_autoscroll) = last_autoscroll {
+                    if self.scroll_position == last_autoscroll.0
+                        && first_cursor_top == last_autoscroll.1
+                        && last_cursor_bottom == last_autoscroll.2
+                    {
+                        last_autoscroll.3.next()
+                    } else {
+                        AutoscrollStrategy::default()
+                    }
+                } else {
+                    AutoscrollStrategy::default()
+                }
+            }
+        };
+
+        match strategy {
+            AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.vertical_scroll_margin);
                 let target_top = (first_cursor_top - margin).max(0.0);
                 let target_bottom = last_cursor_bottom + margin;
@@ -1481,11 +1536,26 @@ impl Editor {
                     self.set_scroll_position_internal(scroll_position, local, cx);
                 }
             }
-            Autoscroll::Center => {
+            AutoscrollStrategy::Center => {
                 scroll_position.set_y((first_cursor_top - margin).max(0.0));
                 self.set_scroll_position_internal(scroll_position, local, cx);
             }
+            AutoscrollStrategy::Top => {
+                scroll_position.set_y((first_cursor_top).max(0.0));
+                self.set_scroll_position_internal(scroll_position, local, cx);
+            }
+            AutoscrollStrategy::Bottom => {
+                scroll_position.set_y((last_cursor_bottom - visible_lines).max(0.0));
+                self.set_scroll_position_internal(scroll_position, local, cx);
+            }
         }
+
+        self.last_autoscroll = Some((
+            self.scroll_position,
+            first_cursor_top,
+            last_cursor_bottom,
+            strategy,
+        ));
 
         true
     }
@@ -1734,7 +1804,7 @@ impl Editor {
             _ => {}
         }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.set_pending(pending_selection, pending_mode)
         });
     }
@@ -1795,7 +1865,7 @@ impl Editor {
             }
         }
 
-        self.change_selections(auto_scroll.then(|| Autoscroll::Newest), cx, |s| {
+        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
             if !add {
                 s.clear_disjoint();
             } else if click_count > 1 {
@@ -2012,7 +2082,7 @@ impl Editor {
                 return;
             }
 
-            if self.change_selections(Some(Autoscroll::Fit), cx, |s| s.try_cancel()) {
+            if self.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel()) {
                 return;
             }
         }
@@ -2178,7 +2248,7 @@ impl Editor {
             }
 
             drop(snapshot);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(new_selections));
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
             this.trigger_completion_on_input(&text, cx);
         });
     }
@@ -2258,7 +2328,7 @@ impl Editor {
                 })
                 .collect();
 
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(new_selections));
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
         });
     }
 
@@ -2288,7 +2358,7 @@ impl Editor {
         self.transact(cx, |editor, cx| {
             editor.edit_with_autoindent(edits, cx);
 
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let mut index = 0;
                 s.move_cursors_with(|map, _, _| {
                     let row = rows[index];
@@ -2329,7 +2399,7 @@ impl Editor {
                 anchors
             });
 
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_anchors(selection_anchors);
             })
         });
@@ -3025,7 +3095,7 @@ impl Editor {
         });
 
         if let Some(tabstop) = tabstops.first() {
-            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_ranges(tabstop.iter().cloned());
             });
             self.snippet_stack.push(SnippetState {
@@ -3066,7 +3136,7 @@ impl Editor {
                 }
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
-                self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_anchor_ranges(current_ranges.iter().cloned())
                 });
                 // If snippet state is not at the last tabstop, push it back on the stack
@@ -3131,14 +3201,14 @@ impl Editor {
                 }
             }
 
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
             this.insert("", cx);
         });
     }
 
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
@@ -3232,7 +3302,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections))
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections))
         });
     }
 
@@ -3255,7 +3325,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
         });
     }
 
@@ -3387,7 +3457,7 @@ impl Editor {
                 );
             });
             let selections = this.selections.all::<usize>(cx);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
         });
     }
 
@@ -3467,7 +3537,7 @@ impl Editor {
                 })
                 .collect();
 
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             });
         });
@@ -3509,7 +3579,7 @@ impl Editor {
                 buffer.edit(edits, None, cx);
             });
 
-            this.request_autoscroll(Autoscroll::Fit, cx);
+            this.request_autoscroll(Autoscroll::fit(), cx);
         });
     }
 
@@ -3619,7 +3689,7 @@ impl Editor {
                 }
             });
             this.fold_ranges(refold_ranges, cx);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             })
         });
@@ -3724,13 +3794,13 @@ impl Editor {
                 }
             });
             this.fold_ranges(refold_ranges, cx);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(new_selections));
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
         });
     }
 
     pub fn transpose(&mut self, _: &Transpose, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            let edits = this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let edits = this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
                 let line_mode = s.line_mode;
                 s.move_with(|display_map, selection| {
@@ -3774,7 +3844,7 @@ impl Editor {
             this.buffer
                 .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
             let selections = this.selections.all::<usize>(cx);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(selections);
             });
         });
@@ -3808,7 +3878,7 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(selections);
             });
             this.insert("", cx);
@@ -3923,7 +3993,7 @@ impl Editor {
                     });
 
                     let selections = this.selections.all::<usize>(cx);
-                    this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
+                    this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
                 } else {
                     this.insert(&clipboard_text, cx);
                 }
@@ -3938,7 +4008,7 @@ impl Editor {
                     s.select_anchors(selections.to_vec());
                 });
             }
-            self.request_autoscroll(Autoscroll::Fit, cx);
+            self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             cx.emit(Event::Edited);
         }
@@ -3952,7 +4022,7 @@ impl Editor {
                     s.select_anchors(selections.to_vec());
                 });
             }
-            self.request_autoscroll(Autoscroll::Fit, cx);
+            self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             cx.emit(Event::Edited);
         }
@@ -3964,7 +4034,7 @@ impl Editor {
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 let cursor = if selection.is_empty() && !line_mode {
@@ -3978,13 +4048,13 @@ impl Editor {
     }
 
     pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| (movement::left(map, head), SelectionGoal::None));
         })
     }
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 let cursor = if selection.is_empty() && !line_mode {
@@ -3998,12 +4068,12 @@ impl Editor {
     }
 
     pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| (movement::right(map, head), SelectionGoal::None));
         })
     }
 
-    pub fn center_screen(&mut self, _: &CenterScreen, cx: &mut ViewContext<Self>) {
+    pub fn next_screen(&mut self, _: &NextScreen, cx: &mut ViewContext<Editor>) {
         if self.take_rename(true, cx).is_some() {
             return;
         }
@@ -4017,7 +4087,7 @@ impl Editor {
             return;
         }
 
-        self.request_autoscroll(Autoscroll::Center, cx);
+        self.request_autoscroll(Autoscroll::Next, cx);
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
@@ -4036,7 +4106,7 @@ impl Editor {
             return;
         }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
@@ -4070,9 +4140,9 @@ impl Editor {
         };
 
         let autoscroll = if action.center_cursor {
-            Autoscroll::Center
+            Autoscroll::center()
         } else {
-            Autoscroll::Fit
+            Autoscroll::fit()
         };
 
         self.change_selections(Some(autoscroll), cx, |s| {
@@ -4115,7 +4185,7 @@ impl Editor {
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| movement::up(map, head, goal, false))
         })
     }
@@ -4134,7 +4204,7 @@ impl Editor {
             return;
         }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
@@ -4168,9 +4238,9 @@ impl Editor {
         };
 
         let autoscroll = if action.center_cursor {
-            Autoscroll::Center
+            Autoscroll::center()
         } else {
-            Autoscroll::Fit
+            Autoscroll::fit()
         };
 
         self.change_selections(Some(autoscroll), cx, |s| {
@@ -4213,7 +4283,7 @@ impl Editor {
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
         });
     }
@@ -4223,7 +4293,7 @@ impl Editor {
         _: &MoveToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (
                     movement::previous_word_start(map, head),
@@ -4238,7 +4308,7 @@ impl Editor {
         _: &MoveToPreviousSubwordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (
                     movement::previous_subword_start(map, head),
@@ -4253,7 +4323,7 @@ impl Editor {
         _: &SelectToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (
                     movement::previous_word_start(map, head),
@@ -4268,7 +4338,7 @@ impl Editor {
         _: &SelectToPreviousSubwordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (
                     movement::previous_subword_start(map, head),
@@ -4285,7 +4355,7 @@ impl Editor {
     ) {
         self.transact(cx, |this, cx| {
             this.select_autoclose_pair(cx);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
@@ -4305,7 +4375,7 @@ impl Editor {
     ) {
         self.transact(cx, |this, cx| {
             this.select_autoclose_pair(cx);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
@@ -4319,7 +4389,7 @@ impl Editor {
     }
 
     pub fn move_to_next_word_end(&mut self, _: &MoveToNextWordEnd, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (movement::next_word_end(map, head), SelectionGoal::None)
             });
@@ -4331,7 +4401,7 @@ impl Editor {
         _: &MoveToNextSubwordEnd,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (movement::next_subword_end(map, head), SelectionGoal::None)
             });
@@ -4339,7 +4409,7 @@ impl Editor {
     }
 
     pub fn select_to_next_word_end(&mut self, _: &SelectToNextWordEnd, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (movement::next_word_end(map, head), SelectionGoal::None)
             });
@@ -4351,7 +4421,7 @@ impl Editor {
         _: &SelectToNextSubwordEnd,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (movement::next_subword_end(map, head), SelectionGoal::None)
             });
@@ -4360,7 +4430,7 @@ impl Editor {
 
     pub fn delete_to_next_word_end(&mut self, _: &DeleteToNextWordEnd, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
@@ -4379,7 +4449,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
                         let cursor = movement::next_subword_end(map, selection.head());
@@ -4396,7 +4466,7 @@ impl Editor {
         _: &MoveToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (
                     movement::indented_line_beginning(map, head, true),
@@ -4411,7 +4481,7 @@ impl Editor {
         action: &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (
                     movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
@@ -4427,7 +4497,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = true;
                 });
@@ -4444,7 +4514,7 @@ impl Editor {
     }
 
     pub fn move_to_end_of_line(&mut self, _: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (movement::line_end(map, head, true), SelectionGoal::None)
             });
@@ -4456,7 +4526,7 @@ impl Editor {
         action: &SelectToEndOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (
                     movement::line_end(map, head, action.stop_at_soft_wraps),
@@ -4496,7 +4566,7 @@ impl Editor {
             return;
         }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges(vec![0..0]);
         });
     }
@@ -4505,7 +4575,7 @@ impl Editor {
         let mut selection = self.selections.last::<Point>(cx);
         selection.set_head(Point::zero(), SelectionGoal::None);
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select(vec![selection]);
         });
     }
@@ -4517,7 +4587,7 @@ impl Editor {
         }
 
         let cursor = self.buffer.read(cx).read(cx).len();
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges(vec![cursor..cursor])
         });
     }
@@ -4566,14 +4636,14 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut selection = self.selections.first::<usize>(cx);
         selection.set_head(buffer.len(), SelectionGoal::None);
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select(vec![selection]);
         });
     }
 
     pub fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         let end = self.buffer.read(cx).read(cx).len();
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges(vec![0..end]);
         });
     }
@@ -4588,7 +4658,7 @@ impl Editor {
             selection.end = cmp::min(max_point, Point::new(rows.end, 0));
             selection.reversed = false;
         }
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select(selections);
         });
     }
@@ -4613,7 +4683,7 @@ impl Editor {
             }
         }
         self.unfold_ranges(to_unfold, true, cx);
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
     }
@@ -4713,7 +4783,7 @@ impl Editor {
             state.stack.pop();
         }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select(new_selections);
         });
         if state.stack.len() > 1 {
@@ -4762,7 +4832,7 @@ impl Editor {
 
                 if let Some(next_selected_range) = next_selected_range {
                     self.unfold_ranges([next_selected_range.clone()], false, cx);
-                    self.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                    self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
                         }
@@ -4795,7 +4865,7 @@ impl Editor {
                     done: false,
                 };
                 self.unfold_ranges([selection.start..selection.end], false, cx);
-                self.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select(selections);
                 });
                 self.select_next_state = Some(select_state);
@@ -5028,7 +5098,7 @@ impl Editor {
             }
 
             drop(snapshot);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
         });
     }
 
@@ -5072,7 +5142,7 @@ impl Editor {
 
         if selected_larger_node {
             stack.push(old_selections);
-            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             });
         }
@@ -5086,7 +5156,7 @@ impl Editor {
     ) {
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         if let Some(selections) = stack.pop() {
-            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(selections.to_vec());
             });
         }
@@ -5117,7 +5187,7 @@ impl Editor {
             }
         }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select(selections);
         });
     }
@@ -5129,7 +5199,7 @@ impl Editor {
             self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
             self.add_selections_state = entry.add_selections_state;
-            self.request_autoscroll(Autoscroll::Newest, cx);
+            self.request_autoscroll(Autoscroll::newest(), cx);
         }
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
@@ -5141,7 +5211,7 @@ impl Editor {
             self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
             self.add_selections_state = entry.add_selections_state;
-            self.request_autoscroll(Autoscroll::Newest, cx);
+            self.request_autoscroll(Autoscroll::newest(), cx);
         }
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
@@ -5163,7 +5233,7 @@ impl Editor {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    self.change_selections(Some(Autoscroll::center()), cx, |s| {
                         let mut new_selection = s.newest_anchor().clone();
                         new_selection.collapse_to(jump_to, SelectionGoal::None);
                         s.select_anchors(vec![new_selection.clone()]);
@@ -5209,7 +5279,7 @@ impl Editor {
 
             if let Some((primary_range, group_id)) = group {
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    self.change_selections(Some(Autoscroll::center()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
                             start: primary_range.start,
@@ -5284,7 +5354,7 @@ impl Editor {
                 .dedup();
 
             if let Some(hunk) = hunks.next() {
-                this.change_selections(Some(Autoscroll::Center), cx, |s| {
+                this.change_selections(Some(Autoscroll::center()), cx, |s| {
                     let row = hunk.start_display_row();
                     let point = DisplayPoint::new(row, 0);
                     s.select_display_ranges([point..point]);
@@ -5382,7 +5452,7 @@ impl Editor {
                 if editor_handle != target_editor_handle {
                     pane.update(cx, |pane, _| pane.disable_history());
                 }
-                target_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                target_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([range]);
                 });
 
@@ -6004,7 +6074,7 @@ impl Editor {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
-            self.request_autoscroll(Autoscroll::Fit, cx);
+            self.request_autoscroll(Autoscroll::fit(), cx);
             cx.notify();
         }
     }
@@ -6019,7 +6089,7 @@ impl Editor {
         if ranges.peek().is_some() {
             self.display_map
                 .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
-            self.request_autoscroll(Autoscroll::Fit, cx);
+            self.request_autoscroll(Autoscroll::fit(), cx);
             cx.notify();
         }
     }
@@ -6032,7 +6102,7 @@ impl Editor {
         let blocks = self
             .display_map
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
-        self.request_autoscroll(Autoscroll::Fit, cx);
+        self.request_autoscroll(Autoscroll::fit(), cx);
         blocks
     }
 
@@ -6043,7 +6113,7 @@ impl Editor {
     ) {
         self.display_map
             .update(cx, |display_map, _| display_map.replace_blocks(blocks));
-        self.request_autoscroll(Autoscroll::Fit, cx);
+        self.request_autoscroll(Autoscroll::fit(), cx);
     }
 
     pub fn remove_blocks(&mut self, block_ids: HashSet<BlockId>, cx: &mut ViewContext<Self>) {
@@ -6383,7 +6453,7 @@ impl Editor {
             for (buffer, ranges) in new_selections_by_buffer.into_iter() {
                 let editor = workspace.open_project_item::<Self>(buffer, cx);
                 editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
                         s.select_ranges(ranges);
                     });
                 });
@@ -6409,7 +6479,7 @@ impl Editor {
                 };
 
                 let nav_history = editor.nav_history.take();
-                editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select_ranges([cursor..cursor]);
                 });
                 editor.nav_history = nav_history;

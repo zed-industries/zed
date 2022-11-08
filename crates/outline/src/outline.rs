@@ -122,7 +122,7 @@ impl OutlineView {
                 let display_rows = start.to_display_point(&snapshot).row()
                     ..end.to_display_point(&snapshot).row() + 1;
                 active_editor.highlight_rows(Some(display_rows));
-                active_editor.request_autoscroll(Autoscroll::Center, cx);
+                active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }
         cx.notify();
@@ -219,7 +219,7 @@ impl PickerDelegate for OutlineView {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([position..position])
                 });
             }

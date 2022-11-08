@@ -26,7 +26,7 @@ pub fn init(cx: &mut MutableAppContext) {
 pub fn visual_motion(motion: Motion, times: usize, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let was_reversed = selection.reversed;
 
@@ -58,7 +58,7 @@ pub fn visual_object(object: Object, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         if let Operator::Object { around } = vim.pop_operator(cx) {
             vim.update_active_editor(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
                         let head = selection.head();
                         if let Some(mut range) = object.range(map, head, around) {
@@ -126,7 +126,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
             });
             copy_selections_content(editor, editor.selections.line_mode, cx);
             editor.edit_with_autoindent(edits, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_anchors(new_selections);
             });
         });
@@ -140,7 +140,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
             editor.set_clip_at_line_ends(false, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {
                         original_columns
@@ -159,7 +159,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head().to_point(map);
 
@@ -298,7 +298,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
                             buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
                         });
 
-                        editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select(new_selections)
                         });
                     } else {

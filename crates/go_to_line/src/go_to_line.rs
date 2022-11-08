@@ -83,7 +83,7 @@ impl GoToLine {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([position..position])
                 });
             }
@@ -127,7 +127,7 @@ impl GoToLine {
                         let display_point = point.to_display_point(&snapshot);
                         let row = display_point.row();
                         active_editor.highlight_rows(Some(row..row + 1));
-                        active_editor.request_autoscroll(Autoscroll::Center, cx);
+                        active_editor.request_autoscroll(Autoscroll::center(), cx);
                     });
                     cx.notify();
                 }

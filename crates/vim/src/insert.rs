@@ -13,7 +13,7 @@ pub fn init(cx: &mut MutableAppContext) {
 fn normal_before(_: &mut Workspace, _: &NormalBefore, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |state, cx| {
         state.update_active_editor(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_cursors_with(|map, mut cursor, _| {
                     *cursor.column_mut() = cursor.column().saturating_sub(1);
                     (map.clip_point(cursor, Bias::Left), SelectionGoal::None)

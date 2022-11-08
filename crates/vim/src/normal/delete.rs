@@ -8,7 +8,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut Mutab
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let original_head = selection.head();
                     original_columns.insert(selection.id, original_head.column());
@@ -20,7 +20,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut Mutab
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head();
                     if motion.linewise() {
@@ -43,7 +43,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Mutab
             // Emulates behavior in vim where if we expanded backwards to include a newline
             // the cursor gets set back to the start of the line
             let mut should_move_to_start: HashSet<_> = Default::default();
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     object.expand_selection(map, selection, around);
                     let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
@@ -78,7 +78,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Mutab
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head();
                     if should_move_to_start.contains(&selection.id) {
