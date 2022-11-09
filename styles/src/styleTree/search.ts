@@ -1,5 +1,6 @@
 import { ColorScheme } from "../themes/common/colorScheme";
-import { background, border, text } from "./components";
+import { withOpacity } from "../utils/color";
+import { background, border, foreground, text } from "./components";
 
 export default function search(colorScheme: ColorScheme) {
   let layer = colorScheme.highest;
@@ -26,7 +27,8 @@ export default function search(colorScheme: ColorScheme) {
   };
 
   return {
-    matchBackground: background(layer), // theme.editor.highlight.match,
+    // TODO: Add an activeMatchBackground on the rust side to differenciate between active and inactive
+    matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
     tabIconSpacing: 8,
     tabIconWidth: 14,
     optionButton: {
