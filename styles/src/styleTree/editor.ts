@@ -151,10 +151,10 @@ export default function editor(colorScheme: ColorScheme) {
       widthEm: 0.16,
       cornerRadius: 0.05,
     },
-    documentHighlightReadBackground: colorScheme.ramps
-      .neutral(0.5)
-      .alpha(0.2)
-      .hex(), // TODO: This was blend
+    /** Highlights matching occurences of what is under the cursor
+     * as well as matched brackets
+     */
+    documentHighlightReadBackground: withOpacity(foreground(layer, "accent"), 0.1),
     documentHighlightWriteBackground: colorScheme.ramps
       .neutral(0.5)
       .alpha(0.4)
