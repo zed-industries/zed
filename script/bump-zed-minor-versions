@@ -15,8 +15,6 @@ if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
   exit 1
 fi
 git pull -q --ff-only origin main
-git fetch --tags
-cargo check -q
 
 # Parse the current version
 version=$(script/get-crate-version zed)
@@ -30,6 +28,10 @@ minor_branch_name="v${major}.${minor}.x"
 prev_minor_branch_name="v${major}.${prev_minor}.x"
 next_minor_branch_name="v${major}.${next_minor}.x"
 preview_tag_name="v${major}.${minor}.${patch}-pre"
+
+git fetch origin ${prev_minor_branch_name}:${prev_minor_branch_name}
+git fetch origin --tags
+cargo check -q
 
 function cleanup {
   git checkout -q main
