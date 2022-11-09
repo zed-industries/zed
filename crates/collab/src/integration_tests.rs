@@ -53,6 +53,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeRegistry;
+use tokio::runtime::{EnterGuard, Runtime};
 use unindent::Unindent as _;
 use util::post_inc;
 use workspace::{shared_screen::SharedScreen, Item, SplitDirection, ToggleFollow, Workspace};
@@ -72,8 +73,15 @@ async fn test_basic_calls(
     cx_b2: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
+    // let runtime = tokio::runtime::Runtime::new().unwrap();
+    // let _enter_guard = runtime.enter();
+
     deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+
+    let start = std::time::Instant::now();
+    eprintln!("test_basic_calls");
+
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -259,6 +267,8 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
+
+    eprintln!("finished test {:?}", start.elapsed());
 }
 
 #[gpui::test(iterations = 10)]
@@ -6091,7 +6101,12 @@ impl TestServer {
     ) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
-        let test_db = TestDb::fake(background.clone());
+        let test_db = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(TestDb::postgres());
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
