@@ -67,7 +67,7 @@ pub struct Collaborator {
 
 #[derive(Default, Serialize)]
 pub struct Worktree {
-    pub abs_path: PathBuf,
+    pub abs_path: Vec<u8>,
     pub root_name: String,
     pub visible: bool,
     #[serde(skip)]
@@ -773,7 +773,11 @@ impl Store {
                             Worktree {
                                 root_name: worktree.root_name,
                                 visible: worktree.visible,
-                                ..Default::default()
+                                abs_path: worktree.abs_path.clone(),
+                                entries: Default::default(),
+                                diagnostic_summaries: Default::default(),
+                                scan_id: Default::default(),
+                                is_complete: Default::default(),
                             },
                         )
                     })
@@ -852,7 +856,11 @@ impl Store {
                         Worktree {
                             root_name: worktree.root_name.clone(),
                             visible: worktree.visible,
-                            ..Default::default()
+                            abs_path: worktree.abs_path.clone(),
+                            entries: Default::default(),
+                            diagnostic_summaries: Default::default(),
+                            scan_id: Default::default(),
+                            is_complete: false,
                         },
                     );
                 }
@@ -1006,6 +1014,7 @@ impl Store {
         project_id: ProjectId,
         worktree_id: u64,
         worktree_root_name: &str,
+        worktree_abs_path: &[u8],
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
         scan_id: u64,
@@ -1016,6 +1025,7 @@ impl Store {
         let connection_ids = project.connection_ids();
         let mut worktree = project.worktrees.entry(worktree_id).or_default();
         worktree.root_name = worktree_root_name.to_string();
+        worktree.abs_path = worktree_abs_path.to_vec();
 
         for entry_id in removed_entries {
             worktree.entries.remove(entry_id);
