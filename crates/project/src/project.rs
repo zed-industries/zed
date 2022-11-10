@@ -3453,29 +3453,39 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server = if let Some((_, server)) = self.language_server_for_buffer(buffer, cx)
-            {
-                server.clone()
-            } else {
-                return Task::ready(Ok(Default::default()));
+            let lang_server = match self.language_server_for_buffer(buffer, cx) {
+                Some((_, server)) => server.clone(),
+                _ => return Task::ready(Ok(Default::default())),
             };
 
             cx.spawn(|this, mut cx| async move {
                 let resolved_completion = lang_server
                     .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
                     .await?;
+
                 if let Some(edits) = resolved_completion.additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {
                             this.edits_from_lsp(&buffer_handle, edits, None, cx)
                         })
                         .await?;
+
                     buffer_handle.update(&mut cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
+
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], None, cx);
+                            let primary = &completion.old_range;
+                            let within_primary = primary.start.cmp(&range.start, buffer).is_ge()
+                                && primary.end.cmp(&range.end, buffer).is_le();
+                            let within_additional = range.start.cmp(&primary.start, buffer).is_ge()
+                                && range.end.cmp(&primary.end, buffer).is_le();
+
+                            if !within_primary && !within_additional {
+                                buffer.edit([(range, text)], None, cx);
+                            }
                         }
+
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
                             if !push_to_history {
