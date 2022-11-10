@@ -121,9 +121,7 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = rpc::Server::new(state.clone(), None);
-            rpc_server
-                .start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
+            let rpc_server = rpc::Server::new(state.clone());
 
             let app = api::routes(rpc_server.clone(), state.clone())
                 .merge(rpc::routes(rpc_server.clone()))

@@ -1,11 +1,10 @@
-use crate::db::{self, ChannelId, ProjectId, UserId};
+use crate::db::{self, ProjectId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use nanoid::nanoid;
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
-use std::{borrow::Cow, mem, path::PathBuf, str, time::Duration};
-use time::OffsetDateTime;
+use std::{borrow::Cow, mem, path::PathBuf, str};
 use tracing::instrument;
 use util::post_inc;
 
@@ -18,8 +17,6 @@ pub struct Store {
     next_room_id: RoomId,
     rooms: BTreeMap<RoomId, proto::Room>,
     projects: BTreeMap<ProjectId, Project>,
-    #[serde(skip)]
-    channels: BTreeMap<ChannelId, Channel>,
 }
 
 #[derive(Default, Serialize)]
@@ -33,7 +30,6 @@ struct ConnectionState {
     user_id: UserId,
     admin: bool,
     projects: BTreeSet<ProjectId>,
-    channels: HashSet<ChannelId>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize)]
@@ -60,8 +56,6 @@ pub struct Project {
 pub struct Collaborator {
     pub replica_id: ReplicaId,
     pub user_id: UserId,
-    #[serde(skip)]
-    pub last_activity: Option<OffsetDateTime>,
     pub admin: bool,
 }
 
@@ -76,11 +70,6 @@ pub struct Worktree {
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     pub scan_id: u64,
     pub is_complete: bool,
-}
-
-#[derive(Default)]
-pub struct Channel {
-    pub connection_ids: HashSet<ConnectionId>,
 }
 
 pub type ReplicaId = u16;
@@ -113,38 +102,23 @@ pub struct LeftRoom<'a> {
 #[derive(Copy, Clone)]
 pub struct Metrics {
     pub connections: usize,
-    pub registered_projects: usize,
-    pub active_projects: usize,
     pub shared_projects: usize,
 }
 
 impl Store {
     pub fn metrics(&self) -> Metrics {
-        const ACTIVE_PROJECT_TIMEOUT: Duration = Duration::from_secs(60);
-        let active_window_start = OffsetDateTime::now_utc() - ACTIVE_PROJECT_TIMEOUT;
-
         let connections = self.connections.values().filter(|c| !c.admin).count();
-        let mut registered_projects = 0;
-        let mut active_projects = 0;
         let mut shared_projects = 0;
         for project in self.projects.values() {
             if let Some(connection) = self.connections.get(&project.host_connection_id) {
                 if !connection.admin {
-                    registered_projects += 1;
-                    if project.is_active_since(active_window_start) {
-                        active_projects += 1;
-                        if !project.guests.is_empty() {
-                            shared_projects += 1;
-                        }
-                    }
+                    shared_projects += 1;
                 }
             }
         }
 
         Metrics {
             connections,
-            registered_projects,
-            active_projects,
             shared_projects,
         }
     }
@@ -162,7 +136,6 @@ impl Store {
                 user_id,
                 admin,
                 projects: Default::default(),
-                channels: Default::default(),
             },
         );
         let connected_user = self.connected_users.entry(user_id).or_default();
@@ -201,17 +174,11 @@ impl Store {
             .ok_or_else(|| anyhow!("no such connection"))?;
 
         let user_id = connection.user_id;
-        let connection_channels = mem::take(&mut connection.channels);
 
         let mut result = RemovedConnectionState {
             user_id,
             ..Default::default()
         };
-
-        // Leave all channels.
-        for channel_id in connection_channels {
-            self.leave_channel(connection_id, channel_id);
-        }
 
         let connected_user = self.connected_users.get(&user_id).unwrap();
         if let Some(active_call) = connected_user.active_call.as_ref() {
@@ -236,34 +203,6 @@ impl Store {
         self.connections.remove(&connection_id).unwrap();
 
         Ok(result)
-    }
-
-    #[cfg(test)]
-    pub fn channel(&self, id: ChannelId) -> Option<&Channel> {
-        self.channels.get(&id)
-    }
-
-    pub fn join_channel(&mut self, connection_id: ConnectionId, channel_id: ChannelId) {
-        if let Some(connection) = self.connections.get_mut(&connection_id) {
-            connection.channels.insert(channel_id);
-            self.channels
-                .entry(channel_id)
-                .or_default()
-                .connection_ids
-                .insert(connection_id);
-        }
-    }
-
-    pub fn leave_channel(&mut self, connection_id: ConnectionId, channel_id: ChannelId) {
-        if let Some(connection) = self.connections.get_mut(&connection_id) {
-            connection.channels.remove(&channel_id);
-            if let btree_map::Entry::Occupied(mut entry) = self.channels.entry(channel_id) {
-                entry.get_mut().connection_ids.remove(&connection_id);
-                if entry.get_mut().connection_ids.is_empty() {
-                    entry.remove();
-                }
-            }
-        }
     }
 
     pub fn user_id_for_connection(&self, connection_id: ConnectionId) -> Result<UserId> {
@@ -760,7 +699,6 @@ impl Store {
                 host: Collaborator {
                     user_id: connection.user_id,
                     replica_id: 0,
-                    last_activity: None,
                     admin: connection.admin,
                 },
                 guests: Default::default(),
@@ -959,12 +897,10 @@ impl Store {
             Collaborator {
                 replica_id,
                 user_id: connection.user_id,
-                last_activity: Some(OffsetDateTime::now_utc()),
                 admin: connection.admin,
             },
         );
 
-        project.host.last_activity = Some(OffsetDateTime::now_utc());
         Ok((project, replica_id))
     }
 
@@ -1056,42 +992,10 @@ impl Store {
             .connection_ids())
     }
 
-    pub fn channel_connection_ids(&self, channel_id: ChannelId) -> Result<Vec<ConnectionId>> {
-        Ok(self
-            .channels
-            .get(&channel_id)
-            .ok_or_else(|| anyhow!("no such channel"))?
-            .connection_ids())
-    }
-
     pub fn project(&self, project_id: ProjectId) -> Result<&Project> {
         self.projects
             .get(&project_id)
             .ok_or_else(|| anyhow!("no such project"))
-    }
-
-    pub fn register_project_activity(
-        &mut self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-    ) -> Result<()> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        let collaborator = if connection_id == project.host_connection_id {
-            &mut project.host
-        } else if let Some(guest) = project.guests.get_mut(&connection_id) {
-            guest
-        } else {
-            return Err(anyhow!("no such project"))?;
-        };
-        collaborator.last_activity = Some(OffsetDateTime::now_utc());
-        Ok(())
-    }
-
-    pub fn projects(&self) -> impl Iterator<Item = (&ProjectId, &Project)> {
-        self.projects.iter()
     }
 
     pub fn read_project(
@@ -1154,10 +1058,7 @@ impl Store {
                     }
                 }
             }
-            for channel_id in &connection.channels {
-                let channel = self.channels.get(channel_id).unwrap();
-                assert!(channel.connection_ids.contains(connection_id));
-            }
+
             assert!(self
                 .connected_users
                 .get(&connection.user_id)
@@ -1253,28 +1154,10 @@ impl Store {
                 "project was not shared in room"
             );
         }
-
-        for (channel_id, channel) in &self.channels {
-            for connection_id in &channel.connection_ids {
-                let connection = self.connections.get(connection_id).unwrap();
-                assert!(connection.channels.contains(channel_id));
-            }
-        }
     }
 }
 
 impl Project {
-    fn is_active_since(&self, start_time: OffsetDateTime) -> bool {
-        self.guests
-            .values()
-            .chain([&self.host])
-            .any(|collaborator| {
-                collaborator
-                    .last_activity
-                    .map_or(false, |active_time| active_time > start_time)
-            })
-    }
-
     pub fn guest_connection_ids(&self) -> Vec<ConnectionId> {
         self.guests.keys().copied().collect()
     }
@@ -1285,11 +1168,5 @@ impl Project {
             .copied()
             .chain(Some(self.host_connection_id))
             .collect()
-    }
-}
-
-impl Channel {
-    fn connection_ids(&self) -> Vec<ConnectionId> {
-        self.connection_ids.iter().copied().collect()
     }
 }

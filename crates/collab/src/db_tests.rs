@@ -1,12 +1,10 @@
 use super::db::*;
-use collections::HashMap;
 use gpui::executor::{Background, Deterministic};
-use std::{sync::Arc, time::Duration};
-use time::OffsetDateTime;
+use std::sync::Arc;
 
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_get_users_by_ids() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
 
     let mut user_ids = Vec::new();
@@ -66,9 +64,9 @@ async fn test_get_users_by_ids() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_get_user_by_github_account() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
     let user_id1 = db
         .create_user(
@@ -122,407 +120,9 @@ async fn test_get_user_by_github_account() {
     assert_eq!(user.github_user_id, Some(102));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_worktree_extensions() {
-    let test_db = TestDb::new(build_background_executor()).await;
-    let db = test_db.db();
-
-    let user = db
-        .create_user(
-            "u1@example.com",
-            false,
-            NewUserParams {
-                github_login: "u1".into(),
-                github_user_id: 0,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let project = db.register_project(user).await.unwrap();
-
-    db.update_worktree_extensions(project, 100, Default::default())
-        .await
-        .unwrap();
-    db.update_worktree_extensions(
-        project,
-        100,
-        [("rs".to_string(), 5), ("md".to_string(), 3)]
-            .into_iter()
-            .collect(),
-    )
-    .await
-    .unwrap();
-    db.update_worktree_extensions(
-        project,
-        100,
-        [("rs".to_string(), 6), ("md".to_string(), 5)]
-            .into_iter()
-            .collect(),
-    )
-    .await
-    .unwrap();
-    db.update_worktree_extensions(
-        project,
-        101,
-        [("ts".to_string(), 2), ("md".to_string(), 1)]
-            .into_iter()
-            .collect(),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        db.get_project_extensions(project).await.unwrap(),
-        [
-            (
-                100,
-                [("rs".into(), 6), ("md".into(), 5),]
-                    .into_iter()
-                    .collect::<HashMap<_, _>>()
-            ),
-            (
-                101,
-                [("ts".into(), 2), ("md".into(), 1),]
-                    .into_iter()
-                    .collect::<HashMap<_, _>>()
-            )
-        ]
-        .into_iter()
-        .collect()
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_user_activity() {
-    let test_db = TestDb::new(build_background_executor()).await;
-    let db = test_db.db();
-
-    let mut user_ids = Vec::new();
-    for i in 0..=2 {
-        user_ids.push(
-            db.create_user(
-                &format!("user{i}@example.com"),
-                false,
-                NewUserParams {
-                    github_login: format!("user{i}"),
-                    github_user_id: i,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap()
-            .user_id,
-        );
-    }
-
-    let project_1 = db.register_project(user_ids[0]).await.unwrap();
-    db.update_worktree_extensions(
-        project_1,
-        1,
-        HashMap::from_iter([("rs".into(), 5), ("md".into(), 7)]),
-    )
-    .await
-    .unwrap();
-    let project_2 = db.register_project(user_ids[1]).await.unwrap();
-    let t0 = OffsetDateTime::now_utc() - Duration::from_secs(60 * 60);
-
-    // User 2 opens a project
-    let t1 = t0 + Duration::from_secs(10);
-    db.record_user_activity(t0..t1, &[(user_ids[1], project_2)])
-        .await
-        .unwrap();
-
-    let t2 = t1 + Duration::from_secs(10);
-    db.record_user_activity(t1..t2, &[(user_ids[1], project_2)])
-        .await
-        .unwrap();
-
-    // User 1 joins the project
-    let t3 = t2 + Duration::from_secs(10);
-    db.record_user_activity(
-        t2..t3,
-        &[(user_ids[1], project_2), (user_ids[0], project_2)],
-    )
-    .await
-    .unwrap();
-
-    // User 1 opens another project
-    let t4 = t3 + Duration::from_secs(10);
-    db.record_user_activity(
-        t3..t4,
-        &[
-            (user_ids[1], project_2),
-            (user_ids[0], project_2),
-            (user_ids[0], project_1),
-        ],
-    )
-    .await
-    .unwrap();
-
-    // User 3 joins that project
-    let t5 = t4 + Duration::from_secs(10);
-    db.record_user_activity(
-        t4..t5,
-        &[
-            (user_ids[1], project_2),
-            (user_ids[0], project_2),
-            (user_ids[0], project_1),
-            (user_ids[2], project_1),
-        ],
-    )
-    .await
-    .unwrap();
-
-    // User 2 leaves
-    let t6 = t5 + Duration::from_secs(5);
-    db.record_user_activity(
-        t5..t6,
-        &[(user_ids[0], project_1), (user_ids[2], project_1)],
-    )
-    .await
-    .unwrap();
-
-    let t7 = t6 + Duration::from_secs(60);
-    let t8 = t7 + Duration::from_secs(10);
-    db.record_user_activity(t7..t8, &[(user_ids[0], project_1)])
-        .await
-        .unwrap();
-
-    assert_eq!(
-        db.get_top_users_activity_summary(t0..t6, 10).await.unwrap(),
-        &[
-            UserActivitySummary {
-                id: user_ids[0],
-                github_login: "user0".to_string(),
-                project_activity: vec![
-                    ProjectActivitySummary {
-                        id: project_1,
-                        duration: Duration::from_secs(25),
-                        max_collaborators: 2
-                    },
-                    ProjectActivitySummary {
-                        id: project_2,
-                        duration: Duration::from_secs(30),
-                        max_collaborators: 2
-                    }
-                ]
-            },
-            UserActivitySummary {
-                id: user_ids[1],
-                github_login: "user1".to_string(),
-                project_activity: vec![ProjectActivitySummary {
-                    id: project_2,
-                    duration: Duration::from_secs(50),
-                    max_collaborators: 2
-                }]
-            },
-            UserActivitySummary {
-                id: user_ids[2],
-                github_login: "user2".to_string(),
-                project_activity: vec![ProjectActivitySummary {
-                    id: project_1,
-                    duration: Duration::from_secs(15),
-                    max_collaborators: 2
-                }]
-            },
-        ]
-    );
-
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(56), false)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(56), true)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(54), false)
-            .await
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(54), true)
-            .await
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(30), false)
-            .await
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(30), true)
-            .await
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(10), false)
-            .await
-            .unwrap(),
-        3
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t6, Duration::from_secs(10), true)
-            .await
-            .unwrap(),
-        3
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t1, Duration::from_secs(5), false)
-            .await
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        db.get_active_user_count(t0..t1, Duration::from_secs(5), true)
-            .await
-            .unwrap(),
-        0
-    );
-
-    assert_eq!(
-        db.get_user_activity_timeline(t3..t6, user_ids[0])
-            .await
-            .unwrap(),
-        &[
-            UserActivityPeriod {
-                project_id: project_1,
-                start: t3,
-                end: t6,
-                extensions: HashMap::from_iter([("rs".to_string(), 5), ("md".to_string(), 7)]),
-            },
-            UserActivityPeriod {
-                project_id: project_2,
-                start: t3,
-                end: t5,
-                extensions: Default::default(),
-            },
-        ]
-    );
-    assert_eq!(
-        db.get_user_activity_timeline(t0..t8, user_ids[0])
-            .await
-            .unwrap(),
-        &[
-            UserActivityPeriod {
-                project_id: project_2,
-                start: t2,
-                end: t5,
-                extensions: Default::default(),
-            },
-            UserActivityPeriod {
-                project_id: project_1,
-                start: t3,
-                end: t6,
-                extensions: HashMap::from_iter([("rs".to_string(), 5), ("md".to_string(), 7)]),
-            },
-            UserActivityPeriod {
-                project_id: project_1,
-                start: t7,
-                end: t8,
-                extensions: HashMap::from_iter([("rs".to_string(), 5), ("md".to_string(), 7)]),
-            },
-        ]
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_recent_channel_messages() {
-    let test_db = TestDb::new(build_background_executor()).await;
-    let db = test_db.db();
-    let user = db
-        .create_user(
-            "u@example.com",
-            false,
-            NewUserParams {
-                github_login: "u".into(),
-                github_user_id: 1,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let org = db.create_org("org", "org").await.unwrap();
-    let channel = db.create_org_channel(org, "channel").await.unwrap();
-    for i in 0..10 {
-        db.create_channel_message(channel, user, &i.to_string(), OffsetDateTime::now_utc(), i)
-            .await
-            .unwrap();
-    }
-
-    let messages = db.get_channel_messages(channel, 5, None).await.unwrap();
-    assert_eq!(
-        messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
-        ["5", "6", "7", "8", "9"]
-    );
-
-    let prev_messages = db
-        .get_channel_messages(channel, 4, Some(messages[0].id))
-        .await
-        .unwrap();
-    assert_eq!(
-        prev_messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
-        ["1", "2", "3", "4"]
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_channel_message_nonces() {
-    let test_db = TestDb::new(build_background_executor()).await;
-    let db = test_db.db();
-    let user = db
-        .create_user(
-            "user@example.com",
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 1,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let org = db.create_org("org", "org").await.unwrap();
-    let channel = db.create_org_channel(org, "channel").await.unwrap();
-
-    let msg1_id = db
-        .create_channel_message(channel, user, "1", OffsetDateTime::now_utc(), 1)
-        .await
-        .unwrap();
-    let msg2_id = db
-        .create_channel_message(channel, user, "2", OffsetDateTime::now_utc(), 2)
-        .await
-        .unwrap();
-    let msg3_id = db
-        .create_channel_message(channel, user, "3", OffsetDateTime::now_utc(), 1)
-        .await
-        .unwrap();
-    let msg4_id = db
-        .create_channel_message(channel, user, "4", OffsetDateTime::now_utc(), 2)
-        .await
-        .unwrap();
-
-    assert_ne!(msg1_id, msg2_id);
-    assert_eq!(msg1_id, msg3_id);
-    assert_eq!(msg2_id, msg4_id);
-}
-
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_create_access_tokens() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
     let user = db
         .create_user(
@@ -571,9 +171,9 @@ fn test_fuzzy_like_string() {
     assert_eq!(DefaultDb::fuzzy_like_string(" z  "), "%z%");
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_fuzzy_search_users() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -619,9 +219,9 @@ async fn test_fuzzy_search_users() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_add_contacts() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
 
     let mut user_ids = Vec::new();
@@ -783,9 +383,9 @@ async fn test_add_contacts() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_invite_codes() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
     let NewUserResult { user_id: user1, .. } = db
         .create_user(
@@ -978,9 +578,9 @@ async fn test_invite_codes() {
     assert_eq!(invite_count, 1);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_signups() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
 
     // people sign up on the waitlist
@@ -1124,9 +724,9 @@ async fn test_signups() {
     .unwrap_err();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[gpui::test]
 async fn test_metrics_id() {
-    let test_db = TestDb::new(build_background_executor()).await;
+    let test_db = TestDb::new(build_background_executor());
     let db = test_db.db();
 
     let NewUserResult {

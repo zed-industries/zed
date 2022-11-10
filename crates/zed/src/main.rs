@@ -115,7 +115,6 @@ fn main() {
 
         context_menu::init(cx);
         project::Project::init(&client);
-        client::Channel::init(&client);
         client::init(client.clone(), cx);
         command_palette::init(cx);
         editor::init(cx);
