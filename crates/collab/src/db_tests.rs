@@ -7,7 +7,7 @@ use time::OffsetDateTime;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_users_by_ids() {
     for test_db in [
-        TestDb::postgres().await,
+        TestDb::real().await,
         TestDb::fake(build_background_executor()),
     ] {
         let db = test_db.db();
@@ -73,7 +73,7 @@ async fn test_get_users_by_ids() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_user_by_github_account() {
     for test_db in [
-        TestDb::postgres().await,
+        TestDb::real().await,
         TestDb::fake(build_background_executor()),
     ] {
         let db = test_db.db();
@@ -132,7 +132,7 @@ async fn test_get_user_by_github_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_worktree_extensions() {
-    let test_db = TestDb::postgres().await;
+    let test_db = TestDb::real().await;
     let db = test_db.db();
 
     let user = db
@@ -204,7 +204,7 @@ async fn test_worktree_extensions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_user_activity() {
-    let test_db = TestDb::postgres().await;
+    let test_db = TestDb::real().await;
     let db = test_db.db();
 
     let mut user_ids = Vec::new();
@@ -448,7 +448,7 @@ async fn test_user_activity() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_recent_channel_messages() {
     for test_db in [
-        TestDb::postgres().await,
+        TestDb::real().await,
         TestDb::fake(build_background_executor()),
     ] {
         let db = test_db.db();
@@ -493,7 +493,7 @@ async fn test_recent_channel_messages() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_channel_message_nonces() {
     for test_db in [
-        TestDb::postgres().await,
+        TestDb::real().await,
         TestDb::fake(build_background_executor()),
     ] {
         let db = test_db.db();
@@ -538,7 +538,7 @@ async fn test_channel_message_nonces() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_create_access_tokens() {
-    let test_db = TestDb::postgres().await;
+    let test_db = TestDb::real().await;
     let db = test_db.db();
     let user = db
         .create_user(
@@ -582,14 +582,14 @@ async fn test_create_access_tokens() {
 
 #[test]
 fn test_fuzzy_like_string() {
-    assert_eq!(PostgresDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
-    assert_eq!(PostgresDb::fuzzy_like_string("x y"), "%x%y%");
-    assert_eq!(PostgresDb::fuzzy_like_string(" z  "), "%z%");
+    assert_eq!(RealDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
+    assert_eq!(RealDb::fuzzy_like_string("x y"), "%x%y%");
+    assert_eq!(RealDb::fuzzy_like_string(" z  "), "%z%");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fuzzy_search_users() {
-    let test_db = TestDb::postgres().await;
+    let test_db = TestDb::real().await;
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -638,7 +638,7 @@ async fn test_fuzzy_search_users() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_add_contacts() {
     for test_db in [
-        TestDb::postgres().await,
+        TestDb::real().await,
         TestDb::fake(build_background_executor()),
     ] {
         let db = test_db.db();
@@ -805,7 +805,7 @@ async fn test_add_contacts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invite_codes() {
-    let postgres = TestDb::postgres().await;
+    let postgres = TestDb::real().await;
     let db = postgres.db();
     let NewUserResult { user_id: user1, .. } = db
         .create_user(
@@ -1000,7 +1000,7 @@ async fn test_invite_codes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_signups() {
-    let postgres = TestDb::postgres().await;
+    let postgres = TestDb::real().await;
     let db = postgres.db();
 
     // people sign up on the waitlist
@@ -1146,7 +1146,7 @@ async fn test_signups() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_metrics_id() {
-    let postgres = TestDb::postgres().await;
+    let postgres = TestDb::real().await;
     let db = postgres.db();
 
     let NewUserResult {

@@ -53,7 +53,6 @@ use std::{
     time::Duration,
 };
 use theme::ThemeRegistry;
-use tokio::runtime::{EnterGuard, Runtime};
 use unindent::Unindent as _;
 use util::post_inc;
 use workspace::{shared_screen::SharedScreen, Item, SplitDirection, ToggleFollow, Workspace};
@@ -80,7 +79,6 @@ async fn test_basic_calls(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
 
     let start = std::time::Instant::now();
-    eprintln!("test_basic_calls");
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -6106,7 +6104,7 @@ impl TestServer {
             .enable_time()
             .build()
             .unwrap()
-            .block_on(TestDb::postgres());
+            .block_on(TestDb::real());
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
@@ -6162,7 +6160,7 @@ impl TestServer {
                     },
                 )
                 .await
-                .unwrap()
+                .expect("creating user failed")
                 .user_id
         };
         let client_name = name.to_string();
@@ -6202,7 +6200,11 @@ impl TestServer {
                         let (client_conn, server_conn, killed) =
                             Connection::in_memory(cx.background());
                         let (connection_id_tx, connection_id_rx) = oneshot::channel();
-                        let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
+                        let user = db
+                            .get_user_by_id(user_id)
+                            .await
+                            .expect("retrieving user failed")
+                            .unwrap();
                         cx.background()
                             .spawn(server.handle_connection(
                                 server_conn,
