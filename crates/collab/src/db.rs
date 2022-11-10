@@ -53,6 +53,7 @@ pub trait RowsAffected {
     fn rows_affected(&self) -> u64;
 }
 
+#[cfg(test)]
 impl RowsAffected for sqlx::sqlite::SqliteQueryResult {
     fn rows_affected(&self) -> u64 {
         self.rows_affected()
