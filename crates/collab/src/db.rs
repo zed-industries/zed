@@ -12,8 +12,16 @@ use sqlx::{
 use std::{cmp, ops::Range, path::Path, time::Duration};
 use time::{OffsetDateTime, PrimitiveDateTime};
 
+#[cfg(test)]
+pub type DefaultDb = Db<sqlx::Sqlite>;
+
+#[cfg(not(test))]
+pub type DefaultDb = Db<sqlx::Postgres>;
+
 pub struct Db<D: sqlx::Database> {
     pool: sqlx::Pool<D>,
+    #[cfg(test)]
+    background: Option<std::sync::Arc<gpui::executor::Background>>,
 }
 
 macro_rules! test_support {
@@ -23,6 +31,10 @@ macro_rules! test_support {
         };
 
         if cfg!(test) {
+            #[cfg(test)]
+            if let Some(background) = $self.background.as_ref() {
+                background.simulate_random_delay().await;
+            }
             tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().unwrap().block_on(body)
         } else {
             body.await
@@ -30,7 +42,7 @@ macro_rules! test_support {
     }};
 }
 
-trait RowsAffected {
+pub trait RowsAffected {
     fn rows_affected(&self) -> u64;
 }
 
@@ -48,32 +60,37 @@ impl RowsAffected for sqlx::postgres::PgQueryResult {
 
 impl Db<sqlx::Sqlite> {
     #[cfg(test)]
-    pub async fn sqlite(url: &str, max_connections: u32) -> Result<Self> {
+    pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(max_connections)
             .connect(url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            background: None,
+        })
     }
 }
 
 impl Db<sqlx::Postgres> {
-    pub async fn postgres(url: &str, max_connections: u32) -> Result<Self> {
+    pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(max_connections)
             .connect(url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            #[cfg(test)]
+            background: None,
+        })
     }
 }
 
 impl<D> Db<D>
 where
     D: sqlx::Database + sqlx::migrate::MigrateDatabase,
-    for<'a> <D as sqlx::database::HasArguments<'a>>::Arguments: sqlx::IntoArguments<'a, D>,
-    D: for<'a> sqlx::database::HasValueRef<'a>,
-    D: for<'a> sqlx::database::HasArguments<'a>,
     D::Connection: sqlx::migrate::Migrate,
+    for<'a> <D as sqlx::database::HasArguments<'a>>::Arguments: sqlx::IntoArguments<'a, D>,
     for<'a> &'a mut D::Connection: sqlx::Executor<'a, Database = D>,
     for<'a, 'b> &'b mut sqlx::Transaction<'a, D>: sqlx::Executor<'b, Database = D>,
     D::QueryResult: RowsAffected,
@@ -452,19 +469,18 @@ where
 
     pub async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()> {
         test_support!(self, {
+            let emails = invites
+                .iter()
+                .map(|s| s.email_address.as_str())
+                .collect::<Vec<_>>();
             sqlx::query(
                 "
                 UPDATE signups
                 SET email_confirmation_sent = TRUE
-                WHERE email_address = ANY ($1)
+                WHERE email_address IN (SELECT value from json_each($1))
                 ",
             )
-            // .bind(
-            //     &invites
-            //         .iter()
-            //         .map(|s| s.email_address.as_str())
-            //         .collect::<Vec<_>>(),
-            // )
+            .bind(&serde_json::json!(emails))
             .execute(&self.pool)
             .await?;
             Ok(())
@@ -808,7 +824,7 @@ where
                 count = excluded.count
                 ",
             );
-            query.build().execute(&self.pool).await?;
+            // query.build().execute(&self.pool).await?;
 
             Ok(())
         })
@@ -1604,24 +1620,6 @@ where
                 .await?)
         })
     }
-
-    #[cfg(test)]
-    pub async fn teardown(&self, url: &str) {
-        test_support!(self, {
-            use util::ResultExt;
-
-            let query = "
-                SELECT pg_terminate_backend(pg_stat_activity.pid)
-                FROM pg_stat_activity
-                WHERE pg_stat_activity.datname = current_database() AND pid <> pg_backend_pid();
-            ";
-            sqlx::query(query).execute(&self.pool).await.log_err();
-            self.pool.close().await;
-            <sqlx::Sqlite as sqlx::migrate::MigrateDatabase>::drop_database(url)
-                .await
-                .log_err();
-        })
-    }
 }
 
 macro_rules! id_type {
@@ -1833,51 +1831,37 @@ mod test {
     use super::*;
     use gpui::executor::Background;
     use rand::prelude::*;
-    use sqlx::{migrate::MigrateDatabase, Sqlite};
+    use sqlx::migrate::MigrateDatabase;
     use std::sync::Arc;
 
     pub struct TestDb {
-        pub db: Option<Arc<Db<Sqlite>>>,
+        pub db: Option<Arc<DefaultDb>>,
         pub url: String,
     }
 
     impl TestDb {
-        #[allow(clippy::await_holding_lock)]
-        pub async fn real() -> Self {
-            todo!()
-            // eprintln!("creating database...");
-            // let start = std::time::Instant::now();
-            // let mut rng = StdRng::from_entropy();
-            // let url = format!("/tmp/zed-test-{}", rng.gen::<u128>());
-            // Sqlite::create_database(&url).await.unwrap();
-            // let db = Db::new(&url, 5).await.unwrap();
-            // db.migrate(Path::new(DEFAULT_MIGRATIONS_PATH.unwrap()), false)
-            //     .await
-            //     .unwrap();
-
-            // eprintln!("created database: {:?}", start.elapsed());
-            // Self {
-            //     db: Some(Arc::new(db)),
-            //     url,
-            // }
-        }
-
-        pub async fn fake(background: Arc<Background>) -> Self {
-            let start = std::time::Instant::now();
+        pub async fn new(background: Arc<Background>) -> Self {
             let mut rng = StdRng::from_entropy();
-            let url = format!("file:db-{}?mode=memory&cache=shared", rng.gen::<u128>());
-            let db = Db::sqlite(&url, 5).await.unwrap();
+            let url = format!("/tmp/zed-test-{}", rng.gen::<u128>());
+            sqlx::Sqlite::create_database(&url).await.unwrap();
+            let mut db = DefaultDb::new(&url, 5).await.unwrap();
+            db.background = Some(background);
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations.sqlite");
             db.migrate(Path::new(migrations_path), false).await.unwrap();
-
             Self {
                 db: Some(Arc::new(db)),
                 url,
             }
         }
 
-        pub fn db(&self) -> &Arc<Db<Sqlite>> {
+        pub fn db(&self) -> &Arc<DefaultDb> {
             self.db.as_ref().unwrap()
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            std::fs::remove_file(&self.url).ok();
         }
     }
 }

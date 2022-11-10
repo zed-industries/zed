@@ -18,7 +18,7 @@ use serde::Deserialize;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -101,8 +101,7 @@ async fn main() -> Result<()> {
             let migrations_path = config
                 .migrations_path
                 .as_deref()
-                .or(db::DEFAULT_MIGRATIONS_PATH.map(|s| s.as_ref()))
-                .ok_or_else(|| anyhow!("missing MIGRATIONS_PATH environment variable"))?;
+                .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")));
 
             let migrations = db.migrate(&migrations_path, false).await?;
             for (migration, duration) in migrations {

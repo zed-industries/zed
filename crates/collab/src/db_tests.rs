@@ -6,133 +6,125 @@ use time::OffsetDateTime;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_users_by_ids() {
-    for test_db in [
-        TestDb::real().await,
-        TestDb::fake(build_background_executor()),
-    ] {
-        let db = test_db.db();
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
 
-        let mut user_ids = Vec::new();
-        for i in 1..=4 {
-            user_ids.push(
-                db.create_user(
-                    &format!("user{i}@example.com"),
-                    false,
-                    NewUserParams {
-                        github_login: format!("user{i}"),
-                        github_user_id: i,
-                        invite_count: 0,
-                    },
-                )
-                .await
-                .unwrap()
-                .user_id,
-            );
-        }
-
-        assert_eq!(
-            db.get_users_by_ids(user_ids.clone()).await.unwrap(),
-            vec![
-                User {
-                    id: user_ids[0],
-                    github_login: "user1".to_string(),
-                    github_user_id: Some(1),
-                    email_address: Some("user1@example.com".to_string()),
-                    admin: false,
-                    ..Default::default()
+    let mut user_ids = Vec::new();
+    for i in 1..=4 {
+        user_ids.push(
+            db.create_user(
+                &format!("user{i}@example.com"),
+                false,
+                NewUserParams {
+                    github_login: format!("user{i}"),
+                    github_user_id: i,
+                    invite_count: 0,
                 },
-                User {
-                    id: user_ids[1],
-                    github_login: "user2".to_string(),
-                    github_user_id: Some(2),
-                    email_address: Some("user2@example.com".to_string()),
-                    admin: false,
-                    ..Default::default()
-                },
-                User {
-                    id: user_ids[2],
-                    github_login: "user3".to_string(),
-                    github_user_id: Some(3),
-                    email_address: Some("user3@example.com".to_string()),
-                    admin: false,
-                    ..Default::default()
-                },
-                User {
-                    id: user_ids[3],
-                    github_login: "user4".to_string(),
-                    github_user_id: Some(4),
-                    email_address: Some("user4@example.com".to_string()),
-                    admin: false,
-                    ..Default::default()
-                }
-            ]
+            )
+            .await
+            .unwrap()
+            .user_id,
         );
     }
+
+    assert_eq!(
+        db.get_users_by_ids(user_ids.clone()).await.unwrap(),
+        vec![
+            User {
+                id: user_ids[0],
+                github_login: "user1".to_string(),
+                github_user_id: Some(1),
+                email_address: Some("user1@example.com".to_string()),
+                admin: false,
+                ..Default::default()
+            },
+            User {
+                id: user_ids[1],
+                github_login: "user2".to_string(),
+                github_user_id: Some(2),
+                email_address: Some("user2@example.com".to_string()),
+                admin: false,
+                ..Default::default()
+            },
+            User {
+                id: user_ids[2],
+                github_login: "user3".to_string(),
+                github_user_id: Some(3),
+                email_address: Some("user3@example.com".to_string()),
+                admin: false,
+                ..Default::default()
+            },
+            User {
+                id: user_ids[3],
+                github_login: "user4".to_string(),
+                github_user_id: Some(4),
+                email_address: Some("user4@example.com".to_string()),
+                admin: false,
+                ..Default::default()
+            }
+        ]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_user_by_github_account() {
-    for test_db in [
-        TestDb::real().await,
-        TestDb::fake(build_background_executor()),
-    ] {
-        let db = test_db.db();
-        let user_id1 = db
-            .create_user(
-                "user1@example.com",
-                false,
-                NewUserParams {
-                    github_login: "login1".into(),
-                    github_user_id: 101,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap()
-            .user_id;
-        let user_id2 = db
-            .create_user(
-                "user2@example.com",
-                false,
-                NewUserParams {
-                    github_login: "login2".into(),
-                    github_user_id: 102,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap()
-            .user_id;
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
+    let user_id1 = db
+        .create_user(
+            "user1@example.com",
+            false,
+            NewUserParams {
+                github_login: "login1".into(),
+                github_user_id: 101,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    let user_id2 = db
+        .create_user(
+            "user2@example.com",
+            false,
+            NewUserParams {
+                github_login: "login2".into(),
+                github_user_id: 102,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
 
-        let user = db
-            .get_user_by_github_account("login1", None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(user.id, user_id1);
-        assert_eq!(&user.github_login, "login1");
-        assert_eq!(user.github_user_id, Some(101));
+    let user = db
+        .get_user_by_github_account("login1", None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(user.id, user_id1);
+    assert_eq!(&user.github_login, "login1");
+    assert_eq!(user.github_user_id, Some(101));
 
-        assert!(db
-            .get_user_by_github_account("non-existent-login", None)
-            .await
-            .unwrap()
-            .is_none());
+    assert!(db
+        .get_user_by_github_account("non-existent-login", None)
+        .await
+        .unwrap()
+        .is_none());
 
-        let user = db
-            .get_user_by_github_account("the-new-login2", Some(102))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(user.id, user_id2);
-        assert_eq!(&user.github_login, "the-new-login2");
-        assert_eq!(user.github_user_id, Some(102));
-    }
+    let user = db
+        .get_user_by_github_account("the-new-login2", Some(102))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(user.id, user_id2);
+    assert_eq!(&user.github_login, "the-new-login2");
+    assert_eq!(user.github_user_id, Some(102));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_worktree_extensions() {
-    let test_db = TestDb::real().await;
+    let test_db = TestDb::new(build_background_executor()).await;
     let db = test_db.db();
 
     let user = db
@@ -204,7 +196,7 @@ async fn test_worktree_extensions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_user_activity() {
-    let test_db = TestDb::real().await;
+    let test_db = TestDb::new(build_background_executor()).await;
     let db = test_db.db();
 
     let mut user_ids = Vec::new();
@@ -447,98 +439,90 @@ async fn test_user_activity() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_recent_channel_messages() {
-    for test_db in [
-        TestDb::real().await,
-        TestDb::fake(build_background_executor()),
-    ] {
-        let db = test_db.db();
-        let user = db
-            .create_user(
-                "u@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u".into(),
-                    github_user_id: 1,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap()
-            .user_id;
-        let org = db.create_org("org", "org").await.unwrap();
-        let channel = db.create_org_channel(org, "channel").await.unwrap();
-        for i in 0..10 {
-            db.create_channel_message(channel, user, &i.to_string(), OffsetDateTime::now_utc(), i)
-                .await
-                .unwrap();
-        }
-
-        let messages = db.get_channel_messages(channel, 5, None).await.unwrap();
-        assert_eq!(
-            messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
-            ["5", "6", "7", "8", "9"]
-        );
-
-        let prev_messages = db
-            .get_channel_messages(channel, 4, Some(messages[0].id))
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
+    let user = db
+        .create_user(
+            "u@example.com",
+            false,
+            NewUserParams {
+                github_login: "u".into(),
+                github_user_id: 1,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    let org = db.create_org("org", "org").await.unwrap();
+    let channel = db.create_org_channel(org, "channel").await.unwrap();
+    for i in 0..10 {
+        db.create_channel_message(channel, user, &i.to_string(), OffsetDateTime::now_utc(), i)
             .await
             .unwrap();
-        assert_eq!(
-            prev_messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
-            ["1", "2", "3", "4"]
-        );
     }
+
+    let messages = db.get_channel_messages(channel, 5, None).await.unwrap();
+    assert_eq!(
+        messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
+        ["5", "6", "7", "8", "9"]
+    );
+
+    let prev_messages = db
+        .get_channel_messages(channel, 4, Some(messages[0].id))
+        .await
+        .unwrap();
+    assert_eq!(
+        prev_messages.iter().map(|m| &m.body).collect::<Vec<_>>(),
+        ["1", "2", "3", "4"]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_channel_message_nonces() {
-    for test_db in [
-        TestDb::real().await,
-        TestDb::fake(build_background_executor()),
-    ] {
-        let db = test_db.db();
-        let user = db
-            .create_user(
-                "user@example.com",
-                false,
-                NewUserParams {
-                    github_login: "user".into(),
-                    github_user_id: 1,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap()
-            .user_id;
-        let org = db.create_org("org", "org").await.unwrap();
-        let channel = db.create_org_channel(org, "channel").await.unwrap();
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
+    let user = db
+        .create_user(
+            "user@example.com",
+            false,
+            NewUserParams {
+                github_login: "user".into(),
+                github_user_id: 1,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    let org = db.create_org("org", "org").await.unwrap();
+    let channel = db.create_org_channel(org, "channel").await.unwrap();
 
-        let msg1_id = db
-            .create_channel_message(channel, user, "1", OffsetDateTime::now_utc(), 1)
-            .await
-            .unwrap();
-        let msg2_id = db
-            .create_channel_message(channel, user, "2", OffsetDateTime::now_utc(), 2)
-            .await
-            .unwrap();
-        let msg3_id = db
-            .create_channel_message(channel, user, "3", OffsetDateTime::now_utc(), 1)
-            .await
-            .unwrap();
-        let msg4_id = db
-            .create_channel_message(channel, user, "4", OffsetDateTime::now_utc(), 2)
-            .await
-            .unwrap();
+    let msg1_id = db
+        .create_channel_message(channel, user, "1", OffsetDateTime::now_utc(), 1)
+        .await
+        .unwrap();
+    let msg2_id = db
+        .create_channel_message(channel, user, "2", OffsetDateTime::now_utc(), 2)
+        .await
+        .unwrap();
+    let msg3_id = db
+        .create_channel_message(channel, user, "3", OffsetDateTime::now_utc(), 1)
+        .await
+        .unwrap();
+    let msg4_id = db
+        .create_channel_message(channel, user, "4", OffsetDateTime::now_utc(), 2)
+        .await
+        .unwrap();
 
-        assert_ne!(msg1_id, msg2_id);
-        assert_eq!(msg1_id, msg3_id);
-        assert_eq!(msg2_id, msg4_id);
-    }
+    assert_ne!(msg1_id, msg2_id);
+    assert_eq!(msg1_id, msg3_id);
+    assert_eq!(msg2_id, msg4_id);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_create_access_tokens() {
-    let test_db = TestDb::real().await;
+    let test_db = TestDb::new(build_background_executor()).await;
     let db = test_db.db();
     let user = db
         .create_user(
@@ -582,14 +566,14 @@ async fn test_create_access_tokens() {
 
 #[test]
 fn test_fuzzy_like_string() {
-    assert_eq!(RealDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
-    assert_eq!(RealDb::fuzzy_like_string("x y"), "%x%y%");
-    assert_eq!(RealDb::fuzzy_like_string(" z  "), "%z%");
+    assert_eq!(DefaultDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
+    assert_eq!(DefaultDb::fuzzy_like_string("x y"), "%x%y%");
+    assert_eq!(DefaultDb::fuzzy_like_string(" z  "), "%z%");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fuzzy_search_users() {
-    let test_db = TestDb::real().await;
+    let test_db = TestDb::new(build_background_executor()).await;
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -625,7 +609,7 @@ async fn test_fuzzy_search_users() {
         &["rhode-island", "colorado", "oregon"],
     );
 
-    async fn fuzzy_search_user_names(db: &Arc<TestDb>, query: &str) -> Vec<String> {
+    async fn fuzzy_search_user_names(db: &DefaultDb, query: &str) -> Vec<String> {
         db.fuzzy_search_users(query, 10)
             .await
             .unwrap()
@@ -637,176 +621,172 @@ async fn test_fuzzy_search_users() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_add_contacts() {
-    for test_db in [
-        TestDb::real().await,
-        TestDb::fake(build_background_executor()),
-    ] {
-        let db = test_db.db();
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
 
-        let mut user_ids = Vec::new();
-        for i in 0..3 {
-            user_ids.push(
-                db.create_user(
-                    &format!("user{i}@example.com"),
-                    false,
-                    NewUserParams {
-                        github_login: format!("user{i}"),
-                        github_user_id: i,
-                        invite_count: 0,
-                    },
-                )
-                .await
-                .unwrap()
-                .user_id,
-            );
-        }
-
-        let user_1 = user_ids[0];
-        let user_2 = user_ids[1];
-        let user_3 = user_ids[2];
-
-        // User starts with no contacts
-        assert_eq!(db.get_contacts(user_1).await.unwrap(), &[]);
-
-        // User requests a contact. Both users see the pending request.
-        db.send_contact_request(user_1, user_2).await.unwrap();
-        assert!(!db.has_contact(user_1, user_2).await.unwrap());
-        assert!(!db.has_contact(user_2, user_1).await.unwrap());
-        assert_eq!(
-            db.get_contacts(user_1).await.unwrap(),
-            &[Contact::Outgoing { user_id: user_2 }],
-        );
-        assert_eq!(
-            db.get_contacts(user_2).await.unwrap(),
-            &[Contact::Incoming {
-                user_id: user_1,
-                should_notify: true
-            }]
-        );
-
-        // User 2 dismisses the contact request notification without accepting or rejecting.
-        // We shouldn't notify them again.
-        db.dismiss_contact_notification(user_1, user_2)
-            .await
-            .unwrap_err();
-        db.dismiss_contact_notification(user_2, user_1)
-            .await
-            .unwrap();
-        assert_eq!(
-            db.get_contacts(user_2).await.unwrap(),
-            &[Contact::Incoming {
-                user_id: user_1,
-                should_notify: false
-            }]
-        );
-
-        // User can't accept their own contact request
-        db.respond_to_contact_request(user_1, user_2, true)
-            .await
-            .unwrap_err();
-
-        // User accepts a contact request. Both users see the contact.
-        db.respond_to_contact_request(user_2, user_1, true)
-            .await
-            .unwrap();
-        assert_eq!(
-            db.get_contacts(user_1).await.unwrap(),
-            &[Contact::Accepted {
-                user_id: user_2,
-                should_notify: true
-            }],
-        );
-        assert!(db.has_contact(user_1, user_2).await.unwrap());
-        assert!(db.has_contact(user_2, user_1).await.unwrap());
-        assert_eq!(
-            db.get_contacts(user_2).await.unwrap(),
-            &[Contact::Accepted {
-                user_id: user_1,
-                should_notify: false,
-            }]
-        );
-
-        // Users cannot re-request existing contacts.
-        db.send_contact_request(user_1, user_2).await.unwrap_err();
-        db.send_contact_request(user_2, user_1).await.unwrap_err();
-
-        // Users can't dismiss notifications of them accepting other users' requests.
-        db.dismiss_contact_notification(user_2, user_1)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            db.get_contacts(user_1).await.unwrap(),
-            &[Contact::Accepted {
-                user_id: user_2,
-                should_notify: true,
-            }]
-        );
-
-        // Users can dismiss notifications of other users accepting their requests.
-        db.dismiss_contact_notification(user_1, user_2)
-            .await
-            .unwrap();
-        assert_eq!(
-            db.get_contacts(user_1).await.unwrap(),
-            &[Contact::Accepted {
-                user_id: user_2,
-                should_notify: false,
-            }]
-        );
-
-        // Users send each other concurrent contact requests and
-        // see that they are immediately accepted.
-        db.send_contact_request(user_1, user_3).await.unwrap();
-        db.send_contact_request(user_3, user_1).await.unwrap();
-        assert_eq!(
-            db.get_contacts(user_1).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: false,
+    let mut user_ids = Vec::new();
+    for i in 0..3 {
+        user_ids.push(
+            db.create_user(
+                &format!("user{i}@example.com"),
+                false,
+                NewUserParams {
+                    github_login: format!("user{i}"),
+                    github_user_id: i,
+                    invite_count: 0,
                 },
-                Contact::Accepted {
-                    user_id: user_3,
-                    should_notify: false
-                }
-            ]
-        );
-        assert_eq!(
-            db.get_contacts(user_3).await.unwrap(),
-            &[Contact::Accepted {
-                user_id: user_1,
-                should_notify: false
-            }],
-        );
-
-        // User declines a contact request. Both users see that it is gone.
-        db.send_contact_request(user_2, user_3).await.unwrap();
-        db.respond_to_contact_request(user_3, user_2, false)
+            )
             .await
-            .unwrap();
-        assert!(!db.has_contact(user_2, user_3).await.unwrap());
-        assert!(!db.has_contact(user_3, user_2).await.unwrap());
-        assert_eq!(
-            db.get_contacts(user_2).await.unwrap(),
-            &[Contact::Accepted {
-                user_id: user_1,
-                should_notify: false
-            }]
-        );
-        assert_eq!(
-            db.get_contacts(user_3).await.unwrap(),
-            &[Contact::Accepted {
-                user_id: user_1,
-                should_notify: false
-            }],
+            .unwrap()
+            .user_id,
         );
     }
+
+    let user_1 = user_ids[0];
+    let user_2 = user_ids[1];
+    let user_3 = user_ids[2];
+
+    // User starts with no contacts
+    assert_eq!(db.get_contacts(user_1).await.unwrap(), &[]);
+
+    // User requests a contact. Both users see the pending request.
+    db.send_contact_request(user_1, user_2).await.unwrap();
+    assert!(!db.has_contact(user_1, user_2).await.unwrap());
+    assert!(!db.has_contact(user_2, user_1).await.unwrap());
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Outgoing { user_id: user_2 }],
+    );
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Incoming {
+            user_id: user_1,
+            should_notify: true
+        }]
+    );
+
+    // User 2 dismisses the contact request notification without accepting or rejecting.
+    // We shouldn't notify them again.
+    db.dismiss_contact_notification(user_1, user_2)
+        .await
+        .unwrap_err();
+    db.dismiss_contact_notification(user_2, user_1)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Incoming {
+            user_id: user_1,
+            should_notify: false
+        }]
+    );
+
+    // User can't accept their own contact request
+    db.respond_to_contact_request(user_1, user_2, true)
+        .await
+        .unwrap_err();
+
+    // User accepts a contact request. Both users see the contact.
+    db.respond_to_contact_request(user_2, user_1, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_2,
+            should_notify: true
+        }],
+    );
+    assert!(db.has_contact(user_1, user_2).await.unwrap());
+    assert!(db.has_contact(user_2, user_1).await.unwrap());
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false,
+        }]
+    );
+
+    // Users cannot re-request existing contacts.
+    db.send_contact_request(user_1, user_2).await.unwrap_err();
+    db.send_contact_request(user_2, user_1).await.unwrap_err();
+
+    // Users can't dismiss notifications of them accepting other users' requests.
+    db.dismiss_contact_notification(user_2, user_1)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_2,
+            should_notify: true,
+        }]
+    );
+
+    // Users can dismiss notifications of other users accepting their requests.
+    db.dismiss_contact_notification(user_1, user_2)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_2,
+            should_notify: false,
+        }]
+    );
+
+    // Users send each other concurrent contact requests and
+    // see that they are immediately accepted.
+    db.send_contact_request(user_1, user_3).await.unwrap();
+    db.send_contact_request(user_3, user_1).await.unwrap();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[
+            Contact::Accepted {
+                user_id: user_2,
+                should_notify: false,
+            },
+            Contact::Accepted {
+                user_id: user_3,
+                should_notify: false
+            }
+        ]
+    );
+    assert_eq!(
+        db.get_contacts(user_3).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false
+        }],
+    );
+
+    // User declines a contact request. Both users see that it is gone.
+    db.send_contact_request(user_2, user_3).await.unwrap();
+    db.respond_to_contact_request(user_3, user_2, false)
+        .await
+        .unwrap();
+    assert!(!db.has_contact(user_2, user_3).await.unwrap());
+    assert!(!db.has_contact(user_3, user_2).await.unwrap());
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false
+        }]
+    );
+    assert_eq!(
+        db.get_contacts(user_3).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false
+        }],
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invite_codes() {
-    let postgres = TestDb::real().await;
-    let db = postgres.db();
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
     let NewUserResult { user_id: user1, .. } = db
         .create_user(
             "user1@example.com",
@@ -1000,8 +980,8 @@ async fn test_invite_codes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_signups() {
-    let postgres = TestDb::real().await;
-    let db = postgres.db();
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
 
     // people sign up on the waitlist
     for i in 0..8 {
@@ -1146,8 +1126,8 @@ async fn test_signups() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_metrics_id() {
-    let postgres = TestDb::real().await;
-    let db = postgres.db();
+    let test_db = TestDb::new(build_background_executor()).await;
+    let db = test_db.db();
 
     let NewUserResult {
         user_id: user1,

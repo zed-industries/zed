@@ -6104,7 +6104,7 @@ impl TestServer {
             .enable_time()
             .build()
             .unwrap()
-            .block_on(TestDb::real());
+            .block_on(TestDb::new(background.clone()));
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
