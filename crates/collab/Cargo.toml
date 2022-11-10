@@ -50,8 +50,8 @@ tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
 
 [dependencies.sqlx]
-git = "https://github.com/zed-industries/sqlx"
-rev = "a3488181818e2094f12c7eae59cdfacd254d50b3"
+git = "https://github.com/launchbadge/sqlx"
+rev = "4b7053807c705df312bcb9b6281e184bf7534eb3"
 features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid"]
 
 [dev-dependencies]
@@ -80,8 +80,8 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 unindent = "0.1"
 
 [dev-dependencies.sqlx]
-git = "https://github.com/zed-industries/sqlx"
-rev = "a3488181818e2094f12c7eae59cdfacd254d50b3"
+git = "https://github.com/launchbadge/sqlx"
+rev = "4b7053807c705df312bcb9b6281e184bf7534eb3"
 features = ["sqlite"]
 
 [features]

@@ -5604,7 +5604,7 @@ dependencies = [
 [[package]]
 name = "sqlx"
 version = "0.6.2"
-source = "git+https://github.com/zed-industries/sqlx?rev=a3488181818e2094f12c7eae59cdfacd254d50b3#a3488181818e2094f12c7eae59cdfacd254d50b3"
+source = "git+https://github.com/launchbadge/sqlx?rev=4b7053807c705df312bcb9b6281e184bf7534eb3#4b7053807c705df312bcb9b6281e184bf7534eb3"
 dependencies = [
  "sqlx-core",
  "sqlx-macros",
@@ -5613,7 +5613,7 @@ dependencies = [
 [[package]]
 name = "sqlx-core"
 version = "0.6.2"
-source = "git+https://github.com/zed-industries/sqlx?rev=a3488181818e2094f12c7eae59cdfacd254d50b3#a3488181818e2094f12c7eae59cdfacd254d50b3"
+source = "git+https://github.com/launchbadge/sqlx?rev=4b7053807c705df312bcb9b6281e184bf7534eb3#4b7053807c705df312bcb9b6281e184bf7534eb3"
 dependencies = [
  "ahash",
  "atoi",
@@ -5670,7 +5670,7 @@ dependencies = [
 [[package]]
 name = "sqlx-macros"
 version = "0.6.2"
-source = "git+https://github.com/zed-industries/sqlx?rev=a3488181818e2094f12c7eae59cdfacd254d50b3#a3488181818e2094f12c7eae59cdfacd254d50b3"
+source = "git+https://github.com/launchbadge/sqlx?rev=4b7053807c705df312bcb9b6281e184bf7534eb3#4b7053807c705df312bcb9b6281e184bf7534eb3"
 dependencies = [
  "dotenvy",
  "either",
@@ -5689,7 +5689,7 @@ dependencies = [
 [[package]]
 name = "sqlx-rt"
 version = "0.6.2"
-source = "git+https://github.com/zed-industries/sqlx?rev=a3488181818e2094f12c7eae59cdfacd254d50b3#a3488181818e2094f12c7eae59cdfacd254d50b3"
+source = "git+https://github.com/launchbadge/sqlx?rev=4b7053807c705df312bcb9b6281e184bf7534eb3#4b7053807c705df312bcb9b6281e184bf7534eb3"
 dependencies = [
  "once_cell",
  "tokio",
