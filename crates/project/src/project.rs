@@ -3476,12 +3476,12 @@ impl Project {
 
                         for (range, text) in edits {
                             let primary = &completion.old_range;
-                            let within_primary = primary.start.cmp(&range.start, buffer).is_ge()
-                                && primary.end.cmp(&range.end, buffer).is_le();
-                            let within_additional = range.start.cmp(&primary.start, buffer).is_ge()
-                                && range.end.cmp(&primary.end, buffer).is_le();
+                            let start_within = primary.start.cmp(&range.start, buffer).is_le()
+                                && primary.end.cmp(&range.start, buffer).is_ge();
+                            let end_within = range.start.cmp(&primary.end, buffer).is_le()
+                                && range.end.cmp(&primary.end, buffer).is_ge();
 
-                            if !within_primary && !within_additional {
+                            if !start_within && !end_within {
                                 buffer.edit([(range, text)], None, cx);
                             }
                         }
