@@ -819,11 +819,20 @@ impl StatusItemView for CursorPosition {
 
 fn path_for_buffer<'a>(
     buffer: &ModelHandle<MultiBuffer>,
-    mut height: usize,
+    height: usize,
     include_filename: bool,
     cx: &'a AppContext,
 ) -> Option<Cow<'a, Path>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
+    path_for_file(file, height, include_filename, cx)
+}
+
+fn path_for_file<'a>(
+    file: &'a dyn language::File,
+    mut height: usize,
+    include_filename: bool,
+    cx: &'a AppContext,
+) -> Option<Cow<'a, Path>> {
     // Ensure we always render at least the filename.
     height += 1;
 
@@ -845,13 +854,82 @@ fn path_for_buffer<'a>(
         if include_filename {
             Some(full_path.into())
         } else {
-            Some(full_path.parent().unwrap().to_path_buf().into())
+            Some(full_path.parent()?.to_path_buf().into())
         }
     } else {
-        let mut path = file.path().strip_prefix(prefix).unwrap();
+        let mut path = file.path().strip_prefix(prefix).ok()?;
         if !include_filename {
-            path = path.parent().unwrap();
+            path = path.parent()?;
         }
         Some(path.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::MutableAppContext;
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
+    #[gpui::test]
+    fn test_path_for_file(cx: &mut MutableAppContext) {
+        let file = TestFile {
+            path: Path::new("").into(),
+            full_path: PathBuf::from(""),
+        };
+        assert_eq!(path_for_file(&file, 0, false, cx), None);
+    }
+
+    struct TestFile {
+        path: Arc<Path>,
+        full_path: PathBuf,
+    }
+
+    impl language::File for TestFile {
+        fn path(&self) -> &Arc<Path> {
+            &self.path
+        }
+
+        fn full_path(&self, _: &gpui::AppContext) -> PathBuf {
+            self.full_path.clone()
+        }
+
+        fn as_local(&self) -> Option<&dyn language::LocalFile> {
+            todo!()
+        }
+
+        fn mtime(&self) -> std::time::SystemTime {
+            todo!()
+        }
+
+        fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
+            todo!()
+        }
+
+        fn is_deleted(&self) -> bool {
+            todo!()
+        }
+
+        fn save(
+            &self,
+            _: u64,
+            _: language::Rope,
+            _: clock::Global,
+            _: project::LineEnding,
+            _: &mut MutableAppContext,
+        ) -> gpui::Task<anyhow::Result<(clock::Global, String, std::time::SystemTime)>> {
+            todo!()
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            todo!()
+        }
+
+        fn to_proto(&self) -> rpc::proto::File {
+            todo!()
+        }
     }
 }
