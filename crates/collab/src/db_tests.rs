@@ -625,7 +625,7 @@ async fn test_fuzzy_search_users() {
         &["rhode-island", "colorado", "oregon"],
     );
 
-    async fn fuzzy_search_user_names(db: &Arc<dyn Db>, query: &str) -> Vec<String> {
+    async fn fuzzy_search_user_names(db: &Arc<TestDb>, query: &str) -> Vec<String> {
         db.fuzzy_search_users(query, 10)
             .await
             .unwrap()

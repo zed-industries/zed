@@ -13,7 +13,7 @@ use crate::rpc::ResultExt as _;
 use anyhow::anyhow;
 use axum::{routing::get, Router};
 use collab::{Error, Result};
-use db::{Db, RealDb};
+use db::DefaultDb as Db;
 use serde::Deserialize;
 use std::{
     env::args,
@@ -49,14 +49,14 @@ pub struct MigrateConfig {
 }
 
 pub struct AppState {
-    db: Arc<dyn Db>,
+    db: Arc<Db>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     config: Config,
 }
 
 impl AppState {
     async fn new(config: Config) -> Result<Arc<Self>> {
-        let db = RealDb::new(&config.database_url, 5).await?;
+        let db = Db::new(&config.database_url, 5).await?;
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server
             .as_ref()
@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
         }
         Some("migrate") => {
             let config = envy::from_env::<MigrateConfig>().expect("error loading config");
-            let db = RealDb::new(&config.database_url, 5).await?;
+            let db = Db::new(&config.database_url, 5).await?;
 
             let migrations_path = config
                 .migrations_path
