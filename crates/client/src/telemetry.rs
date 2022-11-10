@@ -1,5 +1,5 @@
 use crate::http::HttpClient;
-use db::Db;
+use db::{kvp::KeyValue, Db};
 use gpui::{
     executor::Background,
     serde_json::{self, value::Map, Value},
@@ -148,7 +148,7 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>, db: Db) {
+    pub fn start(self: &Arc<Self>, db: Db<KeyValue>) {
         let this = self.clone();
         self.executor
             .spawn(

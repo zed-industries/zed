@@ -1,5 +1,6 @@
 pub mod bindable;
 pub mod connection;
+pub mod domain;
 pub mod migrations;
 pub mod savepoint;
 pub mod statement;

@@ -1925,7 +1925,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+            cx.add_window(|cx| Workspace::new(None, project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labled_item(&workspace, &pane, "A", cx);

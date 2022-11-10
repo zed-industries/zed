@@ -1,5 +1,5 @@
 use anyhow::Result;
-use indoc::{formatdoc, indoc};
+use indoc::formatdoc;
 
 use crate::connection::Connection;
 

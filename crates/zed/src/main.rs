@@ -57,7 +57,7 @@ fn main() {
     init_panic_hook(app_version, http.clone(), app.background());
 
     let db = app.background().spawn(async move {
-        project::Db::open(&*zed::paths::DB_DIR, RELEASE_CHANNEL_NAME.as_str())
+        project::Db::<project::KeyValue>::open(&*zed::paths::DB_DIR, RELEASE_CHANNEL_NAME.as_str())
     });
 
     load_embedded_fonts(&app);
@@ -150,7 +150,7 @@ fn main() {
         let db = cx.background().block(db);
         cx.set_global(db);
 
-        client.start_telemetry(cx.global::<Db>().clone());
+        client.start_telemetry(cx.global::<Db<project::KeyValue>>().clone());
         client.report_event("start app", Default::default());
 
         let app_state = Arc::new(AppState {
@@ -165,7 +165,7 @@ fn main() {
             default_item_factory,
         });
         auto_update::init(
-            cx.global::<Db>().clone(),
+            cx.global::<Db<project::KeyValue>>().clone(),
             http,
             client::ZED_SERVER_URL.clone(),
             cx,

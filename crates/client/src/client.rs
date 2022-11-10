@@ -11,7 +11,7 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
-use db::Db;
+use db::{kvp::KeyValue, Db};
 use futures::{future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
     actions,
@@ -1218,7 +1218,7 @@ impl Client {
         self.peer.respond_with_error(receipt, error)
     }
 
-    pub fn start_telemetry(&self, db: Db) {
+    pub fn start_telemetry(&self, db: Db<KeyValue>) {
         self.telemetry.start(db.clone());
     }
 

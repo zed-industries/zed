@@ -2,7 +2,7 @@ mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
 use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
-use db::Db;
+use db::{kvp::KeyValue, Db};
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, WeakViewHandle,
@@ -42,7 +42,7 @@ pub struct AutoUpdater {
     current_version: AppVersion,
     http_client: Arc<dyn HttpClient>,
     pending_poll: Option<Task<()>>,
-    db: project::Db,
+    db: project::Db<KeyValue>,
     server_url: String,
 }
 
@@ -57,7 +57,7 @@ impl Entity for AutoUpdater {
 }
 
 pub fn init(
-    db: Db,
+    db: Db<KeyValue>,
     http_client: Arc<dyn HttpClient>,
     server_url: String,
     cx: &mut MutableAppContext,
@@ -126,7 +126,7 @@ impl AutoUpdater {
 
     fn new(
         current_version: AppVersion,
-        db: project::Db,
+        db: project::Db<KeyValue>,
         http_client: Arc<dyn HttpClient>,
         server_url: String,
     ) -> Self {

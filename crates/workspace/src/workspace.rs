@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::{model::SerializedWorkspace, Db};
+use db::{kvp::KeyValue, model::SerializedWorkspace, Db};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -1288,7 +1288,8 @@ impl Workspace {
 
             // Use the resolved worktree roots to get the serialized_db from the database
             let serialized_workspace = cx.read(|cx| {
-                cx.global::<Db>()
+                cx.global::<Db<KeyValue>>()
+                    .open_as::<db::Workspace>()
                     .workspace_for_roots(&Vec::from_iter(worktree_roots.into_iter())[..])
             });
 

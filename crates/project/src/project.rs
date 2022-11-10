@@ -63,7 +63,7 @@ use std::{
 use thiserror::Error;
 use util::{defer, post_inc, ResultExt, TryFutureExt as _};
 
-pub use db::Db;
+pub use db::{kvp::KeyValue, Db};
 pub use fs::*;
 pub use worktree::*;
 

@@ -1,26 +1,26 @@
-use std::{ops::Deref, sync::Arc};
+use std::{marker::PhantomData, ops::Deref, sync::Arc};
 
 use connection::Connection;
 use thread_local::ThreadLocal;
 
-use crate::{connection, migrations::Migration};
+use crate::{connection, domain::Domain};
 
-pub struct ThreadSafeConnection {
+pub struct ThreadSafeConnection<D: Domain> {
     uri: Arc<str>,
     persistent: bool,
     initialize_query: Option<&'static str>,
-    migrations: Option<&'static [Migration]>,
     connection: Arc<ThreadLocal<Connection>>,
+    _pd: PhantomData<D>,
 }
 
-impl ThreadSafeConnection {
+impl<D: Domain> ThreadSafeConnection<D> {
     pub fn new(uri: &str, persistent: bool) -> Self {
         Self {
             uri: Arc::from(uri),
             persistent,
             initialize_query: None,
-            migrations: None,
             connection: Default::default(),
+            _pd: PhantomData,
         }
     }
 
@@ -28,13 +28,6 @@ impl ThreadSafeConnection {
     /// be infallible (EG only use pragma statements)
     pub fn with_initialize_query(mut self, initialize_query: &'static str) -> Self {
         self.initialize_query = Some(initialize_query);
-        self
-    }
-
-    /// Migrations have to be run per connection because we fallback to memory
-    /// so this needs
-    pub fn with_migrations(mut self, migrations: &'static [Migration]) -> Self {
-        self.migrations = Some(migrations);
         self
     }
 
@@ -50,21 +43,33 @@ impl ThreadSafeConnection {
     fn open_shared_memory(&self) -> Connection {
         Connection::open_memory(self.uri.as_ref())
     }
+
+    // Open a new connection for the given domain, leaving this
+    // connection intact.
+    pub fn for_domain<D2: Domain>(&self) -> ThreadSafeConnection<D2> {
+        ThreadSafeConnection {
+            uri: self.uri.clone(),
+            persistent: self.persistent,
+            initialize_query: self.initialize_query,
+            connection: Default::default(),
+            _pd: PhantomData,
+        }
+    }
 }
 
-impl Clone for ThreadSafeConnection {
+impl<D: Domain> Clone for ThreadSafeConnection<D> {
     fn clone(&self) -> Self {
         Self {
             uri: self.uri.clone(),
             persistent: self.persistent,
             initialize_query: self.initialize_query.clone(),
-            migrations: self.migrations.clone(),
             connection: self.connection.clone(),
+            _pd: PhantomData,
         }
     }
 }
 
-impl Deref for ThreadSafeConnection {
+impl<D: Domain> Deref for ThreadSafeConnection<D> {
     type Target = Connection;
 
     fn deref(&self) -> &Self::Target {
@@ -83,13 +88,7 @@ impl Deref for ThreadSafeConnection {
                 .unwrap();
             }
 
-            if let Some(migrations) = self.migrations {
-                for migration in migrations {
-                    migration
-                        .run(&connection)
-                        .expect(&format!("Migrations failed to execute: {:?}", migration));
-                }
-            }
+            D::migrate(&connection).expect("Migrations failed");
 
             connection
         })

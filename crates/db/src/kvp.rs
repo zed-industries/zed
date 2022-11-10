@@ -1,7 +1,7 @@
 use super::Db;
 use anyhow::Result;
 use indoc::indoc;
-use sqlez::migrations::Migration;
+use sqlez::{connection::Connection, domain::Domain, migrations::Migration};
 
 pub(crate) const KVP_MIGRATION: Migration = Migration::new(
     "kvp",
@@ -13,7 +13,16 @@ pub(crate) const KVP_MIGRATION: Migration = Migration::new(
     "}],
 );
 
-impl Db {
+#[derive(Clone)]
+pub enum KeyValue {}
+
+impl Domain for KeyValue {
+    fn migrate(conn: &Connection) -> anyhow::Result<()> {
+        KVP_MIGRATION.run(conn)
+    }
+}
+
+impl Db<KeyValue> {
     pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
         self.select_row_bound("SELECT value FROM kv_store WHERE key = (?)")?(key)
     }
