@@ -1,7 +1,6 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-pub mod channel;
 pub mod http;
 pub mod telemetry;
 pub mod user;
@@ -44,7 +43,6 @@ use thiserror::Error;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
 
-pub use channel::*;
 pub use rpc::*;
 pub use user::*;
 

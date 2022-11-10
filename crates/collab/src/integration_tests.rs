@@ -1,14 +1,14 @@
 use crate::{
-    db::{NewUserParams, ProjectId, TestDb, UserId},
-    rpc::{Executor, Server, Store},
+    db::{NewUserParams, ProjectId, SqliteTestDb as TestDb, UserId},
+    rpc::{Executor, Server},
     AppState,
 };
 use ::rpc::Peer;
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
-    self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
-    Credentials, EstablishConnectionError, PeerId, User, UserStore, RECEIVE_TIMEOUT,
+    self, test::FakeHttpClient, Client, Connection, Credentials, EstablishConnectionError, PeerId,
+    User, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
@@ -16,10 +16,7 @@ use editor::{
     ToggleCodeActions, Undo,
 };
 use fs::{FakeFs, Fs as _, HomeDir, LineEnding};
-use futures::{
-    channel::{mpsc, oneshot},
-    Future, StreamExt as _,
-};
+use futures::{channel::oneshot, Future, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
     geometry::vector::vec2f,
@@ -39,7 +36,6 @@ use project::{
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Formatter, Settings};
-use sqlx::types::time::OffsetDateTime;
 use std::{
     cell::{Cell, RefCell},
     env, mem,
@@ -73,7 +69,10 @@ async fn test_basic_calls(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
+
+    let start = std::time::Instant::now();
+
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -259,6 +258,8 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
+
+    eprintln!("finished test {:?}", start.elapsed());
 }
 
 #[gpui::test(iterations = 10)]
@@ -271,7 +272,7 @@ async fn test_room_uniqueness(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let _client_a2 = server.create_client(cx_a2, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -376,7 +377,7 @@ async fn test_leaving_room_on_disconnection(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -505,7 +506,7 @@ async fn test_calls_on_multiple_connections(
     cx_b2: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b1 = server.create_client(cx_b1, "user_b").await;
     let client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -654,7 +655,7 @@ async fn test_share_project(
 ) {
     deterministic.forbid_parking();
     let (_, window_b) = cx_b.add_window(|_| EmptyView);
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -791,7 +792,7 @@ async fn test_unshare_project(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -874,7 +875,7 @@ async fn test_host_disconnect(
 ) {
     cx_b.update(editor::init);
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -979,7 +980,7 @@ async fn test_active_call_events(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     client_a.fs.insert_tree("/a", json!({})).await;
@@ -1068,7 +1069,7 @@ async fn test_room_location(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     client_a.fs.insert_tree("/a", json!({})).await;
@@ -1234,7 +1235,7 @@ async fn test_propagate_saves_and_fs_changes(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -1409,7 +1410,7 @@ async fn test_git_diff_base_change(
     cx_b: &mut TestAppContext,
 ) {
     executor.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -1661,7 +1662,7 @@ async fn test_fs_operations(
     cx_b: &mut TestAppContext,
 ) {
     executor.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -1927,7 +1928,7 @@ async fn test_fs_operations(
 #[gpui::test(iterations = 10)]
 async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -1981,7 +1982,7 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
 #[gpui::test(iterations = 10)]
 async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2040,7 +2041,7 @@ async fn test_editing_while_guest_opens_buffer(
     cx_b: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2087,7 +2088,7 @@ async fn test_leaving_worktree_while_opening_buffer(
     cx_b: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2132,7 +2133,7 @@ async fn test_canceling_buffer_opening(
 ) {
     deterministic.forbid_parking();
 
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2183,7 +2184,7 @@ async fn test_leaving_project(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -2316,7 +2317,7 @@ async fn test_collaborating_with_diagnostics(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -2581,7 +2582,7 @@ async fn test_collaborating_with_diagnostics(
 #[gpui::test(iterations = 10)]
 async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2755,7 +2756,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 #[gpui::test(iterations = 10)]
 async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2848,7 +2849,7 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
 async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     use project::FormatTrigger;
 
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2949,7 +2950,7 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
 #[gpui::test(iterations = 10)]
 async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3093,7 +3094,7 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3194,7 +3195,7 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3273,7 +3274,7 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
 #[gpui::test(iterations = 10)]
 async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3375,7 +3376,7 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
 #[gpui::test(iterations = 10)]
 async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3478,7 +3479,7 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3586,7 +3587,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     mut rng: StdRng,
 ) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3662,7 +3663,7 @@ async fn test_collaborating_with_code_actions(
 ) {
     cx_a.foreground().forbid_parking();
     cx_b.update(editor::init);
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3873,7 +3874,7 @@ async fn test_collaborating_with_code_actions(
 async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     cx_b.update(editor::init);
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4065,7 +4066,7 @@ async fn test_language_server_statuses(
     deterministic.forbid_parking();
 
     cx_b.update(editor::init);
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4170,415 +4171,6 @@ async fn test_language_server_statuses(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-
-    // Create an org that includes these 2 users.
-    let db = &server.app_state.db;
-    let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-    db.add_org_member(org_id, client_a.current_user_id(cx_a), false)
-        .await
-        .unwrap();
-    db.add_org_member(org_id, client_b.current_user_id(cx_b), false)
-        .await
-        .unwrap();
-
-    // Create a channel that includes all the users.
-    let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-    db.add_channel_member(channel_id, client_a.current_user_id(cx_a), false)
-        .await
-        .unwrap();
-    db.add_channel_member(channel_id, client_b.current_user_id(cx_b), false)
-        .await
-        .unwrap();
-    db.create_channel_message(
-        channel_id,
-        client_b.current_user_id(cx_b),
-        "hello A, it's B.",
-        OffsetDateTime::now_utc(),
-        1,
-    )
-    .await
-    .unwrap();
-
-    let channels_a =
-        cx_a.add_model(|cx| ChannelList::new(client_a.user_store.clone(), client_a.clone(), cx));
-    channels_a
-        .condition(cx_a, |list, _| list.available_channels().is_some())
-        .await;
-    channels_a.read_with(cx_a, |list, _| {
-        assert_eq!(
-            list.available_channels().unwrap(),
-            &[ChannelDetails {
-                id: channel_id.to_proto(),
-                name: "test-channel".to_string()
-            }]
-        )
-    });
-    let channel_a = channels_a.update(cx_a, |this, cx| {
-        this.get_channel(channel_id.to_proto(), cx).unwrap()
-    });
-    channel_a.read_with(cx_a, |channel, _| assert!(channel.messages().is_empty()));
-    channel_a
-        .condition(cx_a, |channel, _| {
-            channel_messages(channel)
-                == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
-        })
-        .await;
-
-    let channels_b =
-        cx_b.add_model(|cx| ChannelList::new(client_b.user_store.clone(), client_b.clone(), cx));
-    channels_b
-        .condition(cx_b, |list, _| list.available_channels().is_some())
-        .await;
-    channels_b.read_with(cx_b, |list, _| {
-        assert_eq!(
-            list.available_channels().unwrap(),
-            &[ChannelDetails {
-                id: channel_id.to_proto(),
-                name: "test-channel".to_string()
-            }]
-        )
-    });
-
-    let channel_b = channels_b.update(cx_b, |this, cx| {
-        this.get_channel(channel_id.to_proto(), cx).unwrap()
-    });
-    channel_b.read_with(cx_b, |channel, _| assert!(channel.messages().is_empty()));
-    channel_b
-        .condition(cx_b, |channel, _| {
-            channel_messages(channel)
-                == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
-        })
-        .await;
-
-    channel_a
-        .update(cx_a, |channel, cx| {
-            channel
-                .send_message("oh, hi B.".to_string(), cx)
-                .unwrap()
-                .detach();
-            let task = channel.send_message("sup".to_string(), cx).unwrap();
-            assert_eq!(
-                channel_messages(channel),
-                &[
-                    ("user_b".to_string(), "hello A, it's B.".to_string(), false),
-                    ("user_a".to_string(), "oh, hi B.".to_string(), true),
-                    ("user_a".to_string(), "sup".to_string(), true)
-                ]
-            );
-            task
-        })
-        .await
-        .unwrap();
-
-    channel_b
-        .condition(cx_b, |channel, _| {
-            channel_messages(channel)
-                == [
-                    ("user_b".to_string(), "hello A, it's B.".to_string(), false),
-                    ("user_a".to_string(), "oh, hi B.".to_string(), false),
-                    ("user_a".to_string(), "sup".to_string(), false),
-                ]
-        })
-        .await;
-
-    assert_eq!(
-        server
-            .store()
-            .await
-            .channel(channel_id)
-            .unwrap()
-            .connection_ids
-            .len(),
-        2
-    );
-    cx_b.update(|_| drop(channel_b));
-    server
-        .condition(|state| state.channel(channel_id).unwrap().connection_ids.len() == 1)
-        .await;
-
-    cx_a.update(|_| drop(channel_a));
-    server
-        .condition(|state| state.channel(channel_id).is_none())
-        .await;
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_chat_message_validation(cx_a: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-
-    let db = &server.app_state.db;
-    let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-    let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-    db.add_org_member(org_id, client_a.current_user_id(cx_a), false)
-        .await
-        .unwrap();
-    db.add_channel_member(channel_id, client_a.current_user_id(cx_a), false)
-        .await
-        .unwrap();
-
-    let channels_a =
-        cx_a.add_model(|cx| ChannelList::new(client_a.user_store.clone(), client_a.clone(), cx));
-    channels_a
-        .condition(cx_a, |list, _| list.available_channels().is_some())
-        .await;
-    let channel_a = channels_a.update(cx_a, |this, cx| {
-        this.get_channel(channel_id.to_proto(), cx).unwrap()
-    });
-
-    // Messages aren't allowed to be too long.
-    channel_a
-        .update(cx_a, |channel, cx| {
-            let long_body = "this is long.\n".repeat(1024);
-            channel.send_message(long_body, cx).unwrap()
-        })
-        .await
-        .unwrap_err();
-
-    // Messages aren't allowed to be blank.
-    channel_a.update(cx_a, |channel, cx| {
-        channel.send_message(String::new(), cx).unwrap_err()
-    });
-
-    // Leading and trailing whitespace are trimmed.
-    channel_a
-        .update(cx_a, |channel, cx| {
-            channel
-                .send_message("\n surrounded by whitespace  \n".to_string(), cx)
-                .unwrap()
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        db.get_channel_messages(channel_id, 10, None)
-            .await
-            .unwrap()
-            .iter()
-            .map(|m| &m.body)
-            .collect::<Vec<_>>(),
-        &["surrounded by whitespace"]
-    );
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-
-    let mut status_b = client_b.status();
-
-    // Create an org that includes these 2 users.
-    let db = &server.app_state.db;
-    let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-    db.add_org_member(org_id, client_a.current_user_id(cx_a), false)
-        .await
-        .unwrap();
-    db.add_org_member(org_id, client_b.current_user_id(cx_b), false)
-        .await
-        .unwrap();
-
-    // Create a channel that includes all the users.
-    let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-    db.add_channel_member(channel_id, client_a.current_user_id(cx_a), false)
-        .await
-        .unwrap();
-    db.add_channel_member(channel_id, client_b.current_user_id(cx_b), false)
-        .await
-        .unwrap();
-    db.create_channel_message(
-        channel_id,
-        client_b.current_user_id(cx_b),
-        "hello A, it's B.",
-        OffsetDateTime::now_utc(),
-        2,
-    )
-    .await
-    .unwrap();
-
-    let channels_a =
-        cx_a.add_model(|cx| ChannelList::new(client_a.user_store.clone(), client_a.clone(), cx));
-    channels_a
-        .condition(cx_a, |list, _| list.available_channels().is_some())
-        .await;
-
-    channels_a.read_with(cx_a, |list, _| {
-        assert_eq!(
-            list.available_channels().unwrap(),
-            &[ChannelDetails {
-                id: channel_id.to_proto(),
-                name: "test-channel".to_string()
-            }]
-        )
-    });
-    let channel_a = channels_a.update(cx_a, |this, cx| {
-        this.get_channel(channel_id.to_proto(), cx).unwrap()
-    });
-    channel_a.read_with(cx_a, |channel, _| assert!(channel.messages().is_empty()));
-    channel_a
-        .condition(cx_a, |channel, _| {
-            channel_messages(channel)
-                == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
-        })
-        .await;
-
-    let channels_b =
-        cx_b.add_model(|cx| ChannelList::new(client_b.user_store.clone(), client_b.clone(), cx));
-    channels_b
-        .condition(cx_b, |list, _| list.available_channels().is_some())
-        .await;
-    channels_b.read_with(cx_b, |list, _| {
-        assert_eq!(
-            list.available_channels().unwrap(),
-            &[ChannelDetails {
-                id: channel_id.to_proto(),
-                name: "test-channel".to_string()
-            }]
-        )
-    });
-
-    let channel_b = channels_b.update(cx_b, |this, cx| {
-        this.get_channel(channel_id.to_proto(), cx).unwrap()
-    });
-    channel_b.read_with(cx_b, |channel, _| assert!(channel.messages().is_empty()));
-    channel_b
-        .condition(cx_b, |channel, _| {
-            channel_messages(channel)
-                == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
-        })
-        .await;
-
-    // Disconnect client B, ensuring we can still access its cached channel data.
-    server.forbid_connections();
-    server.disconnect_client(client_b.peer_id().unwrap());
-    cx_b.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
-    while !matches!(
-        status_b.next().await,
-        Some(client::Status::ReconnectionError { .. })
-    ) {}
-
-    channels_b.read_with(cx_b, |channels, _| {
-        assert_eq!(
-            channels.available_channels().unwrap(),
-            [ChannelDetails {
-                id: channel_id.to_proto(),
-                name: "test-channel".to_string()
-            }]
-        )
-    });
-    channel_b.read_with(cx_b, |channel, _| {
-        assert_eq!(
-            channel_messages(channel),
-            [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
-        )
-    });
-
-    // Send a message from client B while it is disconnected.
-    channel_b
-        .update(cx_b, |channel, cx| {
-            let task = channel
-                .send_message("can you see this?".to_string(), cx)
-                .unwrap();
-            assert_eq!(
-                channel_messages(channel),
-                &[
-                    ("user_b".to_string(), "hello A, it's B.".to_string(), false),
-                    ("user_b".to_string(), "can you see this?".to_string(), true)
-                ]
-            );
-            task
-        })
-        .await
-        .unwrap_err();
-
-    // Send a message from client A while B is disconnected.
-    channel_a
-        .update(cx_a, |channel, cx| {
-            channel
-                .send_message("oh, hi B.".to_string(), cx)
-                .unwrap()
-                .detach();
-            let task = channel.send_message("sup".to_string(), cx).unwrap();
-            assert_eq!(
-                channel_messages(channel),
-                &[
-                    ("user_b".to_string(), "hello A, it's B.".to_string(), false),
-                    ("user_a".to_string(), "oh, hi B.".to_string(), true),
-                    ("user_a".to_string(), "sup".to_string(), true)
-                ]
-            );
-            task
-        })
-        .await
-        .unwrap();
-
-    // Give client B a chance to reconnect.
-    server.allow_connections();
-    cx_b.foreground().advance_clock(Duration::from_secs(10));
-
-    // Verify that B sees the new messages upon reconnection, as well as the message client B
-    // sent while offline.
-    channel_b
-        .condition(cx_b, |channel, _| {
-            channel_messages(channel)
-                == [
-                    ("user_b".to_string(), "hello A, it's B.".to_string(), false),
-                    ("user_a".to_string(), "oh, hi B.".to_string(), false),
-                    ("user_a".to_string(), "sup".to_string(), false),
-                    ("user_b".to_string(), "can you see this?".to_string(), false),
-                ]
-        })
-        .await;
-
-    // Ensure client A and B can communicate normally after reconnection.
-    channel_a
-        .update(cx_a, |channel, cx| {
-            channel.send_message("you online?".to_string(), cx).unwrap()
-        })
-        .await
-        .unwrap();
-    channel_b
-        .condition(cx_b, |channel, _| {
-            channel_messages(channel)
-                == [
-                    ("user_b".to_string(), "hello A, it's B.".to_string(), false),
-                    ("user_a".to_string(), "oh, hi B.".to_string(), false),
-                    ("user_a".to_string(), "sup".to_string(), false),
-                    ("user_b".to_string(), "can you see this?".to_string(), false),
-                    ("user_a".to_string(), "you online?".to_string(), false),
-                ]
-        })
-        .await;
-
-    channel_b
-        .update(cx_b, |channel, cx| {
-            channel.send_message("yep".to_string(), cx).unwrap()
-        })
-        .await
-        .unwrap();
-    channel_a
-        .condition(cx_a, |channel, _| {
-            channel_messages(channel)
-                == [
-                    ("user_b".to_string(), "hello A, it's B.".to_string(), false),
-                    ("user_a".to_string(), "oh, hi B.".to_string(), false),
-                    ("user_a".to_string(), "sup".to_string(), false),
-                    ("user_b".to_string(), "can you see this?".to_string(), false),
-                    ("user_a".to_string(), "you online?".to_string(), false),
-                    ("user_b".to_string(), "yep".to_string(), false),
-                ]
-        })
-        .await;
-}
-
-#[gpui::test(iterations = 10)]
 async fn test_contacts(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
@@ -4586,7 +4178,7 @@ async fn test_contacts(
     cx_c: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -4912,7 +4504,7 @@ async fn test_contact_requests(
     cx_a.foreground().forbid_parking();
 
     // Connect to a server as 3 clients.
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_a2 = server.create_client(cx_a2, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -5093,7 +4685,7 @@ async fn test_following(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5367,7 +4959,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5545,7 +5137,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     cx_b.update(editor::init);
 
     // 2 clients connect to a server.
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5719,7 +5311,7 @@ async fn test_peers_simultaneously_following_each_other(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5789,7 +5381,7 @@ async fn test_random_collaboration(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut server = TestServer::start(cx.foreground(), cx.background()).await;
+    let mut server = TestServer::start(cx.background()).await;
     let db = server.app_state.db.clone();
 
     let mut available_guests = Vec::new();
@@ -6076,8 +5668,6 @@ struct TestServer {
     peer: Arc<Peer>,
     app_state: Arc<AppState>,
     server: Arc<Server>,
-    foreground: Rc<executor::Foreground>,
-    notifications: mpsc::UnboundedReceiver<()>,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
     forbid_connections: Arc<AtomicBool>,
     _test_db: TestDb,
@@ -6085,13 +5675,10 @@ struct TestServer {
 }
 
 impl TestServer {
-    async fn start(
-        foreground: Rc<executor::Foreground>,
-        background: Arc<executor::Background>,
-    ) -> Self {
+    async fn start(background: Arc<executor::Background>) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
-        let test_db = TestDb::fake(background.clone());
+        let test_db = TestDb::new(background.clone());
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
@@ -6102,14 +5689,11 @@ impl TestServer {
         .unwrap();
         let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
         let peer = Peer::new();
-        let notifications = mpsc::unbounded();
-        let server = Server::new(app_state.clone(), Some(notifications.0));
+        let server = Server::new(app_state.clone());
         Self {
             peer,
             app_state,
             server,
-            foreground,
-            notifications: notifications.1,
             connection_killers: Default::default(),
             forbid_connections: Default::default(),
             _test_db: test_db,
@@ -6147,7 +5731,7 @@ impl TestServer {
                     },
                 )
                 .await
-                .unwrap()
+                .expect("creating user failed")
                 .user_id
         };
         let client_name = name.to_string();
@@ -6187,7 +5771,11 @@ impl TestServer {
                         let (client_conn, server_conn, killed) =
                             Connection::in_memory(cx.background());
                         let (connection_id_tx, connection_id_rx) = oneshot::channel();
-                        let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
+                        let user = db
+                            .get_user_by_id(user_id)
+                            .await
+                            .expect("retrieving user failed")
+                            .unwrap();
                         cx.background()
                             .spawn(server.handle_connection(
                                 server_conn,
@@ -6221,7 +5809,6 @@ impl TestServer {
             default_item_factory: |_, _| unimplemented!(),
         });
 
-        Channel::init(&client);
         Project::init(&client);
         cx.update(|cx| {
             workspace::init(app_state.clone(), cx);
@@ -6321,21 +5908,6 @@ impl TestServer {
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
             config: Default::default(),
         })
-    }
-
-    async fn condition<F>(&mut self, mut predicate: F)
-    where
-        F: FnMut(&Store) -> bool,
-    {
-        assert!(
-            self.foreground.parking_forbidden(),
-            "you must call forbid_parking to use server conditions so we don't block indefinitely"
-        );
-        while !(predicate)(&*self.server.store.lock().await) {
-            self.foreground.start_waiting();
-            self.notifications.next().await;
-            self.foreground.finish_waiting();
-        }
     }
 }
 
@@ -7050,20 +6622,6 @@ impl Executor for Arc<gpui::executor::Background> {
     fn sleep(&self, duration: Duration) -> Self::Sleep {
         self.as_ref().timer(duration)
     }
-}
-
-fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {
-    channel
-        .messages()
-        .cursor::<()>()
-        .map(|m| {
-            (
-                m.sender.github_login.clone(),
-                m.body.clone(),
-                m.is_pending(),
-            )
-        })
-        .collect()
 }
 
 #[derive(Debug, Eq, PartialEq)]

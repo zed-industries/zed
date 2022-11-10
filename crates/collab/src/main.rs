@@ -13,12 +13,12 @@ use crate::rpc::ResultExt as _;
 use anyhow::anyhow;
 use axum::{routing::get, Router};
 use collab::{Error, Result};
-use db::{Db, PostgresDb};
+use db::DefaultDb as Db;
 use serde::Deserialize;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -49,14 +49,14 @@ pub struct MigrateConfig {
 }
 
 pub struct AppState {
-    db: Arc<dyn Db>,
+    db: Arc<Db>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     config: Config,
 }
 
 impl AppState {
     async fn new(config: Config) -> Result<Arc<Self>> {
-        let db = PostgresDb::new(&config.database_url, 5).await?;
+        let db = Db::new(&config.database_url, 5).await?;
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server
             .as_ref()
@@ -96,13 +96,12 @@ async fn main() -> Result<()> {
         }
         Some("migrate") => {
             let config = envy::from_env::<MigrateConfig>().expect("error loading config");
-            let db = PostgresDb::new(&config.database_url, 5).await?;
+            let db = Db::new(&config.database_url, 5).await?;
 
             let migrations_path = config
                 .migrations_path
                 .as_deref()
-                .or(db::DEFAULT_MIGRATIONS_PATH.map(|s| s.as_ref()))
-                .ok_or_else(|| anyhow!("missing MIGRATIONS_PATH environment variable"))?;
+                .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")));
 
             let migrations = db.migrate(&migrations_path, false).await?;
             for (migration, duration) in migrations {
@@ -122,9 +121,7 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = rpc::Server::new(state.clone(), None);
-            rpc_server
-                .start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
+            let rpc_server = rpc::Server::new(state.clone());
 
             let app = api::routes(rpc_server.clone(), state.clone())
                 .merge(rpc::routes(rpc_server.clone()))
