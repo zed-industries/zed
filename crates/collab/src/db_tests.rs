@@ -2,228 +2,192 @@ use super::db::*;
 use gpui::executor::{Background, Deterministic};
 use std::sync::Arc;
 
-#[gpui::test]
-async fn test_get_users_by_ids() {
-    let test_db = TestDb::new(build_background_executor());
-    let db = test_db.db();
+macro_rules! test_both_dbs {
+    ($postgres_test_name:ident, $sqlite_test_name:ident, $db:ident, $body:block) => {
+        #[gpui::test]
+        async fn $postgres_test_name() {
+            let test_db = PostgresTestDb::new(Deterministic::new(0).build_background());
+            let $db = test_db.db();
+            $body
+        }
 
-    let mut user_ids = Vec::new();
-    for i in 1..=4 {
-        user_ids.push(
-            db.create_user(
-                &format!("user{i}@example.com"),
+        #[gpui::test]
+        async fn $sqlite_test_name() {
+            let test_db = SqliteTestDb::new(Deterministic::new(0).build_background());
+            let $db = test_db.db();
+            $body
+        }
+    };
+}
+
+test_both_dbs!(
+    test_get_users_by_ids_postgres,
+    test_get_users_by_ids_sqlite,
+    db,
+    {
+        let mut user_ids = Vec::new();
+        for i in 1..=4 {
+            user_ids.push(
+                db.create_user(
+                    &format!("user{i}@example.com"),
+                    false,
+                    NewUserParams {
+                        github_login: format!("user{i}"),
+                        github_user_id: i,
+                        invite_count: 0,
+                    },
+                )
+                .await
+                .unwrap()
+                .user_id,
+            );
+        }
+
+        assert_eq!(
+            db.get_users_by_ids(user_ids.clone()).await.unwrap(),
+            vec![
+                User {
+                    id: user_ids[0],
+                    github_login: "user1".to_string(),
+                    github_user_id: Some(1),
+                    email_address: Some("user1@example.com".to_string()),
+                    admin: false,
+                    ..Default::default()
+                },
+                User {
+                    id: user_ids[1],
+                    github_login: "user2".to_string(),
+                    github_user_id: Some(2),
+                    email_address: Some("user2@example.com".to_string()),
+                    admin: false,
+                    ..Default::default()
+                },
+                User {
+                    id: user_ids[2],
+                    github_login: "user3".to_string(),
+                    github_user_id: Some(3),
+                    email_address: Some("user3@example.com".to_string()),
+                    admin: false,
+                    ..Default::default()
+                },
+                User {
+                    id: user_ids[3],
+                    github_login: "user4".to_string(),
+                    github_user_id: Some(4),
+                    email_address: Some("user4@example.com".to_string()),
+                    admin: false,
+                    ..Default::default()
+                }
+            ]
+        );
+    }
+);
+
+test_both_dbs!(
+    test_get_user_by_github_account_postgres,
+    test_get_user_by_github_account_sqlite,
+    db,
+    {
+        let user_id1 = db
+            .create_user(
+                "user1@example.com",
                 false,
                 NewUserParams {
-                    github_login: format!("user{i}"),
-                    github_user_id: i,
+                    github_login: "login1".into(),
+                    github_user_id: 101,
                     invite_count: 0,
                 },
             )
             .await
             .unwrap()
-            .user_id,
-        );
-    }
-
-    assert_eq!(
-        db.get_users_by_ids(user_ids.clone()).await.unwrap(),
-        vec![
-            User {
-                id: user_ids[0],
-                github_login: "user1".to_string(),
-                github_user_id: Some(1),
-                email_address: Some("user1@example.com".to_string()),
-                admin: false,
-                ..Default::default()
-            },
-            User {
-                id: user_ids[1],
-                github_login: "user2".to_string(),
-                github_user_id: Some(2),
-                email_address: Some("user2@example.com".to_string()),
-                admin: false,
-                ..Default::default()
-            },
-            User {
-                id: user_ids[2],
-                github_login: "user3".to_string(),
-                github_user_id: Some(3),
-                email_address: Some("user3@example.com".to_string()),
-                admin: false,
-                ..Default::default()
-            },
-            User {
-                id: user_ids[3],
-                github_login: "user4".to_string(),
-                github_user_id: Some(4),
-                email_address: Some("user4@example.com".to_string()),
-                admin: false,
-                ..Default::default()
-            }
-        ]
-    );
-}
-
-#[gpui::test]
-async fn test_get_user_by_github_account() {
-    let test_db = TestDb::new(build_background_executor());
-    let db = test_db.db();
-    let user_id1 = db
-        .create_user(
-            "user1@example.com",
-            false,
-            NewUserParams {
-                github_login: "login1".into(),
-                github_user_id: 101,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let user_id2 = db
-        .create_user(
-            "user2@example.com",
-            false,
-            NewUserParams {
-                github_login: "login2".into(),
-                github_user_id: 102,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
-    let user = db
-        .get_user_by_github_account("login1", None)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(user.id, user_id1);
-    assert_eq!(&user.github_login, "login1");
-    assert_eq!(user.github_user_id, Some(101));
-
-    assert!(db
-        .get_user_by_github_account("non-existent-login", None)
-        .await
-        .unwrap()
-        .is_none());
-
-    let user = db
-        .get_user_by_github_account("the-new-login2", Some(102))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(user.id, user_id2);
-    assert_eq!(&user.github_login, "the-new-login2");
-    assert_eq!(user.github_user_id, Some(102));
-}
-
-#[gpui::test]
-async fn test_create_access_tokens() {
-    let test_db = TestDb::new(build_background_executor());
-    let db = test_db.db();
-    let user = db
-        .create_user(
-            "u1@example.com",
-            false,
-            NewUserParams {
-                github_login: "u1".into(),
-                github_user_id: 1,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
-    db.create_access_token_hash(user, "h1", 3).await.unwrap();
-    db.create_access_token_hash(user, "h2", 3).await.unwrap();
-    assert_eq!(
-        db.get_access_token_hashes(user).await.unwrap(),
-        &["h2".to_string(), "h1".to_string()]
-    );
-
-    db.create_access_token_hash(user, "h3", 3).await.unwrap();
-    assert_eq!(
-        db.get_access_token_hashes(user).await.unwrap(),
-        &["h3".to_string(), "h2".to_string(), "h1".to_string(),]
-    );
-
-    db.create_access_token_hash(user, "h4", 3).await.unwrap();
-    assert_eq!(
-        db.get_access_token_hashes(user).await.unwrap(),
-        &["h4".to_string(), "h3".to_string(), "h2".to_string(),]
-    );
-
-    db.create_access_token_hash(user, "h5", 3).await.unwrap();
-    assert_eq!(
-        db.get_access_token_hashes(user).await.unwrap(),
-        &["h5".to_string(), "h4".to_string(), "h3".to_string()]
-    );
-}
-
-#[test]
-fn test_fuzzy_like_string() {
-    assert_eq!(DefaultDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
-    assert_eq!(DefaultDb::fuzzy_like_string("x y"), "%x%y%");
-    assert_eq!(DefaultDb::fuzzy_like_string(" z  "), "%z%");
-}
-
-#[gpui::test]
-async fn test_fuzzy_search_users() {
-    let test_db = TestDb::new(build_background_executor());
-    let db = test_db.db();
-    for (i, github_login) in [
-        "California",
-        "colorado",
-        "oregon",
-        "washington",
-        "florida",
-        "delaware",
-        "rhode-island",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        db.create_user(
-            &format!("{github_login}@example.com"),
-            false,
-            NewUserParams {
-                github_login: github_login.into(),
-                github_user_id: i as i32,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap();
-    }
-
-    assert_eq!(
-        fuzzy_search_user_names(db, "clr").await,
-        &["colorado", "California"]
-    );
-    assert_eq!(
-        fuzzy_search_user_names(db, "ro").await,
-        &["rhode-island", "colorado", "oregon"],
-    );
-
-    async fn fuzzy_search_user_names(db: &DefaultDb, query: &str) -> Vec<String> {
-        db.fuzzy_search_users(query, 10)
+            .user_id;
+        let user_id2 = db
+            .create_user(
+                "user2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "login2".into(),
+                    github_user_id: 102,
+                    invite_count: 0,
+                },
+            )
             .await
             .unwrap()
-            .into_iter()
-            .map(|user| user.github_login)
-            .collect::<Vec<_>>()
+            .user_id;
+
+        let user = db
+            .get_user_by_github_account("login1", None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id, user_id1);
+        assert_eq!(&user.github_login, "login1");
+        assert_eq!(user.github_user_id, Some(101));
+
+        assert!(db
+            .get_user_by_github_account("non-existent-login", None)
+            .await
+            .unwrap()
+            .is_none());
+
+        let user = db
+            .get_user_by_github_account("the-new-login2", Some(102))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id, user_id2);
+        assert_eq!(&user.github_login, "the-new-login2");
+        assert_eq!(user.github_user_id, Some(102));
     }
-}
+);
 
-#[gpui::test]
-async fn test_add_contacts() {
-    let test_db = TestDb::new(build_background_executor());
-    let db = test_db.db();
+test_both_dbs!(
+    test_create_access_tokens_postgres,
+    test_create_access_tokens_sqlite,
+    db,
+    {
+        let user = db
+            .create_user(
+                "u1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u1".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
 
+        db.create_access_token_hash(user, "h1", 3).await.unwrap();
+        db.create_access_token_hash(user, "h2", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h2".to_string(), "h1".to_string()]
+        );
+
+        db.create_access_token_hash(user, "h3", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h3".to_string(), "h2".to_string(), "h1".to_string(),]
+        );
+
+        db.create_access_token_hash(user, "h4", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h4".to_string(), "h3".to_string(), "h2".to_string(),]
+        );
+
+        db.create_access_token_hash(user, "h5", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h5".to_string(), "h4".to_string(), "h3".to_string()]
+        );
+    }
+);
+
+test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
     let mut user_ids = Vec::new();
     for i in 0..3 {
         user_ids.push(
@@ -381,12 +345,109 @@ async fn test_add_contacts() {
             should_notify: false
         }],
     );
+});
+
+test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
+    let NewUserResult {
+        user_id: user1,
+        metrics_id: metrics_id1,
+        ..
+    } = db
+        .create_user(
+            "person1@example.com",
+            false,
+            NewUserParams {
+                github_login: "person1".into(),
+                github_user_id: 101,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap();
+    let NewUserResult {
+        user_id: user2,
+        metrics_id: metrics_id2,
+        ..
+    } = db
+        .create_user(
+            "person2@example.com",
+            false,
+            NewUserParams {
+                github_login: "person2".into(),
+                github_user_id: 102,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(db.get_user_metrics_id(user1).await.unwrap(), metrics_id1);
+    assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id2);
+    assert_eq!(metrics_id1.len(), 36);
+    assert_eq!(metrics_id2.len(), 36);
+    assert_ne!(metrics_id1, metrics_id2);
+});
+
+#[test]
+fn test_fuzzy_like_string() {
+    assert_eq!(DefaultDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
+    assert_eq!(DefaultDb::fuzzy_like_string("x y"), "%x%y%");
+    assert_eq!(DefaultDb::fuzzy_like_string(" z  "), "%z%");
+}
+
+#[gpui::test]
+async fn test_fuzzy_search_users() {
+    let test_db = PostgresTestDb::new(build_background_executor());
+    let db = test_db.db();
+    for (i, github_login) in [
+        "California",
+        "colorado",
+        "oregon",
+        "washington",
+        "florida",
+        "delaware",
+        "rhode-island",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        db.create_user(
+            &format!("{github_login}@example.com"),
+            false,
+            NewUserParams {
+                github_login: github_login.into(),
+                github_user_id: i as i32,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        fuzzy_search_user_names(db, "clr").await,
+        &["colorado", "California"]
+    );
+    assert_eq!(
+        fuzzy_search_user_names(db, "ro").await,
+        &["rhode-island", "colorado", "oregon"],
+    );
+
+    async fn fuzzy_search_user_names(db: &Db<sqlx::Postgres>, query: &str) -> Vec<String> {
+        db.fuzzy_search_users(query, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|user| user.github_login)
+            .collect::<Vec<_>>()
+    }
 }
 
 #[gpui::test]
 async fn test_invite_codes() {
-    let test_db = TestDb::new(build_background_executor());
+    let test_db = PostgresTestDb::new(build_background_executor());
     let db = test_db.db();
+
     let NewUserResult { user_id: user1, .. } = db
         .create_user(
             "user1@example.com",
@@ -580,7 +641,7 @@ async fn test_invite_codes() {
 
 #[gpui::test]
 async fn test_signups() {
-    let test_db = TestDb::new(build_background_executor());
+    let test_db = PostgresTestDb::new(build_background_executor());
     let db = test_db.db();
 
     // people sign up on the waitlist
@@ -722,51 +783,6 @@ async fn test_signups() {
     )
     .await
     .unwrap_err();
-}
-
-#[gpui::test]
-async fn test_metrics_id() {
-    let test_db = TestDb::new(build_background_executor());
-    let db = test_db.db();
-
-    let NewUserResult {
-        user_id: user1,
-        metrics_id: metrics_id1,
-        ..
-    } = db
-        .create_user(
-            "person1@example.com",
-            false,
-            NewUserParams {
-                github_login: "person1".into(),
-                github_user_id: 101,
-                invite_count: 5,
-            },
-        )
-        .await
-        .unwrap();
-    let NewUserResult {
-        user_id: user2,
-        metrics_id: metrics_id2,
-        ..
-    } = db
-        .create_user(
-            "person2@example.com",
-            false,
-            NewUserParams {
-                github_login: "person2".into(),
-                github_user_id: 102,
-                invite_count: 5,
-            },
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(db.get_user_metrics_id(user1).await.unwrap(), metrics_id1);
-    assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id2);
-    assert_eq!(metrics_id1.len(), 36);
-    assert_eq!(metrics_id2.len(), 36);
-    assert_ne!(metrics_id1, metrics_id2);
 }
 
 fn build_background_executor() -> Arc<Background> {

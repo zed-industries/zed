@@ -33,10 +33,14 @@ macro_rules! test_support {
         };
 
         if cfg!(test) {
+            #[cfg(not(test))]
+            unreachable!();
+
             #[cfg(test)]
             if let Some(background) = $self.background.as_ref() {
                 background.simulate_random_delay().await;
             }
+
             #[cfg(test)]
             $self.runtime.as_ref().unwrap().block_on(body)
         } else {
@@ -63,8 +67,6 @@ impl RowsAffected for sqlx::postgres::PgQueryResult {
 
 #[cfg(test)]
 impl Db<sqlx::Sqlite> {
-    const MIGRATIONS_PATH: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations.sqlite");
-
     pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         use std::str::FromStr as _;
         let options = sqlx::sqlite::SqliteConnectOptions::from_str(url)
@@ -83,8 +85,19 @@ impl Db<sqlx::Sqlite> {
         })
     }
 
-    #[cfg(test)]
-    pub fn teardown(&self, _url: &str) {}
+    pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
+        test_support!(self, {
+            let query = "
+                SELECT users.*
+                FROM users
+                WHERE users.id IN (SELECT value from json_each($1))
+            ";
+            Ok(sqlx::query_as(query)
+                .bind(&serde_json::json!(ids))
+                .fetch_all(&self.pool)
+                .await?)
+        })
+    }
 
     pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
         test_support!(self, {
@@ -155,11 +168,13 @@ impl Db<sqlx::Sqlite> {
     ) -> Result<Invite> {
         unimplemented!()
     }
+
+    pub async fn record_sent_invites(&self, _invites: &[Invite]) -> Result<()> {
+        unimplemented!()
+    }
 }
 
 impl Db<sqlx::Postgres> {
-    const MIGRATIONS_PATH: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
-
     pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(max_connections)
@@ -205,6 +220,20 @@ impl Db<sqlx::Postgres> {
                 .bind(like_string)
                 .bind(name_query)
                 .bind(limit as i32)
+                .fetch_all(&self.pool)
+                .await?)
+        })
+    }
+
+    pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
+        test_support!(self, {
+            let query = "
+                SELECT users.*
+                FROM users
+                WHERE users.id = ANY ($1)
+            ";
+            Ok(sqlx::query_as(query)
+                .bind(&ids.into_iter().map(|id| id.0).collect::<Vec<_>>())
                 .fetch_all(&self.pool)
                 .await?)
         })
@@ -382,7 +411,7 @@ impl Db<sqlx::Postgres> {
                     device_id
                 )
                 VALUES
-                    ($1, $2, FALSE, $3, $4, $5, FALSE, $6)
+                    ($1, $2, FALSE, $3, $4, $5, FALSE, $6, $7, $8)
                 RETURNING id
                 ",
             )
@@ -484,6 +513,26 @@ impl Db<sqlx::Postgres> {
                 email_address: email_address.into(),
                 email_confirmation_code,
             })
+        })
+    }
+
+    pub async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()> {
+        test_support!(self, {
+            let emails = invites
+                .iter()
+                .map(|s| s.email_address.as_str())
+                .collect::<Vec<_>>();
+            sqlx::query(
+                "
+                UPDATE signups
+                SET email_confirmation_sent = TRUE
+                WHERE email_address = ANY ($1)
+                ",
+            )
+            .bind(&emails)
+            .execute(&self.pool)
+            .await?;
+            Ok(())
         })
     }
 }
@@ -596,20 +645,6 @@ where
             Ok(sqlx::query_as(query)
                 .bind(&id)
                 .fetch_optional(&self.pool)
-                .await?)
-        })
-    }
-
-    pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-        test_support!(self, {
-            let query = "
-                SELECT users.*
-                FROM users
-                WHERE users.id IN (SELECT value from json_each($1))
-            ";
-            Ok(sqlx::query_as(query)
-                .bind(&serde_json::json!(ids))
-                .fetch_all(&self.pool)
                 .await?)
         })
     }
@@ -767,26 +802,6 @@ where
             .bind(count as i32)
             .fetch_all(&self.pool)
             .await?)
-        })
-    }
-
-    pub async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()> {
-        test_support!(self, {
-            let emails = invites
-                .iter()
-                .map(|s| s.email_address.as_str())
-                .collect::<Vec<_>>();
-            sqlx::query(
-                "
-                UPDATE signups
-                SET email_confirmation_sent = TRUE
-                WHERE email_address IN (SELECT value from json_each($1))
-                ",
-            )
-            .bind(&serde_json::json!(emails))
-            .execute(&self.pool)
-            .await?;
-            Ok(())
         })
     }
 
@@ -1330,16 +1345,23 @@ pub use test::*;
 mod test {
     use super::*;
     use gpui::executor::Background;
+    use lazy_static::lazy_static;
+    use parking_lot::Mutex;
     use rand::prelude::*;
+    use sqlx::migrate::MigrateDatabase;
     use std::sync::Arc;
 
-    pub struct TestDb {
-        pub db: Option<Arc<DefaultDb>>,
+    pub struct SqliteTestDb {
+        pub db: Option<Arc<Db<sqlx::Sqlite>>>,
         pub conn: sqlx::sqlite::SqliteConnection,
+    }
+
+    pub struct PostgresTestDb {
+        pub db: Option<Arc<Db<sqlx::Postgres>>>,
         pub url: String,
     }
 
-    impl TestDb {
+    impl SqliteTestDb {
         pub fn new(background: Arc<Background>) -> Self {
             let mut rng = StdRng::from_entropy();
             let url = format!("file:zed-test-{}?mode=memory", rng.gen::<u128>());
@@ -1350,10 +1372,9 @@ mod test {
                 .unwrap();
 
             let (mut db, conn) = runtime.block_on(async {
-                let db = DefaultDb::new(&url, 5).await.unwrap();
-                db.migrate(Path::new(DefaultDb::MIGRATIONS_PATH), false)
-                    .await
-                    .unwrap();
+                let db = Db::<sqlx::Sqlite>::new(&url, 5).await.unwrap();
+                let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations.sqlite");
+                db.migrate(migrations_path.as_ref(), false).await.unwrap();
                 let conn = db.pool.acquire().await.unwrap().detach();
                 (db, conn)
             });
@@ -1364,16 +1385,57 @@ mod test {
             Self {
                 db: Some(Arc::new(db)),
                 conn,
-                url,
             }
         }
 
-        pub fn db(&self) -> &Arc<DefaultDb> {
+        pub fn db(&self) -> &Arc<Db<sqlx::Sqlite>> {
             self.db.as_ref().unwrap()
         }
     }
 
-    impl Drop for TestDb {
+    impl PostgresTestDb {
+        pub fn new(background: Arc<Background>) -> Self {
+            lazy_static! {
+                static ref LOCK: Mutex<()> = Mutex::new(());
+            }
+
+            let _guard = LOCK.lock();
+            let mut rng = StdRng::from_entropy();
+            let url = format!(
+                "postgres://postgres@localhost/zed-test-{}",
+                rng.gen::<u128>()
+            );
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
+
+            let mut db = runtime.block_on(async {
+                sqlx::Postgres::create_database(&url)
+                    .await
+                    .expect("failed to create test db");
+                let db = Db::<sqlx::Postgres>::new(&url, 5).await.unwrap();
+                let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
+                db.migrate(Path::new(migrations_path), false).await.unwrap();
+                db
+            });
+
+            db.background = Some(background);
+            db.runtime = Some(runtime);
+
+            Self {
+                db: Some(Arc::new(db)),
+                url,
+            }
+        }
+
+        pub fn db(&self) -> &Arc<Db<sqlx::Postgres>> {
+            self.db.as_ref().unwrap()
+        }
+    }
+
+    impl Drop for PostgresTestDb {
         fn drop(&mut self) {
             let db = self.db.take().unwrap();
             db.teardown(&self.url);
