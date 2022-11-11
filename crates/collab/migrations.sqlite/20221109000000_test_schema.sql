@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS "users" (
+CREATE TABLE "users" (
     "id" INTEGER PRIMARY KEY,
     "github_login" VARCHAR,
     "admin" BOOLEAN,
@@ -16,14 +16,14 @@ CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
 CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
 CREATE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 
-CREATE TABLE IF NOT EXISTS "access_tokens" (
+CREATE TABLE "access_tokens" (
     "id" INTEGER PRIMARY KEY,
     "user_id" INTEGER REFERENCES users (id),
     "hash" VARCHAR(128)
 );
 CREATE INDEX "index_access_tokens_user_id" ON "access_tokens" ("user_id");
 
-CREATE TABLE IF NOT EXISTS "contacts" (
+CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY,
     "user_id_a" INTEGER REFERENCES users (id) NOT NULL,
     "user_id_b" INTEGER REFERENCES users (id) NOT NULL,
@@ -34,8 +34,52 @@ CREATE TABLE IF NOT EXISTS "contacts" (
 CREATE UNIQUE INDEX "index_contacts_user_ids" ON "contacts" ("user_id_a", "user_id_b");
 CREATE INDEX "index_contacts_user_id_b" ON "contacts" ("user_id_b");
 
-CREATE TABLE IF NOT EXISTS "projects" (
+CREATE TABLE "rooms" (
     "id" INTEGER PRIMARY KEY,
-    "host_user_id" INTEGER REFERENCES users (id) NOT NULL,
-    "unregistered" BOOLEAN NOT NULL DEFAULT false
+    "version" INTEGER NOT NULL,
+    "live_kit_room" VARCHAR NOT NULL
 );
+
+CREATE TABLE "projects" (
+    "id" INTEGER PRIMARY KEY,
+    "room_id" INTEGER REFERENCES rooms (id),
+    "host_user_id" INTEGER REFERENCES users (id) NOT NULL
+);
+
+CREATE TABLE "project_collaborators" (
+    "id" INTEGER PRIMARY KEY,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id),
+    "connection_id" INTEGER NOT NULL,
+    "user_id" INTEGER NOT NULL,
+    "replica_id" INTEGER NOT NULL,
+    "is_host" BOOLEAN NOT NULL
+);
+CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
+
+CREATE TABLE "worktrees" (
+    "id" INTEGER NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id),
+    "root_name" VARCHAR NOT NULL,
+    PRIMARY KEY(project_id, id)
+);
+CREATE INDEX "index_worktrees_on_project_id" ON "worktrees" ("project_id");
+
+CREATE TABLE "room_participants" (
+    "id" INTEGER PRIMARY KEY,
+    "room_id" INTEGER NOT NULL REFERENCES rooms (id),
+    "user_id" INTEGER NOT NULL REFERENCES users (id),
+    "connection_id" INTEGER,
+    "location_kind" INTEGER,
+    "location_project_id" INTEGER REFERENCES projects (id)
+);
+CREATE UNIQUE INDEX "index_room_participants_on_user_id_and_room_id" ON "room_participants" ("user_id", "room_id");
+
+CREATE TABLE "calls" (
+    "id" INTEGER PRIMARY KEY,
+    "room_id" INTEGER NOT NULL REFERENCES rooms (id),
+    "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
+    "called_user_id" INTEGER NOT NULL REFERENCES users (id),
+    "answering_connection_id" INTEGER,
+    "initial_project_id" INTEGER REFERENCES projects (id)
+);
+CREATE UNIQUE INDEX "index_calls_on_calling_user_id" ON "calls" ("calling_user_id");
