@@ -1179,6 +1179,10 @@ impl Snapshot {
         self.id
     }
 
+    pub fn abs_path(&self) -> &Arc<Path> {
+        &self.abs_path
+    }
+
     pub fn contains_entry(&self, entry_id: ProjectEntryId) -> bool {
         self.entries_by_id.get(&entry_id, &()).is_some()
     }
@@ -1370,10 +1374,6 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub fn abs_path(&self) -> &Arc<Path> {
-        &self.abs_path
-    }
-
     pub fn extension_counts(&self) -> &HashMap<OsString, usize> {
         &self.extension_counts
     }
