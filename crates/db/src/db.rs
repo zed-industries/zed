@@ -1,5 +1,4 @@
 pub mod kvp;
-pub mod workspace;
 
 use std::fs;
 use std::ops::Deref;
@@ -10,8 +9,6 @@ use indoc::indoc;
 use sqlez::connection::Connection;
 use sqlez::domain::Domain;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
-
-pub use workspace::*;
 
 const INITIALIZE_QUERY: &'static str = indoc! {"
     PRAGMA journal_mode=WAL;

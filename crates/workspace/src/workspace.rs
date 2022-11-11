@@ -10,12 +10,13 @@ pub mod shared_screen;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
+mod workspace_db;
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::{kvp::KeyValue, model::SerializedWorkspace, Db};
+use db::{kvp::KeyValue, Db};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -60,6 +61,8 @@ use std::{
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
+
+use crate::workspace_db::model;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -1120,7 +1123,7 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(
-        _serialized_workspace: Option<SerializedWorkspace>,
+        _serialized_workspace: Option<isize>,
         project: ModelHandle<Project>,
         dock_default_factory: DefaultItemFactory,
         cx: &mut ViewContext<Self>,
@@ -1289,7 +1292,7 @@ impl Workspace {
             // Use the resolved worktree roots to get the serialized_db from the database
             let serialized_workspace = cx.read(|cx| {
                 cx.global::<Db<KeyValue>>()
-                    .open_as::<db::Workspace>()
+                    .open_as::<model::Workspace>()
                     .workspace_for_roots(&Vec::from_iter(worktree_roots.into_iter())[..])
             });
 
