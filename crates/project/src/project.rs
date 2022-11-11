@@ -3573,7 +3573,13 @@ impl Project {
                         partial_result_params: Default::default(),
                         context: lsp::CodeActionContext {
                             diagnostics: relevant_diagnostics,
-                            only: None,
+                            only: Some(vec![
+                                lsp::CodeActionKind::EMPTY,
+                                lsp::CodeActionKind::QUICKFIX,
+                                lsp::CodeActionKind::REFACTOR,
+                                lsp::CodeActionKind::REFACTOR_EXTRACT,
+                                lsp::CodeActionKind::SOURCE,
+                            ]),
                         },
                     })
                     .await?
