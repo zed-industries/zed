@@ -800,19 +800,25 @@ impl Server {
     }
 
     async fn decline_call(self: Arc<Server>, message: Message<proto::DeclineCall>) -> Result<()> {
-        let recipient_user_id = message.sender_user_id;
+        let room = self
+            .app_state
+            .db
+            .decline_call(
+                RoomId::from_proto(message.payload.room_id),
+                message.sender_user_id,
+            )
+            .await?;
+        for recipient_id in self
+            .store()
+            .await
+            .connection_ids_for_user(message.sender_user_id)
         {
-            let mut store = self.store().await;
-            let (room, recipient_connection_ids) =
-                store.decline_call(message.payload.room_id, message.sender_connection_id)?;
-            for recipient_id in recipient_connection_ids {
-                self.peer
-                    .send(recipient_id, proto::CallCanceled {})
-                    .trace_err();
-            }
-            self.room_updated(room);
+            self.peer
+                .send(recipient_id, proto::CallCanceled {})
+                .trace_err();
         }
-        self.update_user_contacts(recipient_user_id).await?;
+        self.room_updated(&room);
+        self.update_user_contacts(message.sender_user_id).await?;
         Ok(())
     }
 

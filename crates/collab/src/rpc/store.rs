@@ -162,8 +162,9 @@ impl Store {
                 result.room = Some(Cow::Owned(left_room.room.into_owned()));
                 result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
             } else if connected_user.connection_ids.len() == 1 {
-                let (room, _) = self.decline_call(room_id, connection_id)?;
-                result.room = Some(Cow::Owned(room.clone()));
+                todo!()
+                // let (room, _) = self.decline_call(room_id, connection_id)?;
+                // result.room = Some(Cow::Owned(room.clone()));
             }
         }
 
@@ -388,39 +389,6 @@ impl Store {
         // recipient.active_call.take();
 
         // Ok((room, recipient.connection_ids.clone()))
-    }
-
-    pub fn decline_call(
-        &mut self,
-        room_id: RoomId,
-        recipient_connection_id: ConnectionId,
-    ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
-        todo!()
-        // let called_user_id = self.user_id_for_connection(recipient_connection_id)?;
-        // let recipient = self
-        //     .connected_users
-        //     .get_mut(&called_user_id)
-        //     .ok_or_else(|| anyhow!("no such connection"))?;
-        // if let Some(active_call) = recipient.active_call {
-        //     anyhow::ensure!(active_call.room_id == room_id, "no such room");
-        //     anyhow::ensure!(
-        //         active_call.connection_id.is_none(),
-        //         "cannot decline a call after joining room"
-        //     );
-        //     recipient.active_call.take();
-        //     let recipient_connection_ids = self
-        //         .connection_ids_for_user(called_user_id)
-        //         .collect::<Vec<_>>();
-        //     let room = self
-        //         .rooms
-        //         .get_mut(&active_call.room_id)
-        //         .ok_or_else(|| anyhow!("no such room"))?;
-        //     room.pending_participant_user_ids
-        //         .retain(|user_id| UserId::from_proto(*user_id) != called_user_id);
-        //     Ok((room, recipient_connection_ids))
-        // } else {
-        //     Err(anyhow!("user is not being called"))
-        // }
     }
 
     pub fn unshare_project(

@@ -1027,6 +1027,24 @@ where
         })
     }
 
+    pub async fn decline_call(&self, room_id: RoomId, user_id: UserId) -> Result<proto::Room> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query(
+                "
+                DELETE FROM room_participants
+                WHERE room_id = $1 AND user_id = $2 AND connection_id IS NULL
+                ",
+            )
+            .bind(room_id)
+            .bind(user_id)
+            .execute(&mut tx)
+            .await?;
+
+            self.commit_room_transaction(room_id, tx).await
+        })
+    }
+
     pub async fn join_room(
         &self,
         room_id: RoomId,
