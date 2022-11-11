@@ -128,10 +128,23 @@ pub struct OpenSharedScreen {
 
 #[derive(Clone, PartialEq)]
 pub struct SplitWithItem {
-    from: WeakViewHandle<Pane>,
     pane_to_split: WeakViewHandle<Pane>,
     split_direction: SplitDirection,
+    from: WeakViewHandle<Pane>,
     item_id_to_move: usize,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct SplitWithProjectEntry {
+    pane_to_split: WeakViewHandle<Pane>,
+    split_direction: SplitDirection,
+    project_entry: ProjectEntryId,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct OpenProjectEntryInPane {
+    pane: WeakViewHandle<Pane>,
+    project_entry: ProjectEntryId,
 }
 
 impl_internal_actions!(
@@ -143,6 +156,8 @@ impl_internal_actions!(
         OpenSharedScreen,
         RemoveWorktreeFromProject,
         SplitWithItem,
+        SplitWithProjectEntry,
+        OpenProjectEntryInPane,
     ]
 );
 impl_actions!(workspace, [ActivatePane]);
@@ -231,6 +246,57 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 *split_direction,
                 cx,
             )
+        },
+    );
+
+    cx.add_async_action(
+        |workspace: &mut Workspace,
+         SplitWithProjectEntry {
+             pane_to_split,
+             split_direction,
+             project_entry,
+         }: &_,
+         cx| {
+            pane_to_split.upgrade(cx).and_then(|pane_to_split| {
+                let new_pane = workspace.add_pane(cx);
+                workspace
+                    .center
+                    .split(&pane_to_split, &new_pane, *split_direction)
+                    .unwrap();
+
+                workspace
+                    .project
+                    .read(cx)
+                    .path_for_entry(*project_entry, cx)
+                    .map(|path| {
+                        let task = workspace.open_path(path, Some(new_pane.downgrade()), true, cx);
+                        cx.foreground().spawn(async move {
+                            task.await?;
+                            Ok(())
+                        })
+                    })
+            })
+        },
+    );
+
+    cx.add_async_action(
+        |workspace: &mut Workspace,
+         OpenProjectEntryInPane {
+             pane,
+             project_entry,
+         }: &_,
+         cx| {
+            workspace
+                .project
+                .read(cx)
+                .path_for_entry(*project_entry, cx)
+                .map(|path| {
+                    let task = workspace.open_path(path, Some(pane.clone()), true, cx);
+                    cx.foreground().spawn(async move {
+                        task.await?;
+                        Ok(())
+                    })
+                })
         },
     );
 
@@ -1399,7 +1465,7 @@ impl Workspace {
         mut abs_paths: Vec<PathBuf>,
         visible: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>> {
+    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
         let fs = self.fs.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
@@ -1429,7 +1495,7 @@ impl Workspace {
                             if fs.is_file(&abs_path).await {
                                 Some(
                                     this.update(&mut cx, |this, cx| {
-                                        this.open_path(project_path, true, cx)
+                                        this.open_path(project_path, None, true, cx)
                                     })
                                     .await,
                                 )
@@ -1749,10 +1815,11 @@ impl Workspace {
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
+        pane: Option<WeakViewHandle<Pane>>,
         focus_item: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>> {
-        let pane = self.active_pane().downgrade();
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        let pane = pane.unwrap_or_else(|| self.active_pane().downgrade());
         let task = self.load_path(path.into(), cx);
         cx.spawn(|this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
@@ -2874,7 +2941,7 @@ pub fn open_paths(
     cx: &mut MutableAppContext,
 ) -> Task<(
     ViewHandle<Workspace>,
-    Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
+    Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
 )> {
     log::info!("open paths {:?}", abs_paths);
 

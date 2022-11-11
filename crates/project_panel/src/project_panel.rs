@@ -1,12 +1,13 @@
 use context_menu::{ContextMenu, ContextMenuItem};
+use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
 use futures::stream::StreamExt;
 use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler,
-        ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
+        AnchorCorner, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex, Label,
+        MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions, keymap,
@@ -25,6 +26,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use theme::ProjectPanelEntry;
 use unicase::UniCase;
 use workspace::Workspace;
 
@@ -71,8 +73,9 @@ pub enum ClipboardEntry {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct EntryDetails {
+pub struct EntryDetails {
     filename: String,
+    path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
     is_ignored: bool,
@@ -220,6 +223,7 @@ impl ProjectPanel {
             this.update_visible_entries(None, cx);
             this
         });
+
         cx.subscribe(&project_panel, {
             let project_panel = project_panel.downgrade();
             move |workspace, _, event, cx| match event {
@@ -235,6 +239,7 @@ impl ProjectPanel {
                                         worktree_id: worktree.read(cx).id(),
                                         path: entry.path.clone(),
                                     },
+                                    None,
                                     focus_opened_item,
                                     cx,
                                 )
@@ -601,6 +606,10 @@ impl ProjectPanel {
                     cx.notify();
                 }
             }
+
+            cx.update_global(|drag_and_drop: &mut DragAndDrop<Workspace>, cx| {
+                drag_and_drop.cancel_dragging::<ProjectEntryId>(cx);
+            })
         }
     }
 
@@ -950,14 +959,15 @@ impl ProjectPanel {
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
+                let root_name = OsStr::new(snapshot.root_name());
                 let expanded_entry_ids = self
                     .expanded_dir_ids
                     .get(&snapshot.id())
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
-                let root_name = OsStr::new(snapshot.root_name());
-                for entry in &visible_worktree_entries[range.start.saturating_sub(ix)..end_ix - ix]
-                {
+
+                let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
+                for entry in &visible_worktree_entries[entry_range] {
                     let mut details = EntryDetails {
                         filename: entry
                             .path
@@ -965,6 +975,7 @@ impl ProjectPanel {
                             .unwrap_or(root_name)
                             .to_string_lossy()
                             .to_string(),
+                        path: entry.path.clone(),
                         depth: entry.path.components().count(),
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
@@ -978,12 +989,14 @@ impl ProjectPanel {
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                     };
+
                     if let Some(edit_state) = &self.edit_state {
                         let is_edited_entry = if edit_state.is_new_entry {
                             entry.id == NEW_ENTRY_ID
                         } else {
                             entry.id == edit_state.entry_id
                         };
+
                         if is_edited_entry {
                             if let Some(processing_filename) = &edit_state.processing_filename {
                                 details.is_processing = true;
@@ -1005,6 +1018,63 @@ impl ProjectPanel {
         }
     }
 
+    fn render_entry_visual_element<V: View>(
+        details: &EntryDetails,
+        editor: Option<&ViewHandle<Editor>>,
+        padding: f32,
+        row_container_style: ContainerStyle,
+        style: &ProjectPanelEntry,
+        cx: &mut RenderContext<V>,
+    ) -> ElementBox {
+        let kind = details.kind;
+        let show_editor = details.is_editing && !details.is_processing;
+
+        Flex::row()
+            .with_child(
+                ConstrainedBox::new(if kind == EntryKind::Dir {
+                    if details.is_expanded {
+                        Svg::new("icons/chevron_down_8.svg")
+                            .with_color(style.icon_color)
+                            .boxed()
+                    } else {
+                        Svg::new("icons/chevron_right_8.svg")
+                            .with_color(style.icon_color)
+                            .boxed()
+                    }
+                } else {
+                    Empty::new().boxed()
+                })
+                .with_max_width(style.icon_size)
+                .with_max_height(style.icon_size)
+                .aligned()
+                .constrained()
+                .with_width(style.icon_size)
+                .boxed(),
+            )
+            .with_child(if show_editor && editor.is_some() {
+                ChildView::new(editor.unwrap().clone(), cx)
+                    .contained()
+                    .with_margin_left(style.icon_spacing)
+                    .aligned()
+                    .left()
+                    .flex(1.0, true)
+                    .boxed()
+            } else {
+                Label::new(details.filename.clone(), style.text.clone())
+                    .contained()
+                    .with_margin_left(style.icon_spacing)
+                    .aligned()
+                    .left()
+                    .boxed()
+            })
+            .constrained()
+            .with_height(style.height)
+            .contained()
+            .with_style(row_container_style)
+            .with_padding_left(padding)
+            .boxed()
+    }
+
     fn render_entry(
         entry_id: ProjectEntryId,
         details: EntryDetails,
@@ -1013,69 +1083,34 @@ impl ProjectPanel {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let kind = details.kind;
+        let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
+
+        let entry_style = if details.is_cut {
+            &theme.cut_entry
+        } else if details.is_ignored {
+            &theme.ignored_entry
+        } else {
+            &theme.entry
+        };
+
         let show_editor = details.is_editing && !details.is_processing;
+
         MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, cx| {
-            let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
-
-            let entry_style = if details.is_cut {
-                &theme.cut_entry
-            } else if details.is_ignored {
-                &theme.ignored_entry
-            } else {
-                &theme.entry
-            };
-
             let style = entry_style.style_for(state, details.is_selected).clone();
-
             let row_container_style = if show_editor {
                 theme.filename_editor.container
             } else {
                 style.container
             };
-            Flex::row()
-                .with_child(
-                    ConstrainedBox::new(if kind == EntryKind::Dir {
-                        if details.is_expanded {
-                            Svg::new("icons/chevron_down_8.svg")
-                                .with_color(style.icon_color)
-                                .boxed()
-                        } else {
-                            Svg::new("icons/chevron_right_8.svg")
-                                .with_color(style.icon_color)
-                                .boxed()
-                        }
-                    } else {
-                        Empty::new().boxed()
-                    })
-                    .with_max_width(style.icon_size)
-                    .with_max_height(style.icon_size)
-                    .aligned()
-                    .constrained()
-                    .with_width(style.icon_size)
-                    .boxed(),
-                )
-                .with_child(if show_editor {
-                    ChildView::new(editor.clone(), cx)
-                        .contained()
-                        .with_margin_left(theme.entry.default.icon_spacing)
-                        .aligned()
-                        .left()
-                        .flex(1.0, true)
-                        .boxed()
-                } else {
-                    Label::new(details.filename, style.text.clone())
-                        .contained()
-                        .with_margin_left(style.icon_spacing)
-                        .aligned()
-                        .left()
-                        .boxed()
-                })
-                .constrained()
-                .with_height(theme.entry.default.height)
-                .contained()
-                .with_style(row_container_style)
-                .with_padding_left(padding)
-                .boxed()
+
+            Self::render_entry_visual_element(
+                &details,
+                Some(editor),
+                padding,
+                row_container_style,
+                &style,
+                cx,
+            )
         })
         .on_click(MouseButton::Left, move |e, cx| {
             if kind == EntryKind::Dir {
@@ -1092,6 +1127,21 @@ impl ProjectPanel {
                 entry_id,
                 position: e.position,
             })
+        })
+        .as_draggable(entry_id, {
+            let row_container_style = theme.dragged_entry.container;
+
+            move |_, cx: &mut RenderContext<Workspace>| {
+                let theme = cx.global::<Settings>().theme.clone();
+                Self::render_entry_visual_element(
+                    &details,
+                    None,
+                    padding,
+                    row_container_style,
+                    &theme.project_panel.dragged_entry,
+                    cx,
+                )
+            }
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
