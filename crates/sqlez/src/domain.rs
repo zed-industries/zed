@@ -1,6 +1,6 @@
 use crate::connection::Connection;
 
-pub trait Domain: Send + Sync + Clone {
+pub trait Domain {
     fn migrate(conn: &Connection) -> anyhow::Result<()>;
 }
 

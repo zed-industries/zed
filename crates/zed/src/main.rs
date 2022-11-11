@@ -170,7 +170,11 @@ fn main() {
             client::ZED_SERVER_URL.clone(),
             cx,
         );
-        workspace::init(app_state.clone(), cx);
+
+        let workspace_db = cx.global::<Db<project::KeyValue>>().open_as::<Workspace>();
+
+        workspace::init(app_state.clone(), cx, workspace_db);
+
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);

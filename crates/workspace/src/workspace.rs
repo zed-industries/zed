@@ -12,6 +12,7 @@ mod status_bar;
 mod toolbar;
 mod workspace_db;
 
+use crate::workspace_db::model::SerializedWorkspace;
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
@@ -61,8 +62,6 @@ use std::{
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
-
-use crate::workspace_db::model;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -166,7 +165,9 @@ impl_internal_actions!(
 );
 impl_actions!(workspace, [ActivatePane]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext, db: Db<Workspace>) {
+    cx.set_global(db);
+
     pane::init(cx);
     dock::init(cx);
 
@@ -1123,7 +1124,7 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(
-        _serialized_workspace: Option<isize>,
+        _serialized_workspace: Option<SerializedWorkspace>,
         project: ModelHandle<Project>,
         dock_default_factory: DefaultItemFactory,
         cx: &mut ViewContext<Self>,
@@ -1291,9 +1292,10 @@ impl Workspace {
 
             // Use the resolved worktree roots to get the serialized_db from the database
             let serialized_workspace = cx.read(|cx| {
-                cx.global::<Db<KeyValue>>()
-                    .open_as::<model::Workspace>()
-                    .workspace_for_roots(&Vec::from_iter(worktree_roots.into_iter())[..])
+                Workspace::workspace_for_roots(
+                    cx.global::<Db<Workspace>>(),
+                    &Vec::from_iter(worktree_roots.into_iter())[..],
+                )
             });
 
             // Use the serialized workspace to construct the new window

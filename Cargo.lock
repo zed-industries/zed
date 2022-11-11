@@ -1040,6 +1040,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
+ "db",
  "editor",
  "env_logger",
  "envy",
@@ -1550,7 +1551,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "collections",
  "env_logger",
  "gpui",
@@ -7620,6 +7620,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "call",
  "client",
  "collections",
@@ -7629,6 +7630,7 @@ dependencies = [
  "fs",
  "futures 0.3.25",
  "gpui",
+ "indoc",
  "language",
  "log",
  "menu",
@@ -7639,6 +7641,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "sqlez",
  "theme",
  "util",
 ]

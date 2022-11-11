@@ -1,8 +1,9 @@
 use crate::{
-    db::{NewUserParams, ProjectId, SqliteTestDb as TestDb, UserId},
+    db::{Db, NewUserParams, ProjectId, UserId},
     rpc::{Executor, Server},
     AppState,
 };
+
 use ::rpc::Peer;
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
@@ -11,6 +12,7 @@ use client::{
     User, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
+use db as SqliteDb;
 use editor::{
     self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToOffset,
     ToggleCodeActions, Undo,
@@ -5836,7 +5838,11 @@ impl TestServer {
 
         Project::init(&client);
         cx.update(|cx| {
-            workspace::init(app_state.clone(), cx);
+            workspace::init(
+                app_state.clone(),
+                cx,
+                SqliteDb::open_in_memory("integration tests"),
+            );
             call::init(client.clone(), user_store.clone(), cx);
         });
 

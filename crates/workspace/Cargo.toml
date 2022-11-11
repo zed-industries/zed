@@ -30,8 +30,10 @@ language = { path = "../language" }
 menu = { path = "../menu" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+sqlez = { path = "../sqlez" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+bincode = "1.2.1"
 anyhow = "1.0.38"
 futures = "0.3"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
@@ -40,6 +42,8 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 smallvec = { version = "1.6", features = ["union"] }
+indoc = "1.0.4"
+
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

@@ -630,7 +630,7 @@ mod tests {
     use gpui::{
         executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };
-    use project::{Project, ProjectPath};
+    use project::{Db, Project, ProjectPath};
     use serde_json::json;
     use std::{
         collections::HashSet,
@@ -1817,7 +1817,7 @@ mod tests {
             state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(app_state.clone(), cx, Db::open_in_memory("test"));
             editor::init(cx);
             pane::init(cx);
             app_state

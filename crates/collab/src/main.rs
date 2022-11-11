@@ -9,11 +9,11 @@ mod db_tests;
 #[cfg(test)]
 mod integration_tests;
 
+use crate::db::{Db, PostgresDb};
 use crate::rpc::ResultExt as _;
 use anyhow::anyhow;
 use axum::{routing::get, Router};
 use collab::{Error, Result};
-use db::DefaultDb as Db;
 use serde::Deserialize;
 use std::{
     env::args,

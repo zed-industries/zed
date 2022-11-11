@@ -1,17 +1,19 @@
 use anyhow::{bail, Context, Result};
+
+use db::Db;
 use util::{iife, unzip_option, ResultExt};
 
 use std::path::{Path, PathBuf};
 
 use indoc::indoc;
-use sqlez::{domain::Domain, migrations::Migration};
+use sqlez::{connection::Connection, domain::Domain, migrations::Migration};
+
+use super::Workspace;
 
 use self::model::{
     Axis, GroupId, PaneId, SerializedItem, SerializedItemKind, SerializedPane, SerializedPaneGroup,
     SerializedWorkspace, WorkspaceId,
 };
-
-use super::Db;
 
 // 1) Move all of this into Workspace crate
 // 2) Deserialize items fully
@@ -70,23 +72,20 @@ pub(crate) const ITEM_MIGRATIONS: Migration = Migration::new(
     "}],
 );
 
-#[derive(Clone)]
-pub enum Workspace {}
-
 impl Domain for Workspace {
-    fn migrate(conn: &sqlez::connection::Connection) -> anyhow::Result<()> {
+    fn migrate(conn: &Connection) -> anyhow::Result<()> {
         WORKSPACES_MIGRATION.run(&conn)?;
         PANE_MIGRATIONS.run(&conn)?;
         ITEM_MIGRATIONS.run(&conn)
     }
 }
 
-impl Db<Workspace> {
+impl Workspace {
     /// Returns a serialized workspace for the given worktree_roots. If the passed array
     /// is empty, the most recent workspace is returned instead. If no workspace for the
     /// passed roots is stored, returns none.
     pub fn workspace_for_roots<P: AsRef<Path>>(
-        &self,
+        db: &Db<Workspace>,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
         let workspace_id: WorkspaceId = worktree_roots.into();
@@ -95,12 +94,12 @@ impl Db<Workspace> {
         // and we've grabbed the most recent workspace
         let (workspace_id, dock_anchor, dock_visible) = iife!({
             if worktree_roots.len() == 0 {
-                self.select_row(indoc! {"
+                db.select_row(indoc! {"
                         SELECT workspace_id, dock_anchor, dock_visible 
                         FROM workspaces 
                         ORDER BY timestamp DESC LIMIT 1"})?()?
             } else {
-                self.select_row_bound(indoc! {"
+                db.select_row_bound(indoc! {"
                         SELECT workspace_id, dock_anchor, dock_visible 
                         FROM workspaces 
                         WHERE workspace_id = ?"})?(&workspace_id)?
@@ -111,12 +110,10 @@ impl Db<Workspace> {
         .flatten()?;
 
         Some(SerializedWorkspace {
-            dock_pane: self
-                .get_dock_pane(&workspace_id)
+            dock_pane: Workspace::get_dock_pane(&db, &workspace_id)
                 .context("Getting dock pane")
                 .log_err()?,
-            center_group: self
-                .get_center_pane_group(&workspace_id)
+            center_group: Workspace::get_center_pane_group(&db, &workspace_id)
                 .context("Getting center group")
                 .log_err()?,
             dock_anchor,
@@ -127,32 +124,32 @@ impl Db<Workspace> {
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
     pub fn save_workspace<P: AsRef<Path>>(
-        &self,
+        db: &Db<Workspace>,
         worktree_roots: &[P],
         old_roots: Option<&[P]>,
         workspace: &SerializedWorkspace,
     ) {
         let workspace_id: WorkspaceId = worktree_roots.into();
 
-        self.with_savepoint("update_worktrees", || {
+        db.with_savepoint("update_worktrees", || {
             if let Some(old_roots) = old_roots {
                 let old_id: WorkspaceId = old_roots.into();
 
-                self.exec_bound("DELETE FROM WORKSPACES WHERE workspace_id = ?")?(&old_id)?;
+                db.exec_bound("DELETE FROM WORKSPACES WHERE workspace_id = ?")?(&old_id)?;
             }
 
             // Delete any previous workspaces with the same roots. This cascades to all
             // other tables that are based on the same roots set.
             // Insert new workspace into workspaces table if none were found
-            self.exec_bound("DELETE FROM workspaces WHERE workspace_id = ?;")?(&workspace_id)?;
+            db.exec_bound("DELETE FROM workspaces WHERE workspace_id = ?;")?(&workspace_id)?;
 
-            self.exec_bound(
+            db.exec_bound(
                 "INSERT INTO workspaces(workspace_id, dock_anchor, dock_visible) VALUES (?, ?, ?)",
             )?((&workspace_id, workspace.dock_anchor, workspace.dock_visible))?;
 
             // Save center pane group and dock pane
-            self.save_pane_group(&workspace_id, &workspace.center_group, None)?;
-            self.save_pane(&workspace_id, &workspace.dock_pane, None)?;
+            Workspace::save_pane_group(db, &workspace_id, &workspace.center_group, None)?;
+            Workspace::save_pane(db, &workspace_id, &workspace.dock_pane, None)?;
 
             Ok(())
         })
@@ -169,11 +166,11 @@ impl Db<Workspace> {
     }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
-    pub fn recent_workspaces(&self, limit: usize) -> Vec<Vec<PathBuf>> {
+    pub fn recent_workspaces(conn: &Connection, limit: usize) -> Vec<Vec<PathBuf>> {
         iife!({
             // TODO, upgrade anyhow: https://docs.rs/anyhow/1.0.66/anyhow/fn.Ok.html
             Ok::<_, anyhow::Error>(
-                self.select_bound::<usize, WorkspaceId>(
+                conn.select_bound::<usize, WorkspaceId>(
                     "SELECT workspace_id FROM workspaces ORDER BY timestamp DESC LIMIT ?",
                 )?(limit)?
                 .into_iter()
@@ -186,21 +183,21 @@ impl Db<Workspace> {
     }
 
     pub(crate) fn get_center_pane_group(
-        &self,
+        db: &Db<Workspace>,
         workspace_id: &WorkspaceId,
     ) -> Result<SerializedPaneGroup> {
-        self.get_pane_group_children(workspace_id, None)?
+        Workspace::get_pane_group_children(&db, workspace_id, None)?
             .into_iter()
             .next()
             .context("No center pane group")
     }
 
     fn get_pane_group_children<'a>(
-        &self,
+        db: &Db<Workspace>,
         workspace_id: &WorkspaceId,
         group_id: Option<GroupId>,
     ) -> Result<Vec<SerializedPaneGroup>> {
-        self.select_bound::<(Option<GroupId>, &WorkspaceId), (Option<GroupId>, Option<Axis>, Option<PaneId>)>(indoc! {"
+        db.select_bound::<(Option<GroupId>, &WorkspaceId), (Option<GroupId>, Option<Axis>, Option<PaneId>)>(indoc! {"
             SELECT group_id, axis, pane_id
                 FROM (SELECT group_id, axis, NULL as pane_id, position,  parent_group_id, workspace_id
                 FROM pane_groups
@@ -217,14 +214,15 @@ impl Db<Workspace> {
                 if let Some((group_id, axis)) = group_id.zip(axis) {
                     Ok(SerializedPaneGroup::Group {
                         axis,
-                        children: self.get_pane_group_children(
+                        children: Workspace::get_pane_group_children(
+                            db,
                             workspace_id,
                             Some(group_id),
                         )?,
                     })
                 } else if let Some(pane_id) = pane_id {
                     Ok(SerializedPaneGroup::Pane(SerializedPane {
-                        children: self.get_items(pane_id)?,
+                        children: Workspace::get_items(db, pane_id)?,
                     }))
                 } else {
                     bail!("Pane Group Child was neither a pane group or a pane");
@@ -234,7 +232,7 @@ impl Db<Workspace> {
     }
 
     pub(crate) fn save_pane_group(
-        &self,
+        db: &Db<Workspace>,
         workspace_id: &WorkspaceId,
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
@@ -247,20 +245,28 @@ impl Db<Workspace> {
 
         match pane_group {
             SerializedPaneGroup::Group { axis, children } => {
-                let parent_id = self.insert_bound("INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) VALUES (?, ?, ?, ?)")?
+                let parent_id = db.insert_bound("INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) VALUES (?, ?, ?, ?)")?
                     ((workspace_id, parent_id, position, *axis))?;
 
                 for (position, group) in children.iter().enumerate() {
-                    self.save_pane_group(workspace_id, group, Some((parent_id, position)))?
+                    Workspace::save_pane_group(
+                        db,
+                        workspace_id,
+                        group,
+                        Some((parent_id, position)),
+                    )?
                 }
                 Ok(())
             }
-            SerializedPaneGroup::Pane(pane) => self.save_pane(workspace_id, pane, parent),
+            SerializedPaneGroup::Pane(pane) => Workspace::save_pane(db, workspace_id, pane, parent),
         }
     }
 
-    pub(crate) fn get_dock_pane(&self, workspace_id: &WorkspaceId) -> Result<SerializedPane> {
-        let pane_id = self.select_row_bound(indoc! {"
+    pub(crate) fn get_dock_pane(
+        db: &Db<Workspace>,
+        workspace_id: &WorkspaceId,
+    ) -> Result<SerializedPane> {
+        let pane_id = db.select_row_bound(indoc! {"
                 SELECT pane_id FROM panes 
                 WHERE workspace_id = ? AND parent_group_id IS NULL AND position IS NULL"})?(
             workspace_id,
@@ -268,28 +274,27 @@ impl Db<Workspace> {
         .context("No dock pane for workspace")?;
 
         Ok(SerializedPane::new(
-            self.get_items(pane_id).context("Reading items")?,
+            Workspace::get_items(db, pane_id).context("Reading items")?,
         ))
     }
 
     pub(crate) fn save_pane(
-        &self,
+        db: &Db<Workspace>,
         workspace_id: &WorkspaceId,
         pane: &SerializedPane,
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
         let (parent_id, order) = unzip_option(parent);
 
-        let pane_id = self.insert_bound(
+        let pane_id = db.insert_bound(
             "INSERT INTO panes(workspace_id, parent_group_id, position) VALUES (?, ?, ?)",
         )?((workspace_id, parent_id, order))?;
 
-        self.save_items(workspace_id, pane_id, &pane.children)
-            .context("Saving items")
+        Workspace::save_items(db, workspace_id, pane_id, &pane.children).context("Saving items")
     }
 
-    pub(crate) fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
-        Ok(self.select_bound(indoc! {"
+    pub(crate) fn get_items(db: &Db<Workspace>, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
+        Ok(db.select_bound(indoc! {"
                 SELECT item_id, kind FROM items
                 WHERE pane_id = ?
                 ORDER BY position"})?(pane_id)?
@@ -302,15 +307,15 @@ impl Db<Workspace> {
     }
 
     pub(crate) fn save_items(
-        &self,
+        db: &Db<Workspace>,
         workspace_id: &WorkspaceId,
         pane_id: PaneId,
         items: &[SerializedItem],
     ) -> Result<()> {
-        let mut delete_old = self
+        let mut delete_old = db
             .exec_bound("DELETE FROM items WHERE workspace_id = ? AND pane_id = ? AND item_id = ?")
             .context("Preparing deletion")?;
-        let mut insert_new = self.exec_bound(
+        let mut insert_new = db.exec_bound(
             "INSERT INTO items(item_id, workspace_id, pane_id, kind, position) VALUES (?, ?, ?, ?, ?)",
         ).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
@@ -324,17 +329,12 @@ impl Db<Workspace> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        model::{
-            DockAnchor::{Bottom, Expanded, Right},
-            SerializedWorkspace,
-        },
-        Db,
-    };
+    use crate::workspace_db::model::DockAnchor::{Bottom, Expanded, Right};
+    use crate::{Db, Workspace};
 
     #[test]
     fn test_workspace_assignment() {
-        env_logger::try_init().ok();
+        // env_logger::try_init().ok();
 
         let db = Db::open_in_memory("test_basic_functionality");
 
@@ -359,61 +359,73 @@ mod tests {
             dock_pane: Default::default(),
         };
 
-        db.save_workspace(&["/tmp", "/tmp2"], None, &workspace_1);
-        db.save_workspace(&["/tmp"], None, &workspace_2);
+        Workspace::save_workspace(&db, &["/tmp", "/tmp2"], None, &workspace_1);
+        Workspace::save_workspace(&db, &["/tmp"], None, &workspace_2);
 
         db.write_to("test.db").unwrap();
 
         // Test that paths are treated as a set
         assert_eq!(
-            db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
+            Workspace::workspace_for_roots(&db, &["/tmp", "/tmp2"]).unwrap(),
             workspace_1
         );
         assert_eq!(
-            db.workspace_for_roots(&["/tmp2", "/tmp"]).unwrap(),
+            Workspace::workspace_for_roots(&db, &["/tmp2", "/tmp"]).unwrap(),
             workspace_1
         );
 
         // Make sure that other keys work
-        assert_eq!(db.workspace_for_roots(&["/tmp"]).unwrap(), workspace_2);
-        assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
+        assert_eq!(
+            Workspace::workspace_for_roots(&db, &["/tmp"]).unwrap(),
+            workspace_2
+        );
+        assert_eq!(
+            Workspace::workspace_for_roots(&db, &["/tmp3", "/tmp2", "/tmp4"]),
+            None
+        );
 
         // Test 'mutate' case of updating a pre-existing id
-        db.save_workspace(&["/tmp", "/tmp2"], Some(&["/tmp", "/tmp2"]), &workspace_2);
+        Workspace::save_workspace(
+            &db,
+            &["/tmp", "/tmp2"],
+            Some(&["/tmp", "/tmp2"]),
+            &workspace_2,
+        );
         assert_eq!(
-            db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
+            Workspace::workspace_for_roots(&db, &["/tmp", "/tmp2"]).unwrap(),
             workspace_2
         );
 
         // Test other mechanism for mutating
-        db.save_workspace(&["/tmp", "/tmp2"], None, &workspace_3);
+        Workspace::save_workspace(&db, &["/tmp", "/tmp2"], None, &workspace_3);
         assert_eq!(
-            db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
+            Workspace::workspace_for_roots(&db, &["/tmp", "/tmp2"]).unwrap(),
             workspace_3
         );
 
         // Make sure that updating paths differently also works
-        db.save_workspace(
+        Workspace::save_workspace(
+            &db,
             &["/tmp3", "/tmp4", "/tmp2"],
             Some(&["/tmp", "/tmp2"]),
             &workspace_3,
         );
-        assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
+        assert_eq!(Workspace::workspace_for_roots(&db, &["/tmp2", "tmp"]), None);
         assert_eq!(
-            db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"])
-                .unwrap(),
+            Workspace::workspace_for_roots(&db, &["/tmp2", "/tmp3", "/tmp4"]).unwrap(),
             workspace_3
         );
     }
 
-    use crate::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
+    use crate::workspace_db::model::SerializedWorkspace;
+    use crate::workspace_db::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
 
     fn default_workspace(
         dock_pane: SerializedPane,
         center_group: &SerializedPaneGroup,
     ) -> SerializedWorkspace {
         SerializedWorkspace {
-            dock_anchor: crate::model::DockAnchor::Right,
+            dock_anchor: crate::workspace_db::model::DockAnchor::Right,
             dock_visible: false,
             center_group: center_group.clone(),
             dock_pane,
@@ -422,11 +434,11 @@ mod tests {
 
     #[test]
     fn test_basic_dock_pane() {
-        env_logger::try_init().ok();
+        // env_logger::try_init().ok();
 
         let db = Db::open_in_memory("basic_dock_pane");
 
-        let dock_pane = crate::model::SerializedPane {
+        let dock_pane = crate::workspace_db::model::SerializedPane {
             children: vec![
                 SerializedItem::Terminal { item_id: 1 },
                 SerializedItem::Terminal { item_id: 4 },
@@ -437,16 +449,16 @@ mod tests {
 
         let workspace = default_workspace(dock_pane, &Default::default());
 
-        db.save_workspace(&["/tmp"], None, &workspace);
+        Workspace::save_workspace(&db, &["/tmp"], None, &workspace);
 
-        let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let new_workspace = Workspace::workspace_for_roots(&db, &["/tmp"]).unwrap();
 
         assert_eq!(workspace.dock_pane, new_workspace.dock_pane);
     }
 
     #[test]
     fn test_simple_split() {
-        env_logger::try_init().ok();
+        // env_logger::try_init().ok();
 
         let db = Db::open_in_memory("simple_split");
 
@@ -456,10 +468,10 @@ mod tests {
         //  | 3,4   |       |
         //  -----------------
         let center_pane = SerializedPaneGroup::Group {
-            axis: crate::model::Axis::Horizontal,
+            axis: crate::workspace_db::model::Axis::Horizontal,
             children: vec![
                 SerializedPaneGroup::Group {
-                    axis: crate::model::Axis::Vertical,
+                    axis: crate::workspace_db::model::Axis::Vertical,
                     children: vec![
                         SerializedPaneGroup::Pane(SerializedPane {
                             children: vec![
@@ -486,7 +498,7 @@ mod tests {
 
         let workspace = default_workspace(Default::default(), &center_pane);
 
-        db.save_workspace(&["/tmp"], None, &workspace);
+        Workspace::save_workspace(&db, &["/tmp"], None, &workspace);
 
         assert_eq!(workspace.center_group, center_pane);
     }
@@ -720,7 +732,7 @@ pub mod model {
     mod tests {
         use sqlez::connection::Connection;
 
-        use crate::model::DockAnchor;
+        use crate::workspace_db::model::DockAnchor;
 
         use super::WorkspaceId;
 
