@@ -71,8 +71,6 @@ async fn test_basic_calls(
     deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.background()).await;
 
-    let start = std::time::Instant::now();
-
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -258,8 +256,6 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
-
-    eprintln!("finished test {:?}", start.elapsed());
 }
 
 #[gpui::test(iterations = 10)]
