@@ -1070,6 +1070,97 @@ where
         })
     }
 
+    pub async fn leave_room(
+        &self,
+        room_id: RoomId,
+        connection_id: ConnectionId,
+    ) -> Result<LeftRoom> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+
+            // Leave room.
+            let user_id: UserId = sqlx::query_scalar(
+                "
+                DELETE FROM room_participants
+                WHERE room_id = $1 AND connection_id = $2
+                RETURNING user_id
+                ",
+            )
+            .bind(room_id)
+            .bind(connection_id.0 as i32)
+            .fetch_one(&mut tx)
+            .await?;
+
+            // Cancel pending calls initiated by the leaving user.
+            let canceled_calls_to_user_ids: Vec<UserId> = sqlx::query_scalar(
+                "
+                DELETE FROM room_participants
+                WHERE calling_user_id = $1 AND connection_id IS NULL
+                RETURNING user_id
+                ",
+            )
+            .bind(room_id)
+            .bind(connection_id.0 as i32)
+            .fetch_all(&mut tx)
+            .await?;
+
+            let mut project_collaborators = sqlx::query_as::<_, ProjectCollaborator>(
+                "
+                SELECT project_collaborators.*
+                FROM projects, project_collaborators
+                WHERE
+                    projects.room_id = $1 AND
+                    projects.user_id = $2 AND
+                    projects.id = project_collaborators.project_id
+                ",
+            )
+            .bind(room_id)
+            .bind(user_id)
+            .fetch(&mut tx);
+
+            let mut left_projects = HashMap::default();
+            while let Some(collaborator) = project_collaborators.next().await {
+                let collaborator = collaborator?;
+                let left_project =
+                    left_projects
+                        .entry(collaborator.project_id)
+                        .or_insert(LeftProject {
+                            id: collaborator.project_id,
+                            host_user_id: Default::default(),
+                            connection_ids: Default::default(),
+                        });
+
+                let collaborator_connection_id = ConnectionId(collaborator.connection_id as u32);
+                if collaborator_connection_id != connection_id || collaborator.is_host {
+                    left_project.connection_ids.push(collaborator_connection_id);
+                }
+
+                if collaborator.is_host {
+                    left_project.host_user_id = collaborator.user_id;
+                }
+            }
+            drop(project_collaborators);
+
+            sqlx::query(
+                "
+                DELETE FROM projects
+                WHERE room_id = $1 AND user_id = $2
+                ",
+            )
+            .bind(room_id)
+            .bind(user_id)
+            .execute(&mut tx)
+            .await?;
+
+            let room = self.commit_room_transaction(room_id, tx).await?;
+            Ok(LeftRoom {
+                room,
+                left_projects,
+                canceled_calls_to_user_ids,
+            })
+        })
+    }
+
     pub async fn update_room_participant_location(
         &self,
         room_id: RoomId,
@@ -1665,6 +1756,27 @@ pub struct Project {
     pub id: ProjectId,
     pub host_user_id: UserId,
     pub unregistered: bool,
+}
+
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+pub struct ProjectCollaborator {
+    pub project_id: ProjectId,
+    pub connection_id: i32,
+    pub user_id: UserId,
+    pub replica_id: i32,
+    pub is_host: bool,
+}
+
+pub struct LeftProject {
+    pub id: ProjectId,
+    pub host_user_id: UserId,
+    pub connection_ids: Vec<ConnectionId>,
+}
+
+pub struct LeftRoom {
+    pub room: proto::Room,
+    pub left_projects: HashMap<ProjectId, LeftProject>,
+    pub canceled_calls_to_user_ids: Vec<UserId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

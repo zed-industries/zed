@@ -48,7 +48,7 @@ CREATE TABLE "projects" (
 
 CREATE TABLE "project_collaborators" (
     "id" INTEGER PRIMARY KEY,
-    "project_id" INTEGER NOT NULL REFERENCES projects (id),
+    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "connection_id" INTEGER NOT NULL,
     "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
@@ -58,7 +58,7 @@ CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborato
 
 CREATE TABLE "worktrees" (
     "id" INTEGER NOT NULL,
-    "project_id" INTEGER NOT NULL REFERENCES projects (id),
+    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "root_name" VARCHAR NOT NULL,
     PRIMARY KEY(project_id, id)
 );

@@ -90,13 +90,6 @@ pub struct LeftProject {
     pub remove_collaborator: bool,
 }
 
-pub struct LeftRoom<'a> {
-    pub room: Cow<'a, proto::Room>,
-    pub unshared_projects: Vec<Project>,
-    pub left_projects: Vec<LeftProject>,
-    pub canceled_call_connection_ids: Vec<ConnectionId>,
-}
-
 #[derive(Copy, Clone)]
 pub struct Metrics {
     pub connections: usize,
@@ -156,11 +149,12 @@ impl Store {
         if let Some(active_call) = connected_user.active_call.as_ref() {
             let room_id = active_call.room_id;
             if active_call.connection_id == Some(connection_id) {
-                let left_room = self.leave_room(room_id, connection_id)?;
-                result.hosted_projects = left_room.unshared_projects;
-                result.guest_projects = left_room.left_projects;
-                result.room = Some(Cow::Owned(left_room.room.into_owned()));
-                result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
+                todo!()
+                // let left_room = self.leave_room(room_id, connection_id)?;
+                // result.hosted_projects = left_room.unshared_projects;
+                // result.guest_projects = left_room.left_projects;
+                // result.room = Some(Cow::Owned(left_room.room.into_owned()));
+                // result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
             } else if connected_user.connection_ids.len() == 1 {
                 todo!()
                 // let (room, _) = self.decline_call(room_id, connection_id)?;
@@ -256,84 +250,6 @@ impl Store {
             busy: self.is_user_busy(user_id),
             should_notify,
         }
-    }
-
-    pub fn leave_room(&mut self, room_id: RoomId, connection_id: ConnectionId) -> Result<LeftRoom> {
-        todo!()
-        // let connection = self
-        //     .connections
-        //     .get_mut(&connection_id)
-        //     .ok_or_else(|| anyhow!("no such connection"))?;
-        // let user_id = connection.user_id;
-
-        // let connected_user = self
-        //     .connected_users
-        //     .get(&user_id)
-        //     .ok_or_else(|| anyhow!("no such connection"))?;
-        // anyhow::ensure!(
-        //     connected_user
-        //         .active_call
-        //         .map_or(false, |call| call.room_id == room_id
-        //             && call.connection_id == Some(connection_id)),
-        //     "cannot leave a room before joining it"
-        // );
-
-        // // Given that users can only join one room at a time, we can safely unshare
-        // // and leave all projects associated with the connection.
-        // let mut unshared_projects = Vec::new();
-        // let mut left_projects = Vec::new();
-        // for project_id in connection.projects.clone() {
-        //     if let Ok((_, project)) = self.unshare_project(project_id, connection_id) {
-        //         unshared_projects.push(project);
-        //     } else if let Ok(project) = self.leave_project(project_id, connection_id) {
-        //         left_projects.push(project);
-        //     }
-        // }
-        // self.connected_users.get_mut(&user_id).unwrap().active_call = None;
-
-        // let room = self
-        //     .rooms
-        //     .get_mut(&room_id)
-        //     .ok_or_else(|| anyhow!("no such room"))?;
-        // room.participants
-        //     .retain(|participant| participant.peer_id != connection_id.0);
-
-        // let mut canceled_call_connection_ids = Vec::new();
-        // room.pending_participant_user_ids
-        //     .retain(|pending_participant_user_id| {
-        //         if let Some(connected_user) = self
-        //             .connected_users
-        //             .get_mut(&UserId::from_proto(*pending_participant_user_id))
-        //         {
-        //             if let Some(call) = connected_user.active_call.as_ref() {
-        //                 if call.calling_user_id == user_id {
-        //                     connected_user.active_call.take();
-        //                     canceled_call_connection_ids
-        //                         .extend(connected_user.connection_ids.iter().copied());
-        //                     false
-        //                 } else {
-        //                     true
-        //                 }
-        //             } else {
-        //                 true
-        //             }
-        //         } else {
-        //             true
-        //         }
-        //     });
-
-        // let room = if room.participants.is_empty() {
-        //     Cow::Owned(self.rooms.remove(&room_id).unwrap())
-        // } else {
-        //     Cow::Borrowed(self.rooms.get(&room_id).unwrap())
-        // };
-
-        // Ok(LeftRoom {
-        //     room,
-        //     unshared_projects,
-        //     left_projects,
-        //     canceled_call_connection_ids,
-        // })
     }
 
     pub fn rooms(&self) -> &BTreeMap<RoomId, proto::Room> {
