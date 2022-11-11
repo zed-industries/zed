@@ -1342,7 +1342,7 @@ where
                 INSERT INTO projects (host_user_id, room_id)
                 VALUES ($1)
                 RETURNING id
-            ",
+                ",
             )
             .bind(user_id)
             .bind(room_id)
@@ -1354,7 +1354,7 @@ where
                 sqlx::query(
                     "
                 INSERT INTO worktrees (id, project_id, root_name)
-                ",
+                    ",
                 )
                 .bind(worktree.id as i32)
                 .bind(project_id)
@@ -1739,15 +1739,6 @@ pub struct Room {
     pub id: RoomId,
     pub version: i32,
     pub live_kit_room: String,
-}
-
-#[derive(Clone, Debug, Default, FromRow, PartialEq)]
-pub struct Call {
-    pub room_id: RoomId,
-    pub calling_user_id: UserId,
-    pub called_user_id: UserId,
-    pub answering_connection_id: Option<i32>,
-    pub initial_project_id: Option<ProjectId>,
 }
 
 id_type!(ProjectId);

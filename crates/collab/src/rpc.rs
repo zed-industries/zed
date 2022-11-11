@@ -431,12 +431,8 @@ impl Server {
         let mut contacts_to_update = HashSet::default();
         let mut room_left = None;
         {
-            let mut store = self.store().await;
-
-            #[cfg(test)]
-            let removed_connection = store.remove_connection(connection_id).unwrap();
-            #[cfg(not(test))]
-            let removed_connection = store.remove_connection(connection_id)?;
+            let removed_connection = self.store().await.remove_connection(connection_id)?;
+            self.app_state.db.remove_connection(connection_id);
 
             for project in removed_connection.hosted_projects {
                 projects_to_unshare.push(project.id);

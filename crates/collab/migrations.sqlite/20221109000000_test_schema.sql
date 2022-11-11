@@ -68,10 +68,11 @@ CREATE TABLE "room_participants" (
     "id" INTEGER PRIMARY KEY,
     "room_id" INTEGER NOT NULL REFERENCES rooms (id),
     "user_id" INTEGER NOT NULL REFERENCES users (id),
-    "connection_id" INTEGER,
+    "answering_connection_id" INTEGER,
     "location_kind" INTEGER,
     "location_project_id" INTEGER REFERENCES projects (id),
     "initial_project_id" INTEGER REFERENCES projects (id),
     "calling_user_id" INTEGER NOT NULL REFERENCES users (id)
+    "calling_connection_id" INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");

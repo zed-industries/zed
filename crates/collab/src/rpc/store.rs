@@ -72,16 +72,6 @@ pub struct Worktree {
 
 pub type ReplicaId = u16;
 
-#[derive(Default)]
-pub struct RemovedConnectionState<'a> {
-    pub user_id: UserId,
-    pub hosted_projects: Vec<Project>,
-    pub guest_projects: Vec<LeftProject>,
-    pub contact_ids: HashSet<UserId>,
-    pub room: Option<Cow<'a, proto::Room>>,
-    pub canceled_call_connection_ids: Vec<ConnectionId>,
-}
-
 pub struct LeftProject {
     pub id: ProjectId,
     pub host_user_id: UserId,
@@ -129,47 +119,20 @@ impl Store {
     }
 
     #[instrument(skip(self))]
-    pub fn remove_connection(
-        &mut self,
-        connection_id: ConnectionId,
-    ) -> Result<RemovedConnectionState> {
+    pub fn remove_connection(&mut self, connection_id: ConnectionId) -> Result<()> {
         let connection = self
             .connections
             .get_mut(&connection_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
 
         let user_id = connection.user_id;
-
-        let mut result = RemovedConnectionState {
-            user_id,
-            ..Default::default()
-        };
-
-        let connected_user = self.connected_users.get(&user_id).unwrap();
-        if let Some(active_call) = connected_user.active_call.as_ref() {
-            let room_id = active_call.room_id;
-            if active_call.connection_id == Some(connection_id) {
-                todo!()
-                // let left_room = self.leave_room(room_id, connection_id)?;
-                // result.hosted_projects = left_room.unshared_projects;
-                // result.guest_projects = left_room.left_projects;
-                // result.room = Some(Cow::Owned(left_room.room.into_owned()));
-                // result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
-            } else if connected_user.connection_ids.len() == 1 {
-                todo!()
-                // let (room, _) = self.decline_call(room_id, connection_id)?;
-                // result.room = Some(Cow::Owned(room.clone()));
-            }
-        }
-
         let connected_user = self.connected_users.get_mut(&user_id).unwrap();
         connected_user.connection_ids.remove(&connection_id);
         if connected_user.connection_ids.is_empty() {
             self.connected_users.remove(&user_id);
         }
         self.connections.remove(&connection_id).unwrap();
-
-        Ok(result)
+        Ok(())
     }
 
     pub fn user_id_for_connection(&self, connection_id: ConnectionId) -> Result<UserId> {
