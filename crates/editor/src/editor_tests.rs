@@ -4146,14 +4146,26 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
 
     handle_resolve_completion_request(
         &mut cx,
-        Some((
-            indoc! {"
-                one.second_completion
-                two
-                threeˇ
-            "},
-            "\nadditional edit",
-        )),
+        Some(vec![
+            (
+                //This overlaps with the primary completion edit which is
+                //misbehavior from the LSP spec, test that we filter it out
+                indoc! {"
+                    one.second_ˇcompletion
+                    two
+                    threeˇ
+                "},
+                "overlapping aditional edit",
+            ),
+            (
+                indoc! {"
+                    one.second_completion
+                    two
+                    threeˇ
+                "},
+                "\nadditional edit",
+            ),
+        ]),
     )
     .await;
     apply_additional_edits.await.unwrap();
@@ -4303,19 +4315,24 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
 
     async fn handle_resolve_completion_request<'a>(
         cx: &mut EditorLspTestContext<'a>,
-        edit: Option<(&'static str, &'static str)>,
+        edits: Option<Vec<(&'static str, &'static str)>>,
     ) {
-        let edit = edit.map(|(marked_string, new_text)| {
-            let (_, marked_ranges) = marked_text_ranges(marked_string, false);
-            let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
-            vec![lsp::TextEdit::new(replace_range, new_text.to_string())]
+        let edits = edits.map(|edits| {
+            edits
+                .iter()
+                .map(|(marked_string, new_text)| {
+                    let (_, marked_ranges) = marked_text_ranges(marked_string, false);
+                    let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
+                    lsp::TextEdit::new(replace_range, new_text.to_string())
+                })
+                .collect::<Vec<_>>()
         });
 
         cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
-            let edit = edit.clone();
+            let edits = edits.clone();
             async move {
                 Ok(lsp::CompletionItem {
-                    additional_text_edits: edit,
+                    additional_text_edits: edits,
                     ..Default::default()
                 })
             }
