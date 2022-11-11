@@ -164,9 +164,10 @@ message LeaveRoom {
 
 message Room {
     uint64 id = 1;
-    repeated Participant participants = 2;
-    repeated uint64 pending_participant_user_ids = 3;
-    string live_kit_room = 4;
+    uint64 version = 2;
+    repeated Participant participants = 3;
+    repeated uint64 pending_participant_user_ids = 4;
+    string live_kit_room = 5;
 }
 
 message Participant {
@@ -199,13 +200,13 @@ message ParticipantLocation {
 
 message Call {
     uint64 room_id = 1;
-    uint64 recipient_user_id = 2;
+    uint64 called_user_id = 2;
     optional uint64 initial_project_id = 3;
 }
 
 message IncomingCall {
     uint64 room_id = 1;
-    uint64 caller_user_id = 2;
+    uint64 calling_user_id = 2;
     repeated uint64 participant_user_ids = 3;
     optional ParticipantProject initial_project = 4;
 }
@@ -214,7 +215,7 @@ message CallCanceled {}
 
 message CancelCall {
     uint64 room_id = 1;
-    uint64 recipient_user_id = 2;
+    uint64 called_user_id = 2;
 }
 
 message DeclineCall {

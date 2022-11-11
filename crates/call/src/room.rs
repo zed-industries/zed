@@ -149,7 +149,7 @@ impl Room {
     }
 
     pub(crate) fn create(
-        recipient_user_id: u64,
+        called_user_id: u64,
         initial_project: Option<ModelHandle<Project>>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -182,7 +182,7 @@ impl Room {
             match room
                 .update(&mut cx, |room, cx| {
                     room.leave_when_empty = true;
-                    room.call(recipient_user_id, initial_project_id, cx)
+                    room.call(called_user_id, initial_project_id, cx)
                 })
                 .await
             {
@@ -487,7 +487,7 @@ impl Room {
 
     pub(crate) fn call(
         &mut self,
-        recipient_user_id: u64,
+        called_user_id: u64,
         initial_project_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -503,7 +503,7 @@ impl Room {
             let result = client
                 .request(proto::Call {
                     room_id,
-                    recipient_user_id,
+                    called_user_id,
                     initial_project_id,
                 })
                 .await;

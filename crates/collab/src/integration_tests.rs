@@ -104,7 +104,7 @@ async fn test_basic_calls(
     // User B receives the call.
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b.caller.github_login, "user_a");
+    assert_eq!(call_b.calling_user.github_login, "user_a");
 
     // User B connects via another client and also receives a ring on the newly-connected client.
     let _client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -112,7 +112,7 @@ async fn test_basic_calls(
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.caller.github_login, "user_a");
+    assert_eq!(call_b2.calling_user.github_login, "user_a");
 
     // User B joins the room using the first client.
     active_call_b
@@ -165,7 +165,7 @@ async fn test_basic_calls(
 
     // User C receives the call, but declines it.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
-    assert_eq!(call_c.caller.github_login, "user_b");
+    assert_eq!(call_c.calling_user.github_login, "user_b");
     active_call_c.update(cx_c, |call, _| call.decline_incoming().unwrap());
     assert!(incoming_call_c.next().await.unwrap().is_none());
 
@@ -308,7 +308,7 @@ async fn test_room_uniqueness(
     // User B receives the call from user A.
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b1.caller.github_login, "user_a");
+    assert_eq!(call_b1.calling_user.github_login, "user_a");
 
     // Ensure calling users A and B from client C fails.
     active_call_c
@@ -367,7 +367,7 @@ async fn test_room_uniqueness(
         .unwrap();
     deterministic.run_until_parked();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.caller.github_login, "user_c");
+    assert_eq!(call_b2.calling_user.github_login, "user_c");
 }
 
 #[gpui::test(iterations = 10)]
@@ -695,7 +695,7 @@ async fn test_share_project(
     let incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call = incoming_call_b.borrow().clone().unwrap();
-    assert_eq!(call.caller.github_login, "user_a");
+    assert_eq!(call.calling_user.github_login, "user_a");
     let initial_project = call.initial_project.unwrap();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
@@ -766,7 +766,7 @@ async fn test_share_project(
     let incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call = incoming_call_c.borrow().clone().unwrap();
-    assert_eq!(call.caller.github_login, "user_b");
+    assert_eq!(call.calling_user.github_login, "user_b");
     let initial_project = call.initial_project.unwrap();
     active_call_c
         .update(cx_c, |call, cx| call.accept_incoming(cx))

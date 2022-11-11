@@ -1,12 +1,10 @@
 use crate::db::{self, ProjectId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
-use nanoid::nanoid;
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
 use std::{borrow::Cow, mem, path::PathBuf, str};
 use tracing::instrument;
-use util::post_inc;
 
 pub type RoomId = u64;
 
@@ -34,7 +32,7 @@ struct ConnectionState {
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize)]
 pub struct Call {
-    pub caller_user_id: UserId,
+    pub calling_user_id: UserId,
     pub room_id: RoomId,
     pub connection_id: Option<ConnectionId>,
     pub initial_project_id: Option<ProjectId>,
@@ -147,7 +145,7 @@ impl Store {
                 let room = self.room(active_call.room_id)?;
                 Some(proto::IncomingCall {
                     room_id: active_call.room_id,
-                    caller_user_id: active_call.caller_user_id.to_proto(),
+                    calling_user_id: active_call.calling_user_id.to_proto(),
                     participant_user_ids: room
                         .participants
                         .iter()
@@ -285,47 +283,6 @@ impl Store {
         }
     }
 
-    pub fn create_room(&mut self, creator_connection_id: ConnectionId) -> Result<&proto::Room> {
-        let connection = self
-            .connections
-            .get_mut(&creator_connection_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let connected_user = self
-            .connected_users
-            .get_mut(&connection.user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        anyhow::ensure!(
-            connected_user.active_call.is_none(),
-            "can't create a room with an active call"
-        );
-
-        let room_id = post_inc(&mut self.next_room_id);
-        let room = proto::Room {
-            id: room_id,
-            participants: vec![proto::Participant {
-                user_id: connection.user_id.to_proto(),
-                peer_id: creator_connection_id.0,
-                projects: Default::default(),
-                location: Some(proto::ParticipantLocation {
-                    variant: Some(proto::participant_location::Variant::External(
-                        proto::participant_location::External {},
-                    )),
-                }),
-            }],
-            pending_participant_user_ids: Default::default(),
-            live_kit_room: nanoid!(30),
-        };
-
-        self.rooms.insert(room_id, room);
-        connected_user.active_call = Some(Call {
-            caller_user_id: connection.user_id,
-            room_id,
-            connection_id: Some(creator_connection_id),
-            initial_project_id: None,
-        });
-        Ok(self.rooms.get(&room_id).unwrap())
-    }
-
     pub fn join_room(
         &mut self,
         room_id: RoomId,
@@ -424,7 +381,7 @@ impl Store {
                     .get_mut(&UserId::from_proto(*pending_participant_user_id))
                 {
                     if let Some(call) = connected_user.active_call.as_ref() {
-                        if call.caller_user_id == user_id {
+                        if call.calling_user_id == user_id {
                             connected_user.active_call.take();
                             canceled_call_connection_ids
                                 .extend(connected_user.connection_ids.iter().copied());
@@ -462,101 +419,10 @@ impl Store {
         &self.rooms
     }
 
-    pub fn call(
-        &mut self,
-        room_id: RoomId,
-        recipient_user_id: UserId,
-        initial_project_id: Option<ProjectId>,
-        from_connection_id: ConnectionId,
-    ) -> Result<(&proto::Room, Vec<ConnectionId>, proto::IncomingCall)> {
-        let caller_user_id = self.user_id_for_connection(from_connection_id)?;
-
-        let recipient_connection_ids = self
-            .connection_ids_for_user(recipient_user_id)
-            .collect::<Vec<_>>();
-        let mut recipient = self
-            .connected_users
-            .get_mut(&recipient_user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        anyhow::ensure!(
-            recipient.active_call.is_none(),
-            "recipient is already on another call"
-        );
-
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        anyhow::ensure!(
-            room.participants
-                .iter()
-                .any(|participant| participant.peer_id == from_connection_id.0),
-            "no such room"
-        );
-        anyhow::ensure!(
-            room.pending_participant_user_ids
-                .iter()
-                .all(|user_id| UserId::from_proto(*user_id) != recipient_user_id),
-            "cannot call the same user more than once"
-        );
-        room.pending_participant_user_ids
-            .push(recipient_user_id.to_proto());
-
-        if let Some(initial_project_id) = initial_project_id {
-            let project = self
-                .projects
-                .get(&initial_project_id)
-                .ok_or_else(|| anyhow!("no such project"))?;
-            anyhow::ensure!(project.room_id == room_id, "no such project");
-        }
-
-        recipient.active_call = Some(Call {
-            caller_user_id,
-            room_id,
-            connection_id: None,
-            initial_project_id,
-        });
-
-        Ok((
-            room,
-            recipient_connection_ids,
-            proto::IncomingCall {
-                room_id,
-                caller_user_id: caller_user_id.to_proto(),
-                participant_user_ids: room
-                    .participants
-                    .iter()
-                    .map(|participant| participant.user_id)
-                    .collect(),
-                initial_project: initial_project_id
-                    .and_then(|id| Self::build_participant_project(id, &self.projects)),
-            },
-        ))
-    }
-
-    pub fn call_failed(&mut self, room_id: RoomId, to_user_id: UserId) -> Result<&proto::Room> {
-        let mut recipient = self
-            .connected_users
-            .get_mut(&to_user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        anyhow::ensure!(recipient
-            .active_call
-            .map_or(false, |call| call.room_id == room_id
-                && call.connection_id.is_none()));
-        recipient.active_call = None;
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        room.pending_participant_user_ids
-            .retain(|user_id| UserId::from_proto(*user_id) != to_user_id);
-        Ok(room)
-    }
-
     pub fn cancel_call(
         &mut self,
         room_id: RoomId,
-        recipient_user_id: UserId,
+        called_user_id: UserId,
         canceller_connection_id: ConnectionId,
     ) -> Result<(&proto::Room, HashSet<ConnectionId>)> {
         let canceller_user_id = self.user_id_for_connection(canceller_connection_id)?;
@@ -566,7 +432,7 @@ impl Store {
             .ok_or_else(|| anyhow!("no such connection"))?;
         let recipient = self
             .connected_users
-            .get(&recipient_user_id)
+            .get(&called_user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         let canceller_active_call = canceller
             .active_call
@@ -595,9 +461,9 @@ impl Store {
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
         room.pending_participant_user_ids
-            .retain(|user_id| UserId::from_proto(*user_id) != recipient_user_id);
+            .retain(|user_id| UserId::from_proto(*user_id) != called_user_id);
 
-        let recipient = self.connected_users.get_mut(&recipient_user_id).unwrap();
+        let recipient = self.connected_users.get_mut(&called_user_id).unwrap();
         recipient.active_call.take();
 
         Ok((room, recipient.connection_ids.clone()))
@@ -608,10 +474,10 @@ impl Store {
         room_id: RoomId,
         recipient_connection_id: ConnectionId,
     ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
-        let recipient_user_id = self.user_id_for_connection(recipient_connection_id)?;
+        let called_user_id = self.user_id_for_connection(recipient_connection_id)?;
         let recipient = self
             .connected_users
-            .get_mut(&recipient_user_id)
+            .get_mut(&called_user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         if let Some(active_call) = recipient.active_call {
             anyhow::ensure!(active_call.room_id == room_id, "no such room");
@@ -621,110 +487,18 @@ impl Store {
             );
             recipient.active_call.take();
             let recipient_connection_ids = self
-                .connection_ids_for_user(recipient_user_id)
+                .connection_ids_for_user(called_user_id)
                 .collect::<Vec<_>>();
             let room = self
                 .rooms
                 .get_mut(&active_call.room_id)
                 .ok_or_else(|| anyhow!("no such room"))?;
             room.pending_participant_user_ids
-                .retain(|user_id| UserId::from_proto(*user_id) != recipient_user_id);
+                .retain(|user_id| UserId::from_proto(*user_id) != called_user_id);
             Ok((room, recipient_connection_ids))
         } else {
             Err(anyhow!("user is not being called"))
         }
-    }
-
-    pub fn update_participant_location(
-        &mut self,
-        room_id: RoomId,
-        location: proto::ParticipantLocation,
-        connection_id: ConnectionId,
-    ) -> Result<&proto::Room> {
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        if let Some(proto::participant_location::Variant::SharedProject(project)) =
-            location.variant.as_ref()
-        {
-            anyhow::ensure!(
-                room.participants
-                    .iter()
-                    .flat_map(|participant| &participant.projects)
-                    .any(|participant_project| participant_project.id == project.id),
-                "no such project"
-            );
-        }
-
-        let participant = room
-            .participants
-            .iter_mut()
-            .find(|participant| participant.peer_id == connection_id.0)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        participant.location = Some(location);
-
-        Ok(room)
-    }
-
-    pub fn share_project(
-        &mut self,
-        room_id: RoomId,
-        project_id: ProjectId,
-        worktrees: Vec<proto::WorktreeMetadata>,
-        host_connection_id: ConnectionId,
-    ) -> Result<&proto::Room> {
-        let connection = self
-            .connections
-            .get_mut(&host_connection_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        let participant = room
-            .participants
-            .iter_mut()
-            .find(|participant| participant.peer_id == host_connection_id.0)
-            .ok_or_else(|| anyhow!("no such room"))?;
-
-        connection.projects.insert(project_id);
-        self.projects.insert(
-            project_id,
-            Project {
-                id: project_id,
-                room_id,
-                host_connection_id,
-                host: Collaborator {
-                    user_id: connection.user_id,
-                    replica_id: 0,
-                    admin: connection.admin,
-                },
-                guests: Default::default(),
-                active_replica_ids: Default::default(),
-                worktrees: worktrees
-                    .into_iter()
-                    .map(|worktree| {
-                        (
-                            worktree.id,
-                            Worktree {
-                                root_name: worktree.root_name,
-                                visible: worktree.visible,
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .collect(),
-                language_servers: Default::default(),
-            },
-        );
-
-        participant
-            .projects
-            .extend(Self::build_participant_project(project_id, &self.projects));
-
-        Ok(room)
     }
 
     pub fn unshare_project(

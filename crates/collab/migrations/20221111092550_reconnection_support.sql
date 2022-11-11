@@ -44,4 +44,4 @@ CREATE TABLE IF NOT EXISTS "calls" (
     "answering_connection_id" INTEGER,
     "initial_project_id" INTEGER REFERENCES projects (id)
 );
-CREATE UNIQUE INDEX "index_calls_on_calling_user_id" ON "calls" ("calling_user_id");
+CREATE UNIQUE INDEX "index_calls_on_called_user_id" ON "calls" ("called_user_id");

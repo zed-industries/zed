@@ -3,6 +3,7 @@ use anyhow::anyhow;
 use axum::http::StatusCode;
 use collections::HashMap;
 use futures::StreamExt;
+use rpc::{proto, ConnectionId};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::{Migrate as _, Migration, MigrationSource},
@@ -565,6 +566,7 @@ where
     for<'a> i64: sqlx::Encode<'a, D> + sqlx::Decode<'a, D>,
     for<'a> bool: sqlx::Encode<'a, D> + sqlx::Decode<'a, D>,
     for<'a> Uuid: sqlx::Encode<'a, D> + sqlx::Decode<'a, D>,
+    for<'a> Option<ProjectId>: sqlx::Encode<'a, D> + sqlx::Decode<'a, D>,
     for<'a> sqlx::types::JsonValue: sqlx::Encode<'a, D> + sqlx::Decode<'a, D>,
     for<'a> OffsetDateTime: sqlx::Encode<'a, D> + sqlx::Decode<'a, D>,
     for<'a> PrimitiveDateTime: sqlx::Decode<'a, D> + sqlx::Decode<'a, D>,
@@ -882,40 +884,350 @@ where
         })
     }
 
-    // projects
-
-    /// Registers a new project for the given user.
-    pub async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId> {
+    pub async fn create_room(
+        &self,
+        user_id: UserId,
+        connection_id: ConnectionId,
+    ) -> Result<proto::Room> {
         test_support!(self, {
-            Ok(sqlx::query_scalar(
+            let mut tx = self.pool.begin().await?;
+            let live_kit_room = nanoid::nanoid!(30);
+            let room_id = sqlx::query_scalar(
                 "
-                INSERT INTO projects(host_user_id)
-                VALUES ($1)
+                INSERT INTO rooms (live_kit_room, version)
+                VALUES ($1, $2)
                 RETURNING id
                 ",
             )
-            .bind(host_user_id)
-            .fetch_one(&self.pool)
+            .bind(&live_kit_room)
+            .bind(0)
+            .fetch_one(&mut tx)
             .await
-            .map(ProjectId)?)
+            .map(RoomId)?;
+
+            sqlx::query(
+                "
+                INSERT INTO room_participants (room_id, user_id, connection_id)
+                VALUES ($1, $2, $3)
+                ",
+            )
+            .bind(room_id)
+            .bind(user_id)
+            .bind(connection_id.0 as i32)
+            .execute(&mut tx)
+            .await?;
+
+            sqlx::query(
+                "
+                INSERT INTO calls (room_id, calling_user_id, called_user_id, answering_connection_id)
+                VALUES ($1, $2, $3, $4)
+                ",
+            )
+            .bind(room_id)
+            .bind(user_id)
+            .bind(user_id)
+            .bind(connection_id.0 as i32)
+            .execute(&mut tx)
+            .await?;
+
+            self.commit_room_transaction(room_id, tx).await
         })
     }
 
-    /// Unregisters a project for the given project id.
-    pub async fn unregister_project(&self, project_id: ProjectId) -> Result<()> {
+    pub async fn call(
+        &self,
+        room_id: RoomId,
+        calling_user_id: UserId,
+        called_user_id: UserId,
+        initial_project_id: Option<ProjectId>,
+    ) -> Result<proto::Room> {
         test_support!(self, {
+            let mut tx = self.pool.begin().await?;
             sqlx::query(
                 "
-                UPDATE projects
-                SET unregistered = TRUE
-                WHERE id = $1
+                INSERT INTO calls (room_id, calling_user_id, called_user_id, initial_project_id)
+                VALUES ($1, $2, $3, $4)
+                ",
+            )
+            .bind(room_id)
+            .bind(calling_user_id)
+            .bind(called_user_id)
+            .bind(initial_project_id)
+            .execute(&mut tx)
+            .await?;
+
+            sqlx::query(
+                "
+                INSERT INTO room_participants (room_id, user_id)
+                VALUES ($1, $2)
+                ",
+            )
+            .bind(room_id)
+            .bind(called_user_id)
+            .execute(&mut tx)
+            .await?;
+
+            self.commit_room_transaction(room_id, tx).await
+        })
+    }
+
+    pub async fn call_failed(
+        &self,
+        room_id: RoomId,
+        called_user_id: UserId,
+    ) -> Result<proto::Room> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query(
+                "
+                DELETE FROM calls
+                WHERE room_id = $1 AND called_user_id = $2
+                ",
+            )
+            .bind(room_id)
+            .bind(called_user_id)
+            .execute(&mut tx)
+            .await?;
+
+            sqlx::query(
+                "
+                DELETE FROM room_participants
+                WHERE room_id = $1 AND user_id = $2
+                ",
+            )
+            .bind(room_id)
+            .bind(called_user_id)
+            .execute(&mut tx)
+            .await?;
+
+            self.commit_room_transaction(room_id, tx).await
+        })
+    }
+
+    pub async fn update_room_participant_location(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        location: proto::ParticipantLocation,
+    ) -> Result<proto::Room> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+
+            let location_kind;
+            let location_project_id;
+            match location
+                .variant
+                .ok_or_else(|| anyhow!("invalid location"))?
+            {
+                proto::participant_location::Variant::SharedProject(project) => {
+                    location_kind = 0;
+                    location_project_id = Some(ProjectId::from_proto(project.id));
+                }
+                proto::participant_location::Variant::UnsharedProject(_) => {
+                    location_kind = 1;
+                    location_project_id = None;
+                }
+                proto::participant_location::Variant::External(_) => {
+                    location_kind = 2;
+                    location_project_id = None;
+                }
+            }
+
+            sqlx::query(
+                "
+                UPDATE room_participants
+                SET location_kind = $1 AND location_project_id = $2
+                WHERE room_id = $1 AND user_id = $2
+                ",
+            )
+            .bind(location_kind)
+            .bind(location_project_id)
+            .bind(room_id)
+            .bind(user_id)
+            .execute(&mut tx)
+            .await?;
+
+            self.commit_room_transaction(room_id, tx).await
+        })
+    }
+
+    async fn commit_room_transaction(
+        &self,
+        room_id: RoomId,
+        mut tx: sqlx::Transaction<'_, D>,
+    ) -> Result<proto::Room> {
+        sqlx::query(
+            "
+            UPDATE rooms
+            SET version = version + 1
+            WHERE id = $1
+            ",
+        )
+        .bind(room_id)
+        .execute(&mut tx)
+        .await?;
+
+        let room: Room = sqlx::query_as(
+            "
+            SELECT *
+            FROM rooms
+            WHERE id = $1
+            ",
+        )
+        .bind(room_id)
+        .fetch_one(&mut tx)
+        .await?;
+
+        let mut db_participants =
+            sqlx::query_as::<_, (UserId, Option<i32>, Option<i32>, Option<i32>)>(
+                "
+                SELECT user_id, connection_id, location_kind, location_project_id
+                FROM room_participants
+                WHERE room_id = $1
+                ",
+            )
+            .bind(room_id)
+            .fetch(&mut tx);
+
+        let mut participants = Vec::new();
+        let mut pending_participant_user_ids = Vec::new();
+        while let Some(participant) = db_participants.next().await {
+            let (user_id, connection_id, _location_kind, _location_project_id) = participant?;
+            if let Some(connection_id) = connection_id {
+                participants.push(proto::Participant {
+                    user_id: user_id.to_proto(),
+                    peer_id: connection_id as u32,
+                    projects: Default::default(),
+                    location: Some(proto::ParticipantLocation {
+                        variant: Some(proto::participant_location::Variant::External(
+                            Default::default(),
+                        )),
+                    }),
+                });
+            } else {
+                pending_participant_user_ids.push(user_id.to_proto());
+            }
+        }
+        drop(db_participants);
+
+        for participant in &mut participants {
+            let mut entries = sqlx::query_as::<_, (ProjectId, String)>(
+                "
+                SELECT projects.id, worktrees.root_name
+                FROM projects
+                LEFT JOIN worktrees ON projects.id = worktrees.project_id
+                WHERE room_id = $1 AND host_user_id = $2
+                ",
+            )
+            .bind(room_id)
+            .fetch(&mut tx);
+
+            let mut projects = HashMap::default();
+            while let Some(entry) = entries.next().await {
+                let (project_id, worktree_root_name) = entry?;
+                let participant_project =
+                    projects
+                        .entry(project_id)
+                        .or_insert(proto::ParticipantProject {
+                            id: project_id.to_proto(),
+                            worktree_root_names: Default::default(),
+                        });
+                participant_project
+                    .worktree_root_names
+                    .push(worktree_root_name);
+            }
+
+            participant.projects = projects.into_values().collect();
+        }
+
+        tx.commit().await?;
+
+        Ok(proto::Room {
+            id: room.id.to_proto(),
+            version: room.version as u64,
+            live_kit_room: room.live_kit_room,
+            participants,
+            pending_participant_user_ids,
+        })
+    }
+
+    // projects
+
+    pub async fn share_project(
+        &self,
+        user_id: UserId,
+        connection_id: ConnectionId,
+        room_id: RoomId,
+        worktrees: &[proto::WorktreeMetadata],
+    ) -> Result<(ProjectId, proto::Room)> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+            let project_id = sqlx::query_scalar(
+                "
+                INSERT INTO projects (host_user_id, room_id)
+                VALUES ($1)
+                RETURNING id
+            ",
+            )
+            .bind(user_id)
+            .bind(room_id)
+            .fetch_one(&mut tx)
+            .await
+            .map(ProjectId)?;
+
+            for worktree in worktrees {
+                sqlx::query(
+                    "
+                INSERT INTO worktrees (id, project_id, root_name)
+                ",
+                )
+                .bind(worktree.id as i32)
+                .bind(project_id)
+                .bind(&worktree.root_name)
+                .execute(&mut tx)
+                .await?;
+            }
+
+            sqlx::query(
+                "
+                INSERT INTO project_collaborators (
+                project_id,
+                connection_id,
+                user_id,
+                replica_id,
+                is_host
+                )
+                VALUES ($1, $2, $3, $4, $5)
                 ",
             )
             .bind(project_id)
-            .execute(&self.pool)
+            .bind(connection_id.0 as i32)
+            .bind(user_id)
+            .bind(0)
+            .bind(true)
+            .execute(&mut tx)
             .await?;
-            Ok(())
+
+            let room = self.commit_room_transaction(room_id, tx).await?;
+            Ok((project_id, room))
         })
+    }
+
+    pub async fn unshare_project(&self, project_id: ProjectId) -> Result<()> {
+        todo!()
+        // test_support!(self, {
+        //     sqlx::query(
+        //         "
+        //         UPDATE projects
+        //         SET unregistered = TRUE
+        //         WHERE id = $1
+        //         ",
+        //     )
+        //     .bind(project_id)
+        //     .execute(&self.pool)
+        //     .await?;
+        //     Ok(())
+        // })
     }
 
     // contacts
@@ -1244,6 +1556,14 @@ pub struct User {
     pub invite_code: Option<String>,
     pub invite_count: i32,
     pub connected_once: bool,
+}
+
+id_type!(RoomId);
+#[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
+pub struct Room {
+    pub id: RoomId,
+    pub version: i32,
+    pub live_kit_room: String,
 }
 
 id_type!(ProjectId);
