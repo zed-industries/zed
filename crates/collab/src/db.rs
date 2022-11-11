@@ -1061,6 +1061,91 @@ where
         })
     }
 
+    pub async fn join_room(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        connection_id: ConnectionId,
+    ) -> Result<proto::Room> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query(
+                "
+                UPDATE calls
+                SET answering_connection_id = $1
+                WHERE room_id = $2 AND called_user_id = $3
+                RETURNING 1
+                ",
+            )
+            .bind(connection_id.0 as i32)
+            .bind(room_id)
+            .bind(user_id)
+            .fetch_one(&mut tx)
+            .await?;
+
+            sqlx::query(
+                "
+                UPDATE room_participants 
+                SET connection_id = $1
+                WHERE room_id = $2 AND user_id = $3
+                RETURNING 1
+                ",
+            )
+            .bind(connection_id.0 as i32)
+            .bind(room_id)
+            .bind(user_id)
+            .fetch_one(&mut tx)
+            .await?;
+
+            self.commit_room_transaction(room_id, tx).await
+        })
+
+        // let connection = self
+        //     .connections
+        //     .get_mut(&connection_id)
+        //     .ok_or_else(|| anyhow!("no such connection"))?;
+        // let user_id = connection.user_id;
+        // let recipient_connection_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
+
+        // let connected_user = self
+        //     .connected_users
+        //     .get_mut(&user_id)
+        //     .ok_or_else(|| anyhow!("no such connection"))?;
+        // let active_call = connected_user
+        //     .active_call
+        //     .as_mut()
+        //     .ok_or_else(|| anyhow!("not being called"))?;
+        // anyhow::ensure!(
+        //     active_call.room_id == room_id && active_call.connection_id.is_none(),
+        //     "not being called on this room"
+        // );
+
+        // let room = self
+        //     .rooms
+        //     .get_mut(&room_id)
+        //     .ok_or_else(|| anyhow!("no such room"))?;
+        // anyhow::ensure!(
+        //     room.pending_participant_user_ids
+        //         .contains(&user_id.to_proto()),
+        //     anyhow!("no such room")
+        // );
+        // room.pending_participant_user_ids
+        //     .retain(|pending| *pending != user_id.to_proto());
+        // room.participants.push(proto::Participant {
+        //     user_id: user_id.to_proto(),
+        //     peer_id: connection_id.0,
+        //     projects: Default::default(),
+        //     location: Some(proto::ParticipantLocation {
+        //         variant: Some(proto::participant_location::Variant::External(
+        //             proto::participant_location::External {},
+        //         )),
+        //     }),
+        // });
+        // active_call.connection_id = Some(connection_id);
+
+        // Ok((room, recipient_connection_ids))
+    }
+
     pub async fn update_room_participant_location(
         &self,
         room_id: RoomId,

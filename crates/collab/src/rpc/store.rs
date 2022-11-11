@@ -257,57 +257,6 @@ impl Store {
         }
     }
 
-    pub fn join_room(
-        &mut self,
-        room_id: RoomId,
-        connection_id: ConnectionId,
-    ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
-        let connection = self
-            .connections
-            .get_mut(&connection_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let user_id = connection.user_id;
-        let recipient_connection_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
-
-        let connected_user = self
-            .connected_users
-            .get_mut(&user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let active_call = connected_user
-            .active_call
-            .as_mut()
-            .ok_or_else(|| anyhow!("not being called"))?;
-        anyhow::ensure!(
-            active_call.room_id == room_id && active_call.connection_id.is_none(),
-            "not being called on this room"
-        );
-
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        anyhow::ensure!(
-            room.pending_participant_user_ids
-                .contains(&user_id.to_proto()),
-            anyhow!("no such room")
-        );
-        room.pending_participant_user_ids
-            .retain(|pending| *pending != user_id.to_proto());
-        room.participants.push(proto::Participant {
-            user_id: user_id.to_proto(),
-            peer_id: connection_id.0,
-            projects: Default::default(),
-            location: Some(proto::ParticipantLocation {
-                variant: Some(proto::participant_location::Variant::External(
-                    proto::participant_location::External {},
-                )),
-            }),
-        });
-        active_call.connection_id = Some(connection_id);
-
-        Ok((room, recipient_connection_ids))
-    }
-
     pub fn leave_room(&mut self, room_id: RoomId, connection_id: ConnectionId) -> Result<LeftRoom> {
         let connection = self
             .connections

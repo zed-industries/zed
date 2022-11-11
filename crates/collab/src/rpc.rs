@@ -607,42 +607,51 @@ impl Server {
         request: Message<proto::JoinRoom>,
         response: Response<proto::JoinRoom>,
     ) -> Result<()> {
+        let room = self
+            .app_state
+            .db
+            .join_room(
+                RoomId::from_proto(request.payload.id),
+                request.sender_user_id,
+                request.sender_connection_id,
+            )
+            .await?;
+        for recipient_id in self
+            .store()
+            .await
+            .connection_ids_for_user(request.sender_user_id)
         {
-            let mut store = self.store().await;
-            let (room, recipient_connection_ids) =
-                store.join_room(request.payload.id, request.sender_connection_id)?;
-            for recipient_id in recipient_connection_ids {
-                self.peer
-                    .send(recipient_id, proto::CallCanceled {})
-                    .trace_err();
-            }
+            self.peer
+                .send(recipient_id, proto::CallCanceled {})
+                .trace_err();
+        }
 
-            let live_kit_connection_info =
-                if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
-                    if let Some(token) = live_kit
-                        .room_token(
-                            &room.live_kit_room,
-                            &request.sender_connection_id.to_string(),
-                        )
-                        .trace_err()
-                    {
-                        Some(proto::LiveKitConnectionInfo {
-                            server_url: live_kit.url().into(),
-                            token,
-                        })
-                    } else {
-                        None
-                    }
+        let live_kit_connection_info =
+            if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+                if let Some(token) = live_kit
+                    .room_token(
+                        &room.live_kit_room,
+                        &request.sender_connection_id.to_string(),
+                    )
+                    .trace_err()
+                {
+                    Some(proto::LiveKitConnectionInfo {
+                        server_url: live_kit.url().into(),
+                        token,
+                    })
                 } else {
                     None
-                };
+                }
+            } else {
+                None
+            };
 
-            response.send(proto::JoinRoomResponse {
-                room: Some(room.clone()),
-                live_kit_connection_info,
-            })?;
-            self.room_updated(room);
-        }
+        self.room_updated(&room);
+        response.send(proto::JoinRoomResponse {
+            room: Some(room),
+            live_kit_connection_info,
+        })?;
+
         self.update_user_contacts(request.sender_user_id).await?;
         Ok(())
     }
