@@ -940,7 +940,7 @@ where
         calling_user_id: UserId,
         called_user_id: UserId,
         initial_project_id: Option<ProjectId>,
-    ) -> Result<proto::Room> {
+    ) -> Result<(proto::Room, proto::IncomingCall)> {
         test_support!(self, {
             let mut tx = self.pool.begin().await?;
             sqlx::query(
@@ -967,8 +967,65 @@ where
             .execute(&mut tx)
             .await?;
 
-            self.commit_room_transaction(room_id, tx).await
+            let room = self.commit_room_transaction(room_id, tx).await?;
+            let incoming_call =
+                Self::build_incoming_call(&room, calling_user_id, initial_project_id);
+            Ok((room, incoming_call))
         })
+    }
+
+    pub async fn incoming_call_for_user(
+        &self,
+        user_id: UserId,
+    ) -> Result<Option<proto::IncomingCall>> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+            let call = sqlx::query_as::<_, Call>(
+                "
+                SELECT *
+                FROM calls
+                WHERE called_user_id = $1 AND answering_connection_id IS NULL
+                ",
+            )
+            .bind(user_id)
+            .fetch_optional(&mut tx)
+            .await?;
+
+            if let Some(call) = call {
+                let room = self.get_room(call.room_id, &mut tx).await?;
+                Ok(Some(Self::build_incoming_call(
+                    &room,
+                    call.calling_user_id,
+                    call.initial_project_id,
+                )))
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
+    fn build_incoming_call(
+        room: &proto::Room,
+        calling_user_id: UserId,
+        initial_project_id: Option<ProjectId>,
+    ) -> proto::IncomingCall {
+        proto::IncomingCall {
+            room_id: room.id,
+            calling_user_id: calling_user_id.to_proto(),
+            participant_user_ids: room
+                .participants
+                .iter()
+                .map(|participant| participant.user_id)
+                .collect(),
+            initial_project: room.participants.iter().find_map(|participant| {
+                let initial_project_id = initial_project_id?.to_proto();
+                participant
+                    .projects
+                    .iter()
+                    .find(|project| project.id == initial_project_id)
+                    .cloned()
+            }),
+        }
     }
 
     pub async fn call_failed(
@@ -1066,7 +1123,17 @@ where
         .bind(room_id)
         .execute(&mut tx)
         .await?;
+        let room = self.get_room(room_id, &mut tx).await?;
+        tx.commit().await?;
 
+        Ok(room)
+    }
+
+    async fn get_room(
+        &self,
+        room_id: RoomId,
+        tx: &mut sqlx::Transaction<'_, D>,
+    ) -> Result<proto::Room> {
         let room: Room = sqlx::query_as(
             "
             SELECT *
@@ -1075,7 +1142,7 @@ where
             ",
         )
         .bind(room_id)
-        .fetch_one(&mut tx)
+        .fetch_one(&mut *tx)
         .await?;
 
         let mut db_participants =
@@ -1087,7 +1154,7 @@ where
                 ",
             )
             .bind(room_id)
-            .fetch(&mut tx);
+            .fetch(&mut *tx);
 
         let mut participants = Vec::new();
         let mut pending_participant_user_ids = Vec::new();
@@ -1120,7 +1187,7 @@ where
                 ",
             )
             .bind(room_id)
-            .fetch(&mut tx);
+            .fetch(&mut *tx);
 
             let mut projects = HashMap::default();
             while let Some(entry) = entries.next().await {
@@ -1139,9 +1206,6 @@ where
 
             participant.projects = projects.into_values().collect();
         }
-
-        tx.commit().await?;
-
         Ok(proto::Room {
             id: room.id.to_proto(),
             version: room.version as u64,
@@ -1564,6 +1628,15 @@ pub struct Room {
     pub id: RoomId,
     pub version: i32,
     pub live_kit_room: String,
+}
+
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+pub struct Call {
+    pub room_id: RoomId,
+    pub calling_user_id: UserId,
+    pub called_user_id: UserId,
+    pub answering_connection_id: Option<i32>,
+    pub initial_project_id: Option<ProjectId>,
 }
 
 id_type!(ProjectId);

@@ -346,11 +346,7 @@ impl Server {
 
             {
                 let mut store = this.store().await;
-                let incoming_call = store.add_connection(connection_id, user_id, user.admin);
-                if let Some(incoming_call) = incoming_call {
-                    this.peer.send(connection_id, incoming_call)?;
-                }
-
+                store.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
 
                 if let Some((code, count)) = invite_code {
@@ -360,6 +356,11 @@ impl Server {
                     })?;
                 }
             }
+
+            if let Some(incoming_call) = this.app_state.db.incoming_call_for_user(user_id).await? {
+                this.peer.send(connection_id, incoming_call)?;
+            }
+
             this.update_user_contacts(user_id).await?;
 
             let handle_io = handle_io.fuse();
@@ -726,31 +727,13 @@ impl Server {
             return Err(anyhow!("cannot call a user who isn't a contact"))?;
         }
 
-        let room = self
+        let (room, incoming_call) = self
             .app_state
             .db
             .call(room_id, calling_user_id, called_user_id, initial_project_id)
             .await?;
         self.room_updated(&room);
         self.update_user_contacts(called_user_id).await?;
-
-        let incoming_call = proto::IncomingCall {
-            room_id: room_id.to_proto(),
-            calling_user_id: calling_user_id.to_proto(),
-            participant_user_ids: room
-                .participants
-                .iter()
-                .map(|participant| participant.user_id)
-                .collect(),
-            initial_project: room.participants.iter().find_map(|participant| {
-                let initial_project_id = initial_project_id?.to_proto();
-                participant
-                    .projects
-                    .iter()
-                    .find(|project| project.id == initial_project_id)
-                    .cloned()
-            }),
-        };
 
         let mut calls = self
             .store()
