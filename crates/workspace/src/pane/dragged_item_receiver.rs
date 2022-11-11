@@ -118,6 +118,7 @@ pub fn handle_dropped_item(
     {
         Action::Open(*project_entry)
     } else {
+        cx.propagate_event();
         return;
     };
 
