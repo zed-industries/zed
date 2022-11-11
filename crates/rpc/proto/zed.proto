@@ -166,7 +166,7 @@ message Room {
     uint64 id = 1;
     uint64 version = 2;
     repeated Participant participants = 3;
-    repeated uint64 pending_participant_user_ids = 4;
+    repeated PendingParticipant pending_participants = 4;
     string live_kit_room = 5;
 }
 
@@ -175,6 +175,12 @@ message Participant {
     uint32 peer_id = 2;
     repeated ParticipantProject projects = 3;
     ParticipantLocation location = 4;
+}
+
+message PendingParticipant {
+    uint64 user_id = 1;
+    uint64 calling_user_id = 2;
+    optional uint64 initial_project_id = 3;
 }
 
 message ParticipantProject {

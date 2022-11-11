@@ -294,6 +294,11 @@ impl Room {
             .position(|participant| Some(participant.user_id) == self.client.user_id());
         let local_participant = local_participant_ix.map(|ix| room.participants.swap_remove(ix));
 
+        let pending_participant_user_ids = room
+            .pending_participants
+            .iter()
+            .map(|p| p.user_id)
+            .collect::<Vec<_>>();
         let remote_participant_user_ids = room
             .participants
             .iter()
@@ -303,7 +308,7 @@ impl Room {
             self.user_store.update(cx, move |user_store, cx| {
                 (
                     user_store.get_users(remote_participant_user_ids, cx),
-                    user_store.get_users(room.pending_participant_user_ids, cx),
+                    user_store.get_users(pending_participant_user_ids, cx),
                 )
             });
         self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {

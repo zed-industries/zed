@@ -907,26 +907,14 @@ where
 
             sqlx::query(
                 "
-                INSERT INTO room_participants (room_id, user_id, connection_id)
-                VALUES ($1, $2, $3)
-                ",
-            )
-            .bind(room_id)
-            .bind(user_id)
-            .bind(connection_id.0 as i32)
-            .execute(&mut tx)
-            .await?;
-
-            sqlx::query(
-                "
-                INSERT INTO calls (room_id, calling_user_id, called_user_id, answering_connection_id)
+                INSERT INTO room_participants (room_id, user_id, connection_id, calling_user_id)
                 VALUES ($1, $2, $3, $4)
                 ",
             )
             .bind(room_id)
             .bind(user_id)
-            .bind(user_id)
             .bind(connection_id.0 as i32)
+            .bind(user_id)
             .execute(&mut tx)
             .await?;
 
@@ -945,31 +933,20 @@ where
             let mut tx = self.pool.begin().await?;
             sqlx::query(
                 "
-                INSERT INTO calls (room_id, calling_user_id, called_user_id, initial_project_id)
+                INSERT INTO room_participants (room_id, user_id, calling_user_id, initial_project_id)
                 VALUES ($1, $2, $3, $4)
                 ",
             )
             .bind(room_id)
-            .bind(calling_user_id)
             .bind(called_user_id)
+            .bind(calling_user_id)
             .bind(initial_project_id)
             .execute(&mut tx)
             .await?;
 
-            sqlx::query(
-                "
-                INSERT INTO room_participants (room_id, user_id)
-                VALUES ($1, $2)
-                ",
-            )
-            .bind(room_id)
-            .bind(called_user_id)
-            .execute(&mut tx)
-            .await?;
-
             let room = self.commit_room_transaction(room_id, tx).await?;
-            let incoming_call =
-                Self::build_incoming_call(&room, calling_user_id, initial_project_id);
+            let incoming_call = Self::build_incoming_call(&room, called_user_id)
+                .ok_or_else(|| anyhow!("failed to build incoming call"))?;
             Ok((room, incoming_call))
         })
     }
@@ -980,24 +957,20 @@ where
     ) -> Result<Option<proto::IncomingCall>> {
         test_support!(self, {
             let mut tx = self.pool.begin().await?;
-            let call = sqlx::query_as::<_, Call>(
+            let room_id = sqlx::query_scalar::<_, RoomId>(
                 "
-                SELECT *
-                FROM calls
-                WHERE called_user_id = $1 AND answering_connection_id IS NULL
+                SELECT room_id
+                FROM room_participants
+                WHERE user_id = $1 AND connection_id IS NULL
                 ",
             )
             .bind(user_id)
             .fetch_optional(&mut tx)
             .await?;
 
-            if let Some(call) = call {
-                let room = self.get_room(call.room_id, &mut tx).await?;
-                Ok(Some(Self::build_incoming_call(
-                    &room,
-                    call.calling_user_id,
-                    call.initial_project_id,
-                )))
+            if let Some(room_id) = room_id {
+                let room = self.get_room(room_id, &mut tx).await?;
+                Ok(Self::build_incoming_call(&room, user_id))
             } else {
                 Ok(None)
             }
@@ -1006,26 +979,30 @@ where
 
     fn build_incoming_call(
         room: &proto::Room,
-        calling_user_id: UserId,
-        initial_project_id: Option<ProjectId>,
-    ) -> proto::IncomingCall {
-        proto::IncomingCall {
+        called_user_id: UserId,
+    ) -> Option<proto::IncomingCall> {
+        let pending_participant = room
+            .pending_participants
+            .iter()
+            .find(|participant| participant.user_id == called_user_id.to_proto())?;
+
+        Some(proto::IncomingCall {
             room_id: room.id,
-            calling_user_id: calling_user_id.to_proto(),
+            calling_user_id: pending_participant.calling_user_id,
             participant_user_ids: room
                 .participants
                 .iter()
                 .map(|participant| participant.user_id)
                 .collect(),
             initial_project: room.participants.iter().find_map(|participant| {
-                let initial_project_id = initial_project_id?.to_proto();
+                let initial_project_id = pending_participant.initial_project_id?;
                 participant
                     .projects
                     .iter()
                     .find(|project| project.id == initial_project_id)
                     .cloned()
             }),
-        }
+        })
     }
 
     pub async fn call_failed(
@@ -1035,17 +1012,6 @@ where
     ) -> Result<proto::Room> {
         test_support!(self, {
             let mut tx = self.pool.begin().await?;
-            sqlx::query(
-                "
-                DELETE FROM calls
-                WHERE room_id = $1 AND called_user_id = $2
-                ",
-            )
-            .bind(room_id)
-            .bind(called_user_id)
-            .execute(&mut tx)
-            .await?;
-
             sqlx::query(
                 "
                 DELETE FROM room_participants
@@ -1071,20 +1037,6 @@ where
             let mut tx = self.pool.begin().await?;
             sqlx::query(
                 "
-                UPDATE calls
-                SET answering_connection_id = $1
-                WHERE room_id = $2 AND called_user_id = $3
-                RETURNING 1
-                ",
-            )
-            .bind(connection_id.0 as i32)
-            .bind(room_id)
-            .bind(user_id)
-            .fetch_one(&mut tx)
-            .await?;
-
-            sqlx::query(
-                "
                 UPDATE room_participants 
                 SET connection_id = $1
                 WHERE room_id = $2 AND user_id = $3
@@ -1096,54 +1048,8 @@ where
             .bind(user_id)
             .fetch_one(&mut tx)
             .await?;
-
             self.commit_room_transaction(room_id, tx).await
         })
-
-        // let connection = self
-        //     .connections
-        //     .get_mut(&connection_id)
-        //     .ok_or_else(|| anyhow!("no such connection"))?;
-        // let user_id = connection.user_id;
-        // let recipient_connection_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
-
-        // let connected_user = self
-        //     .connected_users
-        //     .get_mut(&user_id)
-        //     .ok_or_else(|| anyhow!("no such connection"))?;
-        // let active_call = connected_user
-        //     .active_call
-        //     .as_mut()
-        //     .ok_or_else(|| anyhow!("not being called"))?;
-        // anyhow::ensure!(
-        //     active_call.room_id == room_id && active_call.connection_id.is_none(),
-        //     "not being called on this room"
-        // );
-
-        // let room = self
-        //     .rooms
-        //     .get_mut(&room_id)
-        //     .ok_or_else(|| anyhow!("no such room"))?;
-        // anyhow::ensure!(
-        //     room.pending_participant_user_ids
-        //         .contains(&user_id.to_proto()),
-        //     anyhow!("no such room")
-        // );
-        // room.pending_participant_user_ids
-        //     .retain(|pending| *pending != user_id.to_proto());
-        // room.participants.push(proto::Participant {
-        //     user_id: user_id.to_proto(),
-        //     peer_id: connection_id.0,
-        //     projects: Default::default(),
-        //     location: Some(proto::ParticipantLocation {
-        //         variant: Some(proto::participant_location::Variant::External(
-        //             proto::participant_location::External {},
-        //         )),
-        //     }),
-        // });
-        // active_call.connection_id = Some(connection_id);
-
-        // Ok((room, recipient_connection_ids))
     }
 
     pub async fn update_room_participant_location(
@@ -1231,9 +1137,9 @@ where
         .await?;
 
         let mut db_participants =
-            sqlx::query_as::<_, (UserId, Option<i32>, Option<i32>, Option<i32>)>(
+            sqlx::query_as::<_, (UserId, Option<i32>, Option<i32>, Option<ProjectId>, UserId, Option<ProjectId>)>(
                 "
-                SELECT user_id, connection_id, location_kind, location_project_id
+                SELECT user_id, connection_id, location_kind, location_project_id, calling_user_id, initial_project_id
                 FROM room_participants
                 WHERE room_id = $1
                 ",
@@ -1242,9 +1148,16 @@ where
             .fetch(&mut *tx);
 
         let mut participants = Vec::new();
-        let mut pending_participant_user_ids = Vec::new();
+        let mut pending_participants = Vec::new();
         while let Some(participant) = db_participants.next().await {
-            let (user_id, connection_id, _location_kind, _location_project_id) = participant?;
+            let (
+                user_id,
+                connection_id,
+                _location_kind,
+                _location_project_id,
+                calling_user_id,
+                initial_project_id,
+            ) = participant?;
             if let Some(connection_id) = connection_id {
                 participants.push(proto::Participant {
                     user_id: user_id.to_proto(),
@@ -1257,7 +1170,11 @@ where
                     }),
                 });
             } else {
-                pending_participant_user_ids.push(user_id.to_proto());
+                pending_participants.push(proto::PendingParticipant {
+                    user_id: user_id.to_proto(),
+                    calling_user_id: calling_user_id.to_proto(),
+                    initial_project_id: initial_project_id.map(|id| id.to_proto()),
+                });
             }
         }
         drop(db_participants);
@@ -1296,7 +1213,7 @@ where
             version: room.version as u64,
             live_kit_room: room.live_kit_room,
             participants,
-            pending_participant_user_ids,
+            pending_participants,
         })
     }
 

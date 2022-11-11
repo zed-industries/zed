@@ -70,16 +70,8 @@ CREATE TABLE "room_participants" (
     "user_id" INTEGER NOT NULL REFERENCES users (id),
     "connection_id" INTEGER,
     "location_kind" INTEGER,
-    "location_project_id" INTEGER REFERENCES projects (id)
+    "location_project_id" INTEGER REFERENCES projects (id),
+    "initial_project_id" INTEGER REFERENCES projects (id),
+    "calling_user_id" INTEGER NOT NULL REFERENCES users (id)
 );
-CREATE UNIQUE INDEX "index_room_participants_on_user_id_and_room_id" ON "room_participants" ("user_id", "room_id");
-
-CREATE TABLE "calls" (
-    "id" INTEGER PRIMARY KEY,
-    "room_id" INTEGER NOT NULL REFERENCES rooms (id),
-    "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
-    "called_user_id" INTEGER NOT NULL REFERENCES users (id),
-    "answering_connection_id" INTEGER,
-    "initial_project_id" INTEGER REFERENCES projects (id)
-);
-CREATE UNIQUE INDEX "index_calls_on_called_user_id" ON "calls" ("called_user_id");
+CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");

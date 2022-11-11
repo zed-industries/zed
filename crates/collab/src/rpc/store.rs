@@ -258,80 +258,81 @@ impl Store {
     }
 
     pub fn leave_room(&mut self, room_id: RoomId, connection_id: ConnectionId) -> Result<LeftRoom> {
-        let connection = self
-            .connections
-            .get_mut(&connection_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let user_id = connection.user_id;
+        todo!()
+        // let connection = self
+        //     .connections
+        //     .get_mut(&connection_id)
+        //     .ok_or_else(|| anyhow!("no such connection"))?;
+        // let user_id = connection.user_id;
 
-        let connected_user = self
-            .connected_users
-            .get(&user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        anyhow::ensure!(
-            connected_user
-                .active_call
-                .map_or(false, |call| call.room_id == room_id
-                    && call.connection_id == Some(connection_id)),
-            "cannot leave a room before joining it"
-        );
+        // let connected_user = self
+        //     .connected_users
+        //     .get(&user_id)
+        //     .ok_or_else(|| anyhow!("no such connection"))?;
+        // anyhow::ensure!(
+        //     connected_user
+        //         .active_call
+        //         .map_or(false, |call| call.room_id == room_id
+        //             && call.connection_id == Some(connection_id)),
+        //     "cannot leave a room before joining it"
+        // );
 
-        // Given that users can only join one room at a time, we can safely unshare
-        // and leave all projects associated with the connection.
-        let mut unshared_projects = Vec::new();
-        let mut left_projects = Vec::new();
-        for project_id in connection.projects.clone() {
-            if let Ok((_, project)) = self.unshare_project(project_id, connection_id) {
-                unshared_projects.push(project);
-            } else if let Ok(project) = self.leave_project(project_id, connection_id) {
-                left_projects.push(project);
-            }
-        }
-        self.connected_users.get_mut(&user_id).unwrap().active_call = None;
+        // // Given that users can only join one room at a time, we can safely unshare
+        // // and leave all projects associated with the connection.
+        // let mut unshared_projects = Vec::new();
+        // let mut left_projects = Vec::new();
+        // for project_id in connection.projects.clone() {
+        //     if let Ok((_, project)) = self.unshare_project(project_id, connection_id) {
+        //         unshared_projects.push(project);
+        //     } else if let Ok(project) = self.leave_project(project_id, connection_id) {
+        //         left_projects.push(project);
+        //     }
+        // }
+        // self.connected_users.get_mut(&user_id).unwrap().active_call = None;
 
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        room.participants
-            .retain(|participant| participant.peer_id != connection_id.0);
+        // let room = self
+        //     .rooms
+        //     .get_mut(&room_id)
+        //     .ok_or_else(|| anyhow!("no such room"))?;
+        // room.participants
+        //     .retain(|participant| participant.peer_id != connection_id.0);
 
-        let mut canceled_call_connection_ids = Vec::new();
-        room.pending_participant_user_ids
-            .retain(|pending_participant_user_id| {
-                if let Some(connected_user) = self
-                    .connected_users
-                    .get_mut(&UserId::from_proto(*pending_participant_user_id))
-                {
-                    if let Some(call) = connected_user.active_call.as_ref() {
-                        if call.calling_user_id == user_id {
-                            connected_user.active_call.take();
-                            canceled_call_connection_ids
-                                .extend(connected_user.connection_ids.iter().copied());
-                            false
-                        } else {
-                            true
-                        }
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            });
+        // let mut canceled_call_connection_ids = Vec::new();
+        // room.pending_participant_user_ids
+        //     .retain(|pending_participant_user_id| {
+        //         if let Some(connected_user) = self
+        //             .connected_users
+        //             .get_mut(&UserId::from_proto(*pending_participant_user_id))
+        //         {
+        //             if let Some(call) = connected_user.active_call.as_ref() {
+        //                 if call.calling_user_id == user_id {
+        //                     connected_user.active_call.take();
+        //                     canceled_call_connection_ids
+        //                         .extend(connected_user.connection_ids.iter().copied());
+        //                     false
+        //                 } else {
+        //                     true
+        //                 }
+        //             } else {
+        //                 true
+        //             }
+        //         } else {
+        //             true
+        //         }
+        //     });
 
-        let room = if room.participants.is_empty() {
-            Cow::Owned(self.rooms.remove(&room_id).unwrap())
-        } else {
-            Cow::Borrowed(self.rooms.get(&room_id).unwrap())
-        };
+        // let room = if room.participants.is_empty() {
+        //     Cow::Owned(self.rooms.remove(&room_id).unwrap())
+        // } else {
+        //     Cow::Borrowed(self.rooms.get(&room_id).unwrap())
+        // };
 
-        Ok(LeftRoom {
-            room,
-            unshared_projects,
-            left_projects,
-            canceled_call_connection_ids,
-        })
+        // Ok(LeftRoom {
+        //     room,
+        //     unshared_projects,
+        //     left_projects,
+        //     canceled_call_connection_ids,
+        // })
     }
 
     pub fn rooms(&self) -> &BTreeMap<RoomId, proto::Room> {
@@ -344,48 +345,49 @@ impl Store {
         called_user_id: UserId,
         canceller_connection_id: ConnectionId,
     ) -> Result<(&proto::Room, HashSet<ConnectionId>)> {
-        let canceller_user_id = self.user_id_for_connection(canceller_connection_id)?;
-        let canceller = self
-            .connected_users
-            .get(&canceller_user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let recipient = self
-            .connected_users
-            .get(&called_user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let canceller_active_call = canceller
-            .active_call
-            .as_ref()
-            .ok_or_else(|| anyhow!("no active call"))?;
-        let recipient_active_call = recipient
-            .active_call
-            .as_ref()
-            .ok_or_else(|| anyhow!("no active call for recipient"))?;
+        todo!()
+        // let canceller_user_id = self.user_id_for_connection(canceller_connection_id)?;
+        // let canceller = self
+        //     .connected_users
+        //     .get(&canceller_user_id)
+        //     .ok_or_else(|| anyhow!("no such connection"))?;
+        // let recipient = self
+        //     .connected_users
+        //     .get(&called_user_id)
+        //     .ok_or_else(|| anyhow!("no such connection"))?;
+        // let canceller_active_call = canceller
+        //     .active_call
+        //     .as_ref()
+        //     .ok_or_else(|| anyhow!("no active call"))?;
+        // let recipient_active_call = recipient
+        //     .active_call
+        //     .as_ref()
+        //     .ok_or_else(|| anyhow!("no active call for recipient"))?;
 
-        anyhow::ensure!(
-            canceller_active_call.room_id == room_id,
-            "users are on different calls"
-        );
-        anyhow::ensure!(
-            recipient_active_call.room_id == room_id,
-            "users are on different calls"
-        );
-        anyhow::ensure!(
-            recipient_active_call.connection_id.is_none(),
-            "recipient has already answered"
-        );
-        let room_id = recipient_active_call.room_id;
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        room.pending_participant_user_ids
-            .retain(|user_id| UserId::from_proto(*user_id) != called_user_id);
+        // anyhow::ensure!(
+        //     canceller_active_call.room_id == room_id,
+        //     "users are on different calls"
+        // );
+        // anyhow::ensure!(
+        //     recipient_active_call.room_id == room_id,
+        //     "users are on different calls"
+        // );
+        // anyhow::ensure!(
+        //     recipient_active_call.connection_id.is_none(),
+        //     "recipient has already answered"
+        // );
+        // let room_id = recipient_active_call.room_id;
+        // let room = self
+        //     .rooms
+        //     .get_mut(&room_id)
+        //     .ok_or_else(|| anyhow!("no such room"))?;
+        // room.pending_participant_user_ids
+        //     .retain(|user_id| UserId::from_proto(*user_id) != called_user_id);
 
-        let recipient = self.connected_users.get_mut(&called_user_id).unwrap();
-        recipient.active_call.take();
+        // let recipient = self.connected_users.get_mut(&called_user_id).unwrap();
+        // recipient.active_call.take();
 
-        Ok((room, recipient.connection_ids.clone()))
+        // Ok((room, recipient.connection_ids.clone()))
     }
 
     pub fn decline_call(
@@ -393,31 +395,32 @@ impl Store {
         room_id: RoomId,
         recipient_connection_id: ConnectionId,
     ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
-        let called_user_id = self.user_id_for_connection(recipient_connection_id)?;
-        let recipient = self
-            .connected_users
-            .get_mut(&called_user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        if let Some(active_call) = recipient.active_call {
-            anyhow::ensure!(active_call.room_id == room_id, "no such room");
-            anyhow::ensure!(
-                active_call.connection_id.is_none(),
-                "cannot decline a call after joining room"
-            );
-            recipient.active_call.take();
-            let recipient_connection_ids = self
-                .connection_ids_for_user(called_user_id)
-                .collect::<Vec<_>>();
-            let room = self
-                .rooms
-                .get_mut(&active_call.room_id)
-                .ok_or_else(|| anyhow!("no such room"))?;
-            room.pending_participant_user_ids
-                .retain(|user_id| UserId::from_proto(*user_id) != called_user_id);
-            Ok((room, recipient_connection_ids))
-        } else {
-            Err(anyhow!("user is not being called"))
-        }
+        todo!()
+        // let called_user_id = self.user_id_for_connection(recipient_connection_id)?;
+        // let recipient = self
+        //     .connected_users
+        //     .get_mut(&called_user_id)
+        //     .ok_or_else(|| anyhow!("no such connection"))?;
+        // if let Some(active_call) = recipient.active_call {
+        //     anyhow::ensure!(active_call.room_id == room_id, "no such room");
+        //     anyhow::ensure!(
+        //         active_call.connection_id.is_none(),
+        //         "cannot decline a call after joining room"
+        //     );
+        //     recipient.active_call.take();
+        //     let recipient_connection_ids = self
+        //         .connection_ids_for_user(called_user_id)
+        //         .collect::<Vec<_>>();
+        //     let room = self
+        //         .rooms
+        //         .get_mut(&active_call.room_id)
+        //         .ok_or_else(|| anyhow!("no such room"))?;
+        //     room.pending_participant_user_ids
+        //         .retain(|user_id| UserId::from_proto(*user_id) != called_user_id);
+        //     Ok((room, recipient_connection_ids))
+        // } else {
+        //     Err(anyhow!("user is not being called"))
+        // }
     }
 
     pub fn unshare_project(
@@ -767,13 +770,13 @@ impl Store {
         }
 
         for (room_id, room) in &self.rooms {
-            for pending_user_id in &room.pending_participant_user_ids {
-                assert!(
-                    self.connected_users
-                        .contains_key(&UserId::from_proto(*pending_user_id)),
-                    "call is active on a user that has disconnected"
-                );
-            }
+            // for pending_user_id in &room.pending_participant_user_ids {
+            //     assert!(
+            //         self.connected_users
+            //             .contains_key(&UserId::from_proto(*pending_user_id)),
+            //         "call is active on a user that has disconnected"
+            //     );
+            // }
 
             for participant in &room.participants {
                 assert!(
@@ -793,10 +796,10 @@ impl Store {
                 }
             }
 
-            assert!(
-                !room.pending_participant_user_ids.is_empty() || !room.participants.is_empty(),
-                "room can't be empty"
-            );
+            // assert!(
+            //     !room.pending_participant_user_ids.is_empty() || !room.participants.is_empty(),
+            //     "room can't be empty"
+            // );
         }
 
         for (project_id, project) in &self.projects {
