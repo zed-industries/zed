@@ -984,7 +984,7 @@ fn get_injections(
     }
 
     for query_range in changed_ranges {
-        query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end);
+        query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end + 1);
         for mat in query_cursor.matches(&config.query, node, TextProvider(text.as_rope())) {
             let content_ranges = mat
                 .nodes_for_capture_index(config.content_capture_ix)
@@ -1885,6 +1885,37 @@ mod tests {
                     ˇ<% end %>
                 ",
             ],
+        );
+    }
+
+    #[gpui::test]
+    fn test_combined_injections_edit_edges_of_ranges() {
+        let (buffer, syntax_map) = test_edit_sequence(
+            "ERB",
+            &[
+                "
+                    <%= one @two %>
+                    <%= three @four %>
+                ",
+                "
+                    <%= one @two %ˇ
+                    <%= three @four %>
+                ",
+                "
+                    <%= one @two %«>»
+                    <%= three @four %>
+                ",
+            ],
+        );
+
+        assert_capture_ranges(
+            &syntax_map,
+            &buffer,
+            &["tag", "ivar"],
+            "
+                <%= one «@two» %>
+                <%= three «@four» %>
+            ",
         );
     }
 
