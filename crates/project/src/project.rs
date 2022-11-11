@@ -3453,29 +3453,41 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server = if let Some((_, server)) = self.language_server_for_buffer(buffer, cx)
-            {
-                server.clone()
-            } else {
-                return Task::ready(Ok(Default::default()));
+            let lang_server = match self.language_server_for_buffer(buffer, cx) {
+                Some((_, server)) => server.clone(),
+                _ => return Task::ready(Ok(Default::default())),
             };
 
             cx.spawn(|this, mut cx| async move {
                 let resolved_completion = lang_server
                     .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
                     .await?;
+
                 if let Some(edits) = resolved_completion.additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {
                             this.edits_from_lsp(&buffer_handle, edits, None, cx)
                         })
                         .await?;
+
                     buffer_handle.update(&mut cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
+
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], None, cx);
+                            let primary = &completion.old_range;
+                            let start_within = primary.start.cmp(&range.start, buffer).is_le()
+                                && primary.end.cmp(&range.start, buffer).is_ge();
+                            let end_within = range.start.cmp(&primary.end, buffer).is_le()
+                                && range.end.cmp(&primary.end, buffer).is_ge();
+
+                            //Skip addtional edits which overlap with the primary completion edit
+                            //https://github.com/zed-industries/zed/pull/1871
+                            if !start_within && !end_within {
+                                buffer.edit([(range, text)], None, cx);
+                            }
                         }
+
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
                             if !push_to_history {
