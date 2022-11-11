@@ -1110,7 +1110,7 @@ where
                 FROM projects, project_collaborators
                 WHERE
                     projects.room_id = $1 AND
-                    projects.user_id = $2 AND
+                    projects.host_user_id = $2 AND
                     projects.id = project_collaborators.project_id
                 ",
             )
@@ -1144,7 +1144,7 @@ where
             sqlx::query(
                 "
                 DELETE FROM projects
-                WHERE room_id = $1 AND user_id = $2
+                WHERE room_id = $1 AND host_user_id = $2
                 ",
             )
             .bind(room_id)
