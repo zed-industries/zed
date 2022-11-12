@@ -453,10 +453,9 @@ impl SyntaxSnapshot {
                     Some(old_layer.tree.clone()),
                 );
                 changed_ranges = join_ranges(
-                    edits
-                        .iter()
-                        .map(|e| e.new.clone())
-                        .filter(|range| range.start < step_end_byte && range.end > step_start_byte),
+                    edits.iter().map(|e| e.new.clone()).filter(|range| {
+                        range.start <= step_end_byte && range.end >= step_start_byte
+                    }),
                     old_layer
                         .tree
                         .changed_ranges(&tree)
@@ -1916,6 +1915,31 @@ mod tests {
                 <%= one «@two» %>
                 <%= three «@four» %>
             ",
+        );
+    }
+
+    #[gpui::test]
+    fn test_combined_injections_splitting_some_injections() {
+        let (_buffer, _syntax_map) = test_edit_sequence(
+            "ERB",
+            &[
+                r#"
+                      <%A if b(:c) %>
+                        d
+                      <% end %>
+                      eee
+                      <% f %>
+                "#,
+                r#"
+                      <%« AAAAAAA %>
+                        hhhhhhh
+                      <%=» if b(:c) %>
+                        d
+                      <% end %>
+                      eee
+                      <% f %>
+                "#,
+            ],
         );
     }
 
