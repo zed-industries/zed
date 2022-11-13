@@ -70,7 +70,14 @@ pub fn init(db: project::Db, http_client: Arc<dyn HttpClient>, cx: &mut MutableA
             }
         });
         cx.add_global_action(move |_: &ViewReleaseNotes, cx| {
-            cx.platform().open_url(&format!("{server_url}/releases"));
+            let latest_release_url = if cx.has_global::<ReleaseChannel>()
+                && *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
+            {
+                format!("{server_url}/releases/preview/latest")
+            } else {
+                format!("{server_url}/releases/latest")
+            };
+            cx.platform().open_url(&latest_release_url);
         });
         cx.add_action(UpdateNotification::dismiss);
     }
