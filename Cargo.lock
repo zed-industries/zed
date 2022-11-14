@@ -6793,6 +6793,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "backtrace",
+ "dirs 3.0.2",
  "futures 0.3.25",
  "git2",
  "lazy_static",
@@ -7707,7 +7708,6 @@ dependencies = [
  "context_menu",
  "ctor",
  "diagnostics",
- "dirs 3.0.2",
  "easy-parallel",
  "editor",
  "env_logger",

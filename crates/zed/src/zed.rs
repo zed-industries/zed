@@ -1,7 +1,6 @@
 mod feedback;
 pub mod languages;
 pub mod menus;
-pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -31,7 +30,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, ReleaseChannel, Settings};
 use std::{env, path::Path, str, sync::Arc};
-use util::ResultExt;
+use util::{paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
 

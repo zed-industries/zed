@@ -37,7 +37,7 @@ use terminal::terminal_container_view::{get_working_directory, TerminalContainer
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
-use util::{ResultExt, TryFutureExt};
+use util::{paths, ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
 use zed::{
     self, build_window_options, initialize_workspace, languages, menus, RELEASE_CHANNEL,
@@ -57,7 +57,7 @@ fn main() {
     init_panic_hook(app_version, http.clone(), app.background());
 
     let db = app.background().spawn(async move {
-        project::Db::<project::KeyValue>::open(&*zed::paths::DB_DIR, RELEASE_CHANNEL_NAME.as_str())
+        project::Db::<project::KeyValue>::open(&*paths::DB_DIR, RELEASE_CHANNEL_NAME.as_str())
     });
 
     load_embedded_fonts(&app);
@@ -91,11 +91,11 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
-        cx.set_global(HomeDir(zed::paths::HOME.to_path_buf()));
+        cx.set_global(HomeDir(paths::HOME.to_path_buf()));
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
-        languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
+        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let init_languages = cx
             .background()
@@ -106,7 +106,7 @@ fn main() {
 
         //Setup settings global before binding actions
         cx.set_global(SettingsFile::new(
-            &*zed::paths::SETTINGS,
+            &*paths::SETTINGS,
             settings_file_content.clone(),
             fs.clone(),
         ));
@@ -236,16 +236,15 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(&*zed::paths::LOG)
-            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(&*paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = std::fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
+            let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
         }
 
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&*zed::paths::LOG)
+            .open(&*paths::LOG)
             .expect("could not open logfile");
         simplelog::WriteLogger::init(level, simplelog::Config::default(), log_file)
             .expect("could not initialize logger");
@@ -257,7 +256,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
         .spawn({
             async move {
                 let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-                let mut children = smol::fs::read_dir(&*zed::paths::LOGS_DIR).await?;
+                let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
                 while let Some(child) = children.next().await {
                     let child = child?;
                     let child_path = child.path();
@@ -345,7 +344,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
 
         let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
         std::fs::write(
-            zed::paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
+            paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
             &message,
         )
         .context("error writing panic to disk")
@@ -479,8 +478,8 @@ fn load_config_files(
         .clone()
         .spawn(async move {
             let settings_file =
-                WatchedJsonFile::new(fs.clone(), &executor, zed::paths::SETTINGS.clone()).await;
-            let keymap_file = WatchedJsonFile::new(fs, &executor, zed::paths::KEYMAP.clone()).await;
+                WatchedJsonFile::new(fs.clone(), &executor, paths::SETTINGS.clone()).await;
+            let keymap_file = WatchedJsonFile::new(fs, &executor, paths::KEYMAP.clone()).await;
             tx.send((settings_file, keymap_file)).ok()
         })
         .detach();
