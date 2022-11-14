@@ -45,8 +45,8 @@ impl<'a> Statement<'a> {
             let sql = CString::new(query.as_ref())?;
             let mut remaining_sql = sql.as_c_str();
             while {
-                let remaining_sql_str = remaining_sql.to_str()?;
-                remaining_sql_str.trim() != ";" && !remaining_sql_str.is_empty()
+                let remaining_sql_str = remaining_sql.to_str()?.trim();
+                remaining_sql_str != ";" && !remaining_sql_str.is_empty()
             } {
                 let mut raw_statement = 0 as *mut sqlite3_stmt;
                 let mut remaining_sql_ptr = ptr::null();

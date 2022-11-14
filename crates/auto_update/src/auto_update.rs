@@ -2,17 +2,17 @@ mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
 use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
-use db::{kvp::KeyValue, Db};
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, WeakViewHandle,
 };
 use lazy_static::lazy_static;
 use serde::Deserialize;
-use settings::ReleaseChannel;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
+use util::channel::ReleaseChannel;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -42,7 +42,6 @@ pub struct AutoUpdater {
     current_version: AppVersion,
     http_client: Arc<dyn HttpClient>,
     pending_poll: Option<Task<()>>,
-    db: project::Db<KeyValue>,
     server_url: String,
 }
 
@@ -56,16 +55,11 @@ impl Entity for AutoUpdater {
     type Event = ();
 }
 
-pub fn init(
-    db: Db<KeyValue>,
-    http_client: Arc<dyn HttpClient>,
-    server_url: String,
-    cx: &mut MutableAppContext,
-) {
+pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut MutableAppContext) {
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
         let server_url = server_url;
         let auto_updater = cx.add_model(|cx| {
-            let updater = AutoUpdater::new(version, db, http_client, server_url.clone());
+            let updater = AutoUpdater::new(version, http_client, server_url.clone());
             updater.start_polling(cx).detach();
             updater
         });
@@ -126,14 +120,12 @@ impl AutoUpdater {
 
     fn new(
         current_version: AppVersion,
-        db: project::Db<KeyValue>,
         http_client: Arc<dyn HttpClient>,
         server_url: String,
     ) -> Self {
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
-            db,
             http_client,
             server_url,
             pending_poll: None,
@@ -303,20 +295,21 @@ impl AutoUpdater {
         should_show: bool,
         cx: &AppContext,
     ) -> Task<Result<()>> {
-        let db = self.db.clone();
         cx.background().spawn(async move {
             if should_show {
-                db.write_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY, "")?;
+                KEY_VALUE_STORE.write_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY, "")?;
             } else {
-                db.delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?;
+                KEY_VALUE_STORE.delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?;
             }
             Ok(())
         })
     }
 
     fn should_show_update_notification(&self, cx: &AppContext) -> Task<Result<bool>> {
-        let db = self.db.clone();
-        cx.background()
-            .spawn(async move { Ok(db.read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?.is_some()) })
+        cx.background().spawn(async move {
+            Ok(KEY_VALUE_STORE
+                .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?
+                .is_some())
+        })
     }
 }

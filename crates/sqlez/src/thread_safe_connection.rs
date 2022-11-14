@@ -13,6 +13,9 @@ pub struct ThreadSafeConnection<D: Domain> {
     _pd: PhantomData<D>,
 }
 
+unsafe impl<T: Domain> Send for ThreadSafeConnection<T> {}
+unsafe impl<T: Domain> Sync for ThreadSafeConnection<T> {}
+
 impl<D: Domain> ThreadSafeConnection<D> {
     pub fn new(uri: &str, persistent: bool) -> Self {
         Self {

@@ -1,7 +1,11 @@
-use super::Db;
 use anyhow::Result;
 use indoc::indoc;
-use sqlez::{connection::Connection, domain::Domain, migrations::Migration};
+
+use sqlez::{
+    connection::Connection, domain::Domain, migrations::Migration,
+    thread_safe_connection::ThreadSafeConnection,
+};
+use std::ops::Deref;
 
 pub(crate) const KVP_MIGRATION: Migration = Migration::new(
     "kvp",
@@ -13,16 +17,29 @@ pub(crate) const KVP_MIGRATION: Migration = Migration::new(
     "}],
 );
 
-#[derive(Clone)]
-pub enum KeyValue {}
+lazy_static::lazy_static! {
+    pub static ref KEY_VALUE_STORE: KeyValueStore =
+        KeyValueStore(crate::open_file_db());
+}
 
-impl Domain for KeyValue {
+#[derive(Clone)]
+pub struct KeyValueStore(ThreadSafeConnection<KeyValueStore>);
+
+impl Domain for KeyValueStore {
     fn migrate(conn: &Connection) -> anyhow::Result<()> {
         KVP_MIGRATION.run(conn)
     }
 }
 
-impl Db<KeyValue> {
+impl Deref for KeyValueStore {
+    type Target = ThreadSafeConnection<KeyValueStore>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl KeyValueStore {
     pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
         self.select_row_bound("SELECT value FROM kv_store WHERE key = (?)")?(key)
     }
@@ -44,11 +61,11 @@ impl Db<KeyValue> {
 mod tests {
     use anyhow::Result;
 
-    use super::*;
+    use crate::kvp::KeyValueStore;
 
     #[test]
     fn test_kvp() -> Result<()> {
-        let db = Db::open_in_memory("test_kvp");
+        let db = KeyValueStore(crate::open_memory_db("test_kvp"));
 
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
 

@@ -12,7 +12,6 @@ use collab_ui::{CollabTitlebarItem, ToggleCollaborationMenu};
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
-use lazy_static::lazy_static;
 
 use gpui::{
     actions,
@@ -28,9 +27,9 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{keymap_file_json_schema, settings_file_json_schema, ReleaseChannel, Settings};
+use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{env, path::Path, str, sync::Arc};
-use util::{paths, ResultExt};
+use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
 
@@ -68,17 +67,6 @@ actions!(
 );
 
 const MIN_FONT_SIZE: f32 = 6.0;
-
-lazy_static! {
-    pub static ref RELEASE_CHANNEL_NAME: String =
-        env::var("ZED_RELEASE_CHANNEL").unwrap_or(include_str!("../RELEASE_CHANNEL").to_string());
-    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
-        "dev" => ReleaseChannel::Dev,
-        "preview" => ReleaseChannel::Preview,
-        "stable" => ReleaseChannel::Stable,
-        _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
-    };
-}
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(about);
@@ -629,7 +617,7 @@ mod tests {
     use gpui::{
         executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };
-    use project::{Db, Project, ProjectPath};
+    use project::{Project, ProjectPath};
     use serde_json::json;
     use std::{
         collections::HashSet,
@@ -774,6 +762,8 @@ mod tests {
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
         cx.dispatch_global_action(workspace::NewFile);
+        cx.foreground().run_until_parked();
+
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(cx, |workspace, cx| {
@@ -1816,7 +1806,7 @@ mod tests {
             state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-            workspace::init(app_state.clone(), cx, Db::open_in_memory("test"));
+            workspace::init(app_state.clone(), cx);
             editor::init(cx);
             pane::init(cx);
             app_state

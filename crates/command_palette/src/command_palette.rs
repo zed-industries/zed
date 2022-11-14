@@ -320,7 +320,7 @@ mod tests {
     use super::*;
     use editor::Editor;
     use gpui::TestAppContext;
-    use project::{Db, Project};
+    use project::Project;
     use workspace::{AppState, Workspace};
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
 
         cx.update(|cx| {
             editor::init(cx);
-            workspace::init(app_state.clone(), cx, Db::open_in_memory("test"));
+            workspace::init(app_state.clone(), cx);
             init(cx);
         });
 

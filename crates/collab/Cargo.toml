@@ -18,7 +18,6 @@ live_kit_server = { path = "../live_kit_server" }
 rpc = { path = "../rpc" }
 util = { path = "../util" }
 
-db = { path = "../db" }
 anyhow = "1.0.40"
 async-trait = "0.1.50"
 async-tungstenite = "0.16"

@@ -23,7 +23,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Db, Fs, HomeDir, ProjectStore};
+use project::{Fs, HomeDir, ProjectStore};
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -37,12 +37,9 @@ use terminal::terminal_container_view::{get_working_directory, TerminalContainer
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
-use util::{paths, ResultExt, TryFutureExt};
+use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
-use zed::{
-    self, build_window_options, initialize_workspace, languages, menus, RELEASE_CHANNEL,
-    RELEASE_CHANNEL_NAME,
-};
+use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();
@@ -55,10 +52,6 @@ fn main() {
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
     init_panic_hook(app_version, http.clone(), app.background());
-
-    let db = app.background().spawn(async move {
-        project::Db::<project::KeyValue>::open(&*paths::DB_DIR, RELEASE_CHANNEL_NAME.as_str())
-    });
 
     load_embedded_fonts(&app);
 
@@ -147,10 +140,8 @@ fn main() {
         .detach();
 
         let project_store = cx.add_model(|_| ProjectStore::new());
-        let db = cx.background().block(db);
-        cx.set_global(db);
 
-        client.start_telemetry(cx.global::<Db<project::KeyValue>>().clone());
+        client.start_telemetry();
         client.report_event("start app", Default::default());
 
         let app_state = Arc::new(AppState {
@@ -164,16 +155,9 @@ fn main() {
             initialize_workspace,
             default_item_factory,
         });
-        auto_update::init(
-            cx.global::<Db<project::KeyValue>>().clone(),
-            http,
-            client::ZED_SERVER_URL.clone(),
-            cx,
-        );
+        auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
-        let workspace_db = cx.global::<Db<project::KeyValue>>().open_as::<Workspace>();
-
-        workspace::init(app_state.clone(), cx, workspace_db);
+        workspace::init(app_state.clone(), cx);
 
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);

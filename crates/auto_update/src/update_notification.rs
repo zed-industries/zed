@@ -5,7 +5,8 @@ use gpui::{
     Element, Entity, MouseButton, View, ViewContext,
 };
 use menu::Cancel;
-use settings::{ReleaseChannel, Settings};
+use settings::Settings;
+use util::channel::ReleaseChannel;
 use workspace::Notification;
 
 pub struct UpdateNotification {

@@ -5,19 +5,18 @@
 pub mod dock;
 pub mod pane;
 pub mod pane_group;
+mod persistence;
 pub mod searchable;
 pub mod shared_screen;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
-mod workspace_db;
 
-use crate::workspace_db::model::SerializedWorkspace;
+use crate::persistence::model::SerializedWorkspace;
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::{kvp::KeyValue, Db};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -165,9 +164,7 @@ impl_internal_actions!(
 );
 impl_actions!(workspace, [ActivatePane]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext, db: Db<Workspace>) {
-    cx.set_global(db);
-
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
     dock::init(cx);
 
@@ -1291,12 +1288,8 @@ impl Workspace {
             }
 
             // Use the resolved worktree roots to get the serialized_db from the database
-            let serialized_workspace = cx.read(|cx| {
-                Workspace::workspace_for_roots(
-                    cx.global::<Db<Workspace>>(),
-                    &Vec::from_iter(worktree_roots.into_iter())[..],
-                )
-            });
+            let serialized_workspace = persistence::DB
+                .workspace_for_roots(&Vec::from_iter(worktree_roots.into_iter())[..]);
 
             // Use the serialized workspace to construct the new window
             let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {

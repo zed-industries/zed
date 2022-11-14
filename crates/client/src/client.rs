@@ -11,7 +11,6 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
-use db::{kvp::KeyValue, Db};
 use futures::{future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
     actions,
@@ -27,7 +26,6 @@ use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage};
 use serde::Deserialize;
-use settings::ReleaseChannel;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -41,6 +39,7 @@ use std::{
 use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
+use util::channel::ReleaseChannel;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
@@ -1218,8 +1217,8 @@ impl Client {
         self.peer.respond_with_error(receipt, error)
     }
 
-    pub fn start_telemetry(&self, db: Db<KeyValue>) {
-        self.telemetry.start(db.clone());
+    pub fn start_telemetry(&self) {
+        self.telemetry.start();
     }
 
     pub fn report_event(&self, kind: &str, properties: Value) {
