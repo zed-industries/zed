@@ -407,13 +407,18 @@ impl TerminalBuilder {
                 'outer: loop {
                     let mut events = vec![];
                     let mut timer = cx.background().timer(Duration::from_millis(4)).fuse();
-
+                    let mut wakeup = false;
                     loop {
                         futures::select_biased! {
                             _ = timer => break,
                             event = self.events_rx.next() => {
                                 if let Some(event) = event {
-                                    events.push(event);
+                                    if matches!(event, AlacTermEvent::Wakeup) {
+                                        wakeup = true;
+                                    } else {
+                                        events.push(event);
+                                    }
+
                                     if events.len() > 100 {
                                         break;
                                     }
@@ -431,6 +436,9 @@ impl TerminalBuilder {
                         this.upgrade(&cx)?.update(&mut cx, |this, cx| {
                             for event in events {
                                 this.process_event(&event, cx);
+                            }
+                            if wakeup {
+                                this.process_event(&AlacTermEvent::Wakeup, cx);
                             }
                         });
                         smol::future::yield_now().await;
