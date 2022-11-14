@@ -30,9 +30,7 @@ use language::{
 use live_kit_client::MacOSDisplay;
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
-use project::{
-    search::SearchQuery, DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
-};
+use project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath, WorktreeId};
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Formatter, Settings};
@@ -2280,7 +2278,6 @@ async fn test_leaving_project(
             project_id,
             client_b.client.clone(),
             client_b.user_store.clone(),
-            client_b.project_store.clone(),
             client_b.language_registry.clone(),
             FakeFs::new(cx.background()),
             cx,
@@ -5792,11 +5789,9 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            project_store: project_store.clone(),
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
@@ -5823,7 +5818,6 @@ impl TestServer {
             remote_projects: Default::default(),
             next_root_dir_id: 0,
             user_store,
-            project_store,
             fs,
             language_registry: Arc::new(LanguageRegistry::test()),
             buffers: Default::default(),
@@ -5929,7 +5923,6 @@ struct TestClient {
     remote_projects: Vec<ModelHandle<Project>>,
     next_root_dir_id: usize,
     pub user_store: ModelHandle<UserStore>,
-    pub project_store: ModelHandle<ProjectStore>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<FakeFs>,
     buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
@@ -5999,7 +5992,6 @@ impl TestClient {
             Project::local(
                 self.client.clone(),
                 self.user_store.clone(),
-                self.project_store.clone(),
                 self.language_registry.clone(),
                 self.fs.clone(),
                 cx,
@@ -6027,7 +6019,6 @@ impl TestClient {
                 host_project_id,
                 self.client.clone(),
                 self.user_store.clone(),
-                self.project_store.clone(),
                 self.language_registry.clone(),
                 FakeFs::new(cx.background()),
                 cx,
@@ -6157,7 +6148,6 @@ impl TestClient {
                             remote_project_id,
                             client.client.clone(),
                             client.user_store.clone(),
-                            client.project_store.clone(),
                             client.language_registry.clone(),
                             FakeFs::new(cx.background()),
                             cx.to_async(),

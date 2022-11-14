@@ -151,7 +151,7 @@ impl Server {
             .add_message_handler(Server::unshare_project)
             .add_request_handler(Server::join_project)
             .add_message_handler(Server::leave_project)
-            .add_message_handler(Server::update_project)
+            .add_request_handler(Server::update_project)
             .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::start_language_server)
             .add_message_handler(Server::update_language_server)
@@ -861,9 +861,9 @@ impl Server {
             .app_state
             .db
             .share_project(
+                RoomId::from_proto(request.payload.room_id),
                 request.sender_user_id,
                 request.sender_connection_id,
-                RoomId::from_proto(request.payload.room_id),
                 &request.payload.worktrees,
             )
             .await
@@ -1084,6 +1084,7 @@ impl Server {
     async fn update_project(
         self: Arc<Server>,
         request: Message<proto::UpdateProject>,
+        response: Response<proto::UpdateProject>,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         {
@@ -1108,6 +1109,7 @@ impl Server {
                 },
             );
             self.room_updated(room);
+            response.send(proto::Ack {})?;
         };
 
         Ok(())

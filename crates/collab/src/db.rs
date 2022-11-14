@@ -1145,8 +1145,8 @@ where
                     FROM projects, project_collaborators
                     WHERE
                         projects.room_id = $1 AND
-                        projects.host_connection_id = $2 AND
-                        projects.id = project_collaborators.project_id
+                        projects.id = project_collaborators.project_id AND
+                        project_collaborators.connection_id = $2
                     ",
                 )
                 .bind(room_id)
@@ -1370,9 +1370,9 @@ where
 
     pub async fn share_project(
         &self,
+        room_id: RoomId,
         user_id: UserId,
         connection_id: ConnectionId,
-        room_id: RoomId,
         worktrees: &[proto::WorktreeMetadata],
     ) -> Result<(ProjectId, proto::Room)> {
         test_support!(self, {
@@ -1426,10 +1426,18 @@ where
             .await?;
 
             let room = self.commit_room_transaction(room_id, tx).await?;
-            dbg!(&room);
             Ok((project_id, room))
         })
     }
+
+    // pub async fn join_project(
+    //     &self,
+    //     user_id: UserId,
+    //     connection_id: ConnectionId,
+    //     project_id: ProjectId,
+    // ) -> Result<(Project, ReplicaId)> {
+    //     todo!()
+    // }
 
     pub async fn unshare_project(&self, project_id: ProjectId) -> Result<()> {
         todo!()

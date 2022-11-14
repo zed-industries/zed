@@ -287,6 +287,8 @@ impl Room {
         mut room: proto::Room,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        // TODO: honor room version.
+
         // Filter ourselves out from the room's participants.
         let local_participant_ix = room
             .participants
