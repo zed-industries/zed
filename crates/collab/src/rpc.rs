@@ -849,7 +849,8 @@ impl Server {
                 RoomId::from_proto(request.payload.room_id),
                 &request.payload.worktrees,
             )
-            .await?;
+            .await
+            .unwrap();
         response.send(proto::ShareProjectResponse {
             project_id: project_id.to_proto(),
         })?;

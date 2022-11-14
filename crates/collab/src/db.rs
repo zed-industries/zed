@@ -1296,10 +1296,11 @@ where
                 SELECT projects.id, worktrees.root_name
                 FROM projects
                 LEFT JOIN worktrees ON projects.id = worktrees.project_id
-                WHERE room_id = $1 AND host_user_id = $2
+                WHERE room_id = $1 AND host_connection_id = $2
                 ",
             )
             .bind(room_id)
+            .bind(participant.peer_id as i32)
             .fetch(&mut *tx);
 
             let mut projects = HashMap::default();
@@ -1341,14 +1342,14 @@ where
             let mut tx = self.pool.begin().await?;
             let project_id = sqlx::query_scalar(
                 "
-                INSERT INTO projects (host_user_id, host_connection_id, room_id)
+                INSERT INTO projects (room_id, host_user_id, host_connection_id)
                 VALUES ($1, $2, $3)
                 RETURNING id
                 ",
             )
+            .bind(room_id)
             .bind(user_id)
             .bind(connection_id.0 as i32)
-            .bind(room_id)
             .fetch_one(&mut tx)
             .await
             .map(ProjectId)?;
@@ -1356,7 +1357,8 @@ where
             for worktree in worktrees {
                 sqlx::query(
                     "
-                INSERT INTO worktrees (id, project_id, root_name)
+                    INSERT INTO worktrees (id, project_id, root_name)
+                    VALUES ($1, $2, $3)
                     ",
                 )
                 .bind(worktree.id as i32)
@@ -1387,6 +1389,7 @@ where
             .await?;
 
             let room = self.commit_room_transaction(room_id, tx).await?;
+            dbg!(&room);
             Ok((project_id, room))
         })
     }
