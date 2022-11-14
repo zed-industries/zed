@@ -1048,6 +1048,30 @@ where
         })
     }
 
+    pub async fn cancel_call(
+        &self,
+        room_id: RoomId,
+        calling_connection_id: ConnectionId,
+        called_user_id: UserId,
+    ) -> Result<proto::Room> {
+        test_support!(self, {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query(
+                "
+                DELETE FROM room_participants
+                WHERE room_id = $1 AND user_id = $2 AND calling_connection_id = $3 AND answering_connection_id IS NULL
+                ",
+            )
+            .bind(room_id)
+            .bind(called_user_id)
+            .bind(calling_connection_id.0 as i32)
+            .execute(&mut tx)
+            .await?;
+
+            self.commit_room_transaction(room_id, tx).await
+        })
+    }
+
     pub async fn join_room(
         &self,
         room_id: RoomId,
@@ -1073,7 +1097,10 @@ where
         })
     }
 
-    pub async fn leave_room(&self, connection_id: ConnectionId) -> Result<Option<LeftRoom>> {
+    pub async fn leave_room_for_connection(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<Option<LeftRoom>> {
         test_support!(self, {
             let mut tx = self.pool.begin().await?;
 
