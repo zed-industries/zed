@@ -1030,19 +1030,26 @@ where
         })
     }
 
-    pub async fn decline_call(&self, room_id: RoomId, user_id: UserId) -> Result<proto::Room> {
+    pub async fn decline_call(
+        &self,
+        expected_room_id: Option<RoomId>,
+        user_id: UserId,
+    ) -> Result<proto::Room> {
         test_support!(self, {
             let mut tx = self.pool.begin().await?;
-            sqlx::query(
+            let room_id = sqlx::query_scalar(
                 "
                 DELETE FROM room_participants
-                WHERE room_id = $1 AND user_id = $2 AND answering_connection_id IS NULL
+                WHERE user_id = $1 AND answering_connection_id IS NULL
+                RETURNING room_id
                 ",
             )
-            .bind(room_id)
             .bind(user_id)
-            .execute(&mut tx)
+            .fetch_one(&mut tx)
             .await?;
+            if expected_room_id.map_or(false, |expected_room_id| expected_room_id != room_id) {
+                return Err(anyhow!("declining call on unexpected room"))?;
+            }
 
             self.commit_room_transaction(room_id, tx).await
         })
@@ -1050,23 +1057,26 @@ where
 
     pub async fn cancel_call(
         &self,
-        room_id: RoomId,
+        expected_room_id: Option<RoomId>,
         calling_connection_id: ConnectionId,
         called_user_id: UserId,
     ) -> Result<proto::Room> {
         test_support!(self, {
             let mut tx = self.pool.begin().await?;
-            sqlx::query(
+            let room_id = sqlx::query_scalar(
                 "
                 DELETE FROM room_participants
-                WHERE room_id = $1 AND user_id = $2 AND calling_connection_id = $3 AND answering_connection_id IS NULL
+                WHERE user_id = $1 AND calling_connection_id = $2 AND answering_connection_id IS NULL
+                RETURNING room_id
                 ",
             )
-            .bind(room_id)
             .bind(called_user_id)
             .bind(calling_connection_id.0 as i32)
-            .execute(&mut tx)
+            .fetch_one(&mut tx)
             .await?;
+            if expected_room_id.map_or(false, |expected_room_id| expected_room_id != room_id) {
+                return Err(anyhow!("canceling call on unexpected room"))?;
+            }
 
             self.commit_room_transaction(room_id, tx).await
         })
