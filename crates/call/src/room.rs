@@ -34,6 +34,7 @@ pub enum Event {
 
 pub struct Room {
     id: u64,
+    version: u64,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     local_participant: LocalParticipant,
@@ -61,6 +62,7 @@ impl Entity for Room {
 impl Room {
     fn new(
         id: u64,
+        version: u64,
         live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -133,6 +135,7 @@ impl Room {
 
         Self {
             id,
+            version,
             live_kit: live_kit_room,
             status: RoomStatus::Online,
             participant_user_ids: Default::default(),
@@ -161,6 +164,7 @@ impl Room {
             let room = cx.add_model(|cx| {
                 Self::new(
                     room_proto.id,
+                    room_proto.version,
                     response.live_kit_connection_info,
                     client,
                     user_store,
@@ -205,6 +209,7 @@ impl Room {
             let room = cx.add_model(|cx| {
                 Self::new(
                     room_id,
+                    0,
                     response.live_kit_connection_info,
                     client,
                     user_store,
@@ -287,8 +292,6 @@ impl Room {
         mut room: proto::Room,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        // TODO: honor room version.
-
         // Filter ourselves out from the room's participants.
         let local_participant_ix = room
             .participants
@@ -318,6 +321,10 @@ impl Room {
                 futures::join!(remote_participants, pending_participants);
 
             this.update(&mut cx, |this, cx| {
+                if this.version >= room.version {
+                    return;
+                }
+
                 this.participant_user_ids.clear();
 
                 if let Some(participant) = local_participant {
@@ -422,6 +429,7 @@ impl Room {
                     let _ = this.leave(cx);
                 }
 
+                this.version = room.version;
                 this.check_invariants();
                 cx.notify();
             });
