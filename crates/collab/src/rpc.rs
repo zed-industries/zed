@@ -1087,30 +1087,31 @@ impl Server {
         response: Response<proto::UpdateProject>,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
-        {
-            let mut state = self.store().await;
-            let guest_connection_ids = state
-                .read_project(project_id, request.sender_connection_id)?
-                .guest_connection_ids();
-            let room = state.update_project(
+        let (room, guest_connection_ids) = self
+            .app_state
+            .db
+            .update_project(
                 project_id,
+                request.sender_connection_id,
                 &request.payload.worktrees,
-                request.sender_connection_id,
-            )?;
-            broadcast(
-                request.sender_connection_id,
-                guest_connection_ids,
-                |connection_id| {
-                    self.peer.forward_send(
-                        request.sender_connection_id,
-                        connection_id,
-                        request.payload.clone(),
-                    )
-                },
-            );
-            self.room_updated(room);
-            response.send(proto::Ack {})?;
-        };
+            )
+            .await?;
+        broadcast(
+            request.sender_connection_id,
+            guest_connection_ids,
+            |connection_id| {
+                self.peer.send(
+                    connection_id,
+                    proto::ProjectUpdated {
+                        project_id: project_id.to_proto(),
+                        worktrees: request.payload.worktrees.clone(),
+                        room_version: room.version,
+                    },
+                )
+            },
+        );
+        self.room_updated(&room);
+        response.send(proto::Ack {})?;
 
         Ok(())
     }

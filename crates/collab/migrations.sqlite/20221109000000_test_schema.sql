@@ -56,6 +56,7 @@ CREATE TABLE "project_collaborators" (
     "is_host" BOOLEAN NOT NULL
 );
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
+CREATE UNIQUE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id", "replica_id");
 
 CREATE TABLE "worktrees" (
     "id" INTEGER NOT NULL,

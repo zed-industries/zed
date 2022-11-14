@@ -2,7 +2,7 @@ use crate::{Error, Result};
 use anyhow::anyhow;
 use axum::http::StatusCode;
 use collections::HashMap;
-use futures::StreamExt;
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 use rpc::{proto, ConnectionId};
 use serde::{Deserialize, Serialize};
 use sqlx::{
@@ -10,7 +10,7 @@ use sqlx::{
     types::Uuid,
     FromRow,
 };
-use std::{path::Path, time::Duration};
+use std::{future::Future, path::Path, time::Duration};
 use time::{OffsetDateTime, PrimitiveDateTime};
 
 #[cfg(test)]
@@ -27,27 +27,34 @@ pub struct Db<D: sqlx::Database> {
     runtime: Option<tokio::runtime::Runtime>,
 }
 
-macro_rules! test_support {
-    ($self:ident, { $($token:tt)* }) => {{
-        let body = async {
-            $($token)*
-        };
+pub trait BeginTransaction: Send + Sync {
+    type Database: sqlx::Database;
 
-        if cfg!(test) {
-            #[cfg(not(test))]
-            unreachable!();
+    fn begin_transaction(&self) -> BoxFuture<Result<sqlx::Transaction<'static, Self::Database>>>;
+}
 
-            #[cfg(test)]
-            if let Some(background) = $self.background.as_ref() {
-                background.simulate_random_delay().await;
-            }
+// In Postgres, serializable transactions are opt-in
+impl BeginTransaction for Db<sqlx::Postgres> {
+    type Database = sqlx::Postgres;
 
-            #[cfg(test)]
-            $self.runtime.as_ref().unwrap().block_on(body)
-        } else {
-            body.await
+    fn begin_transaction(&self) -> BoxFuture<Result<sqlx::Transaction<'static, sqlx::Postgres>>> {
+        async move {
+            let mut tx = self.pool.begin().await?;
+            sqlx::Executor::execute(&mut tx, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;")
+                .await?;
+            Ok(tx)
         }
-    }};
+        .boxed()
+    }
+}
+
+// In Sqlite, transactions are inherently serializable.
+impl BeginTransaction for Db<sqlx::Sqlite> {
+    type Database = sqlx::Sqlite;
+
+    fn begin_transaction(&self) -> BoxFuture<Result<sqlx::Transaction<'static, sqlx::Sqlite>>> {
+        async move { Ok(self.pool.begin().await?) }.boxed()
+    }
 }
 
 pub trait RowsAffected {
@@ -88,7 +95,8 @@ impl Db<sqlx::Sqlite> {
     }
 
     pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             let query = "
                 SELECT users.*
                 FROM users
@@ -96,13 +104,14 @@ impl Db<sqlx::Sqlite> {
             ";
             Ok(sqlx::query_as(query)
                 .bind(&serde_json::json!(ids))
-                .fetch_all(&self.pool)
+                .fetch_all(&mut tx)
                 .await?)
         })
+        .await
     }
 
     pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let query = "
                 SELECT metrics_id
                 FROM users
@@ -110,9 +119,10 @@ impl Db<sqlx::Sqlite> {
             ";
             Ok(sqlx::query_scalar(query)
                 .bind(id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut tx)
                 .await?)
         })
+        .await
     }
 
     pub async fn create_user(
@@ -121,7 +131,7 @@ impl Db<sqlx::Sqlite> {
         admin: bool,
         params: NewUserParams,
     ) -> Result<NewUserResult> {
-        test_support!(self, {
+        self.transact(|mut tx| async {
             let query = "
                 INSERT INTO users (email_address, github_login, github_user_id, admin, metrics_id)
                 VALUES ($1, $2, $3, $4, $5)
@@ -131,12 +141,13 @@ impl Db<sqlx::Sqlite> {
 
             let (user_id, metrics_id): (UserId, String) = sqlx::query_as(query)
                 .bind(email_address)
-                .bind(params.github_login)
-                .bind(params.github_user_id)
+                .bind(&params.github_login)
+                .bind(&params.github_user_id)
                 .bind(admin)
                 .bind(Uuid::new_v4().to_string())
-                .fetch_one(&self.pool)
+                .fetch_one(&mut tx)
                 .await?;
+            tx.commit().await?;
             Ok(NewUserResult {
                 user_id,
                 metrics_id,
@@ -144,6 +155,7 @@ impl Db<sqlx::Sqlite> {
                 inviting_user_id: None,
             })
         })
+        .await
     }
 
     pub async fn fuzzy_search_users(&self, _name_query: &str, _limit: u32) -> Result<Vec<User>> {
@@ -209,7 +221,8 @@ impl Db<sqlx::Postgres> {
     }
 
     pub async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             let like_string = Self::fuzzy_like_string(name_query);
             let query = "
                 SELECT users.*
@@ -222,27 +235,28 @@ impl Db<sqlx::Postgres> {
                 .bind(like_string)
                 .bind(name_query)
                 .bind(limit as i32)
-                .fetch_all(&self.pool)
+                .fetch_all(&mut tx)
                 .await?)
         })
+        .await
     }
 
     pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-        test_support!(self, {
+        let ids = ids.iter().map(|id| id.0).collect::<Vec<_>>();
+        self.transact(|tx| async {
+            let mut tx = tx;
             let query = "
                 SELECT users.*
                 FROM users
                 WHERE users.id = ANY ($1)
             ";
-            Ok(sqlx::query_as(query)
-                .bind(&ids.into_iter().map(|id| id.0).collect::<Vec<_>>())
-                .fetch_all(&self.pool)
-                .await?)
+            Ok(sqlx::query_as(query).bind(&ids).fetch_all(&mut tx).await?)
         })
+        .await
     }
 
     pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let query = "
                 SELECT metrics_id::text
                 FROM users
@@ -250,9 +264,10 @@ impl Db<sqlx::Postgres> {
             ";
             Ok(sqlx::query_scalar(query)
                 .bind(id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut tx)
                 .await?)
         })
+        .await
     }
 
     pub async fn create_user(
@@ -261,7 +276,7 @@ impl Db<sqlx::Postgres> {
         admin: bool,
         params: NewUserParams,
     ) -> Result<NewUserResult> {
-        test_support!(self, {
+        self.transact(|mut tx| async {
             let query = "
                 INSERT INTO users (email_address, github_login, github_user_id, admin)
                 VALUES ($1, $2, $3, $4)
@@ -271,11 +286,13 @@ impl Db<sqlx::Postgres> {
 
             let (user_id, metrics_id): (UserId, String) = sqlx::query_as(query)
                 .bind(email_address)
-                .bind(params.github_login)
+                .bind(&params.github_login)
                 .bind(params.github_user_id)
                 .bind(admin)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut tx)
                 .await?;
+            tx.commit().await?;
+
             Ok(NewUserResult {
                 user_id,
                 metrics_id,
@@ -283,6 +300,7 @@ impl Db<sqlx::Postgres> {
                 inviting_user_id: None,
             })
         })
+        .await
     }
 
     pub async fn create_user_from_invite(
@@ -290,9 +308,7 @@ impl Db<sqlx::Postgres> {
         invite: &Invite,
         user: NewUserParams,
     ) -> Result<Option<NewUserResult>> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
-
+        self.transact(|mut tx| async {
             let (signup_id, existing_user_id, inviting_user_id, signup_device_id): (
                 i32,
                 Option<UserId>,
@@ -393,10 +409,11 @@ impl Db<sqlx::Postgres> {
                 signup_device_id,
             }))
         })
+        .await
     }
 
     pub async fn create_signup(&self, signup: Signup) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async {
             sqlx::query(
                 "
                 INSERT INTO signups
@@ -425,10 +442,12 @@ impl Db<sqlx::Postgres> {
             .bind(&signup.editor_features)
             .bind(&signup.programming_languages)
             .bind(&signup.device_id)
-            .execute(&self.pool)
+            .execute(&mut tx)
             .await?;
+            tx.commit().await?;
             Ok(())
         })
+        .await
     }
 
     pub async fn create_invite_from_code(
@@ -437,9 +456,7 @@ impl Db<sqlx::Postgres> {
         email_address: &str,
         device_id: Option<&str>,
     ) -> Result<Invite> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
-
+        self.transact(|mut tx| async {
             let existing_user: Option<UserId> = sqlx::query_scalar(
                 "
                 SELECT id
@@ -516,10 +533,11 @@ impl Db<sqlx::Postgres> {
                 email_confirmation_code,
             })
         })
+        .await
     }
 
     pub async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async {
             let emails = invites
                 .iter()
                 .map(|s| s.email_address.as_str())
@@ -532,15 +550,18 @@ impl Db<sqlx::Postgres> {
                 ",
             )
             .bind(&emails)
-            .execute(&self.pool)
+            .execute(&mut tx)
             .await?;
+            tx.commit().await?;
             Ok(())
         })
+        .await
     }
 }
 
 impl<D> Db<D>
 where
+    Self: BeginTransaction<Database = D>,
     D: sqlx::Database + sqlx::migrate::MigrateDatabase,
     D::Connection: sqlx::migrate::Migrate,
     for<'a> <D as sqlx::database::HasArguments<'a>>::Arguments: sqlx::IntoArguments<'a, D>,
@@ -627,18 +648,21 @@ where
     // users
 
     pub async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             let query = "SELECT * FROM users ORDER BY github_login ASC LIMIT $1 OFFSET $2";
             Ok(sqlx::query_as(query)
                 .bind(limit as i32)
                 .bind((page * limit) as i32)
-                .fetch_all(&self.pool)
+                .fetch_all(&mut tx)
                 .await?)
         })
+        .await
     }
 
     pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             let query = "
                 SELECT users.*
                 FROM users
@@ -647,16 +671,18 @@ where
             ";
             Ok(sqlx::query_as(query)
                 .bind(&id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut tx)
                 .await?)
         })
+        .await
     }
 
     pub async fn get_users_with_no_invites(
         &self,
         invited_by_another_user: bool,
     ) -> Result<Vec<User>> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             let query = format!(
                 "
                 SELECT users.*
@@ -667,8 +693,9 @@ where
                 if invited_by_another_user { " NOT" } else { "" }
             );
 
-            Ok(sqlx::query_as(&query).fetch_all(&self.pool).await?)
+            Ok(sqlx::query_as(&query).fetch_all(&mut tx).await?)
         })
+        .await
     }
 
     pub async fn get_user_by_github_account(
@@ -676,7 +703,8 @@ where
         github_login: &str,
         github_user_id: Option<i32>,
     ) -> Result<Option<User>> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             if let Some(github_user_id) = github_user_id {
                 let mut user = sqlx::query_as::<_, User>(
                     "
@@ -688,7 +716,7 @@ where
                 )
                 .bind(github_login)
                 .bind(github_user_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut tx)
                 .await?;
 
                 if user.is_none() {
@@ -702,7 +730,7 @@ where
                     )
                     .bind(github_user_id)
                     .bind(github_login)
-                    .fetch_optional(&self.pool)
+                    .fetch_optional(&mut tx)
                     .await?;
                 }
 
@@ -716,58 +744,62 @@ where
                     ",
                 )
                 .bind(github_login)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut tx)
                 .await?;
                 Ok(user)
             }
         })
+        .await
     }
 
     pub async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async {
             let query = "UPDATE users SET admin = $1 WHERE id = $2";
-            Ok(sqlx::query(query)
+            sqlx::query(query)
                 .bind(is_admin)
                 .bind(id.0)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
+                .execute(&mut tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
         })
+        .await
     }
 
     pub async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let query = "UPDATE users SET connected_once = $1 WHERE id = $2";
-            Ok(sqlx::query(query)
+            sqlx::query(query)
                 .bind(connected_once)
                 .bind(id.0)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
+                .execute(&mut tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
         })
+        .await
     }
 
     pub async fn destroy_user(&self, id: UserId) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let query = "DELETE FROM access_tokens WHERE user_id = $1;";
             sqlx::query(query)
                 .bind(id.0)
-                .execute(&self.pool)
+                .execute(&mut tx)
                 .await
                 .map(drop)?;
             let query = "DELETE FROM users WHERE id = $1;";
-            Ok(sqlx::query(query)
-                .bind(id.0)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
+            sqlx::query(query).bind(id.0).execute(&mut tx).await?;
+            tx.commit().await?;
+            Ok(())
         })
+        .await
     }
 
     // signups
 
     pub async fn get_waitlist_summary(&self) -> Result<WaitlistSummary> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             Ok(sqlx::query_as(
                 "
                 SELECT
@@ -784,13 +816,14 @@ where
                 ) AS unsent
                 ",
             )
-            .fetch_one(&self.pool)
+            .fetch_one(&mut tx)
             .await?)
         })
+        .await
     }
 
     pub async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             Ok(sqlx::query_as(
                 "
                 SELECT
@@ -803,16 +836,16 @@ where
                 ",
             )
             .bind(count as i32)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut tx)
             .await?)
         })
+        .await
     }
 
     // invite codes
 
     pub async fn set_invite_count_for_user(&self, id: UserId, count: u32) -> Result<()> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             if count > 0 {
                 sqlx::query(
                     "
@@ -841,10 +874,11 @@ where
             tx.commit().await?;
             Ok(())
         })
+        .await
     }
 
     pub async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, u32)>> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let result: Option<(String, i32)> = sqlx::query_as(
                 "
                     SELECT invite_code, invite_count
@@ -853,7 +887,7 @@ where
                 ",
             )
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut tx)
             .await?;
             if let Some((code, count)) = result {
                 Ok(Some((code, count.try_into().map_err(anyhow::Error::new)?)))
@@ -861,10 +895,12 @@ where
                 Ok(None)
             }
         })
+        .await
     }
 
     pub async fn get_user_for_invite_code(&self, code: &str) -> Result<User> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             sqlx::query_as(
                 "
                     SELECT *
@@ -873,7 +909,7 @@ where
                 ",
             )
             .bind(code)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut tx)
             .await?
             .ok_or_else(|| {
                 Error::Http(
@@ -882,6 +918,7 @@ where
                 )
             })
         })
+        .await
     }
 
     pub async fn create_room(
@@ -889,8 +926,7 @@ where
         user_id: UserId,
         connection_id: ConnectionId,
     ) -> Result<proto::Room> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             let live_kit_room = nanoid::nanoid!(30);
             let room_id = sqlx::query_scalar(
                 "
@@ -920,7 +956,7 @@ where
             .await?;
 
             self.commit_room_transaction(room_id, tx).await
-        })
+        }).await
     }
 
     pub async fn call(
@@ -931,8 +967,7 @@ where
         called_user_id: UserId,
         initial_project_id: Option<ProjectId>,
     ) -> Result<(proto::Room, proto::IncomingCall)> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             sqlx::query(
                 "
                 INSERT INTO room_participants (room_id, user_id, calling_user_id, calling_connection_id, initial_project_id)
@@ -951,15 +986,14 @@ where
             let incoming_call = Self::build_incoming_call(&room, called_user_id)
                 .ok_or_else(|| anyhow!("failed to build incoming call"))?;
             Ok((room, incoming_call))
-        })
+        }).await
     }
 
     pub async fn incoming_call_for_user(
         &self,
         user_id: UserId,
     ) -> Result<Option<proto::IncomingCall>> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             let room_id = sqlx::query_scalar::<_, RoomId>(
                 "
                 SELECT room_id
@@ -978,6 +1012,7 @@ where
                 Ok(None)
             }
         })
+        .await
     }
 
     fn build_incoming_call(
@@ -1013,8 +1048,7 @@ where
         room_id: RoomId,
         called_user_id: UserId,
     ) -> Result<proto::Room> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             sqlx::query(
                 "
                 DELETE FROM room_participants
@@ -1028,6 +1062,7 @@ where
 
             self.commit_room_transaction(room_id, tx).await
         })
+        .await
     }
 
     pub async fn decline_call(
@@ -1035,8 +1070,7 @@ where
         expected_room_id: Option<RoomId>,
         user_id: UserId,
     ) -> Result<proto::Room> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             let room_id = sqlx::query_scalar(
                 "
                 DELETE FROM room_participants
@@ -1053,6 +1087,7 @@ where
 
             self.commit_room_transaction(room_id, tx).await
         })
+        .await
     }
 
     pub async fn cancel_call(
@@ -1061,8 +1096,7 @@ where
         calling_connection_id: ConnectionId,
         called_user_id: UserId,
     ) -> Result<proto::Room> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             let room_id = sqlx::query_scalar(
                 "
                 DELETE FROM room_participants
@@ -1079,7 +1113,7 @@ where
             }
 
             self.commit_room_transaction(room_id, tx).await
-        })
+        }).await
     }
 
     pub async fn join_room(
@@ -1088,8 +1122,7 @@ where
         user_id: UserId,
         connection_id: ConnectionId,
     ) -> Result<proto::Room> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             sqlx::query(
                 "
                 UPDATE room_participants 
@@ -1105,15 +1138,14 @@ where
             .await?;
             self.commit_room_transaction(room_id, tx).await
         })
+        .await
     }
 
     pub async fn leave_room_for_connection(
         &self,
         connection_id: ConnectionId,
     ) -> Result<Option<LeftRoom>> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
-
+        self.transact(|mut tx| async move {
             // Leave room.
             let room_id = sqlx::query_scalar::<_, RoomId>(
                 "
@@ -1198,6 +1230,7 @@ where
                 Ok(None)
             }
         })
+        .await
     }
 
     pub async fn update_room_participant_location(
@@ -1206,13 +1239,13 @@ where
         connection_id: ConnectionId,
         location: proto::ParticipantLocation,
     ) -> Result<proto::Room> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
-
+        self.transact(|tx| async {
+            let mut tx = tx;
             let location_kind;
             let location_project_id;
             match location
                 .variant
+                .as_ref()
                 .ok_or_else(|| anyhow!("invalid location"))?
             {
                 proto::participant_location::Variant::SharedProject(project) => {
@@ -1245,6 +1278,7 @@ where
 
             self.commit_room_transaction(room_id, tx).await
         })
+        .await
     }
 
     async fn commit_room_transaction(
@@ -1375,8 +1409,7 @@ where
         connection_id: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
     ) -> Result<(ProjectId, proto::Room)> {
-        test_support!(self, {
-            let mut tx = self.pool.begin().await?;
+        self.transact(|mut tx| async move {
             let project_id = sqlx::query_scalar(
                 "
                 INSERT INTO projects (room_id, host_user_id, host_connection_id)
@@ -1428,16 +1461,65 @@ where
             let room = self.commit_room_transaction(room_id, tx).await?;
             Ok((project_id, room))
         })
+        .await
     }
 
-    // pub async fn join_project(
-    //     &self,
-    //     user_id: UserId,
-    //     connection_id: ConnectionId,
-    //     project_id: ProjectId,
-    // ) -> Result<(Project, ReplicaId)> {
-    //     todo!()
-    // }
+    pub async fn update_project(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+        worktrees: &[proto::WorktreeMetadata],
+    ) -> Result<(proto::Room, Vec<ConnectionId>)> {
+        self.transact(|mut tx| async move {
+            let room_id: RoomId = sqlx::query_scalar(
+                "
+                SELECT room_id
+                FROM projects
+                WHERE id = $1 AND host_connection_id = $2
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .fetch_one(&mut tx)
+            .await?;
+
+            for worktree in worktrees {
+                sqlx::query(
+                    "
+                    INSERT INTO worktrees (project_id, id, root_name)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (project_id, id) DO UPDATE SET root_name = excluded.root_name
+                    ",
+                )
+                .bind(project_id)
+                .bind(worktree.id as i32)
+                .bind(&worktree.root_name)
+                .execute(&mut tx)
+                .await?;
+            }
+
+            let mut params = "?,".repeat(worktrees.len());
+            if !worktrees.is_empty() {
+                params.pop();
+            }
+            let query = format!(
+                "
+                DELETE FROM worktrees
+                WHERE id NOT IN ({params})
+                ",
+            );
+
+            let mut query = sqlx::query(&query);
+            for worktree in worktrees {
+                query = query.bind(worktree.id as i32);
+            }
+            query.execute(&mut tx).await?;
+
+            let room = self.commit_room_transaction(room_id, tx).await?;
+            todo!()
+        })
+        .await
+    }
 
     pub async fn unshare_project(&self, project_id: ProjectId) -> Result<()> {
         todo!()
@@ -1459,7 +1541,7 @@ where
     // contacts
 
     pub async fn get_contacts(&self, user_id: UserId) -> Result<Vec<Contact>> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let query = "
                 SELECT user_id_a, user_id_b, a_to_b, accepted, should_notify
                 FROM contacts
@@ -1468,7 +1550,7 @@ where
 
             let mut rows = sqlx::query_as::<_, (UserId, UserId, bool, bool, bool)>(query)
                 .bind(user_id)
-                .fetch(&self.pool);
+                .fetch(&mut tx);
 
             let mut contacts = Vec::new();
             while let Some(row) = rows.next().await {
@@ -1507,10 +1589,11 @@ where
 
             Ok(contacts)
         })
+        .await
     }
 
     pub async fn has_contact(&self, user_id_1: UserId, user_id_2: UserId) -> Result<bool> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let (id_a, id_b) = if user_id_1 < user_id_2 {
                 (user_id_1, user_id_2)
             } else {
@@ -1525,14 +1608,15 @@ where
             Ok(sqlx::query_scalar::<_, i32>(query)
                 .bind(id_a.0)
                 .bind(id_b.0)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut tx)
                 .await?
                 .is_some())
         })
+        .await
     }
 
     pub async fn send_contact_request(&self, sender_id: UserId, receiver_id: UserId) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let (id_a, id_b, a_to_b) = if sender_id < receiver_id {
                 (sender_id, receiver_id, true)
             } else {
@@ -1554,7 +1638,7 @@ where
                 .bind(id_a.0)
                 .bind(id_b.0)
                 .bind(a_to_b)
-                .execute(&self.pool)
+                .execute(&mut tx)
                 .await?;
 
             if result.rows_affected() == 1 {
@@ -1562,11 +1646,11 @@ where
             } else {
                 Err(anyhow!("contact already requested"))?
             }
-        })
+        }).await
     }
 
     pub async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let (id_a, id_b) = if responder_id < requester_id {
                 (responder_id, requester_id)
             } else {
@@ -1579,7 +1663,7 @@ where
             let result = sqlx::query(query)
                 .bind(id_a.0)
                 .bind(id_b.0)
-                .execute(&self.pool)
+                .execute(&mut tx)
                 .await?;
 
             if result.rows_affected() == 1 {
@@ -1588,6 +1672,7 @@ where
                 Err(anyhow!("no such contact"))?
             }
         })
+        .await
     }
 
     pub async fn dismiss_contact_notification(
@@ -1595,7 +1680,7 @@ where
         user_id: UserId,
         contact_user_id: UserId,
     ) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let (id_a, id_b, a_to_b) = if user_id < contact_user_id {
                 (user_id, contact_user_id, true)
             } else {
@@ -1617,7 +1702,7 @@ where
                 .bind(id_a.0)
                 .bind(id_b.0)
                 .bind(a_to_b)
-                .execute(&self.pool)
+                .execute(&mut tx)
                 .await?;
 
             if result.rows_affected() == 0 {
@@ -1626,6 +1711,7 @@ where
 
             Ok(())
         })
+        .await
     }
 
     pub async fn respond_to_contact_request(
@@ -1634,7 +1720,7 @@ where
         requester_id: UserId,
         accept: bool,
     ) -> Result<()> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let (id_a, id_b, a_to_b) = if responder_id < requester_id {
                 (responder_id, requester_id, false)
             } else {
@@ -1650,7 +1736,7 @@ where
                     .bind(id_a.0)
                     .bind(id_b.0)
                     .bind(a_to_b)
-                    .execute(&self.pool)
+                    .execute(&mut tx)
                     .await?
             } else {
                 let query = "
@@ -1661,7 +1747,7 @@ where
                     .bind(id_a.0)
                     .bind(id_b.0)
                     .bind(a_to_b)
-                    .execute(&self.pool)
+                    .execute(&mut tx)
                     .await?
             };
             if result.rows_affected() == 1 {
@@ -1670,6 +1756,7 @@ where
                 Err(anyhow!("no such contact request"))?
             }
         })
+        .await
     }
 
     // access tokens
@@ -1680,7 +1767,8 @@ where
         access_token_hash: &str,
         max_access_token_count: usize,
     ) -> Result<()> {
-        test_support!(self, {
+        self.transact(|tx| async {
+            let mut tx = tx;
             let insert_query = "
                 INSERT INTO access_tokens (user_id, hash)
                 VALUES ($1, $2);
@@ -1696,7 +1784,6 @@ where
                 )
             ";
 
-            let mut tx = self.pool.begin().await?;
             sqlx::query(insert_query)
                 .bind(user_id.0)
                 .bind(access_token_hash)
@@ -1710,10 +1797,11 @@ where
                 .await?;
             Ok(tx.commit().await?)
         })
+        .await
     }
 
     pub async fn get_access_token_hashes(&self, user_id: UserId) -> Result<Vec<String>> {
-        test_support!(self, {
+        self.transact(|mut tx| async move {
             let query = "
                 SELECT hash
                 FROM access_tokens
@@ -1722,9 +1810,51 @@ where
             ";
             Ok(sqlx::query_scalar(query)
                 .bind(user_id.0)
-                .fetch_all(&self.pool)
+                .fetch_all(&mut tx)
                 .await?)
         })
+        .await
+    }
+
+    async fn transact<F, Fut, T>(&self, f: F) -> Result<T>
+    where
+        F: Send + Fn(sqlx::Transaction<'static, D>) -> Fut,
+        Fut: Send + Future<Output = Result<T>>,
+    {
+        let body = async {
+            loop {
+                let tx = self.begin_transaction().await?;
+                match f(tx).await {
+                    Ok(result) => return Ok(result),
+                    Err(error) => match error {
+                        Error::Database(error)
+                            if error
+                                .as_database_error()
+                                .and_then(|error| error.code())
+                                .as_deref()
+                                == Some("hey") =>
+                        {
+                            // Retry (don't break the loop)
+                        }
+                        error @ _ => return Err(error),
+                    },
+                }
+            }
+        };
+
+        #[cfg(test)]
+        {
+            if let Some(background) = self.background.as_ref() {
+                background.simulate_random_delay().await;
+            }
+
+            self.runtime.as_ref().unwrap().block_on(body)
+        }
+
+        #[cfg(not(test))]
+        {
+            body.await
+        }
     }
 }
 

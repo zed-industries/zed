@@ -4,6 +4,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub enum Error {
     Http(StatusCode, String),
+    Database(sqlx::Error),
     Internal(anyhow::Error),
 }
 
@@ -15,7 +16,7 @@ impl From<anyhow::Error> for Error {
 
 impl From<sqlx::Error> for Error {
     fn from(error: sqlx::Error) -> Self {
-        Self::Internal(error.into())
+        Self::Database(error)
     }
 }
 
@@ -41,6 +42,9 @@ impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
             Error::Http(code, message) => (code, message).into_response(),
+            Error::Database(error) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+            }
             Error::Internal(error) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
@@ -52,6 +56,7 @@ impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Http(code, message) => (code, message).fmt(f),
+            Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
         }
     }
@@ -61,6 +66,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Http(code, message) => write!(f, "{code}: {message}"),
+            Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
         }
     }
