@@ -43,7 +43,8 @@ CREATE TABLE "rooms" (
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY,
     "room_id" INTEGER REFERENCES rooms (id),
-    "host_user_id" INTEGER REFERENCES users (id) NOT NULL
+    "host_user_id" INTEGER REFERENCES users (id) NOT NULL,
+    "host_connection_id" INTEGER NOT NULL
 );
 
 CREATE TABLE "project_collaborators" (
@@ -72,7 +73,7 @@ CREATE TABLE "room_participants" (
     "location_kind" INTEGER,
     "location_project_id" INTEGER REFERENCES projects (id),
     "initial_project_id" INTEGER REFERENCES projects (id),
-    "calling_user_id" INTEGER NOT NULL REFERENCES users (id)
+    "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
     "calling_connection_id" INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");

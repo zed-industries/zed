@@ -907,14 +907,15 @@ where
 
             sqlx::query(
                 "
-                INSERT INTO room_participants (room_id, user_id, connection_id, calling_user_id)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO room_participants (room_id, user_id, answering_connection_id, calling_user_id, calling_connection_id)
+                VALUES ($1, $2, $3, $4, $5)
                 ",
             )
             .bind(room_id)
             .bind(user_id)
             .bind(connection_id.0 as i32)
             .bind(user_id)
+            .bind(connection_id.0 as i32)
             .execute(&mut tx)
             .await?;
 
@@ -926,6 +927,7 @@ where
         &self,
         room_id: RoomId,
         calling_user_id: UserId,
+        calling_connection_id: ConnectionId,
         called_user_id: UserId,
         initial_project_id: Option<ProjectId>,
     ) -> Result<(proto::Room, proto::IncomingCall)> {
@@ -933,13 +935,14 @@ where
             let mut tx = self.pool.begin().await?;
             sqlx::query(
                 "
-                INSERT INTO room_participants (room_id, user_id, calling_user_id, initial_project_id)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO room_participants (room_id, user_id, calling_user_id, calling_connection_id, initial_project_id)
+                VALUES ($1, $2, $3, $4, $5)
                 ",
             )
             .bind(room_id)
             .bind(called_user_id)
             .bind(calling_user_id)
+            .bind(calling_connection_id.0 as i32)
             .bind(initial_project_id)
             .execute(&mut tx)
             .await?;
@@ -961,7 +964,7 @@ where
                 "
                 SELECT room_id
                 FROM room_participants
-                WHERE user_id = $1 AND connection_id IS NULL
+                WHERE user_id = $1 AND answering_connection_id IS NULL
                 ",
             )
             .bind(user_id)
@@ -1033,7 +1036,7 @@ where
             sqlx::query(
                 "
                 DELETE FROM room_participants
-                WHERE room_id = $1 AND user_id = $2 AND connection_id IS NULL
+                WHERE room_id = $1 AND user_id = $2 AND answering_connection_id IS NULL
                 ",
             )
             .bind(room_id)
@@ -1056,7 +1059,7 @@ where
             sqlx::query(
                 "
                 UPDATE room_participants 
-                SET connection_id = $1
+                SET answering_connection_id = $1
                 WHERE room_id = $2 AND user_id = $3
                 RETURNING 1
                 ",
@@ -1070,101 +1073,100 @@ where
         })
     }
 
-    pub async fn leave_room(
-        &self,
-        room_id: RoomId,
-        connection_id: ConnectionId,
-    ) -> Result<LeftRoom> {
+    pub async fn leave_room(&self, connection_id: ConnectionId) -> Result<Option<LeftRoom>> {
         test_support!(self, {
             let mut tx = self.pool.begin().await?;
 
             // Leave room.
-            let user_id: UserId = sqlx::query_scalar(
+            let room_id = sqlx::query_scalar::<_, RoomId>(
                 "
                 DELETE FROM room_participants
-                WHERE room_id = $1 AND connection_id = $2
-                RETURNING user_id
+                WHERE answering_connection_id = $1
+                RETURNING room_id
                 ",
             )
-            .bind(room_id)
             .bind(connection_id.0 as i32)
-            .fetch_one(&mut tx)
+            .fetch_optional(&mut tx)
             .await?;
 
-            // Cancel pending calls initiated by the leaving user.
-            let canceled_calls_to_user_ids: Vec<UserId> = sqlx::query_scalar(
-                "
-                DELETE FROM room_participants
-                WHERE calling_user_id = $1 AND connection_id IS NULL
-                RETURNING user_id
-                ",
-            )
-            .bind(room_id)
-            .bind(connection_id.0 as i32)
-            .fetch_all(&mut tx)
-            .await?;
+            if let Some(room_id) = room_id {
+                // Cancel pending calls initiated by the leaving user.
+                let canceled_calls_to_user_ids: Vec<UserId> = sqlx::query_scalar(
+                    "
+                    DELETE FROM room_participants
+                    WHERE calling_connection_id = $1 AND answering_connection_id IS NULL
+                    RETURNING user_id
+                    ",
+                )
+                .bind(connection_id.0 as i32)
+                .fetch_all(&mut tx)
+                .await?;
 
-            let mut project_collaborators = sqlx::query_as::<_, ProjectCollaborator>(
-                "
-                SELECT project_collaborators.*
-                FROM projects, project_collaborators
-                WHERE
-                    projects.room_id = $1 AND
-                    projects.host_user_id = $2 AND
-                    projects.id = project_collaborators.project_id
-                ",
-            )
-            .bind(room_id)
-            .bind(user_id)
-            .fetch(&mut tx);
+                let mut project_collaborators = sqlx::query_as::<_, ProjectCollaborator>(
+                    "
+                    SELECT project_collaborators.*
+                    FROM projects, project_collaborators
+                    WHERE
+                        projects.room_id = $1 AND
+                        projects.host_connection_id = $2 AND
+                        projects.id = project_collaborators.project_id
+                    ",
+                )
+                .bind(room_id)
+                .bind(connection_id.0 as i32)
+                .fetch(&mut tx);
 
-            let mut left_projects = HashMap::default();
-            while let Some(collaborator) = project_collaborators.next().await {
-                let collaborator = collaborator?;
-                let left_project =
-                    left_projects
-                        .entry(collaborator.project_id)
-                        .or_insert(LeftProject {
-                            id: collaborator.project_id,
-                            host_user_id: Default::default(),
-                            connection_ids: Default::default(),
-                        });
+                let mut left_projects = HashMap::default();
+                while let Some(collaborator) = project_collaborators.next().await {
+                    let collaborator = collaborator?;
+                    let left_project =
+                        left_projects
+                            .entry(collaborator.project_id)
+                            .or_insert(LeftProject {
+                                id: collaborator.project_id,
+                                host_user_id: Default::default(),
+                                connection_ids: Default::default(),
+                            });
 
-                let collaborator_connection_id = ConnectionId(collaborator.connection_id as u32);
-                if collaborator_connection_id != connection_id || collaborator.is_host {
-                    left_project.connection_ids.push(collaborator_connection_id);
+                    let collaborator_connection_id =
+                        ConnectionId(collaborator.connection_id as u32);
+                    if collaborator_connection_id != connection_id || collaborator.is_host {
+                        left_project.connection_ids.push(collaborator_connection_id);
+                    }
+
+                    if collaborator.is_host {
+                        left_project.host_user_id = collaborator.user_id;
+                    }
                 }
+                drop(project_collaborators);
 
-                if collaborator.is_host {
-                    left_project.host_user_id = collaborator.user_id;
-                }
+                sqlx::query(
+                    "
+                    DELETE FROM projects
+                    WHERE room_id = $1 AND host_connection_id = $2
+                    ",
+                )
+                .bind(room_id)
+                .bind(connection_id.0 as i32)
+                .execute(&mut tx)
+                .await?;
+
+                let room = self.commit_room_transaction(room_id, tx).await?;
+                Ok(Some(LeftRoom {
+                    room,
+                    left_projects,
+                    canceled_calls_to_user_ids,
+                }))
+            } else {
+                Ok(None)
             }
-            drop(project_collaborators);
-
-            sqlx::query(
-                "
-                DELETE FROM projects
-                WHERE room_id = $1 AND host_user_id = $2
-                ",
-            )
-            .bind(room_id)
-            .bind(user_id)
-            .execute(&mut tx)
-            .await?;
-
-            let room = self.commit_room_transaction(room_id, tx).await?;
-            Ok(LeftRoom {
-                room,
-                left_projects,
-                canceled_calls_to_user_ids,
-            })
         })
     }
 
     pub async fn update_room_participant_location(
         &self,
         room_id: RoomId,
-        user_id: UserId,
+        connection_id: ConnectionId,
         location: proto::ParticipantLocation,
     ) -> Result<proto::Room> {
         test_support!(self, {
@@ -1194,13 +1196,13 @@ where
                 "
                 UPDATE room_participants
                 SET location_kind = $1 AND location_project_id = $2
-                WHERE room_id = $1 AND user_id = $2
+                WHERE room_id = $3 AND answering_connection_id = $4
                 ",
             )
             .bind(location_kind)
             .bind(location_project_id)
             .bind(room_id)
-            .bind(user_id)
+            .bind(connection_id.0 as i32)
             .execute(&mut tx)
             .await?;
 
@@ -1248,7 +1250,7 @@ where
         let mut db_participants =
             sqlx::query_as::<_, (UserId, Option<i32>, Option<i32>, Option<ProjectId>, UserId, Option<ProjectId>)>(
                 "
-                SELECT user_id, connection_id, location_kind, location_project_id, calling_user_id, initial_project_id
+                SELECT user_id, answering_connection_id, location_kind, location_project_id, calling_user_id, initial_project_id
                 FROM room_participants
                 WHERE room_id = $1
                 ",
@@ -1261,16 +1263,16 @@ where
         while let Some(participant) = db_participants.next().await {
             let (
                 user_id,
-                connection_id,
+                answering_connection_id,
                 _location_kind,
                 _location_project_id,
                 calling_user_id,
                 initial_project_id,
             ) = participant?;
-            if let Some(connection_id) = connection_id {
+            if let Some(answering_connection_id) = answering_connection_id {
                 participants.push(proto::Participant {
                     user_id: user_id.to_proto(),
-                    peer_id: connection_id as u32,
+                    peer_id: answering_connection_id as u32,
                     projects: Default::default(),
                     location: Some(proto::ParticipantLocation {
                         variant: Some(proto::participant_location::Variant::External(
@@ -1339,12 +1341,13 @@ where
             let mut tx = self.pool.begin().await?;
             let project_id = sqlx::query_scalar(
                 "
-                INSERT INTO projects (host_user_id, room_id)
-                VALUES ($1)
+                INSERT INTO projects (host_user_id, host_connection_id, room_id)
+                VALUES ($1, $2, $3)
                 RETURNING id
                 ",
             )
             .bind(user_id)
+            .bind(connection_id.0 as i32)
             .bind(room_id)
             .fetch_one(&mut tx)
             .await
@@ -1366,11 +1369,11 @@ where
             sqlx::query(
                 "
                 INSERT INTO project_collaborators (
-                project_id,
-                connection_id,
-                user_id,
-                replica_id,
-                is_host
+                    project_id,
+                    connection_id,
+                    user_id,
+                    replica_id,
+                    is_host
                 )
                 VALUES ($1, $2, $3, $4, $5)
                 ",

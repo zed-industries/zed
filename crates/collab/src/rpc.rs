@@ -415,7 +415,7 @@ impl Server {
 
             drop(foreground_message_handlers);
             tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
-            if let Err(error) = this.sign_out(connection_id).await {
+            if let Err(error) = this.sign_out(connection_id, user_id).await {
                 tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
@@ -424,69 +424,15 @@ impl Server {
     }
 
     #[instrument(skip(self), err)]
-    async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
+    async fn sign_out(
+        self: &mut Arc<Self>,
+        connection_id: ConnectionId,
+        user_id: UserId,
+    ) -> Result<()> {
         self.peer.disconnect(connection_id);
-
-        let mut projects_to_unshare = Vec::new();
-        let mut contacts_to_update = HashSet::default();
-        let mut room_left = None;
-        {
-            let removed_connection = self.store().await.remove_connection(connection_id)?;
-            self.app_state.db.remove_connection(connection_id);
-
-            for project in removed_connection.hosted_projects {
-                projects_to_unshare.push(project.id);
-                broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::UnshareProject {
-                            project_id: project.id.to_proto(),
-                        },
-                    )
-                });
-            }
-
-            for project in removed_connection.guest_projects {
-                broadcast(connection_id, project.connection_ids, |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::RemoveProjectCollaborator {
-                            project_id: project.id.to_proto(),
-                            peer_id: connection_id.0,
-                        },
-                    )
-                });
-            }
-
-            if let Some(room) = removed_connection.room {
-                self.room_updated(&room);
-                room_left = Some(self.room_left(&room, connection_id));
-            }
-
-            contacts_to_update.insert(removed_connection.user_id);
-            for connection_id in removed_connection.canceled_call_connection_ids {
-                self.peer
-                    .send(connection_id, proto::CallCanceled {})
-                    .trace_err();
-                contacts_to_update.extend(store.user_id_for_connection(connection_id).ok());
-            }
-        };
-
-        if let Some(room_left) = room_left {
-            room_left.await.trace_err();
-        }
-
-        for user_id in contacts_to_update {
-            self.update_user_contacts(user_id).await.trace_err();
-        }
-
-        for project_id in projects_to_unshare {
-            self.app_state
-                .db
-                .unshare_project(project_id)
-                .await
-                .trace_err();
-        }
+        self.store().await.remove_connection(connection_id)?;
+        self.leave_room_for_connection(connection_id, user_id)
+            .await?;
 
         Ok(())
     }
@@ -653,66 +599,90 @@ impl Server {
     }
 
     async fn leave_room(self: Arc<Server>, message: Message<proto::LeaveRoom>) -> Result<()> {
+        self.leave_room_for_connection(message.sender_connection_id, message.sender_user_id)
+            .await
+    }
+
+    async fn leave_room_for_connection(
+        self: &Arc<Server>,
+        connection_id: ConnectionId,
+        user_id: UserId,
+    ) -> Result<()> {
         let mut contacts_to_update = HashSet::default();
 
-        let left_room = self
-            .app_state
-            .db
-            .leave_room(
-                RoomId::from_proto(message.payload.id),
-                message.sender_connection_id,
-            )
-            .await?;
-        contacts_to_update.insert(message.sender_user_id);
+        let Some(left_room) = self.app_state.db.leave_room(connection_id).await? else {
+            return Err(anyhow!("no room to leave"))?;
+        };
+        contacts_to_update.insert(user_id);
 
         for project in left_room.left_projects.into_values() {
-            if project.host_user_id == message.sender_user_id {
+            if project.host_user_id == user_id {
                 for connection_id in project.connection_ids {
-                    self.peer.send(
+                    self.peer
+                        .send(
+                            connection_id,
+                            proto::UnshareProject {
+                                project_id: project.id.to_proto(),
+                            },
+                        )
+                        .trace_err();
+                }
+            } else {
+                for connection_id in project.connection_ids {
+                    self.peer
+                        .send(
+                            connection_id,
+                            proto::RemoveProjectCollaborator {
+                                project_id: project.id.to_proto(),
+                                peer_id: connection_id.0,
+                            },
+                        )
+                        .trace_err();
+                }
+
+                self.peer
+                    .send(
                         connection_id,
                         proto::UnshareProject {
                             project_id: project.id.to_proto(),
                         },
-                    )?;
-                }
-            } else {
-                for connection_id in project.connection_ids {
-                    self.peer.send(
-                        connection_id,
-                        proto::RemoveProjectCollaborator {
-                            project_id: project.id.to_proto(),
-                            peer_id: message.sender_connection_id.0,
-                        },
-                    )?;
-                }
-
-                self.peer.send(
-                    message.sender_connection_id,
-                    proto::UnshareProject {
-                        project_id: project.id.to_proto(),
-                    },
-                )?;
+                    )
+                    .trace_err();
             }
         }
 
         self.room_updated(&left_room.room);
         {
             let store = self.store().await;
-            for user_id in left_room.canceled_calls_to_user_ids {
-                for connection_id in store.connection_ids_for_user(user_id) {
+            for canceled_user_id in left_room.canceled_calls_to_user_ids {
+                for connection_id in store.connection_ids_for_user(canceled_user_id) {
                     self.peer
                         .send(connection_id, proto::CallCanceled {})
                         .trace_err();
                 }
-                contacts_to_update.insert(user_id);
+                contacts_to_update.insert(canceled_user_id);
             }
         }
 
-        self.room_left(&left_room.room, message.sender_connection_id)
-            .await
-            .trace_err();
-        for user_id in contacts_to_update {
-            self.update_user_contacts(user_id).await?;
+        for contact_user_id in contacts_to_update {
+            self.update_user_contacts(contact_user_id).await?;
+        }
+
+        if let Some(live_kit) = self.app_state.live_kit_client.as_ref() {
+            live_kit
+                .remove_participant(
+                    left_room.room.live_kit_room.clone(),
+                    connection_id.to_string(),
+                )
+                .await
+                .trace_err();
+
+            if left_room.room.participants.is_empty() {
+                live_kit
+                    .delete_room(left_room.room.live_kit_room)
+                    .await
+                    .trace_err();
+            }
         }
 
         Ok(())
@@ -725,6 +695,7 @@ impl Server {
     ) -> Result<()> {
         let room_id = RoomId::from_proto(request.payload.room_id);
         let calling_user_id = request.sender_user_id;
+        let calling_connection_id = request.sender_connection_id;
         let called_user_id = UserId::from_proto(request.payload.called_user_id);
         let initial_project_id = request
             .payload
@@ -742,7 +713,13 @@ impl Server {
         let (room, incoming_call) = self
             .app_state
             .db
-            .call(room_id, calling_user_id, called_user_id, initial_project_id)
+            .call(
+                room_id,
+                calling_user_id,
+                calling_connection_id,
+                called_user_id,
+                initial_project_id,
+            )
             .await?;
         self.room_updated(&room);
         self.update_user_contacts(called_user_id).await?;
@@ -838,7 +815,7 @@ impl Server {
         let room = self
             .app_state
             .db
-            .update_room_participant_location(room_id, request.sender_user_id, location)
+            .update_room_participant_location(room_id, request.sender_connection_id, location)
             .await?;
         self.room_updated(&room);
         response.send(proto::Ack {})?;
@@ -855,29 +832,6 @@ impl Server {
                     },
                 )
                 .trace_err();
-        }
-    }
-
-    fn room_left(
-        &self,
-        room: &proto::Room,
-        connection_id: ConnectionId,
-    ) -> impl Future<Output = Result<()>> {
-        let client = self.app_state.live_kit_client.clone();
-        let room_name = room.live_kit_room.clone();
-        let participant_count = room.participants.len();
-        async move {
-            if let Some(client) = client {
-                client
-                    .remove_participant(room_name.clone(), connection_id.to_string())
-                    .await?;
-
-                if participant_count == 0 {
-                    client.delete_room(room_name).await?;
-                }
-            }
-
-            Ok(())
         }
     }
 

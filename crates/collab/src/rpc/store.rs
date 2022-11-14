@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
-use std::{borrow::Cow, mem, path::PathBuf, str};
+use std::{mem, path::PathBuf, str};
 use tracing::instrument;
 
 pub type RoomId = u64;
@@ -133,14 +133,6 @@ impl Store {
         }
         self.connections.remove(&connection_id).unwrap();
         Ok(())
-    }
-
-    pub fn user_id_for_connection(&self, connection_id: ConnectionId) -> Result<UserId> {
-        Ok(self
-            .connections
-            .get(&connection_id)
-            .ok_or_else(|| anyhow!("unknown connection"))?
-            .user_id)
     }
 
     pub fn connection_ids_for_user(

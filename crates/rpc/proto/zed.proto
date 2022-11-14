@@ -158,9 +158,7 @@ message JoinRoomResponse {
     optional LiveKitConnectionInfo live_kit_connection_info = 2;
 }
 
-message LeaveRoom {
-    uint64 id = 1;
-}
+message LeaveRoom {}
 
 message Room {
     uint64 id = 1;

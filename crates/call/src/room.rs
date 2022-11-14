@@ -53,7 +53,7 @@ impl Entity for Room {
 
     fn release(&mut self, _: &mut MutableAppContext) {
         if self.status.is_online() {
-            self.client.send(proto::LeaveRoom { id: self.id }).log_err();
+            self.client.send(proto::LeaveRoom {}).log_err();
         }
     }
 }
@@ -241,7 +241,7 @@ impl Room {
         self.participant_user_ids.clear();
         self.subscriptions.clear();
         self.live_kit.take();
-        self.client.send(proto::LeaveRoom { id: self.id })?;
+        self.client.send(proto::LeaveRoom {})?;
         Ok(())
     }
 
