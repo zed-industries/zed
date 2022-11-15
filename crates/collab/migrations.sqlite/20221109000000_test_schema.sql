@@ -70,7 +70,7 @@ CREATE TABLE "worktree_entries" (
     "mtime_nanos" INTEGER NOT NULL,
     "is_symlink" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
-    PRIMARY KEY(project_id, worktree_id, id)
+    PRIMARY KEY(project_id, worktree_id, id),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id)
 );
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
