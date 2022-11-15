@@ -117,6 +117,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             Some(CachedLspAdapter::new(html::HtmlLspAdapter).await),
         ),
         ("ruby", tree_sitter_ruby::language(), None),
+        ("erb", tree_sitter_embedded_template::language(), None),
     ] {
         languages.add(language(name, grammar, lsp_adapter));
     }

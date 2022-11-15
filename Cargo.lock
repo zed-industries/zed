@@ -3017,6 +3017,7 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
+ "tree-sitter-embedded-template",
  "tree-sitter-html",
  "tree-sitter-javascript",
  "tree-sitter-json 0.19.0",
@@ -6403,8 +6404,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.20.8"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=366210ae925d7ea0891bc7a0c738f60c77c04d7b#366210ae925d7ea0891bc7a0c738f60c77c04d7b"
+version = "0.20.9"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=36b5b6c89e55ad1a502f8b3234bb3e12ec83a5da#36b5b6c89e55ad1a502f8b3234bb3e12ec83a5da"
 dependencies = [
  "cc",
  "regex",
@@ -6443,6 +6444,16 @@ dependencies = [
 name = "tree-sitter-elixir"
 version = "0.19.0"
 source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=05e3631c6a0701c1fa518b0fee7be95a2ceef5e2#05e3631c6a0701c1fa518b0fee7be95a2ceef5e2"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-embedded-template"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33817ade928c73a32d4f904a602321e09de9fc24b71d106f3b4b3f8ab30dcc38"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -7741,6 +7752,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-elixir",
+ "tree-sitter-embedded-template",
  "tree-sitter-go",
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",

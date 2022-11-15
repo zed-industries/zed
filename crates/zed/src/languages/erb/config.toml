@@ -1,0 +1,8 @@
+name = "ERB"
+path_suffixes = ["erb"]
+autoclose_before = ">})"
+brackets = [
+    { start = "<", end = ">", close = true, newline = true },
+]
+
+block_comment = ["<%#", "%>"]

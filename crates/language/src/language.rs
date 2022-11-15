@@ -28,6 +28,7 @@ use std::{
     any::Any,
     cell::RefCell,
     fmt::Debug,
+    hash::Hash,
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -326,7 +327,13 @@ struct InjectionConfig {
     query: Query,
     content_capture_ix: u32,
     language_capture_ix: Option<u32>,
-    languages_by_pattern_ix: Vec<Option<Box<str>>>,
+    patterns: Vec<InjectionPatternConfig>,
+}
+
+#[derive(Default, Clone)]
+struct InjectionPatternConfig {
+    language: Option<Box<str>>,
+    combined: bool,
 }
 
 struct BracketConfig {
@@ -637,6 +644,10 @@ impl Language {
         self.adapter.clone()
     }
 
+    pub fn id(&self) -> Option<usize> {
+        self.grammar.as_ref().map(|g| g.id)
+    }
+
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
         grammar.highlights_query = Some(Query::new(grammar.ts_language, source)?);
@@ -730,15 +741,21 @@ impl Language {
                 ("content", &mut content_capture_ix),
             ],
         );
-        let languages_by_pattern_ix = (0..query.pattern_count())
+        let patterns = (0..query.pattern_count())
             .map(|ix| {
-                query.property_settings(ix).iter().find_map(|setting| {
-                    if setting.key.as_ref() == "language" {
-                        return setting.value.clone();
-                    } else {
-                        None
+                let mut config = InjectionPatternConfig::default();
+                for setting in query.property_settings(ix) {
+                    match setting.key.as_ref() {
+                        "language" => {
+                            config.language = setting.value.clone();
+                        }
+                        "combined" => {
+                            config.combined = true;
+                        }
+                        _ => {}
                     }
-                })
+                }
+                config
             })
             .collect();
         if let Some(content_capture_ix) = content_capture_ix {
@@ -746,7 +763,7 @@ impl Language {
                 query,
                 language_capture_ix,
                 content_capture_ix,
-                languages_by_pattern_ix,
+                patterns,
             });
         }
         Ok(self)
@@ -882,6 +899,20 @@ impl Language {
         self.grammar.as_ref()
     }
 }
+
+impl Hash for Language {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id().hash(state)
+    }
+}
+
+impl PartialEq for Language {
+    fn eq(&self, other: &Self) -> bool {
+        self.id().eq(&other.id())
+    }
+}
+
+impl Eq for Language {}
 
 impl Debug for Language {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
