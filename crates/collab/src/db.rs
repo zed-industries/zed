@@ -1886,6 +1886,64 @@ where
         .await
     }
 
+    pub async fn project_collaborators(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<Vec<ProjectCollaborator>> {
+        self.transact(|mut tx| async move {
+            let collaborators = sqlx::query_as::<_, ProjectCollaborator>(
+                "
+                SELECT *
+                FROM project_collaborators
+                WHERE project_id = $1
+                ",
+            )
+            .bind(project_id)
+            .fetch_all(&mut tx)
+            .await?;
+
+            if collaborators
+                .iter()
+                .any(|collaborator| collaborator.connection_id == connection_id.0 as i32)
+            {
+                Ok(collaborators)
+            } else {
+                Err(anyhow!("no such project"))?
+            }
+        })
+        .await
+    }
+
+    pub async fn project_connection_ids(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<HashSet<ConnectionId>> {
+        self.transact(|mut tx| async move {
+            let connection_ids = sqlx::query_scalar::<_, i32>(
+                "
+                SELECT connection_id
+                FROM project_collaborators
+                WHERE project_id = $1
+                ",
+            )
+            .bind(project_id)
+            .fetch_all(&mut tx)
+            .await?;
+
+            if connection_ids.contains(&(connection_id.0 as i32)) {
+                Ok(connection_ids
+                    .into_iter()
+                    .map(|connection_id| ConnectionId(connection_id as u32))
+                    .collect())
+            } else {
+                Err(anyhow!("no such project"))?
+            }
+        })
+        .await
+    }
+
     pub async fn unshare_project(&self, project_id: ProjectId) -> Result<()> {
         todo!()
         // test_support!(self, {

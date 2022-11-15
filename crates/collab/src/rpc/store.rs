@@ -325,34 +325,6 @@ impl Store {
         })
     }
 
-    pub fn project_connection_ids(
-        &self,
-        project_id: ProjectId,
-        acting_connection_id: ConnectionId,
-    ) -> Result<Vec<ConnectionId>> {
-        Ok(self
-            .read_project(project_id, acting_connection_id)?
-            .connection_ids())
-    }
-
-    pub fn read_project(
-        &self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-    ) -> Result<&Project> {
-        let project = self
-            .projects
-            .get(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        if project.host_connection_id == connection_id
-            || project.guests.contains_key(&connection_id)
-        {
-            Ok(project)
-        } else {
-            Err(anyhow!("no such project"))?
-        }
-    }
-
     #[cfg(test)]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
