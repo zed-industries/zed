@@ -61,8 +61,8 @@ CREATE INDEX "index_worktrees_on_project_id" ON "worktrees" ("project_id");
 
 CREATE TABLE "worktree_entries" (
     "id" INTEGER NOT NULL,
-    "project_id" INTEGER NOT NULL REFERENCES projects (id),
-    "worktree_id" INTEGER NOT NULL REFERENCES worktrees (id),
+    "project_id" INTEGER NOT NULL,
+    "worktree_id" INTEGER NOT NULL,
     "is_dir" BOOL NOT NULL,
     "path" VARCHAR NOT NULL,
     "inode" INTEGER NOT NULL,
@@ -71,17 +71,19 @@ CREATE TABLE "worktree_entries" (
     "is_symlink" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     PRIMARY KEY(project_id, worktree_id, id)
+    FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id)
 );
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
 
 CREATE TABLE "worktree_diagnostic_summaries" (
     "path" VARCHAR NOT NULL,
-    "project_id" INTEGER NOT NULL REFERENCES projects (id),
-    "worktree_id" INTEGER NOT NULL REFERENCES worktrees (id),
+    "project_id" INTEGER NOT NULL,
+    "worktree_id" INTEGER NOT NULL,
     "language_server_id" INTEGER NOT NULL,
     "error_count" INTEGER NOT NULL,
     "warning_count" INTEGER NOT NULL,
-    PRIMARY KEY(project_id, worktree_id, path)
+    PRIMARY KEY(project_id, worktree_id, path),
+    FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id)
 );
 CREATE INDEX "index_worktree_diagnostic_summaries_on_project_id_and_worktree_id" ON "worktree_diagnostic_summaries" ("project_id", "worktree_id");
 

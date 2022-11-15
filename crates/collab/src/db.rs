@@ -1556,6 +1556,132 @@ where
         .await
     }
 
+    pub async fn update_worktree(
+        &self,
+        update: &proto::UpdateWorktree,
+        connection_id: ConnectionId,
+    ) -> Result<Vec<ConnectionId>> {
+        self.transact(|mut tx| async move {
+            let project_id = ProjectId::from_proto(update.project_id);
+            let worktree_id = WorktreeId::from_proto(update.worktree_id);
+
+            // Ensure the update comes from the host.
+            sqlx::query(
+                "
+                SELECT 1
+                FROM projects
+                WHERE id = $1 AND host_connection_id = $2
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .fetch_one(&mut tx)
+            .await?;
+
+            // Update metadata.
+            sqlx::query(
+                "
+                UPDATE worktrees
+                SET
+                    root_name = $1,
+                    scan_id = $2,
+                    is_complete = $3,
+                    abs_path = $4
+                WHERE project_id = $5 AND id = $6
+                RETURNING 1
+                ",
+            )
+            .bind(&update.root_name)
+            .bind(update.scan_id as i64)
+            .bind(update.is_last_update)
+            .bind(&update.abs_path)
+            .bind(project_id)
+            .bind(worktree_id)
+            .fetch_one(&mut tx)
+            .await?;
+
+            if !update.updated_entries.is_empty() {
+                let mut params =
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?),".repeat(update.updated_entries.len());
+                params.pop();
+
+                let query = format!(
+                    "
+                    INSERT INTO worktree_entries (
+                        project_id, 
+                        worktree_id, 
+                        id, 
+                        is_dir, 
+                        path, 
+                        inode,
+                        mtime_seconds, 
+                        mtime_nanos, 
+                        is_symlink, 
+                        is_ignored
+                    )
+                    VALUES {params}
+                    "
+                );
+                let mut query = sqlx::query(&query);
+                for entry in &update.updated_entries {
+                    let mtime = entry.mtime.clone().unwrap_or_default();
+                    query = query
+                        .bind(project_id)
+                        .bind(worktree_id)
+                        .bind(entry.id as i64)
+                        .bind(entry.is_dir)
+                        .bind(&entry.path)
+                        .bind(entry.inode as i64)
+                        .bind(mtime.seconds as i64)
+                        .bind(mtime.nanos as i32)
+                        .bind(entry.is_symlink)
+                        .bind(entry.is_ignored);
+                }
+                query.execute(&mut tx).await?;
+            }
+
+            if !update.removed_entries.is_empty() {
+                let mut params = "(?, ?, ?),".repeat(update.removed_entries.len());
+                params.pop();
+                let query = format!(
+                    "
+                    DELETE FROM worktree_entries
+                    WHERE (project_id, worktree_id, entry_id) IN ({params})
+                    "
+                );
+
+                let mut query = sqlx::query(&query);
+                for entry_id in &update.removed_entries {
+                    query = query
+                        .bind(project_id)
+                        .bind(worktree_id)
+                        .bind(*entry_id as i64);
+                }
+                query.execute(&mut tx).await?;
+            }
+
+            let connection_ids = sqlx::query_scalar::<_, i32>(
+                "
+                SELECT connection_id
+                FROM project_collaborators
+                WHERE project_id = $1 AND connection_id != $2
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .fetch_all(&mut tx)
+            .await?;
+
+            tx.commit().await?;
+
+            Ok(connection_ids
+                .into_iter()
+                .map(|connection_id| ConnectionId(connection_id as u32))
+                .collect())
+        })
+        .await
+    }
+
     pub async fn join_project(
         &self,
         project_id: ProjectId,

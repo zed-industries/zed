@@ -1105,18 +1105,11 @@ impl Server {
         request: Message<proto::UpdateWorktree>,
         response: Response<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let project_id = ProjectId::from_proto(request.payload.project_id);
-        let worktree_id = request.payload.worktree_id;
-        let connection_ids = self.store().await.update_worktree(
-            request.sender_connection_id,
-            project_id,
-            worktree_id,
-            &request.payload.root_name,
-            &request.payload.removed_entries,
-            &request.payload.updated_entries,
-            request.payload.scan_id,
-            request.payload.is_last_update,
-        )?;
+        let connection_ids = self
+            .app_state
+            .db
+            .update_worktree(&request.payload, request.sender_connection_id)
+            .await?;
 
         broadcast(
             request.sender_connection_id,

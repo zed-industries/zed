@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
-use std::{path::PathBuf, str};
+use std::path::PathBuf;
 use tracing::instrument;
 
 pub type RoomId = u64;
@@ -325,37 +325,6 @@ impl Store {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_worktree(
-        &mut self,
-        connection_id: ConnectionId,
-        project_id: ProjectId,
-        worktree_id: u64,
-        worktree_root_name: &str,
-        removed_entries: &[u64],
-        updated_entries: &[proto::Entry],
-        scan_id: u64,
-        is_last_update: bool,
-    ) -> Result<Vec<ConnectionId>> {
-        let project = self.write_project(project_id, connection_id)?;
-
-        let connection_ids = project.connection_ids();
-        let mut worktree = project.worktrees.entry(worktree_id).or_default();
-        worktree.root_name = worktree_root_name.to_string();
-
-        for entry_id in removed_entries {
-            worktree.entries.remove(entry_id);
-        }
-
-        for entry in updated_entries {
-            worktree.entries.insert(entry.id, entry.clone());
-        }
-
-        worktree.scan_id = scan_id;
-        worktree.is_complete = is_last_update;
-        Ok(connection_ids)
-    }
-
     pub fn project_connection_ids(
         &self,
         project_id: ProjectId,
@@ -374,24 +343,6 @@ impl Store {
         let project = self
             .projects
             .get(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        if project.host_connection_id == connection_id
-            || project.guests.contains_key(&connection_id)
-        {
-            Ok(project)
-        } else {
-            Err(anyhow!("no such project"))?
-        }
-    }
-
-    fn write_project(
-        &mut self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-    ) -> Result<&mut Project> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id
             || project.guests.contains_key(&connection_id)
