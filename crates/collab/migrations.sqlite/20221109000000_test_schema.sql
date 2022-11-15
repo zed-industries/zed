@@ -62,6 +62,9 @@ CREATE TABLE "worktrees" (
     "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "root_name" VARCHAR NOT NULL,
+    "visible" BOOL NOT NULL,
+    "scan_id" INTEGER NOT NULL,
+    "is_complete" BOOL NOT NULL,
     PRIMARY KEY(project_id, id)
 );
 CREATE INDEX "index_worktrees_on_project_id" ON "worktrees" ("project_id");

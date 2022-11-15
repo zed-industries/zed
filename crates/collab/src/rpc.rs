@@ -862,7 +862,6 @@ impl Server {
             .db
             .share_project(
                 RoomId::from_proto(request.payload.room_id),
-                request.sender_user_id,
                 request.sender_connection_id,
                 &request.payload.worktrees,
             )
@@ -942,15 +941,21 @@ impl Server {
 
         tracing::info!(%project_id, %host_user_id, %host_connection_id, "join project");
 
-        let mut store = self.store().await;
-        let (project, replica_id) = store.join_project(request.sender_connection_id, project_id)?;
-        let peer_count = project.guests.len();
-        let mut collaborators = Vec::with_capacity(peer_count);
-        collaborators.push(proto::Collaborator {
-            peer_id: project.host_connection_id.0,
-            replica_id: 0,
-            user_id: project.host.user_id.to_proto(),
-        });
+        let (project, replica_id) = self
+            .app_state
+            .db
+            .join_project(project_id, request.sender_connection_id)
+            .await?;
+
+        let collaborators = project
+            .collaborators
+            .iter()
+            .map(|collaborator| proto::Collaborator {
+                peer_id: collaborator.connection_id as u32,
+                replica_id: collaborator.replica_id as u32,
+                user_id: collaborator.user_id.to_proto(),
+            })
+            .collect::<Vec<_>>();
         let worktrees = project
             .worktrees
             .iter()
@@ -962,22 +967,12 @@ impl Server {
             })
             .collect::<Vec<_>>();
 
-        // Add all guests other than the requesting user's own connections as collaborators
-        for (guest_conn_id, guest) in &project.guests {
-            if request.sender_connection_id != *guest_conn_id {
-                collaborators.push(proto::Collaborator {
-                    peer_id: guest_conn_id.0,
-                    replica_id: guest.replica_id as u32,
-                    user_id: guest.user_id.to_proto(),
-                });
-            }
-        }
-
-        for conn_id in project.connection_ids() {
-            if conn_id != request.sender_connection_id {
+        for collaborator in &project.collaborators {
+            let connection_id = ConnectionId(collaborator.connection_id as u32);
+            if connection_id != request.sender_connection_id {
                 self.peer
                     .send(
-                        conn_id,
+                        connection_id,
                         proto::AddProjectCollaborator {
                             project_id: project_id.to_proto(),
                             collaborator: Some(proto::Collaborator {

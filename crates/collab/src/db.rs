@@ -1,7 +1,7 @@
 use crate::{Error, Result};
 use anyhow::anyhow;
 use axum::http::StatusCode;
-use collections::HashMap;
+use collections::{BTreeMap, HashMap, HashSet};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use rpc::{proto, ConnectionId};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,11 @@ use sqlx::{
     types::Uuid,
     FromRow,
 };
-use std::{future::Future, path::Path, time::Duration};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use time::{OffsetDateTime, PrimitiveDateTime};
 
 #[cfg(test)]
@@ -1404,13 +1408,26 @@ where
 
     pub async fn share_project(
         &self,
-        room_id: RoomId,
-        user_id: UserId,
+        expected_room_id: RoomId,
         connection_id: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
     ) -> Result<(ProjectId, proto::Room)> {
         self.transact(|mut tx| async move {
-            let project_id = sqlx::query_scalar(
+            let (room_id, user_id) = sqlx::query_as::<_, (RoomId, UserId)>(
+                "
+                SELECT room_id, user_id
+                FROM room_participants
+                WHERE answering_connection_id = $1
+                ",
+            )
+            .bind(connection_id.0 as i32)
+            .fetch_one(&mut tx)
+            .await?;
+            if room_id != expected_room_id {
+                return Err(anyhow!("shared project on unexpected room"))?;
+            }
+
+            let project_id: ProjectId = sqlx::query_scalar(
                 "
                 INSERT INTO projects (room_id, host_user_id, host_connection_id)
                 VALUES ($1, $2, $3)
@@ -1421,8 +1438,7 @@ where
             .bind(user_id)
             .bind(connection_id.0 as i32)
             .fetch_one(&mut tx)
-            .await
-            .map(ProjectId)?;
+            .await?;
 
             for worktree in worktrees {
                 sqlx::query(
@@ -1534,6 +1550,111 @@ where
             Ok((room, guest_connection_ids))
         })
         .await
+    }
+
+    pub async fn join_project(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<(Project, i32)> {
+        self.transact(|mut tx| async move {
+            let (room_id, user_id) = sqlx::query_as::<_, (RoomId, UserId)>(
+                "
+                SELECT room_id, user_id
+                FROM room_participants
+                WHERE answering_connection_id = $1
+                ",
+            )
+            .bind(connection_id.0 as i32)
+            .fetch_one(&mut tx)
+            .await?;
+
+            // Ensure project id was shared on this room.
+            sqlx::query(
+                "
+                SELECT 1
+                FROM projects
+                WHERE project_id = $1 AND room_id = $2
+                ",
+            )
+            .bind(project_id)
+            .bind(room_id)
+            .fetch_one(&mut tx)
+            .await?;
+
+            let replica_ids = sqlx::query_scalar::<_, i32>(
+                "
+                SELECT replica_id
+                FROM project_collaborators
+                WHERE project_id = $1
+                ",
+            )
+            .bind(project_id)
+            .fetch_all(&mut tx)
+            .await?;
+            let replica_ids = HashSet::from_iter(replica_ids);
+            let mut replica_id = 1;
+            while replica_ids.contains(&replica_id) {
+                replica_id += 1;
+            }
+
+            sqlx::query(
+                "
+                INSERT INTO project_collaborators (
+                    project_id,
+                    connection_id,
+                    user_id,
+                    replica_id,
+                    is_host
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .bind(user_id)
+            .bind(replica_id)
+            .bind(false)
+            .execute(&mut tx)
+            .await?;
+
+            tx.commit().await?;
+            todo!()
+        })
+        .await
+        // sqlx::query(
+        //     "
+        //     SELECT replica_id
+        //     FROM project_collaborators
+        //     WHERE project_id = $
+        //     ",
+        // )
+        // .bind(project_id)
+        // .bind(connection_id.0 as i32)
+        // .bind(user_id)
+        // .bind(0)
+        // .bind(true)
+        // .execute(&mut tx)
+        // .await?;
+        // sqlx::query(
+        //     "
+        //     INSERT INTO project_collaborators (
+        //         project_id,
+        //         connection_id,
+        //         user_id,
+        //         replica_id,
+        //         is_host
+        //     )
+        //     VALUES ($1, $2, $3, $4, $5)
+        //     ",
+        // )
+        // .bind(project_id)
+        // .bind(connection_id.0 as i32)
+        // .bind(user_id)
+        // .bind(0)
+        // .bind(true)
+        // .execute(&mut tx)
+        // .await?;
     }
 
     pub async fn unshare_project(&self, project_id: ProjectId) -> Result<()> {
@@ -1967,11 +2088,11 @@ pub struct Room {
 }
 
 id_type!(ProjectId);
-#[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
 pub struct Project {
     pub id: ProjectId,
-    pub host_user_id: UserId,
-    pub unregistered: bool,
+    pub collaborators: Vec<ProjectCollaborator>,
+    pub worktrees: BTreeMap<u64, Worktree>,
+    pub language_servers: Vec<proto::LanguageServer>,
 }
 
 #[derive(Clone, Debug, Default, FromRow, PartialEq)]
@@ -1981,6 +2102,17 @@ pub struct ProjectCollaborator {
     pub user_id: UserId,
     pub replica_id: i32,
     pub is_host: bool,
+}
+
+#[derive(Default)]
+pub struct Worktree {
+    pub abs_path: PathBuf,
+    pub root_name: String,
+    pub visible: bool,
+    pub entries: BTreeMap<u64, proto::Entry>,
+    pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
+    pub scan_id: u64,
+    pub is_complete: bool,
 }
 
 pub struct LeftProject {
