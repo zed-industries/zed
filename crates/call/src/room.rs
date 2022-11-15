@@ -10,7 +10,7 @@ use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
 use project::Project;
-use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
+use std::{mem, sync::Arc};
 use util::{post_inc, ResultExt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -553,7 +553,7 @@ impl Room {
                         id: worktree.id().to_proto(),
                         root_name: worktree.root_name().into(),
                         visible: worktree.is_visible(),
-                        abs_path: worktree.abs_path().as_os_str().as_bytes().to_vec(),
+                        abs_path: worktree.abs_path().to_string_lossy().into(),
                     }
                 })
                 .collect(),

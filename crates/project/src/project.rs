@@ -44,12 +44,10 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     convert::TryInto,
-    ffi::OsString,
     hash::Hash,
     mem,
     num::NonZeroU32,
     ops::Range,
-    os::unix::{ffi::OsStrExt, prelude::OsStringExt},
     path::{Component, Path, PathBuf},
     rc::Rc,
     str,
@@ -837,7 +835,7 @@ impl Project {
                     .request(proto::CreateProjectEntry {
                         worktree_id: project_path.worktree_id.to_proto(),
                         project_id,
-                        path: project_path.path.as_os_str().as_bytes().to_vec(),
+                        path: project_path.path.to_string_lossy().into(),
                         is_directory,
                     })
                     .await?;
@@ -881,7 +879,7 @@ impl Project {
                     .request(proto::CopyProjectEntry {
                         project_id,
                         entry_id: entry_id.to_proto(),
-                        new_path: new_path.as_os_str().as_bytes().to_vec(),
+                        new_path: new_path.to_string_lossy().into(),
                     })
                     .await?;
                 let entry = response
@@ -924,7 +922,7 @@ impl Project {
                     .request(proto::RenameProjectEntry {
                         project_id,
                         entry_id: entry_id.to_proto(),
-                        new_path: new_path.as_os_str().as_bytes().to_vec(),
+                        new_path: new_path.to_string_lossy().into(),
                     })
                     .await?;
                 let entry = response
@@ -4606,7 +4604,7 @@ impl Project {
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
                 let worktree = worktree.as_local_mut().unwrap();
-                let path = PathBuf::from(OsString::from_vec(envelope.payload.path));
+                let path = PathBuf::from(envelope.payload.path);
                 worktree.create_entry(path, envelope.payload.is_directory, cx)
             })
             .await?;
@@ -4630,7 +4628,7 @@ impl Project {
         let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
+                let new_path = PathBuf::from(envelope.payload.new_path);
                 worktree
                     .as_local_mut()
                     .unwrap()
@@ -4658,7 +4656,7 @@ impl Project {
         let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
+                let new_path = PathBuf::from(envelope.payload.new_path);
                 worktree
                     .as_local_mut()
                     .unwrap()

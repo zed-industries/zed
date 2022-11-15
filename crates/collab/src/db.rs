@@ -1446,7 +1446,7 @@ where
                 .bind(project_id)
                 .bind(worktree.id as i32)
                 .bind(&worktree.root_name)
-                .bind(&*String::from_utf8_lossy(&worktree.abs_path))
+                .bind(&worktree.abs_path)
                 .bind(worktree.visible)
                 .bind(0)
                 .bind(false)
@@ -1510,7 +1510,7 @@ where
                 .bind(project_id)
                 .bind(worktree.id as i32)
                 .bind(&worktree.root_name)
-                .bind(String::from_utf8_lossy(&worktree.abs_path).as_ref())
+                .bind(&worktree.abs_path)
                 .bind(worktree.visible)
                 .bind(0)
                 .bind(false)
@@ -1687,7 +1687,7 @@ where
                         worktree.entries.push(proto::Entry {
                             id: entry.id as u64,
                             is_dir: entry.is_dir,
-                            path: entry.path.into_bytes(),
+                            path: entry.path,
                             inode: entry.inode as u64,
                             mtime: Some(proto::Timestamp {
                                 seconds: entry.mtime_seconds as u64,

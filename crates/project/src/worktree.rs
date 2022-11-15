@@ -40,7 +40,6 @@ use std::{
     future::Future,
     mem,
     ops::{Deref, DerefMut},
-    os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
     task::Poll,
@@ -221,7 +220,7 @@ impl Worktree {
         let root_name = worktree.root_name.clone();
         let visible = worktree.visible;
 
-        let abs_path = PathBuf::from(OsString::from_vec(worktree.abs_path));
+        let abs_path = PathBuf::from(worktree.abs_path);
         let snapshot = Snapshot {
             id: WorktreeId(remote_id as usize),
             abs_path: Arc::from(abs_path.deref()),
@@ -656,7 +655,7 @@ impl LocalWorktree {
             id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             visible: self.visible,
-            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
+            abs_path: self.abs_path().as_os_str().to_string_lossy().into(),
         }
     }
 
@@ -990,7 +989,7 @@ impl LocalWorktree {
                             let update = proto::UpdateWorktree {
                                 project_id,
                                 worktree_id,
-                                abs_path: snapshot.abs_path().as_os_str().as_bytes().to_vec(),
+                                abs_path: snapshot.abs_path().to_string_lossy().into(),
                                 root_name: snapshot.root_name().to_string(),
                                 updated_entries: snapshot
                                     .entries_by_path
@@ -1381,7 +1380,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id: self.id().to_proto(),
-            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
+            abs_path: self.abs_path().to_string_lossy().into(),
             root_name,
             updated_entries: self.entries_by_path.iter().map(Into::into).collect(),
             removed_entries: Default::default(),
@@ -1449,7 +1448,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
+            abs_path: self.abs_path().to_string_lossy().into(),
             root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries,
@@ -2928,7 +2927,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
-            path: entry.path.as_os_str().as_bytes().to_vec(),
+            path: entry.path.to_string_lossy().into(),
             inode: entry.inode,
             mtime: Some(entry.mtime.into()),
             is_symlink: entry.is_symlink,
@@ -2946,14 +2945,10 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 EntryKind::Dir
             } else {
                 let mut char_bag = *root_char_bag;
-                char_bag.extend(
-                    String::from_utf8_lossy(&entry.path)
-                        .chars()
-                        .map(|c| c.to_ascii_lowercase()),
-                );
+                char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
                 EntryKind::File(char_bag)
             };
-            let path: Arc<Path> = PathBuf::from(OsString::from_vec(entry.path)).into();
+            let path: Arc<Path> = PathBuf::from(entry.path).into();
             Ok(Entry {
                 id: ProjectEntryId::from_proto(entry.id),
                 kind,

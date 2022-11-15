@@ -954,7 +954,7 @@ impl Server {
                 id: id.to_proto(),
                 root_name: worktree.root_name.clone(),
                 visible: worktree.visible,
-                abs_path: worktree.abs_path.as_bytes().to_vec(),
+                abs_path: worktree.abs_path.clone(),
             })
             .collect::<Vec<_>>();
 
@@ -995,7 +995,7 @@ impl Server {
             let message = proto::UpdateWorktree {
                 project_id: project_id.to_proto(),
                 worktree_id: worktree_id.to_proto(),
-                abs_path: worktree.abs_path.as_bytes().to_vec(),
+                abs_path: worktree.abs_path.clone(),
                 root_name: worktree.root_name,
                 updated_entries: worktree.entries,
                 removed_entries: Default::default(),
