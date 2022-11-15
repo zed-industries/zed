@@ -373,7 +373,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_remove_collaborator);
-        client.add_model_message_handler(Self::handle_project_updated);
+        client.add_model_message_handler(Self::handle_update_project);
         client.add_model_message_handler(Self::handle_unshare_project);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
         client.add_model_message_handler(Self::handle_update_buffer_file);
@@ -4533,9 +4533,9 @@ impl Project {
         })
     }
 
-    async fn handle_project_updated(
+    async fn handle_update_project(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::ProjectUpdated>,
+        envelope: TypedEnvelope<proto::UpdateProject>,
         client: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {

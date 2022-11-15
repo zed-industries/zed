@@ -1515,8 +1515,23 @@ where
             }
             query.execute(&mut tx).await?;
 
+            let mut guest_connection_ids = Vec::new();
+            {
+                let mut db_guest_connection_ids = sqlx::query_scalar::<_, i32>(
+                    "
+                    SELECT connection_id
+                    FROM project_collaborators
+                    WHERE project_id = $1 AND is_host = FALSE
+                    ",
+                )
+                .fetch(&mut tx);
+                while let Some(connection_id) = db_guest_connection_ids.next().await {
+                    guest_connection_ids.push(ConnectionId(connection_id? as u32));
+                }
+            }
+
             let room = self.commit_room_transaction(room_id, tx).await?;
-            todo!()
+            Ok((room, guest_connection_ids))
         })
         .await
     }

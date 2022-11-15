@@ -253,55 +253,6 @@ impl Store {
         }
     }
 
-    pub fn update_project(
-        &mut self,
-        project_id: ProjectId,
-        worktrees: &[proto::WorktreeMetadata],
-        connection_id: ConnectionId,
-    ) -> Result<&proto::Room> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        if project.host_connection_id == connection_id {
-            let mut old_worktrees = mem::take(&mut project.worktrees);
-            for worktree in worktrees {
-                if let Some(old_worktree) = old_worktrees.remove(&worktree.id) {
-                    project.worktrees.insert(worktree.id, old_worktree);
-                } else {
-                    project.worktrees.insert(
-                        worktree.id,
-                        Worktree {
-                            root_name: worktree.root_name.clone(),
-                            visible: worktree.visible,
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
-
-            let room = self
-                .rooms
-                .get_mut(&project.room_id)
-                .ok_or_else(|| anyhow!("no such room"))?;
-            let participant_project = room
-                .participants
-                .iter_mut()
-                .flat_map(|participant| &mut participant.projects)
-                .find(|project| project.id == project_id.to_proto())
-                .ok_or_else(|| anyhow!("no such project"))?;
-            participant_project.worktree_root_names = worktrees
-                .iter()
-                .filter(|worktree| worktree.visible)
-                .map(|worktree| worktree.root_name.clone())
-                .collect();
-
-            Ok(room)
-        } else {
-            Err(anyhow!("no such project"))?
-        }
-    }
-
     pub fn update_diagnostic_summary(
         &mut self,
         project_id: ProjectId,

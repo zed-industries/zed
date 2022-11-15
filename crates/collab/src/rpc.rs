@@ -1100,13 +1100,10 @@ impl Server {
             request.sender_connection_id,
             guest_connection_ids,
             |connection_id| {
-                self.peer.send(
+                self.peer.forward_send(
+                    request.sender_connection_id,
                     connection_id,
-                    proto::ProjectUpdated {
-                        project_id: project_id.to_proto(),
-                        worktrees: request.payload.worktrees.clone(),
-                        room_version: room.version,
-                    },
+                    request.payload.clone(),
                 )
             },
         );
