@@ -625,7 +625,8 @@ mod tests {
     };
     use theme::ThemeRegistry;
     use workspace::{
-        open_paths, pane, Item, ItemHandle, NewFile, Pane, SplitDirection, WorkspaceHandle,
+        item::{Item, ItemHandle},
+        open_paths, pane, NewFile, Pane, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]

@@ -22,7 +22,10 @@ use util::{
     assert_set_eq,
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
 };
-use workspace::{FollowableItem, ItemHandle, NavigationEntry, Pane};
+use workspace::{
+    item::{FollowableItem, ItemHandle},
+    NavigationEntry, Pane,
+};
 
 #[gpui::test]
 fn test_edit_events(cx: &mut MutableAppContext) {
@@ -475,7 +478,7 @@ fn test_clone(cx: &mut gpui::MutableAppContext) {
 fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
     cx.set_global(DragAndDrop::<Workspace>::default());
-    use workspace::Item;
+    use workspace::item::Item;
     let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(None, cx));
     let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 

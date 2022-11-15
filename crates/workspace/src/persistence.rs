@@ -4,6 +4,7 @@ pub mod model;
 
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use db::open_file_db;
@@ -52,7 +53,9 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
             parent_group_id INTEGER, -- NULL indicates that this is a root node
             position INTEGER, -- NULL indicates that this is a root node
             axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
-            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
+                ON DELETE CASCADE 
+                ON UPDATE CASCADE,
             FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
         ) STRICT;
         
@@ -61,7 +64,9 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
             workspace_id BLOB NOT NULL,
             parent_group_id INTEGER, -- NULL, this is a dock pane
             position INTEGER, -- NULL, this is a dock pane
-            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
+               ON DELETE CASCADE 
+               ON UPDATE CASCADE,
             FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
         ) STRICT;
         
@@ -71,8 +76,11 @@ pub(crate) const WORKSPACES_MIGRATION: Migration = Migration::new(
             pane_id INTEGER NOT NULL,
             kind TEXT NOT NULL,
             position INTEGER NOT NULL,
-            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
-            FOREIGN KEY(pane_id) REFERENCES panes(pane_id) ON DELETE CASCADE
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE,
+            FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
+                ON DELETE CASCADE,
             PRIMARY KEY(item_id, workspace_id)
         ) STRICT;
     "}],
@@ -96,15 +104,15 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, dock_anchor, dock_visible) = iife!({
+        let (workspace_id, dock_position) = iife!({
             if worktree_roots.len() == 0 {
                 self.select_row(indoc! {"
-                    SELECT workspace_id, dock_anchor, dock_visible 
+                    SELECT workspace_id, dock_visible, dock_anchor
                     FROM workspaces 
                     ORDER BY timestamp DESC LIMIT 1"})?()?
             } else {
                 self.select_row_bound(indoc! {"
-                    SELECT workspace_id, dock_anchor, dock_visible 
+                    SELECT workspace_id, dock_visible, dock_anchor
                     FROM workspaces 
                     WHERE workspace_id = ?"})?(&workspace_id)?
             }
@@ -122,8 +130,7 @@ impl WorkspaceDb {
                 .get_center_pane_group(&workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            dock_anchor,
-            dock_visible,
+            dock_position,
         })
     }
 
@@ -150,8 +157,8 @@ impl WorkspaceDb {
             self.exec_bound("DELETE FROM workspaces WHERE workspace_id = ?;")?(&workspace_id)?;
 
             self.exec_bound(
-                "INSERT INTO workspaces(workspace_id, dock_anchor, dock_visible) VALUES (?, ?, ?)",
-            )?((&workspace_id, workspace.dock_anchor, workspace.dock_visible))?;
+                "INSERT INTO workspaces(workspace_id, dock_visible, dock_anchor) VALUES (?, ?, ?)",
+            )?((&workspace_id, workspace.dock_position))?;
 
             // Save center pane group and dock pane
             self.save_pane_group(&workspace_id, &workspace.center_group, None)?;
@@ -172,7 +179,7 @@ impl WorkspaceDb {
     }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
-    pub fn recent_workspaces(&self, limit: usize) -> Vec<Vec<PathBuf>> {
+    pub fn recent_workspaces(&self, limit: usize) -> Vec<Arc<Vec<PathBuf>>> {
         iife!({
             // TODO, upgrade anyhow: https://docs.rs/anyhow/1.0.66/anyhow/fn.Ok.html
             Ok::<_, anyhow::Error>(
@@ -181,7 +188,7 @@ impl WorkspaceDb {
                 )?(limit)?
                 .into_iter()
                 .map(|id| id.paths())
-                .collect::<Vec<Vec<PathBuf>>>(),
+                .collect::<Vec<Arc<Vec<PathBuf>>>>(),
             )
         })
         .log_err()
@@ -339,22 +346,19 @@ mod tests {
         let db = WorkspaceDb(open_memory_db("test_basic_functionality"));
 
         let workspace_1 = SerializedWorkspace {
-            dock_anchor: DockAnchor::Bottom,
-            dock_visible: true,
+            dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
             center_group: Default::default(),
             dock_pane: Default::default(),
         };
 
         let workspace_2 = SerializedWorkspace {
-            dock_anchor: DockAnchor::Expanded,
-            dock_visible: false,
+            dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
             center_group: Default::default(),
             dock_pane: Default::default(),
         };
 
         let workspace_3 = SerializedWorkspace {
-            dock_anchor: DockAnchor::Right,
-            dock_visible: true,
+            dock_position: crate::dock::DockPosition::Shown(DockAnchor::Right),
             center_group: Default::default(),
             dock_pane: Default::default(),
         };
@@ -414,8 +418,7 @@ mod tests {
         center_group: &SerializedPaneGroup,
     ) -> SerializedWorkspace {
         SerializedWorkspace {
-            dock_anchor: DockAnchor::Right,
-            dock_visible: false,
+            dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Right),
             center_group: center_group.clone(),
             dock_pane,
         }

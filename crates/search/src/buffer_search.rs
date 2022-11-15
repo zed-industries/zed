@@ -14,8 +14,9 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{any::Any, sync::Arc};
 use workspace::{
+    item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView,
+    Pane, ToolbarItemLocation, ToolbarItemView,
 };
 
 #[derive(Clone, Deserialize, PartialEq)]

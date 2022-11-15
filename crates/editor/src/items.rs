@@ -24,9 +24,9 @@ use std::{
 use text::Selection;
 use util::TryFutureExt;
 use workspace::{
+    item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    FollowableItem, Item, ItemEvent, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView,
-    ToolbarItemLocation,
+    ItemNavHistory, StatusItemView, ToolbarItemLocation,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -490,7 +490,7 @@ impl Item for Editor {
         Task::ready(Ok(()))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         let mut result = Vec::new();
         match event {
             Event::Closed => result.push(ItemEvent::CloseItem),

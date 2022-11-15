@@ -12,7 +12,10 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::{ColorScheme, Layer, Style, StyleSet};
-use workspace::{Item, Workspace};
+use workspace::{
+    item::{Item, ItemEvent},
+    Workspace,
+};
 
 actions!(theme, [DeployThemeTestbench]);
 
@@ -351,7 +354,7 @@ impl Item for ThemeTestbench {
         gpui::Task::ready(Ok(()))
     }
 
-    fn to_item_events(_: &Self::Event) -> Vec<workspace::ItemEvent> {
+    fn to_item_events(_: &Self::Event) -> Vec<ItemEvent> {
         Vec::new()
     }
 }

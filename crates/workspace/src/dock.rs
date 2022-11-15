@@ -98,14 +98,14 @@ pub fn icon_for_dock_anchor(anchor: DockAnchor) -> &'static str {
 }
 
 impl DockPosition {
-    fn is_visible(&self) -> bool {
+    pub fn is_visible(&self) -> bool {
         match self {
             DockPosition::Shown(_) => true,
             DockPosition::Hidden(_) => false,
         }
     }
 
-    fn anchor(&self) -> DockAnchor {
+    pub fn anchor(&self) -> DockAnchor {
         match self {
             DockPosition::Shown(anchor) | DockPosition::Hidden(anchor) => *anchor,
         }
@@ -137,9 +137,15 @@ pub struct Dock {
 }
 
 impl Dock {
-    pub fn new(default_item_factory: DefaultItemFactory, cx: &mut ViewContext<Workspace>) -> Self {
-        let anchor = cx.global::<Settings>().default_dock_anchor;
-        let pane = cx.add_view(|cx| Pane::new(Some(anchor), cx));
+    pub fn new(
+        default_item_factory: DefaultItemFactory,
+        position: Option<DockPosition>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Self {
+        let position = position
+            .unwrap_or_else(|| DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor));
+
+        let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), cx));
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
@@ -152,7 +158,7 @@ impl Dock {
         Self {
             pane,
             panel_sizes: Default::default(),
-            position: DockPosition::Hidden(anchor),
+            position,
             default_item_factory,
         }
     }
@@ -454,7 +460,7 @@ mod tests {
     use settings::Settings;
 
     use super::*;
-    use crate::{sidebar::Sidebar, tests::TestItem, ItemHandle, Workspace};
+    use crate::{item::test::TestItem, sidebar::Sidebar, ItemHandle, Workspace};
 
     pub fn default_item_factory(
         _workspace: &mut Workspace,

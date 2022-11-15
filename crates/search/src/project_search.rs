@@ -24,9 +24,9 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
+    item::{Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
-    Item, ItemEvent, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 actions!(project_search, [SearchInNew, ToggleFocus]);
@@ -893,7 +893,7 @@ impl View for ProjectSearchBar {
 impl ToolbarItemView for ProjectSearchBar {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn workspace::ItemHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();

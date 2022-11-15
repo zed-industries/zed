@@ -6,18 +6,21 @@ use std::{
 use anyhow::{bail, Result};
 
 use gpui::Axis;
+
 use settings::DockAnchor;
 use sqlez::{
     bindable::{Bind, Column},
     statement::Statement,
 };
 
+use crate::dock::DockPosition;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WorkspaceId(Vec<PathBuf>);
+pub(crate) struct WorkspaceId(Arc<Vec<PathBuf>>);
 
 impl WorkspaceId {
-    pub fn paths(self) -> Vec<PathBuf> {
-        self.0
+    pub fn paths(self) -> Arc<Vec<PathBuf>> {
+        self.0.clone()
     }
 }
 
@@ -28,7 +31,7 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceId {
             .map(|p| p.as_ref().to_path_buf())
             .collect::<Vec<_>>();
         roots.sort();
-        Self(roots)
+        Self(Arc::new(roots))
     }
 }
 
@@ -49,8 +52,7 @@ impl Column for WorkspaceId {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SerializedWorkspace {
-    pub dock_anchor: DockAnchor,
-    pub dock_visible: bool,
+    pub dock_position: DockPosition,
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
 }
@@ -152,11 +154,30 @@ impl SerializedItem {
     }
 }
 
+impl Bind for DockPosition {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(self.is_visible(), start_index)?;
+        statement.bind(self.anchor(), next_index)
+    }
+}
+
+impl Column for DockPosition {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (visible, next_index) = bool::column(statement, start_index)?;
+        let (dock_anchor, next_index) = DockAnchor::column(statement, next_index)?;
+        let position = if visible {
+            DockPosition::Shown(dock_anchor)
+        } else {
+            DockPosition::Hidden(dock_anchor)
+        };
+        Ok((position, next_index))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use settings::DockAnchor;
     use sqlez::connection::Connection;
-
-    use crate::persistence::model::DockAnchor;
 
     use super::WorkspaceId;
 

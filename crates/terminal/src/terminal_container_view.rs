@@ -9,7 +9,10 @@ use gpui::{
 };
 use util::truncate_and_trailoff;
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
-use workspace::{Item, ItemEvent, ToolbarItemLocation, Workspace};
+use workspace::{
+    item::{Item, ItemEvent},
+    ToolbarItemLocation, Workspace,
+};
 
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{AlternateScroll, Settings, WorkingDirectory};

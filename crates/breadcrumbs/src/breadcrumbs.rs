@@ -4,7 +4,10 @@ use gpui::{
 use itertools::Itertools;
 use search::ProjectSearchView;
 use settings::Settings;
-use workspace::{ItemEvent, ItemHandle, ToolbarItemLocation, ToolbarItemView};
+use workspace::{
+    item::{ItemEvent, ItemHandle},
+    ToolbarItemLocation, ToolbarItemView,
+};
 
 pub enum Event {
     UpdateLocation,

@@ -1,4 +1,8 @@
-use crate::{Item, ItemNavHistory};
+use crate::{
+    item::ItemEvent,
+    persistence::model::{ItemId, WorkspaceId},
+    Item, ItemNavHistory,
+};
 use anyhow::{anyhow, Result};
 use call::participant::{Frame, RemoteVideoTrack};
 use client::{PeerId, User};
@@ -176,9 +180,21 @@ impl Item for SharedScreen {
         Task::ready(Err(anyhow!("Item::reload called on SharedScreen")))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<crate::ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         match event {
-            Event::Close => vec![crate::ItemEvent::CloseItem],
+            Event::Close => vec![ItemEvent::CloseItem],
         }
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
+
+    fn deserialize(
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<Self> {
+        Err(anyhow!("SharedScreen can not be deserialized"))
     }
 }

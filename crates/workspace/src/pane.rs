@@ -3,8 +3,9 @@ mod dragged_item_receiver;
 use super::{ItemHandle, SplitDirection};
 use crate::{
     dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, ExpandDock, HideDock},
+    item::WeakItemHandle,
     toolbar::Toolbar,
-    Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
+    Item, NewFile, NewSearch, NewTerminal, Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -1634,7 +1635,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::tests::TestItem;
+    use crate::item::test::TestItem;
     use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
 

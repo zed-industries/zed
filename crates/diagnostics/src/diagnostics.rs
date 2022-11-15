@@ -29,7 +29,10 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
+use workspace::{
+    item::{Item, ItemEvent, ItemHandle},
+    ItemNavHistory, Workspace,
+};
 
 actions!(diagnostics, [Deploy]);
 
@@ -503,7 +506,7 @@ impl ProjectDiagnosticsEditor {
     }
 }
 
-impl workspace::Item for ProjectDiagnosticsEditor {
+impl Item for ProjectDiagnosticsEditor {
     fn tab_content(
         &self,
         _detail: Option<usize>,
@@ -571,7 +574,7 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         unreachable!()
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         Editor::to_item_events(event)
     }
 

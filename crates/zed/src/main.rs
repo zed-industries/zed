@@ -38,7 +38,7 @@ use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
+use workspace::{self, item::ItemHandle, AppState, NewFile, OpenPaths, Workspace};
 use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
