@@ -10,11 +10,7 @@ use sqlx::{
     types::Uuid,
     FromRow,
 };
-use std::{
-    future::Future,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{future::Future, path::Path, time::Duration};
 use time::{OffsetDateTime, PrimitiveDateTime};
 
 #[cfg(test)]
@@ -1443,13 +1439,17 @@ where
             for worktree in worktrees {
                 sqlx::query(
                     "
-                    INSERT INTO worktrees (id, project_id, root_name)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO worktrees (project_id, id, root_name, abs_path, visible, scan_id, is_complete)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     ",
                 )
-                .bind(worktree.id as i32)
                 .bind(project_id)
+                .bind(worktree.id as i32)
                 .bind(&worktree.root_name)
+                .bind(&*String::from_utf8_lossy(&worktree.abs_path))
+                .bind(worktree.visible)
+                .bind(0)
+                .bind(false)
                 .execute(&mut tx)
                 .await?;
             }
@@ -1502,32 +1502,36 @@ where
             for worktree in worktrees {
                 sqlx::query(
                     "
-                    INSERT INTO worktrees (project_id, id, root_name)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO worktrees (project_id, id, root_name, abs_path, visible, scan_id, is_complete)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     ON CONFLICT (project_id, id) DO UPDATE SET root_name = excluded.root_name
                     ",
                 )
                 .bind(project_id)
                 .bind(worktree.id as i32)
                 .bind(&worktree.root_name)
+                .bind(String::from_utf8_lossy(&worktree.abs_path).as_ref())
+                .bind(worktree.visible)
+                .bind(0)
+                .bind(false)
                 .execute(&mut tx)
                 .await?;
             }
 
-            let mut params = "?,".repeat(worktrees.len());
+            let mut params = "(?, ?),".repeat(worktrees.len());
             if !worktrees.is_empty() {
                 params.pop();
             }
             let query = format!(
                 "
                 DELETE FROM worktrees
-                WHERE id NOT IN ({params})
+                WHERE (project_id, id) NOT IN ({params})
                 ",
             );
 
             let mut query = sqlx::query(&query);
             for worktree in worktrees {
-                query = query.bind(worktree.id as i32);
+                query = query.bind(project_id).bind(WorktreeId(worktree.id as i32));
             }
             query.execute(&mut tx).await?;
 
@@ -1556,7 +1560,7 @@ where
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-    ) -> Result<(Project, i32)> {
+    ) -> Result<(Project, ReplicaId)> {
         self.transact(|mut tx| async move {
             let (room_id, user_id) = sqlx::query_as::<_, (RoomId, UserId)>(
                 "
@@ -1574,7 +1578,7 @@ where
                 "
                 SELECT 1
                 FROM projects
-                WHERE project_id = $1 AND room_id = $2
+                WHERE id = $1 AND room_id = $2
                 ",
             )
             .bind(project_id)
@@ -1582,9 +1586,9 @@ where
             .fetch_one(&mut tx)
             .await?;
 
-            let replica_ids = sqlx::query_scalar::<_, i32>(
+            let mut collaborators = sqlx::query_as::<_, ProjectCollaborator>(
                 "
-                SELECT replica_id
+                SELECT *
                 FROM project_collaborators
                 WHERE project_id = $1
                 ",
@@ -1592,11 +1596,21 @@ where
             .bind(project_id)
             .fetch_all(&mut tx)
             .await?;
-            let replica_ids = HashSet::from_iter(replica_ids);
-            let mut replica_id = 1;
+            let replica_ids = collaborators
+                .iter()
+                .map(|c| c.replica_id)
+                .collect::<HashSet<_>>();
+            let mut replica_id = ReplicaId(1);
             while replica_ids.contains(&replica_id) {
-                replica_id += 1;
+                replica_id.0 += 1;
             }
+            let new_collaborator = ProjectCollaborator {
+                project_id,
+                connection_id: connection_id.0 as i32,
+                user_id,
+                replica_id,
+                is_host: false,
+            };
 
             sqlx::query(
                 "
@@ -1610,51 +1624,140 @@ where
                 VALUES ($1, $2, $3, $4, $5)
                 ",
             )
-            .bind(project_id)
-            .bind(connection_id.0 as i32)
-            .bind(user_id)
-            .bind(replica_id)
-            .bind(false)
+            .bind(new_collaborator.project_id)
+            .bind(new_collaborator.connection_id)
+            .bind(new_collaborator.user_id)
+            .bind(new_collaborator.replica_id)
+            .bind(new_collaborator.is_host)
             .execute(&mut tx)
+            .await?;
+            collaborators.push(new_collaborator);
+
+            let worktree_rows = sqlx::query_as::<_, WorktreeRow>(
+                "
+                SELECT *
+                FROM worktrees
+                WHERE project_id = $1
+                ",
+            )
+            .bind(project_id)
+            .fetch_all(&mut tx)
+            .await?;
+            let mut worktrees = worktree_rows
+                .into_iter()
+                .map(|worktree_row| {
+                    (
+                        worktree_row.id,
+                        Worktree {
+                            id: worktree_row.id,
+                            abs_path: worktree_row.abs_path,
+                            root_name: worktree_row.root_name,
+                            visible: worktree_row.visible,
+                            entries: Default::default(),
+                            diagnostic_summaries: Default::default(),
+                            scan_id: worktree_row.scan_id as u64,
+                            is_complete: worktree_row.is_complete,
+                        },
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+
+            let mut params = "(?, ?),".repeat(worktrees.len());
+            if !worktrees.is_empty() {
+                params.pop();
+            }
+
+            // Populate worktree entries.
+            {
+                let query = format!(
+                    "
+                        SELECT *
+                        FROM worktree_entries
+                        WHERE (project_id, worktree_id) IN ({params})
+                    ",
+                );
+                let mut entries = sqlx::query_as::<_, WorktreeEntry>(&query);
+                for worktree_id in worktrees.keys() {
+                    entries = entries.bind(project_id).bind(*worktree_id);
+                }
+                let mut entries = entries.fetch(&mut tx);
+                while let Some(entry) = entries.next().await {
+                    let entry = entry?;
+                    if let Some(worktree) = worktrees.get_mut(&entry.worktree_id) {
+                        worktree.entries.push(proto::Entry {
+                            id: entry.id as u64,
+                            is_dir: entry.is_dir,
+                            path: entry.path.into_bytes(),
+                            inode: entry.inode as u64,
+                            mtime: Some(proto::Timestamp {
+                                seconds: entry.mtime_seconds as u64,
+                                nanos: entry.mtime_nanos as u32,
+                            }),
+                            is_symlink: entry.is_symlink,
+                            is_ignored: entry.is_ignored,
+                        });
+                    }
+                }
+            }
+
+            // Populate worktree diagnostic summaries.
+            {
+                let query = format!(
+                    "
+                        SELECT *
+                        FROM worktree_diagnostic_summaries
+                        WHERE (project_id, worktree_id) IN ({params})
+                    ",
+                );
+                let mut summaries = sqlx::query_as::<_, WorktreeDiagnosticSummary>(&query);
+                for worktree_id in worktrees.keys() {
+                    summaries = summaries.bind(project_id).bind(*worktree_id);
+                }
+                let mut summaries = summaries.fetch(&mut tx);
+                while let Some(summary) = summaries.next().await {
+                    let summary = summary?;
+                    if let Some(worktree) = worktrees.get_mut(&summary.worktree_id) {
+                        worktree
+                            .diagnostic_summaries
+                            .push(proto::DiagnosticSummary {
+                                path: summary.path,
+                                language_server_id: summary.language_server_id as u64,
+                                error_count: summary.error_count as u32,
+                                warning_count: summary.warning_count as u32,
+                            });
+                    }
+                }
+            }
+
+            // Populate language servers.
+            let language_servers = sqlx::query_as::<_, LanguageServer>(
+                "
+                SELECT *
+                FROM language_servers
+                WHERE project_id = $1
+                ",
+            )
+            .bind(project_id)
+            .fetch_all(&mut tx)
             .await?;
 
             tx.commit().await?;
-            todo!()
+            Ok((
+                Project {
+                    collaborators,
+                    worktrees,
+                    language_servers: language_servers
+                        .into_iter()
+                        .map(|language_server| proto::LanguageServer {
+                            id: language_server.id.to_proto(),
+                            name: language_server.name,
+                        })
+                        .collect(),
+                },
+                replica_id as ReplicaId,
+            ))
         })
         .await
-        // sqlx::query(
-        //     "
-        //     SELECT replica_id
-        //     FROM project_collaborators
-        //     WHERE project_id = $
-        //     ",
-        // )
-        // .bind(project_id)
-        // .bind(connection_id.0 as i32)
-        // .bind(user_id)
-        // .bind(0)
-        // .bind(true)
-        // .execute(&mut tx)
-        // .await?;
-        // sqlx::query(
-        //     "
-        //     INSERT INTO project_collaborators (
-        //         project_id,
-        //         connection_id,
-        //         user_id,
-        //         replica_id,
-        //         is_host
-        //     )
-        //     VALUES ($1, $2, $3, $4, $5)
-        //     ",
-        // )
-        // .bind(project_id)
-        // .bind(connection_id.0 as i32)
-        // .bind(user_id)
-        // .bind(0)
-        // .bind(true)
-        // .execute(&mut tx)
-        // .await?;
     }
 
     pub async fn unshare_project(&self, project_id: ProjectId) -> Result<()> {
@@ -2089,30 +2192,70 @@ pub struct Room {
 
 id_type!(ProjectId);
 pub struct Project {
-    pub id: ProjectId,
     pub collaborators: Vec<ProjectCollaborator>,
-    pub worktrees: BTreeMap<u64, Worktree>,
+    pub worktrees: BTreeMap<WorktreeId, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
+id_type!(ReplicaId);
 #[derive(Clone, Debug, Default, FromRow, PartialEq)]
 pub struct ProjectCollaborator {
     pub project_id: ProjectId,
     pub connection_id: i32,
     pub user_id: UserId,
-    pub replica_id: i32,
+    pub replica_id: ReplicaId,
     pub is_host: bool,
 }
 
-#[derive(Default)]
-pub struct Worktree {
-    pub abs_path: PathBuf,
+id_type!(WorktreeId);
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+struct WorktreeRow {
+    pub id: WorktreeId,
+    pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
-    pub entries: BTreeMap<u64, proto::Entry>,
-    pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
+    pub scan_id: i64,
+    pub is_complete: bool,
+}
+
+pub struct Worktree {
+    pub id: WorktreeId,
+    pub abs_path: String,
+    pub root_name: String,
+    pub visible: bool,
+    pub entries: Vec<proto::Entry>,
+    pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub scan_id: u64,
     pub is_complete: bool,
+}
+
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+struct WorktreeEntry {
+    id: i64,
+    worktree_id: WorktreeId,
+    is_dir: bool,
+    path: String,
+    inode: i64,
+    mtime_seconds: i64,
+    mtime_nanos: i32,
+    is_symlink: bool,
+    is_ignored: bool,
+}
+
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+struct WorktreeDiagnosticSummary {
+    worktree_id: WorktreeId,
+    path: String,
+    language_server_id: i64,
+    error_count: i32,
+    warning_count: i32,
+}
+
+id_type!(LanguageServerId);
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+struct LanguageServer {
+    id: LanguageServerId,
+    name: String,
 }
 
 pub struct LeftProject {

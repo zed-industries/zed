@@ -20,13 +20,51 @@ CREATE TABLE "project_collaborators" (
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
 CREATE UNIQUE INDEX "index_project_collaborators_on_project_id_and_replica_id" ON "project_collaborators" ("project_id", "replica_id");
 
-CREATE TABLE IF NOT EXISTS "worktrees" (
+CREATE TABLE "worktrees" (
     "id" INTEGER NOT NULL,
-    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id),
     "root_name" VARCHAR NOT NULL,
+    "abs_path" VARCHAR NOT NULL,
+    "visible" BOOL NOT NULL,
+    "scan_id" INTEGER NOT NULL,
+    "is_complete" BOOL NOT NULL,
     PRIMARY KEY(project_id, id)
 );
 CREATE INDEX "index_worktrees_on_project_id" ON "worktrees" ("project_id");
+
+CREATE TABLE "worktree_entries" (
+    "id" INTEGER NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id),
+    "worktree_id" INTEGER NOT NULL REFERENCES worktrees (id),
+    "is_dir" BOOL NOT NULL,
+    "path" VARCHAR NOT NULL,
+    "inode" INTEGER NOT NULL,
+    "mtime_seconds" INTEGER NOT NULL,
+    "mtime_nanos" INTEGER NOT NULL,
+    "is_symlink" BOOL NOT NULL,
+    "is_ignored" BOOL NOT NULL,
+    PRIMARY KEY(project_id, worktree_id, id)
+);
+CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
+
+CREATE TABLE "worktree_diagnostic_summaries" (
+    "path" VARCHAR NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id),
+    "worktree_id" INTEGER NOT NULL REFERENCES worktrees (id),
+    "language_server_id" INTEGER NOT NULL,
+    "error_count" INTEGER NOT NULL,
+    "warning_count" INTEGER NOT NULL,
+    PRIMARY KEY(project_id, worktree_id, path)
+);
+CREATE INDEX "index_worktree_diagnostic_summaries_on_project_id_and_worktree_id" ON "worktree_diagnostic_summaries" ("project_id", "worktree_id");
+
+CREATE TABLE "language_servers" (
+    "id" INTEGER NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id),
+    "name" VARCHAR NOT NULL,
+    PRIMARY KEY(project_id, id)
+);
+CREATE INDEX "index_language_servers_on_project_id" ON "language_servers" ("project_id");
 
 CREATE TABLE IF NOT EXISTS "room_participants" (
     "id" SERIAL PRIMARY KEY,

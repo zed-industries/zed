@@ -294,49 +294,6 @@ impl Store {
         Err(anyhow!("no such project"))?
     }
 
-    pub fn join_project(
-        &mut self,
-        requester_connection_id: ConnectionId,
-        project_id: ProjectId,
-    ) -> Result<(&Project, ReplicaId)> {
-        let connection = self
-            .connections
-            .get_mut(&requester_connection_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let user = self
-            .connected_users
-            .get(&connection.user_id)
-            .ok_or_else(|| anyhow!("no such connection"))?;
-        let active_call = user.active_call.ok_or_else(|| anyhow!("no such project"))?;
-        anyhow::ensure!(
-            active_call.connection_id == Some(requester_connection_id),
-            "no such project"
-        );
-
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        anyhow::ensure!(project.room_id == active_call.room_id, "no such project");
-
-        connection.projects.insert(project_id);
-        let mut replica_id = 1;
-        while project.active_replica_ids.contains(&replica_id) {
-            replica_id += 1;
-        }
-        project.active_replica_ids.insert(replica_id);
-        project.guests.insert(
-            requester_connection_id,
-            Collaborator {
-                replica_id,
-                user_id: connection.user_id,
-                admin: connection.admin,
-            },
-        );
-
-        Ok((project, replica_id))
-    }
-
     pub fn leave_project(
         &mut self,
         project_id: ProjectId,
@@ -407,12 +364,6 @@ impl Store {
         Ok(self
             .read_project(project_id, acting_connection_id)?
             .connection_ids())
-    }
-
-    pub fn project(&self, project_id: ProjectId) -> Result<&Project> {
-        self.projects
-            .get(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))
     }
 
     pub fn read_project(

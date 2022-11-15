@@ -42,7 +42,6 @@ use std::{
     marker::PhantomData,
     net::SocketAddr,
     ops::{Deref, DerefMut},
-    os::unix::prelude::OsStrExt,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
@@ -930,16 +929,8 @@ impl Server {
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let guest_user_id = request.sender_user_id;
-        let host_user_id;
-        let host_connection_id;
-        {
-            let state = self.store().await;
-            let project = state.project(project_id)?;
-            host_user_id = project.host.user_id;
-            host_connection_id = project.host_connection_id;
-        };
 
-        tracing::info!(%project_id, %host_user_id, %host_connection_id, "join project");
+        tracing::info!(%project_id, "join project");
 
         let (project, replica_id) = self
             .app_state
@@ -952,7 +943,7 @@ impl Server {
             .iter()
             .map(|collaborator| proto::Collaborator {
                 peer_id: collaborator.connection_id as u32,
-                replica_id: collaborator.replica_id as u32,
+                replica_id: collaborator.replica_id.0 as u32,
                 user_id: collaborator.user_id.to_proto(),
             })
             .collect::<Vec<_>>();
@@ -960,10 +951,10 @@ impl Server {
             .worktrees
             .iter()
             .map(|(id, worktree)| proto::WorktreeMetadata {
-                id: *id,
+                id: id.to_proto(),
                 root_name: worktree.root_name.clone(),
                 visible: worktree.visible,
-                abs_path: worktree.abs_path.as_os_str().as_bytes().to_vec(),
+                abs_path: worktree.abs_path.as_bytes().to_vec(),
             })
             .collect::<Vec<_>>();
 
@@ -977,7 +968,7 @@ impl Server {
                             project_id: project_id.to_proto(),
                             collaborator: Some(proto::Collaborator {
                                 peer_id: request.sender_connection_id.0,
-                                replica_id: replica_id as u32,
+                                replica_id: replica_id.0 as u32,
                                 user_id: guest_user_id.to_proto(),
                             }),
                         },
@@ -989,12 +980,12 @@ impl Server {
         // First, we send the metadata associated with each worktree.
         response.send(proto::JoinProjectResponse {
             worktrees: worktrees.clone(),
-            replica_id: replica_id as u32,
+            replica_id: replica_id.0 as u32,
             collaborators: collaborators.clone(),
             language_servers: project.language_servers.clone(),
         })?;
 
-        for (worktree_id, worktree) in &project.worktrees {
+        for (worktree_id, worktree) in project.worktrees {
             #[cfg(any(test, feature = "test-support"))]
             const MAX_CHUNK_SIZE: usize = 2;
             #[cfg(not(any(test, feature = "test-support")))]
@@ -1003,10 +994,10 @@ impl Server {
             // Stream this worktree's entries.
             let message = proto::UpdateWorktree {
                 project_id: project_id.to_proto(),
-                worktree_id: *worktree_id,
-                abs_path: worktree.abs_path.as_os_str().as_bytes().to_vec(),
-                root_name: worktree.root_name.clone(),
-                updated_entries: worktree.entries.values().cloned().collect(),
+                worktree_id: worktree_id.to_proto(),
+                abs_path: worktree.abs_path.as_bytes().to_vec(),
+                root_name: worktree.root_name,
+                updated_entries: worktree.entries,
                 removed_entries: Default::default(),
                 scan_id: worktree.scan_id,
                 is_last_update: worktree.is_complete,
@@ -1017,13 +1008,13 @@ impl Server {
             }
 
             // Stream this worktree's diagnostics.
-            for summary in worktree.diagnostic_summaries.values() {
+            for summary in worktree.diagnostic_summaries {
                 self.peer.send(
                     request.sender_connection_id,
                     proto::UpdateDiagnosticSummary {
                         project_id: project_id.to_proto(),
-                        worktree_id: *worktree_id,
-                        summary: Some(summary.clone()),
+                        worktree_id: worktree.id.to_proto(),
+                        summary: Some(summary),
                     },
                 )?;
             }

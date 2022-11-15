@@ -282,13 +282,6 @@ message UpdateWorktree {
     bytes abs_path = 8;
 }
 
-message UpdateWorktreeExtensions {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    repeated string extensions = 3;
-    repeated uint32 counts = 4;
-}
-
 message CreateProjectEntry {
     uint64 project_id = 1;
     uint64 worktree_id = 2;

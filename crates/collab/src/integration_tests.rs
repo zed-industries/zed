@@ -1,5 +1,5 @@
 use crate::{
-    db::{NewUserParams, ProjectId, SqliteTestDb as TestDb, UserId},
+    db::{NewUserParams, SqliteTestDb as TestDb, UserId},
     rpc::{Executor, Server},
     AppState,
 };
@@ -2401,12 +2401,6 @@ async fn test_collaborating_with_diagnostics(
 
     // Wait for server to see the diagnostics update.
     deterministic.run_until_parked();
-    {
-        let store = server.store.lock().await;
-        let project = store.project(ProjectId::from_proto(project_id)).unwrap();
-        let worktree = project.worktrees.get(&worktree_id.to_proto()).unwrap();
-        assert!(!worktree.diagnostic_summaries.is_empty());
-    }
 
     // Ensure client B observes the new diagnostics.
     project_b.read_with(cx_b, |project, cx| {
