@@ -635,7 +635,7 @@ impl Terminal {
                 term.grid_mut().reset_region(..cursor.line);
 
                 // Copy the current line up
-                let line = term.grid()[cursor.line][..cursor.column]
+                let line = term.grid()[cursor.line][..Column(term.grid().columns())]
                     .iter()
                     .cloned()
                     .enumerate()
