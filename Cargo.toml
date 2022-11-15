@@ -65,7 +65,7 @@ serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 rand = { version = "0.8" }
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "d07f864815ecb1e0f1f0bab17fec80438eb4c455" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "36b5b6c89e55ad1a502f8b3234bb3e12ec83a5da" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
