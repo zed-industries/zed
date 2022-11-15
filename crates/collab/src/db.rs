@@ -350,25 +350,6 @@ impl Db<sqlx::Postgres> {
             .await?;
 
             if let Some(inviting_user_id) = inviting_user_id {
-                let id: Option<UserId> = sqlx::query_scalar(
-                    "
-                    UPDATE users
-                    SET invite_count = invite_count - 1
-                    WHERE id = $1 AND invite_count > 0
-                    RETURNING id
-                    ",
-                )
-                .bind(&inviting_user_id)
-                .fetch_optional(&mut tx)
-                .await?;
-
-                if id.is_none() {
-                    Err(Error::Http(
-                        StatusCode::UNAUTHORIZED,
-                        "no invites remaining".to_string(),
-                    ))?;
-                }
-
                 sqlx::query(
                     "
                     INSERT INTO contacts
@@ -453,31 +434,24 @@ impl Db<sqlx::Postgres> {
                 Err(anyhow!("email address is already in use"))?;
             }
 
-            let row: Option<(UserId, i32)> = sqlx::query_as(
+            let inviting_user_id_with_invites: Option<UserId> = sqlx::query_scalar(
                 "
-                SELECT id, invite_count
-                FROM users
-                WHERE invite_code = $1
+                UPDATE users
+                SET invite_count = invite_count - 1
+                WHERE invite_code = $1 AND invite_count > 0
+                RETURNING id
                 ",
             )
             .bind(code)
             .fetch_optional(&mut tx)
             .await?;
 
-            let (inviter_id, invite_count) = match row {
-                Some(row) => row,
-                None => Err(Error::Http(
-                    StatusCode::NOT_FOUND,
-                    "invite code not found".to_string(),
-                ))?,
-            };
-
-            if invite_count == 0 {
-                Err(Error::Http(
+            let Some(inviter_id) = inviting_user_id_with_invites else {
+                return Err(Error::Http(
                     StatusCode::UNAUTHORIZED,
-                    "no invites remaining".to_string(),
-                ))?;
-            }
+                    "unable to find an invite code with invites remaining".to_string(),
+                ));
+            };
 
             let email_confirmation_code: String = sqlx::query_scalar(
                 "
