@@ -5743,7 +5743,7 @@ impl Project {
                 // of any anchors positioned in the unchanged regions.
                 if range.end.row > range.start.row {
                     let mut offset = range.start.to_offset(&snapshot);
-                    let old_text = snapshot.text_for_range(range).collect::<String>();
+                    let old_text = snapshot.text_for_clamped_range(range).collect::<String>();
 
                     let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
                     let mut moved_since_edit = true;

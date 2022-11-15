@@ -259,7 +259,7 @@ impl Rope {
                 .map_or(0, |chunk| chunk.point_to_offset(overshoot))
     }
 
-    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+    pub fn point_utf16_to_offset(&self, point: PointUtf16, clamp: bool) -> usize {
         if point >= self.summary().lines_utf16() {
             return self.summary().len;
         }
@@ -269,7 +269,7 @@ impl Rope {
         cursor.start().1
             + cursor
                 .item()
-                .map_or(0, |chunk| chunk.point_utf16_to_offset(overshoot))
+                .map_or(0, |chunk| chunk.point_utf16_to_offset(overshoot, clamp))
     }
 
     pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
@@ -711,29 +711,41 @@ impl Chunk {
         point_utf16
     }
 
-    fn point_utf16_to_offset(&self, target: PointUtf16) -> usize {
+    fn point_utf16_to_offset(&self, target: PointUtf16, clamp: bool) -> usize {
         let mut offset = 0;
         let mut point = PointUtf16::new(0, 0);
         for ch in self.0.chars() {
-            if point >= target {
-                if point > target {
-                    panic!("point {:?} is inside of character {:?}", target, ch);
-                }
+            if point == target {
                 break;
             }
 
             if ch == '\n' {
                 point.row += 1;
+                point.column = 0;
+
                 if point.row > target.row {
+                    if clamp {
+                        //Return the offset up to but not including the newline
+                        return offset;
+                    }
                     panic!(
                         "point {:?} is beyond the end of a line with length {}",
                         target, point.column
                     );
                 }
-                point.column = 0;
             } else {
                 point.column += ch.len_utf16() as u32;
             }
+
+            if point > target {
+                if clamp {
+                    //Return the offset before adding the len of the codepoint which
+                    //we have landed within, bias left
+                    return offset;
+                }
+                panic!("point {:?} is inside of character {:?}", target, ch);
+            }
+
             offset += ch.len_utf8();
         }
         offset
@@ -1210,7 +1222,7 @@ mod tests {
                     point
                 );
                 assert_eq!(
-                    actual.point_utf16_to_offset(point_utf16),
+                    actual.point_utf16_to_offset(point_utf16, false),
                     ix,
                     "point_utf16_to_offset({:?})",
                     point_utf16
@@ -1250,9 +1262,9 @@ mod tests {
                 let left_point = actual.clip_point_utf16(point_utf16, Bias::Left);
                 let right_point = actual.clip_point_utf16(point_utf16, Bias::Right);
                 assert!(right_point >= left_point);
-                // Ensure translating UTF-16 points to offsets doesn't panic.
-                actual.point_utf16_to_offset(left_point);
-                actual.point_utf16_to_offset(right_point);
+                // Ensure translating valid UTF-16 points to offsets doesn't panic.
+                actual.point_utf16_to_offset(left_point, false);
+                actual.point_utf16_to_offset(right_point, false);
 
                 offset_utf16.0 += 1;
                 if unit == b'\n' as u16 {
