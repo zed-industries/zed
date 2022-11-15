@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
-use std::{mem, path::PathBuf, str};
+use std::{path::PathBuf, str};
 use tracing::instrument;
 
 pub type RoomId = u64;
@@ -156,14 +156,6 @@ impl Store {
             .is_empty()
     }
 
-    fn is_user_busy(&self, user_id: UserId) -> bool {
-        self.connected_users
-            .get(&user_id)
-            .unwrap_or(&Default::default())
-            .active_call
-            .is_some()
-    }
-
     pub fn build_initial_contacts_update(
         &self,
         contacts: Vec<db::Contact>,
@@ -175,10 +167,11 @@ impl Store {
                 db::Contact::Accepted {
                     user_id,
                     should_notify,
+                    busy,
                 } => {
                     update
                         .contacts
-                        .push(self.contact_for_user(user_id, should_notify));
+                        .push(self.contact_for_user(user_id, should_notify, busy));
                 }
                 db::Contact::Outgoing { user_id } => {
                     update.outgoing_requests.push(user_id.to_proto())
@@ -198,11 +191,16 @@ impl Store {
         update
     }
 
-    pub fn contact_for_user(&self, user_id: UserId, should_notify: bool) -> proto::Contact {
+    pub fn contact_for_user(
+        &self,
+        user_id: UserId,
+        should_notify: bool,
+        busy: bool,
+    ) -> proto::Contact {
         proto::Contact {
             user_id: user_id.to_proto(),
             online: self.is_user_online(user_id),
-            busy: self.is_user_busy(user_id),
+            busy,
             should_notify,
         }
     }

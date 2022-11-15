@@ -465,7 +465,7 @@ impl Server {
         if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
             if let Some(code) = &user.invite_code {
                 let store = self.store().await;
-                let invitee_contact = store.contact_for_user(invitee_id, true);
+                let invitee_contact = store.contact_for_user(invitee_id, true, false);
                 for connection_id in store.connection_ids_for_user(inviter_id) {
                     self.peer.send(
                         connection_id,
@@ -895,8 +895,9 @@ impl Server {
 
     async fn update_user_contacts(self: &Arc<Server>, user_id: UserId) -> Result<()> {
         let contacts = self.app_state.db.get_contacts(user_id).await?;
+        let busy = self.app_state.db.is_user_busy(user_id).await?;
         let store = self.store().await;
-        let updated_contact = store.contact_for_user(user_id, false);
+        let updated_contact = store.contact_for_user(user_id, false, busy);
         for contact in contacts {
             if let db::Contact::Accepted {
                 user_id: contact_user_id,
@@ -1575,6 +1576,7 @@ impl Server {
                 .db
                 .respond_to_contact_request(responder_id, requester_id, accept)
                 .await?;
+            let busy = self.app_state.db.is_user_busy(requester_id).await?;
 
             let store = self.store().await;
             // Update responder with new contact
@@ -1582,7 +1584,7 @@ impl Server {
             if accept {
                 update
                     .contacts
-                    .push(store.contact_for_user(requester_id, false));
+                    .push(store.contact_for_user(requester_id, false, busy));
             }
             update
                 .remove_incoming_requests
@@ -1596,7 +1598,7 @@ impl Server {
             if accept {
                 update
                     .contacts
-                    .push(store.contact_for_user(responder_id, true));
+                    .push(store.contact_for_user(responder_id, true, busy));
             }
             update
                 .remove_outgoing_requests

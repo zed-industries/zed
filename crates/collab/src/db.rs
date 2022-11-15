@@ -1558,24 +1558,25 @@ where
     pub async fn get_contacts(&self, user_id: UserId) -> Result<Vec<Contact>> {
         self.transact(|mut tx| async move {
             let query = "
-                SELECT user_id_a, user_id_b, a_to_b, accepted, should_notify
+                SELECT user_id_a, user_id_b, a_to_b, accepted, should_notify, (room_participants.id IS NOT NULL) as busy
                 FROM contacts
+                LEFT JOIN room_participants ON room_participants.user_id = $1
                 WHERE user_id_a = $1 OR user_id_b = $1;
             ";
 
-            let mut rows = sqlx::query_as::<_, (UserId, UserId, bool, bool, bool)>(query)
+            let mut rows = sqlx::query_as::<_, (UserId, UserId, bool, bool, bool, bool)>(query)
                 .bind(user_id)
                 .fetch(&mut tx);
 
             let mut contacts = Vec::new();
             while let Some(row) = rows.next().await {
-                let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
-
+                let (user_id_a, user_id_b, a_to_b, accepted, should_notify, busy) = row?;
                 if user_id_a == user_id {
                     if accepted {
                         contacts.push(Contact::Accepted {
                             user_id: user_id_b,
                             should_notify: should_notify && a_to_b,
+                            busy
                         });
                     } else if a_to_b {
                         contacts.push(Contact::Outgoing { user_id: user_id_b })
@@ -1589,6 +1590,7 @@ where
                     contacts.push(Contact::Accepted {
                         user_id: user_id_a,
                         should_notify: should_notify && !a_to_b,
+                        busy
                     });
                 } else if a_to_b {
                     contacts.push(Contact::Incoming {
@@ -1603,6 +1605,23 @@ where
             contacts.sort_unstable_by_key(|contact| contact.user_id());
 
             Ok(contacts)
+        })
+        .await
+    }
+
+    pub async fn is_user_busy(&self, user_id: UserId) -> Result<bool> {
+        self.transact(|mut tx| async move {
+            Ok(sqlx::query_scalar::<_, i32>(
+                "
+                SELECT 1
+                FROM room_participants
+                WHERE room_participants.user_id = $1
+                ",
+            )
+            .bind(user_id)
+            .fetch_optional(&mut tx)
+            .await?
+            .is_some())
         })
         .await
     }
@@ -1657,6 +1676,7 @@ where
                 .await?;
 
             if result.rows_affected() == 1 {
+                tx.commit().await?;
                 Ok(())
             } else {
                 Err(anyhow!("contact already requested"))?
@@ -1682,6 +1702,7 @@ where
                 .await?;
 
             if result.rows_affected() == 1 {
+                tx.commit().await?;
                 Ok(())
             } else {
                 Err(anyhow!("no such contact"))?
@@ -1721,10 +1742,11 @@ where
                 .await?;
 
             if result.rows_affected() == 0 {
-                Err(anyhow!("no such contact request"))?;
+                Err(anyhow!("no such contact request"))?
+            } else {
+                tx.commit().await?;
+                Ok(())
             }
-
-            Ok(())
         })
         .await
     }
@@ -1766,6 +1788,7 @@ where
                     .await?
             };
             if result.rows_affected() == 1 {
+                tx.commit().await?;
                 Ok(())
             } else {
                 Err(anyhow!("no such contact request"))?
@@ -1977,6 +2000,7 @@ pub enum Contact {
     Accepted {
         user_id: UserId,
         should_notify: bool,
+        busy: bool,
     },
     Outgoing {
         user_id: UserId,

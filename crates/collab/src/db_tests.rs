@@ -258,7 +258,8 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         db.get_contacts(user_1).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_2,
-            should_notify: true
+            should_notify: true,
+            busy: false,
         }],
     );
     assert!(db.has_contact(user_1, user_2).await.unwrap());
@@ -268,6 +269,7 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         &[Contact::Accepted {
             user_id: user_1,
             should_notify: false,
+            busy: false,
         }]
     );
 
@@ -284,6 +286,7 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         &[Contact::Accepted {
             user_id: user_2,
             should_notify: true,
+            busy: false,
         }]
     );
 
@@ -296,6 +299,7 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         &[Contact::Accepted {
             user_id: user_2,
             should_notify: false,
+            busy: false,
         }]
     );
 
@@ -309,10 +313,12 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
             Contact::Accepted {
                 user_id: user_2,
                 should_notify: false,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user_3,
-                should_notify: false
+                should_notify: false,
+                busy: false,
             }
         ]
     );
@@ -320,7 +326,8 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         db.get_contacts(user_3).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }],
     );
 
@@ -335,14 +342,16 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         db.get_contacts(user_2).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
     assert_eq!(
         db.get_contacts(user_3).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }],
     );
 });
@@ -504,14 +513,16 @@ async fn test_invite_codes() {
         db.get_contacts(user1).await.unwrap(),
         [Contact::Accepted {
             user_id: user2,
-            should_notify: true
+            should_notify: true,
+            busy: false,
         }]
     );
     assert_eq!(
         db.get_contacts(user2).await.unwrap(),
         [Contact::Accepted {
             user_id: user1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
     assert_eq!(
@@ -550,11 +561,13 @@ async fn test_invite_codes() {
         [
             Contact::Accepted {
                 user_id: user2,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user3,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             }
         ]
     );
@@ -562,7 +575,8 @@ async fn test_invite_codes() {
         db.get_contacts(user3).await.unwrap(),
         [Contact::Accepted {
             user_id: user1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
     assert_eq!(
@@ -607,15 +621,18 @@ async fn test_invite_codes() {
         [
             Contact::Accepted {
                 user_id: user2,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user3,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user4,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             }
         ]
     );
@@ -623,7 +640,8 @@ async fn test_invite_codes() {
         db.get_contacts(user4).await.unwrap(),
         [Contact::Accepted {
             user_id: user1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
     assert_eq!(
