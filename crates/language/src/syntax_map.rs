@@ -2045,7 +2045,7 @@ mod tests {
           </div>
         "#
         .unindent()
-        .repeat(2);
+        .repeat(8);
 
         let registry = Arc::new(LanguageRegistry::test());
         let language = Arc::new(erb_lang());
