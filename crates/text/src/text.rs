@@ -1808,12 +1808,23 @@ impl BufferSnapshot {
         self.anchor_at(position, Bias::Left)
     }
 
+    pub fn clamped_anchor_before<T: ToOffsetClamped>(&self, position: T) -> Anchor {
+        self.anchor_at_offset(position.to_offset_clamped(self), Bias::Left)
+    }
+
     pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Right)
     }
 
+    pub fn clamped_anchor_after<T: ToOffsetClamped>(&self, position: T) -> Anchor {
+        self.anchor_at_offset(position.to_offset_clamped(self), Bias::Right)
+    }
+
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        let offset = position.to_offset(self);
+        self.anchor_at_offset(position.to_offset(self), bias)
+    }
+
+    fn anchor_at_offset(&self, offset: usize, bias: Bias) -> Anchor {
         if bias == Bias::Left && offset == 0 {
             Anchor::MIN
         } else if bias == Bias::Right && offset == self.len() {
@@ -2369,22 +2380,10 @@ impl ToOffset for Point {
     }
 }
 
-impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
-        snapshot.point_utf16_to_offset(*self)
-    }
-}
-
 impl ToOffset for usize {
     fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
         assert!(*self <= snapshot.len(), "offset {self} is out of range");
         *self
-    }
-}
-
-impl ToOffset for OffsetUtf16 {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
-        snapshot.offset_utf16_to_offset(*self)
     }
 }
 

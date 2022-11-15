@@ -25,7 +25,8 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetClamped, ToPointUtf16,
+    Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -3289,7 +3290,7 @@ impl Project {
         };
 
         let position = position.to_point_utf16(source_buffer);
-        let anchor = source_buffer.anchor_after(position);
+        let anchor = source_buffer.clamped_anchor_after(position);
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
@@ -3355,7 +3356,7 @@ impl Project {
                                         return None;
                                     }
                                     (
-                                        snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                        snapshot.clamped_anchor_before(start)..snapshot.clamped_anchor_after(end),
                                         edit.new_text.clone(),
                                     )
                                 }
@@ -3368,7 +3369,7 @@ impl Project {
                                     }
                                     let Range { start, end } = range_for_token
                                         .get_or_insert_with(|| {
-                                            let offset = position.to_offset(&snapshot);
+                                            let offset = position.to_offset_clamped(&snapshot);
                                             let (range, kind) = snapshot.surrounding_word(offset);
                                             if kind == Some(CharKind::Word) {
                                                 range
@@ -5742,7 +5743,7 @@ impl Project {
                 // we can identify the changes more precisely, preserving the locations
                 // of any anchors positioned in the unchanged regions.
                 if range.end.row > range.start.row {
-                    let mut offset = range.start.to_offset(&snapshot);
+                    let mut offset = range.start.to_offset_clamped(&snapshot);
                     let old_text = snapshot.text_for_clamped_range(range).collect::<String>();
 
                     let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
@@ -5778,11 +5779,11 @@ impl Project {
                         }
                     }
                 } else if range.end == range.start {
-                    let anchor = snapshot.anchor_after(range.start);
+                    let anchor = snapshot.clamped_anchor_after(range.start);
                     edits.push((anchor..anchor, new_text));
                 } else {
-                    let edit_start = snapshot.anchor_after(range.start);
-                    let edit_end = snapshot.anchor_before(range.end);
+                    let edit_start = snapshot.clamped_anchor_after(range.start);
+                    let edit_end = snapshot.clamped_anchor_before(range.end);
                     edits.push((edit_start..edit_end, new_text));
                 }
             }

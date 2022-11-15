@@ -70,8 +70,8 @@ impl DiagnosticSet {
         Self {
             diagnostics: SumTree::from_iter(
                 entries.into_iter().map(|entry| DiagnosticEntry {
-                    range: buffer.anchor_before(entry.range.start)
-                        ..buffer.anchor_after(entry.range.end),
+                    range: buffer.clamped_anchor_before(entry.range.start)
+                        ..buffer.clamped_anchor_after(entry.range.end),
                     diagnostic: entry.diagnostic,
                 }),
                 buffer,
