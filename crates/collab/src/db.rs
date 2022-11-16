@@ -1567,7 +1567,7 @@ where
                         scan_id,
                         is_complete
                     )
-                    VALUES ${params}
+                    VALUES {params}
                     ON CONFLICT (project_id, id) DO UPDATE SET root_name = excluded.root_name
                     "
                 );
