@@ -1620,6 +1620,14 @@ where
                         is_ignored
                     )
                     VALUES {params}
+                    ON CONFLICT (project_id, worktree_id, id) DO UPDATE SET
+                        is_dir = excluded.is_dir,
+                        path = excluded.path,
+                        inode = excluded.inode,
+                        mtime_seconds = excluded.mtime_seconds,
+                        mtime_nanos = excluded.mtime_nanos,
+                        is_symlink = excluded.is_symlink,
+                        is_ignored = excluded.is_ignored
                     "
                 );
                 let mut query = sqlx::query(&query);
