@@ -192,8 +192,14 @@ impl EditorElement {
                 .on_scroll({
                     let position_map = position_map.clone();
                     move |e, cx| {
-                        if !Self::scroll(e.position, e.delta, e.precise, &position_map, bounds, cx)
-                        {
+                        if !Self::scroll(
+                            e.position,
+                            *e.delta.raw(),
+                            e.delta.precise(),
+                            &position_map,
+                            bounds,
+                            cx,
+                        ) {
                             cx.propagate_event()
                         }
                     }

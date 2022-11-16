@@ -97,7 +97,7 @@ impl MouseButton {
     }
 
     fn from_scroll(e: &ScrollWheelEvent) -> Self {
-        if e.delta.y() > 0. {
+        if e.delta.raw().y() > 0. {
             MouseButton::ScrollUp
         } else {
             MouseButton::ScrollDown
