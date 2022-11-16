@@ -1531,7 +1531,8 @@ impl Workspace {
         RemoveWorktreeFromProject(worktree_id): &RemoveWorktreeFromProject,
         cx: &mut ViewContext<Self>,
     ) {
-        self.project
+        let _ = self
+            .project
             .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
     }
 
@@ -3177,7 +3178,7 @@ mod tests {
 
         // Remove a project folder
         project.update(cx, |project, cx| {
-            project.remove_worktree(worktree_id, cx);
+            let _ = project.remove_worktree(worktree_id, cx);
         });
         assert_eq!(
             cx.current_window_title(window_id).as_deref(),

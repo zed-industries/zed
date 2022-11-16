@@ -1561,7 +1561,7 @@ where
             let query = format!(
                 "
                 DELETE FROM worktrees
-                WHERE project_id = ? AND worktree_id NOT IN ({params})
+                WHERE project_id = ? AND id NOT IN ({params})
                 ",
             );
 
@@ -1580,6 +1580,7 @@ where
                     WHERE project_id = $1 AND is_host = FALSE
                     ",
                 )
+                .bind(project_id)
                 .fetch(&mut tx);
                 while let Some(connection_id) = db_guest_connection_ids.next().await {
                     guest_connection_ids.push(ConnectionId(connection_id? as u32));
