@@ -1799,6 +1799,68 @@ where
         .await
     }
 
+    pub async fn start_language_server(
+        &self,
+        update: &proto::StartLanguageServer,
+        connection_id: ConnectionId,
+    ) -> Result<Vec<ConnectionId>> {
+        self.transact(|mut tx| async {
+            let project_id = ProjectId::from_proto(update.project_id);
+            let server = update
+                .server
+                .as_ref()
+                .ok_or_else(|| anyhow!("invalid language server"))?;
+
+            // Ensure the update comes from the host.
+            sqlx::query(
+                "
+                SELECT 1
+                FROM projects
+                WHERE id = $1 AND host_connection_id = $2
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .fetch_one(&mut tx)
+            .await?;
+
+            // Add the newly-started language server.
+            sqlx::query(
+                "
+                INSERT INTO language_servers (project_id, id, name)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (project_id, id) DO UPDATE SET
+                    name = excluded.name
+                ",
+            )
+            .bind(project_id)
+            .bind(server.id as i64)
+            .bind(&server.name)
+            .execute(&mut tx)
+            .await?;
+
+            let connection_ids = sqlx::query_scalar::<_, i32>(
+                "
+                SELECT connection_id
+                FROM project_collaborators
+                WHERE project_id = $1 AND connection_id != $2
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .fetch_all(&mut tx)
+            .await?;
+
+            tx.commit().await?;
+
+            Ok(connection_ids
+                .into_iter()
+                .map(|connection_id| ConnectionId(connection_id as u32))
+                .collect())
+        })
+        .await
+    }
+
     pub async fn join_project(
         &self,
         project_id: ProjectId,

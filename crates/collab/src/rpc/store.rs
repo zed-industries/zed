@@ -251,24 +251,6 @@ impl Store {
         }
     }
 
-    pub fn start_language_server(
-        &mut self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-        language_server: proto::LanguageServer,
-    ) -> Result<Vec<ConnectionId>> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        if project.host_connection_id == connection_id {
-            project.language_servers.push(language_server);
-            return Ok(project.connection_ids());
-        }
-
-        Err(anyhow!("no such project"))?
-    }
-
     pub fn leave_project(
         &mut self,
         project_id: ProjectId,

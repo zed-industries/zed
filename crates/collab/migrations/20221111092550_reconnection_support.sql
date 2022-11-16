@@ -10,8 +10,8 @@ ALTER TABLE "projects"
     DROP COLUMN "unregistered";
 
 CREATE TABLE "worktrees" (
-    "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    "id" INTEGER NOT NULL,
     "root_name" VARCHAR NOT NULL,
     "abs_path" VARCHAR NOT NULL,
     "visible" BOOL NOT NULL,
@@ -22,9 +22,9 @@ CREATE TABLE "worktrees" (
 CREATE INDEX "index_worktrees_on_project_id" ON "worktrees" ("project_id");
 
 CREATE TABLE "worktree_entries" (
-    "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL,
     "worktree_id" INTEGER NOT NULL,
+    "id" INTEGER NOT NULL,
     "is_dir" BOOL NOT NULL,
     "path" VARCHAR NOT NULL,
     "inode" INTEGER NOT NULL,
@@ -38,9 +38,9 @@ CREATE TABLE "worktree_entries" (
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
 
 CREATE TABLE "worktree_diagnostic_summaries" (
-    "path" VARCHAR NOT NULL,
     "project_id" INTEGER NOT NULL,
     "worktree_id" INTEGER NOT NULL,
+    "path" VARCHAR NOT NULL,
     "language_server_id" INTEGER NOT NULL,
     "error_count" INTEGER NOT NULL,
     "warning_count" INTEGER NOT NULL,
@@ -50,8 +50,8 @@ CREATE TABLE "worktree_diagnostic_summaries" (
 CREATE INDEX "index_worktree_diagnostic_summaries_on_project_id_and_worktree_id" ON "worktree_diagnostic_summaries" ("project_id", "worktree_id");
 
 CREATE TABLE "language_servers" (
-    "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    "id" INTEGER NOT NULL,
     "name" VARCHAR NOT NULL,
     PRIMARY KEY(project_id, id)
 );
