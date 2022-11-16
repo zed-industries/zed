@@ -72,6 +72,10 @@ pub trait ToOffset: 'static + fmt::Debug {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
+pub trait ToOffsetClamped: 'static + fmt::Debug {
+    fn to_offset_clamped(&self, snapshot: &MultiBufferSnapshot) -> usize;
+}
+
 pub trait ToOffsetUtf16: 'static + fmt::Debug {
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16;
 }
@@ -1945,9 +1949,9 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+    pub fn point_utf16_to_offset_clamped(&self, point: PointUtf16) -> usize {
         if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.point_utf16_to_offset(point);
+            return buffer.point_utf16_to_offset_clamped(point);
         }
 
         let mut cursor = self.excerpts.cursor::<(PointUtf16, usize)>();
@@ -1961,7 +1965,7 @@ impl MultiBufferSnapshot {
                 .offset_to_point_utf16(excerpt.range.context.start.to_offset(&excerpt.buffer));
             let buffer_offset = excerpt
                 .buffer
-                .point_utf16_to_offset(excerpt_start_point + overshoot);
+                .point_utf16_to_offset_clamped(excerpt_start_point + overshoot);
             *start_offset + (buffer_offset - excerpt_start_offset)
         } else {
             self.excerpts.summary().text.len
@@ -3274,12 +3278,6 @@ impl ToOffset for Point {
     }
 }
 
-impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        snapshot.point_utf16_to_offset(*self)
-    }
-}
-
 impl ToOffset for usize {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         assert!(*self <= snapshot.len(), "offset is out of range");
@@ -3290,6 +3288,12 @@ impl ToOffset for usize {
 impl ToOffset for OffsetUtf16 {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.offset_utf16_to_offset(*self)
+    }
+}
+
+impl ToOffsetClamped for PointUtf16 {
+    fn to_offset_clamped<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+        snapshot.point_utf16_to_offset_clamped(*self)
     }
 }
 

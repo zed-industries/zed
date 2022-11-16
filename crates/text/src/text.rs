@@ -1590,12 +1590,8 @@ impl BufferSnapshot {
         self.visible_text.point_to_offset(point)
     }
 
-    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        self.visible_text.point_utf16_to_offset(point, false)
-    }
-
     pub fn point_utf16_to_offset_clamped(&self, point: PointUtf16) -> usize {
-        self.visible_text.point_utf16_to_offset(point, true)
+        self.visible_text.point_utf16_to_offset_clamped(point)
     }
 
     pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
@@ -2425,15 +2421,19 @@ impl ToPoint for usize {
     }
 }
 
-impl ToPoint for PointUtf16 {
-    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point {
-        snapshot.point_utf16_to_point(*self)
-    }
-}
-
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: &BufferSnapshot) -> Point {
         *self
+    }
+}
+
+pub trait ToPointClamped {
+    fn to_point_clamped(&self, snapshot: &BufferSnapshot) -> Point;
+}
+
+impl ToPointClamped for PointUtf16 {
+    fn to_point_clamped<'a>(&self, snapshot: &BufferSnapshot) -> Point {
+        snapshot.point_utf16_to_point(*self)
     }
 }
 

@@ -14,6 +14,7 @@ use util::post_inc;
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
+    ToOffsetClamped,
 };
 
 #[derive(Clone)]
@@ -544,11 +545,33 @@ impl<'a> MutableSelectionsCollection<'a> {
         T: ToOffset,
     {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let ranges = ranges
+            .into_iter()
+            .map(|range| range.start.to_offset(&buffer)..range.end.to_offset(&buffer));
+        self.select_offset_ranges(ranges);
+    }
+
+    pub fn select_clamped_ranges<I, T>(&mut self, ranges: I)
+    where
+        I: IntoIterator<Item = Range<T>>,
+        T: ToOffsetClamped,
+    {
+        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let ranges = ranges.into_iter().map(|range| {
+            range.start.to_offset_clamped(&buffer)..range.end.to_offset_clamped(&buffer)
+        });
+        self.select_offset_ranges(ranges);
+    }
+
+    fn select_offset_ranges<I>(&mut self, ranges: I)
+    where
+        I: IntoIterator<Item = Range<usize>>,
+    {
         let selections = ranges
             .into_iter()
             .map(|range| {
-                let mut start = range.start.to_offset(&buffer);
-                let mut end = range.end.to_offset(&buffer);
+                let mut start = range.start;
+                let mut end = range.end;
                 let reversed = if start > end {
                     mem::swap(&mut start, &mut end);
                     true
