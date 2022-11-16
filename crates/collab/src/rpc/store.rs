@@ -251,31 +251,6 @@ impl Store {
         }
     }
 
-    pub fn update_diagnostic_summary(
-        &mut self,
-        project_id: ProjectId,
-        worktree_id: u64,
-        connection_id: ConnectionId,
-        summary: proto::DiagnosticSummary,
-    ) -> Result<Vec<ConnectionId>> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        if project.host_connection_id == connection_id {
-            let worktree = project
-                .worktrees
-                .get_mut(&worktree_id)
-                .ok_or_else(|| anyhow!("no such worktree"))?;
-            worktree
-                .diagnostic_summaries
-                .insert(summary.path.clone().into(), summary);
-            return Ok(project.connection_ids());
-        }
-
-        Err(anyhow!("no such worktree"))?
-    }
-
     pub fn start_language_server(
         &mut self,
         project_id: ProjectId,

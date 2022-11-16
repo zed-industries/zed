@@ -1103,7 +1103,7 @@ impl Server {
         request: Message<proto::UpdateWorktree>,
         response: Response<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let connection_ids = self
+        let guest_connection_ids = self
             .app_state
             .db
             .update_worktree(&request.payload, request.sender_connection_id)
@@ -1111,7 +1111,7 @@ impl Server {
 
         broadcast(
             request.sender_connection_id,
-            connection_ids,
+            guest_connection_ids,
             |connection_id| {
                 self.peer.forward_send(
                     request.sender_connection_id,
@@ -1128,21 +1128,15 @@ impl Server {
         self: Arc<Server>,
         request: Message<proto::UpdateDiagnosticSummary>,
     ) -> Result<()> {
-        let summary = request
-            .payload
-            .summary
-            .clone()
-            .ok_or_else(|| anyhow!("invalid summary"))?;
-        let receiver_ids = self.store().await.update_diagnostic_summary(
-            ProjectId::from_proto(request.payload.project_id),
-            request.payload.worktree_id,
-            request.sender_connection_id,
-            summary,
-        )?;
+        let guest_connection_ids = self
+            .app_state
+            .db
+            .update_diagnostic_summary(&request.payload, request.sender_connection_id)
+            .await?;
 
         broadcast(
             request.sender_connection_id,
-            receiver_ids,
+            guest_connection_ids,
             |connection_id| {
                 self.peer.forward_send(
                     request.sender_connection_id,
