@@ -457,22 +457,23 @@ impl Project {
     ) -> Result<ModelHandle<Self>, JoinProjectError> {
         client.authenticate_and_connect(true, &cx).await?;
 
+        let subscription = client.subscribe_to_entity(remote_id);
         let response = client
             .request(proto::JoinProject {
                 project_id: remote_id,
             })
             .await?;
+        let this = cx.add_model(|cx| {
+            let replica_id = response.replica_id as ReplicaId;
 
-        let replica_id = response.replica_id as ReplicaId;
+            let mut worktrees = Vec::new();
+            for worktree in response.worktrees {
+                let worktree = cx.update(|cx| {
+                    Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx)
+                });
+                worktrees.push(worktree);
+            }
 
-        let mut worktrees = Vec::new();
-        for worktree in response.worktrees {
-            let worktree = cx
-                .update(|cx| Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx));
-            worktrees.push(worktree);
-        }
-
-        let this = cx.add_model(|cx: &mut ModelContext<Self>| {
             let mut this = Self {
                 worktrees: Vec::new(),
                 loading_buffers: Default::default(),
@@ -488,7 +489,7 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
-                client_subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
+                client_subscriptions: Default::default(),
                 _subscriptions: Default::default(),
                 client: client.clone(),
                 client_state: Some(ProjectClientState::Remote {
@@ -541,6 +542,7 @@ impl Project {
             }
             this
         });
+        let subscription = subscription.set_model(&this, &mut cx);
 
         let user_ids = response
             .collaborators
@@ -558,6 +560,7 @@ impl Project {
 
         this.update(&mut cx, |this, _| {
             this.collaborators = collaborators;
+            this.client_subscriptions.push(subscription);
         });
 
         Ok(this)
@@ -1035,8 +1038,11 @@ impl Project {
             });
         }
 
-        self.client_subscriptions
-            .push(self.client.add_model_for_remote_entity(project_id, cx));
+        self.client_subscriptions.push(
+            self.client
+                .subscribe_to_entity(project_id)
+                .set_model(&cx.handle(), &mut cx.to_async()),
+        );
         let _ = self.metadata_changed(cx);
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
         cx.notify();
