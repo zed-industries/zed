@@ -25,7 +25,7 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetClamped, ToPointUtf16,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetClipped, ToPointUtf16,
     Transaction,
 };
 use lsp::{
@@ -3369,7 +3369,7 @@ impl Project {
                                     }
                                     let Range { start, end } = range_for_token
                                         .get_or_insert_with(|| {
-                                            let offset = position.to_offset_clamped(&snapshot);
+                                            let offset = position.to_offset_clipped(&snapshot);
                                             let (range, kind) = snapshot.surrounding_word(offset);
                                             if kind == Some(CharKind::Word) {
                                                 range
@@ -5743,7 +5743,7 @@ impl Project {
                 // we can identify the changes more precisely, preserving the locations
                 // of any anchors positioned in the unchanged regions.
                 if range.end.row > range.start.row {
-                    let mut offset = range.start.to_offset_clamped(&snapshot);
+                    let mut offset = range.start.to_offset_clipped(&snapshot);
                     let old_text = snapshot.text_for_clamped_range(range).collect::<String>();
 
                     let diff = TextDiff::from_lines(old_text.as_str(), &new_text);

@@ -1590,8 +1590,8 @@ impl BufferSnapshot {
         self.visible_text.point_to_offset(point)
     }
 
-    pub fn point_utf16_to_offset_clamped(&self, point: PointUtf16) -> usize {
-        self.visible_text.point_utf16_to_offset_clamped(point)
+    pub fn point_utf16_to_offset_clipped(&self, point: PointUtf16) -> usize {
+        self.visible_text.point_utf16_to_offset_clipped(point)
     }
 
     pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
@@ -1649,9 +1649,9 @@ impl BufferSnapshot {
         self.visible_text.chunks_in_range(start..end)
     }
 
-    pub fn text_for_clamped_range<T: ToOffsetClamped>(&self, range: Range<T>) -> Chunks<'_> {
-        let start = range.start.to_offset_clamped(self);
-        let end = range.end.to_offset_clamped(self);
+    pub fn text_for_clamped_range<T: ToOffsetClipped>(&self, range: Range<T>) -> Chunks<'_> {
+        let start = range.start.to_offset_clipped(self);
+        let end = range.end.to_offset_clipped(self);
         self.visible_text.chunks_in_range(start..end)
     }
 
@@ -1804,16 +1804,16 @@ impl BufferSnapshot {
         self.anchor_at(position, Bias::Left)
     }
 
-    pub fn clamped_anchor_before<T: ToOffsetClamped>(&self, position: T) -> Anchor {
-        self.anchor_at_offset(position.to_offset_clamped(self), Bias::Left)
+    pub fn clamped_anchor_before<T: ToOffsetClipped>(&self, position: T) -> Anchor {
+        self.anchor_at_offset(position.to_offset_clipped(self), Bias::Left)
     }
 
     pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Right)
     }
 
-    pub fn clamped_anchor_after<T: ToOffsetClamped>(&self, position: T) -> Anchor {
-        self.anchor_at_offset(position.to_offset_clamped(self), Bias::Right)
+    pub fn clamped_anchor_after<T: ToOffsetClipped>(&self, position: T) -> Anchor {
+        self.anchor_at_offset(position.to_offset_clipped(self), Bias::Right)
     }
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
@@ -2395,13 +2395,13 @@ impl<'a, T: ToOffset> ToOffset for &'a T {
     }
 }
 
-pub trait ToOffsetClamped {
-    fn to_offset_clamped(&self, snapshot: &BufferSnapshot) -> usize;
+pub trait ToOffsetClipped {
+    fn to_offset_clipped(&self, snapshot: &BufferSnapshot) -> usize;
 }
 
-impl ToOffsetClamped for PointUtf16 {
-    fn to_offset_clamped<'a>(&self, snapshot: &BufferSnapshot) -> usize {
-        snapshot.point_utf16_to_offset_clamped(*self)
+impl ToOffsetClipped for PointUtf16 {
+    fn to_offset_clipped<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.point_utf16_to_offset_clipped(*self)
     }
 }
 

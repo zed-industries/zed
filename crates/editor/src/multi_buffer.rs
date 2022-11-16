@@ -72,8 +72,8 @@ pub trait ToOffset: 'static + fmt::Debug {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
-pub trait ToOffsetClamped: 'static + fmt::Debug {
-    fn to_offset_clamped(&self, snapshot: &MultiBufferSnapshot) -> usize;
+pub trait ToOffsetClipped: 'static + fmt::Debug {
+    fn to_offset_clipped(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
 pub trait ToOffsetUtf16: 'static + fmt::Debug {
@@ -1949,9 +1949,9 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn point_utf16_to_offset_clamped(&self, point: PointUtf16) -> usize {
+    pub fn point_utf16_to_offset_clipped(&self, point: PointUtf16) -> usize {
         if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.point_utf16_to_offset_clamped(point);
+            return buffer.point_utf16_to_offset_clipped(point);
         }
 
         let mut cursor = self.excerpts.cursor::<(PointUtf16, usize)>();
@@ -1965,7 +1965,7 @@ impl MultiBufferSnapshot {
                 .offset_to_point_utf16(excerpt.range.context.start.to_offset(&excerpt.buffer));
             let buffer_offset = excerpt
                 .buffer
-                .point_utf16_to_offset_clamped(excerpt_start_point + overshoot);
+                .point_utf16_to_offset_clipped(excerpt_start_point + overshoot);
             *start_offset + (buffer_offset - excerpt_start_offset)
         } else {
             self.excerpts.summary().text.len
@@ -3291,9 +3291,9 @@ impl ToOffset for OffsetUtf16 {
     }
 }
 
-impl ToOffsetClamped for PointUtf16 {
-    fn to_offset_clamped<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        snapshot.point_utf16_to_offset_clamped(*self)
+impl ToOffsetClipped for PointUtf16 {
+    fn to_offset_clipped<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+        snapshot.point_utf16_to_offset_clipped(*self)
     }
 }
 

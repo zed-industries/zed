@@ -259,7 +259,7 @@ impl Rope {
                 .map_or(0, |chunk| chunk.point_to_offset(overshoot))
     }
 
-    pub fn point_utf16_to_offset_clamped(&self, point: PointUtf16) -> usize {
+    pub fn point_utf16_to_offset_clipped(&self, point: PointUtf16) -> usize {
         if point >= self.summary().lines_utf16() {
             return self.summary().len;
         }
@@ -269,7 +269,7 @@ impl Rope {
         cursor.start().1
             + cursor
                 .item()
-                .map_or(0, |chunk| chunk.point_utf16_to_offset_clamped(overshoot))
+                .map_or(0, |chunk| chunk.point_utf16_to_offset_clipped(overshoot))
     }
 
     pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
@@ -711,7 +711,7 @@ impl Chunk {
         point_utf16
     }
 
-    fn point_utf16_to_offset_clamped(&self, target: PointUtf16) -> usize {
+    fn point_utf16_to_offset_clipped(&self, target: PointUtf16) -> usize {
         let mut offset = 0;
         let mut point = PointUtf16::new(0, 0);
 
@@ -1210,7 +1210,7 @@ mod tests {
                     point
                 );
                 assert_eq!(
-                    actual.point_utf16_to_offset_clamped(point_utf16),
+                    actual.point_utf16_to_offset_clipped(point_utf16),
                     ix,
                     "point_utf16_to_offset({:?})",
                     point_utf16
@@ -1251,8 +1251,8 @@ mod tests {
                 let right_point = actual.clip_point_utf16(point_utf16, Bias::Right);
                 assert!(right_point >= left_point);
                 // Ensure translating UTF-16 points to offsets doesn't panic.
-                actual.point_utf16_to_offset_clamped(left_point);
-                actual.point_utf16_to_offset_clamped(right_point);
+                actual.point_utf16_to_offset_clipped(left_point);
+                actual.point_utf16_to_offset_clipped(right_point);
 
                 offset_utf16.0 += 1;
                 if unit == b'\n' as u16 {

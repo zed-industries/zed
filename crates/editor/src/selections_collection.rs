@@ -14,7 +14,7 @@ use util::post_inc;
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
-    ToOffsetClamped,
+    ToOffsetClipped,
 };
 
 #[derive(Clone)]
@@ -551,14 +551,14 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select_offset_ranges(ranges);
     }
 
-    pub fn select_clamped_ranges<I, T>(&mut self, ranges: I)
+    pub fn select_clipped_ranges<I, T>(&mut self, ranges: I)
     where
         I: IntoIterator<Item = Range<T>>,
-        T: ToOffsetClamped,
+        T: ToOffsetClipped,
     {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let ranges = ranges.into_iter().map(|range| {
-            range.start.to_offset_clamped(&buffer)..range.end.to_offset_clamped(&buffer)
+            range.start.to_offset_clipped(&buffer)..range.end.to_offset_clipped(&buffer)
         });
         self.select_offset_ranges(ranges);
     }
