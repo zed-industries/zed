@@ -1760,7 +1760,7 @@ where
                 let query = format!(
                     "
                     DELETE FROM worktree_entries
-                    WHERE project_id = ? AND worktree_id = ? AND entry_id IN ({params})
+                    WHERE project_id = ? AND worktree_id = ? AND id IN ({params})
                     "
                 );
 
