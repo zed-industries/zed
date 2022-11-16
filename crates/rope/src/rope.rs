@@ -714,6 +714,7 @@ impl Chunk {
     fn point_utf16_to_offset_clamped(&self, target: PointUtf16) -> usize {
         let mut offset = 0;
         let mut point = PointUtf16::new(0, 0);
+
         for ch in self.0.chars() {
             if point == target {
                 break;
@@ -722,25 +723,19 @@ impl Chunk {
             if ch == '\n' {
                 point.row += 1;
                 point.column = 0;
-
-                if point.row > target.row {
-                    //point is beyond the end of the line
-                    //Return the offset up to but not including the newline
-                    return offset;
-                }
             } else {
                 point.column += ch.len_utf16() as u32;
             }
 
             if point > target {
-                //point is inside of a codepoint
-                //Return the offset before adding the len of the codepoint which
-                //we have landed within, bias left
+                // If the point is past the end of a line or inside of a code point,
+                // return the last valid offset before the point.
                 return offset;
             }
 
             offset += ch.len_utf8();
         }
+
         offset
     }
 
