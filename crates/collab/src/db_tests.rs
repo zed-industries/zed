@@ -646,7 +646,6 @@ async fn test_signups() {
 
     let usernames = (0..8).map(|i| format!("person-{i}")).collect::<Vec<_>>();
 
-    // people sign up on the waitlist
     let all_signups = usernames
         .iter()
         .enumerate()
@@ -661,8 +660,9 @@ async fn test_signups() {
         })
         .collect::<Vec<Signup>>();
 
+    // people sign up on the waitlist
     for signup in &all_signups {
-        // Users can sign up multiple times without issues
+        // users can sign up multiple times without issues
         for _ in 0..2 {
             db.create_signup(&signup).await.unwrap();
         }
