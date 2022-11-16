@@ -258,8 +258,8 @@ impl Element for List {
                     state.0.borrow_mut().scroll(
                         &scroll_top,
                         height,
-                        e.platform_event.delta,
-                        e.platform_event.precise,
+                        *e.platform_event.delta.raw(),
+                        e.platform_event.delta.precise(),
                         cx,
                     )
                 }

@@ -3,7 +3,7 @@ use crate::{
     keymap::Keystroke,
     platform::{Event, NavigationDirection},
     KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseMovedEvent, ScrollWheelEvent, TouchPhase,
+    MouseMovedEvent, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
@@ -164,17 +164,24 @@ impl Event {
                     _ => Some(TouchPhase::Moved),
                 };
 
+                let raw_data = vec2f(
+                    native_event.scrollingDeltaX() as f32,
+                    native_event.scrollingDeltaY() as f32,
+                );
+
+                let delta = if native_event.hasPreciseScrollingDeltas() == YES {
+                    ScrollDelta::Pixels(raw_data)
+                } else {
+                    ScrollDelta::Lines(raw_data)
+                };
+
                 Self::ScrollWheel(ScrollWheelEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
                     ),
-                    delta: vec2f(
-                        native_event.scrollingDeltaX() as f32,
-                        native_event.scrollingDeltaY() as f32,
-                    ),
+                    delta,
                     phase,
-                    precise: native_event.hasPreciseScrollingDeltas() == YES,
                     modifiers: read_modifiers(native_event),
                 })
             }),

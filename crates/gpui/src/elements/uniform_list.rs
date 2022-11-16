@@ -295,15 +295,19 @@ impl Element for UniformList {
                 move |MouseScrollWheel {
                           platform_event:
                               ScrollWheelEvent {
-                                  position,
-                                  delta,
-                                  precise,
-                                  ..
+                                  position, delta, ..
                               },
                           ..
                       },
                       cx| {
-                    if !Self::scroll(state.clone(), position, delta, precise, scroll_max, cx) {
+                    if !Self::scroll(
+                        state.clone(),
+                        position,
+                        *delta.raw(),
+                        delta.precise(),
+                        scroll_max,
+                        cx,
+                    ) {
                         cx.propagate_event();
                     }
                 }

@@ -1,5 +1,7 @@
 use std::ops::Deref;
 
+use pathfinder_geometry::vector::vec2f;
+
 use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 
 #[derive(Clone, Debug)]
@@ -44,11 +46,45 @@ pub enum TouchPhase {
     Ended,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ScrollDelta {
+    Pixels(Vector2F),
+    Lines(Vector2F),
+}
+
+impl Default for ScrollDelta {
+    fn default() -> Self {
+        Self::Lines(Default::default())
+    }
+}
+
+impl ScrollDelta {
+    pub fn raw(&self) -> &Vector2F {
+        match self {
+            ScrollDelta::Pixels(v) => v,
+            ScrollDelta::Lines(v) => v,
+        }
+    }
+
+    pub fn precise(&self) -> bool {
+        match self {
+            ScrollDelta::Pixels(_) => true,
+            ScrollDelta::Lines(_) => false,
+        }
+    }
+
+    pub fn pixel_delta(&self, line_height: f32) -> Vector2F {
+        match self {
+            ScrollDelta::Pixels(delta) => *delta,
+            ScrollDelta::Lines(delta) => vec2f(delta.x() * line_height, delta.y() * line_height),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScrollWheelEvent {
     pub position: Vector2F,
-    pub delta: Vector2F,
-    pub precise: bool,
+    pub delta: ScrollDelta,
     pub modifiers: Modifiers,
     /// If the platform supports returning the phase of a scroll wheel event, it will be stored here
     pub phase: Option<TouchPhase>,

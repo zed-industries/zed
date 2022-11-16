@@ -635,7 +635,7 @@ impl Terminal {
                 term.grid_mut().reset_region(..cursor.line);
 
                 // Copy the current line up
-                let line = term.grid()[cursor.line][..cursor.column]
+                let line = term.grid()[cursor.line][..Column(term.grid().columns())]
                     .iter()
                     .cloned()
                     .enumerate()
@@ -1144,7 +1144,7 @@ impl Terminal {
 
     fn determine_scroll_lines(&mut self, e: &MouseScrollWheel, mouse_mode: bool) -> Option<i32> {
         let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
-
+        let line_height = self.last_content.size.line_height;
         match e.phase {
             /* Reset scroll state on started */
             Some(gpui::TouchPhase::Started) => {
@@ -1153,11 +1153,11 @@ impl Terminal {
             }
             /* Calculate the appropriate scroll lines */
             Some(gpui::TouchPhase::Moved) => {
-                let old_offset = (self.scroll_px / self.last_content.size.line_height) as i32;
+                let old_offset = (self.scroll_px / line_height) as i32;
 
-                self.scroll_px += e.delta.y() * scroll_multiplier;
+                self.scroll_px += e.delta.pixel_delta(line_height).y() * scroll_multiplier;
 
-                let new_offset = (self.scroll_px / self.last_content.size.line_height) as i32;
+                let new_offset = (self.scroll_px / line_height) as i32;
 
                 // Whenever we hit the edges, reset our stored scroll to 0
                 // so we can respond to changes in direction quickly
@@ -1167,7 +1167,7 @@ impl Terminal {
             }
             /* Fall back to delta / line_height */
             None => Some(
-                ((e.delta.y() * scroll_multiplier) / self.last_content.size.line_height) as i32,
+                ((e.delta.pixel_delta(line_height).y() * scroll_multiplier) / line_height) as i32,
             ),
             _ => None,
         }
