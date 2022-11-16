@@ -624,19 +624,19 @@ impl Server {
 
     async fn leave_room_for_connection(
         self: &Arc<Server>,
-        connection_id: ConnectionId,
-        user_id: UserId,
+        leaving_connection_id: ConnectionId,
+        leaving_user_id: UserId,
     ) -> Result<()> {
         let mut contacts_to_update = HashSet::default();
 
-        let Some(left_room) = self.app_state.db.leave_room_for_connection(connection_id).await? else {
+        let Some(left_room) = self.app_state.db.leave_room_for_connection(leaving_connection_id).await? else {
             return Err(anyhow!("no room to leave"))?;
         };
-        contacts_to_update.insert(user_id);
+        contacts_to_update.insert(leaving_user_id);
 
         for project in left_room.left_projects.into_values() {
-            if project.host_user_id == user_id {
-                for connection_id in project.connection_ids {
+            for connection_id in project.connection_ids {
+                if project.host_user_id == leaving_user_id {
                     self.peer
                         .send(
                             connection_id,
@@ -645,29 +645,27 @@ impl Server {
                             },
                         )
                         .trace_err();
-                }
-            } else {
-                for connection_id in project.connection_ids {
+                } else {
                     self.peer
                         .send(
                             connection_id,
                             proto::RemoveProjectCollaborator {
                                 project_id: project.id.to_proto(),
-                                peer_id: connection_id.0,
+                                peer_id: leaving_connection_id.0,
                             },
                         )
                         .trace_err();
                 }
-
-                self.peer
-                    .send(
-                        connection_id,
-                        proto::UnshareProject {
-                            project_id: project.id.to_proto(),
-                        },
-                    )
-                    .trace_err();
             }
+
+            self.peer
+                .send(
+                    leaving_connection_id,
+                    proto::UnshareProject {
+                        project_id: project.id.to_proto(),
+                    },
+                )
+                .trace_err();
         }
 
         self.room_updated(&left_room.room);
@@ -691,7 +689,7 @@ impl Server {
             live_kit
                 .remove_participant(
                     left_room.room.live_kit_room.clone(),
-                    connection_id.to_string(),
+                    leaving_connection_id.to_string(),
                 )
                 .await
                 .trace_err();
@@ -941,6 +939,9 @@ impl Server {
         let collaborators = project
             .collaborators
             .iter()
+            .filter(|collaborator| {
+                collaborator.connection_id != request.sender_connection_id.0 as i32
+            })
             .map(|collaborator| proto::Collaborator {
                 peer_id: collaborator.connection_id as u32,
                 replica_id: collaborator.replica_id.0 as u32,
@@ -958,23 +959,20 @@ impl Server {
             })
             .collect::<Vec<_>>();
 
-        for collaborator in &project.collaborators {
-            let connection_id = ConnectionId(collaborator.connection_id as u32);
-            if connection_id != request.sender_connection_id {
-                self.peer
-                    .send(
-                        connection_id,
-                        proto::AddProjectCollaborator {
-                            project_id: project_id.to_proto(),
-                            collaborator: Some(proto::Collaborator {
-                                peer_id: request.sender_connection_id.0,
-                                replica_id: replica_id.0 as u32,
-                                user_id: guest_user_id.to_proto(),
-                            }),
-                        },
-                    )
-                    .trace_err();
-            }
+        for collaborator in &collaborators {
+            self.peer
+                .send(
+                    ConnectionId(collaborator.peer_id),
+                    proto::AddProjectCollaborator {
+                        project_id: project_id.to_proto(),
+                        collaborator: Some(proto::Collaborator {
+                            peer_id: request.sender_connection_id.0,
+                            replica_id: replica_id.0 as u32,
+                            user_id: guest_user_id.to_proto(),
+                        }),
+                    },
+                )
+                .trace_err();
         }
 
         // First, we send the metadata associated with each worktree.

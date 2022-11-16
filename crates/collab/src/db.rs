@@ -1171,44 +1171,68 @@ where
                 .fetch_all(&mut tx)
                 .await?;
 
-                let mut project_collaborators = sqlx::query_as::<_, ProjectCollaborator>(
+                let project_ids = sqlx::query_scalar::<_, ProjectId>(
                     "
-                    SELECT project_collaborators.*
-                    FROM projects, project_collaborators
-                    WHERE
-                        projects.room_id = $1 AND
-                        projects.id = project_collaborators.project_id AND
-                        project_collaborators.connection_id = $2
+                    SELECT project_id
+                    FROM project_collaborators
+                    WHERE connection_id = $1
                     ",
                 )
-                .bind(room_id)
                 .bind(connection_id.0 as i32)
-                .fetch(&mut tx);
+                .fetch_all(&mut tx)
+                .await?;
 
+                // Leave projects.
                 let mut left_projects = HashMap::default();
-                while let Some(collaborator) = project_collaborators.next().await {
-                    let collaborator = collaborator?;
-                    let left_project =
-                        left_projects
-                            .entry(collaborator.project_id)
-                            .or_insert(LeftProject {
-                                id: collaborator.project_id,
-                                host_user_id: Default::default(),
-                                connection_ids: Default::default(),
-                            });
-
-                    let collaborator_connection_id =
-                        ConnectionId(collaborator.connection_id as u32);
-                    if collaborator_connection_id != connection_id || collaborator.is_host {
-                        left_project.connection_ids.push(collaborator_connection_id);
+                if !project_ids.is_empty() {
+                    let mut params = "?,".repeat(project_ids.len());
+                    params.pop();
+                    let query = format!(
+                        "
+                        SELECT *
+                        FROM project_collaborators
+                        WHERE project_id IN ({params})
+                    "
+                    );
+                    let mut query = sqlx::query_as::<_, ProjectCollaborator>(&query);
+                    for project_id in project_ids {
+                        query = query.bind(project_id);
                     }
 
-                    if collaborator.is_host {
-                        left_project.host_user_id = collaborator.user_id;
+                    let mut project_collaborators = query.fetch(&mut tx);
+                    while let Some(collaborator) = project_collaborators.next().await {
+                        let collaborator = collaborator?;
+                        let left_project =
+                            left_projects
+                                .entry(collaborator.project_id)
+                                .or_insert(LeftProject {
+                                    id: collaborator.project_id,
+                                    host_user_id: Default::default(),
+                                    connection_ids: Default::default(),
+                                });
+
+                        let collaborator_connection_id =
+                            ConnectionId(collaborator.connection_id as u32);
+                        if collaborator_connection_id != connection_id {
+                            left_project.connection_ids.push(collaborator_connection_id);
+                        }
+
+                        if collaborator.is_host {
+                            left_project.host_user_id = collaborator.user_id;
+                        }
                     }
                 }
-                drop(project_collaborators);
+                sqlx::query(
+                    "
+                    DELETE FROM project_collaborators
+                    WHERE connection_id = $1
+                    ",
+                )
+                .bind(connection_id.0 as i32)
+                .execute(&mut tx)
+                .await?;
 
+                // Unshare projects.
                 sqlx::query(
                     "
                     DELETE FROM projects
@@ -1265,15 +1289,16 @@ where
             sqlx::query(
                 "
                 UPDATE room_participants
-                SET location_kind = $1 AND location_project_id = $2
+                SET location_kind = $1, location_project_id = $2
                 WHERE room_id = $3 AND answering_connection_id = $4
+                RETURNING 1
                 ",
             )
             .bind(location_kind)
             .bind(location_project_id)
             .bind(room_id)
             .bind(connection_id.0 as i32)
-            .execute(&mut tx)
+            .fetch_one(&mut tx)
             .await?;
 
             self.commit_room_transaction(room_id, tx).await
@@ -1335,21 +1360,32 @@ where
             let (
                 user_id,
                 answering_connection_id,
-                _location_kind,
-                _location_project_id,
+                location_kind,
+                location_project_id,
                 calling_user_id,
                 initial_project_id,
             ) = participant?;
             if let Some(answering_connection_id) = answering_connection_id {
+                let location = match (location_kind, location_project_id) {
+                    (Some(0), Some(project_id)) => {
+                        Some(proto::participant_location::Variant::SharedProject(
+                            proto::participant_location::SharedProject {
+                                id: project_id.to_proto(),
+                            },
+                        ))
+                    }
+                    (Some(1), _) => Some(proto::participant_location::Variant::UnsharedProject(
+                        Default::default(),
+                    )),
+                    _ => Some(proto::participant_location::Variant::External(
+                        Default::default(),
+                    )),
+                };
                 participants.push(proto::Participant {
                     user_id: user_id.to_proto(),
                     peer_id: answering_connection_id as u32,
                     projects: Default::default(),
-                    location: Some(proto::ParticipantLocation {
-                        variant: Some(proto::participant_location::Variant::External(
-                            Default::default(),
-                        )),
-                    }),
+                    location: Some(proto::ParticipantLocation { variant: location }),
                 });
             } else {
                 pending_participants.push(proto::PendingParticipant {
