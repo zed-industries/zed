@@ -1354,7 +1354,7 @@ where
             .bind(room_id)
             .fetch(&mut *tx);
 
-        let mut participants = Vec::new();
+        let mut participants = HashMap::default();
         let mut pending_participants = Vec::new();
         while let Some(participant) = db_participants.next().await {
             let (
@@ -1381,12 +1381,15 @@ where
                         Default::default(),
                     )),
                 };
-                participants.push(proto::Participant {
-                    user_id: user_id.to_proto(),
-                    peer_id: answering_connection_id as u32,
-                    projects: Default::default(),
-                    location: Some(proto::ParticipantLocation { variant: location }),
-                });
+                participants.insert(
+                    answering_connection_id,
+                    proto::Participant {
+                        user_id: user_id.to_proto(),
+                        peer_id: answering_connection_id as u32,
+                        projects: Default::default(),
+                        location: Some(proto::ParticipantLocation { variant: location }),
+                    },
+                );
             } else {
                 pending_participants.push(proto::PendingParticipant {
                     user_id: user_id.to_proto(),
@@ -1397,41 +1400,42 @@ where
         }
         drop(db_participants);
 
-        for participant in &mut participants {
-            let mut entries = sqlx::query_as::<_, (ProjectId, String)>(
-                "
-                SELECT projects.id, worktrees.root_name
-                FROM projects
-                LEFT JOIN worktrees ON projects.id = worktrees.project_id
-                WHERE room_id = $1 AND host_connection_id = $2
-                ",
-            )
-            .bind(room_id)
-            .bind(participant.peer_id as i32)
-            .fetch(&mut *tx);
+        let mut rows = sqlx::query_as::<_, (i32, ProjectId, Option<String>)>(
+            "
+            SELECT host_connection_id, projects.id, worktrees.root_name
+            FROM projects
+            LEFT JOIN worktrees ON projects.id = worktrees.project_id
+            WHERE room_id = $1
+            ",
+        )
+        .bind(room_id)
+        .fetch(&mut *tx);
 
-            let mut projects = HashMap::default();
-            while let Some(entry) = entries.next().await {
-                let (project_id, worktree_root_name) = entry?;
-                let participant_project =
-                    projects
-                        .entry(project_id)
-                        .or_insert(proto::ParticipantProject {
-                            id: project_id.to_proto(),
-                            worktree_root_names: Default::default(),
-                        });
-                participant_project
-                    .worktree_root_names
-                    .push(worktree_root_name);
+        while let Some(row) = rows.next().await {
+            let (connection_id, project_id, worktree_root_name) = row?;
+            if let Some(participant) = participants.get_mut(&connection_id) {
+                let project = if let Some(project) = participant
+                    .projects
+                    .iter_mut()
+                    .find(|project| project.id == project_id.to_proto())
+                {
+                    project
+                } else {
+                    participant.projects.push(proto::ParticipantProject {
+                        id: project_id.to_proto(),
+                        worktree_root_names: Default::default(),
+                    });
+                    participant.projects.last_mut().unwrap()
+                };
+                project.worktree_root_names.extend(worktree_root_name);
             }
-
-            participant.projects = projects.into_values().collect();
         }
+
         Ok(proto::Room {
             id: room.id.to_proto(),
             version: room.version as u64,
             live_kit_room: room.live_kit_room,
-            participants,
+            participants: participants.into_values().collect(),
             pending_participants,
         })
     }
@@ -1472,22 +1476,36 @@ where
             .fetch_one(&mut tx)
             .await?;
 
-            for worktree in worktrees {
-                sqlx::query(
+            if !worktrees.is_empty() {
+                let mut params = "(?, ?, ?, ?, ?, ?, ?),".repeat(worktrees.len());
+                params.pop();
+                let query = format!(
                     "
-                    INSERT INTO worktrees (project_id, id, root_name, abs_path, visible, scan_id, is_complete)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ",
-                )
-                .bind(project_id)
-                .bind(worktree.id as i32)
-                .bind(&worktree.root_name)
-                .bind(&worktree.abs_path)
-                .bind(worktree.visible)
-                .bind(0)
-                .bind(false)
-                .execute(&mut tx)
-                .await?;
+                    INSERT INTO worktrees (
+                        project_id,
+                        id,
+                        root_name,
+                        abs_path,
+                        visible,
+                        scan_id,
+                        is_complete
+                    )
+                    VALUES {params}
+                    "
+                );
+
+                let mut query = sqlx::query(&query);
+                for worktree in worktrees {
+                    query = query
+                        .bind(project_id)
+                        .bind(worktree.id as i32)
+                        .bind(&worktree.root_name)
+                        .bind(&worktree.abs_path)
+                        .bind(worktree.visible)
+                        .bind(0)
+                        .bind(false);
+                }
+                query.execute(&mut tx).await?;
             }
 
             sqlx::query(
@@ -1535,23 +1553,37 @@ where
             .fetch_one(&mut tx)
             .await?;
 
-            for worktree in worktrees {
-                sqlx::query(
+            if !worktrees.is_empty() {
+                let mut params = "(?, ?, ?, ?, ?, ?, ?),".repeat(worktrees.len());
+                params.pop();
+                let query = format!(
                     "
-                    INSERT INTO worktrees (project_id, id, root_name, abs_path, visible, scan_id, is_complete)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    INSERT INTO worktrees (
+                        project_id,
+                        id,
+                        root_name,
+                        abs_path,
+                        visible,
+                        scan_id,
+                        is_complete
+                    )
+                    VALUES ${params}
                     ON CONFLICT (project_id, id) DO UPDATE SET root_name = excluded.root_name
-                    ",
-                )
-                .bind(project_id)
-                .bind(worktree.id as i32)
-                .bind(&worktree.root_name)
-                .bind(&worktree.abs_path)
-                .bind(worktree.visible)
-                .bind(0)
-                .bind(false)
-                .execute(&mut tx)
-                .await?;
+                    "
+                );
+
+                let mut query = sqlx::query(&query);
+                for worktree in worktrees {
+                    query = query
+                        .bind(project_id)
+                        .bind(worktree.id as i32)
+                        .bind(&worktree.root_name)
+                        .bind(&worktree.abs_path)
+                        .bind(worktree.visible)
+                        .bind(0)
+                        .bind(false)
+                }
+                query.execute(&mut tx).await?;
             }
 
             let mut params = "?,".repeat(worktrees.len());
