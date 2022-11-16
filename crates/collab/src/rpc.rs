@@ -1041,8 +1041,11 @@ impl Server {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let project;
         {
-            let mut store = self.store().await;
-            project = store.leave_project(project_id, sender_id)?;
+            project = self
+                .app_state
+                .db
+                .leave_project(project_id, sender_id)
+                .await?;
             tracing::info!(
                 %project_id,
                 host_user_id = %project.host_user_id,
@@ -1050,17 +1053,15 @@ impl Server {
                 "leave project"
             );
 
-            if project.remove_collaborator {
-                broadcast(sender_id, project.connection_ids, |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::RemoveProjectCollaborator {
-                            project_id: project_id.to_proto(),
-                            peer_id: sender_id.0,
-                        },
-                    )
-                });
-            }
+            broadcast(sender_id, project.connection_ids, |conn_id| {
+                self.peer.send(
+                    conn_id,
+                    proto::RemoveProjectCollaborator {
+                        project_id: project_id.to_proto(),
+                        peer_id: sender_id.0,
+                    },
+                )
+            });
         }
 
         Ok(())

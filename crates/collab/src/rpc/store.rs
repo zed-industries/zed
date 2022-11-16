@@ -251,37 +251,6 @@ impl Store {
         }
     }
 
-    pub fn leave_project(
-        &mut self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-    ) -> Result<LeftProject> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-
-        // If the connection leaving the project is a collaborator, remove it.
-        let remove_collaborator = if let Some(guest) = project.guests.remove(&connection_id) {
-            project.active_replica_ids.remove(&guest.replica_id);
-            true
-        } else {
-            false
-        };
-
-        if let Some(connection) = self.connections.get_mut(&connection_id) {
-            connection.projects.remove(&project_id);
-        }
-
-        Ok(LeftProject {
-            id: project.id,
-            host_connection_id: project.host_connection_id,
-            host_user_id: project.host.user_id,
-            connection_ids: project.connection_ids(),
-            remove_collaborator,
-        })
-    }
-
     #[cfg(test)]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {

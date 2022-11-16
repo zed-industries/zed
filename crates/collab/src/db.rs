@@ -1209,6 +1209,7 @@ where
                                     id: collaborator.project_id,
                                     host_user_id: Default::default(),
                                     connection_ids: Default::default(),
+                                    host_connection_id: Default::default(),
                                 });
 
                         let collaborator_connection_id =
@@ -1219,6 +1220,8 @@ where
 
                         if collaborator.is_host {
                             left_project.host_user_id = collaborator.user_id;
+                            left_project.host_connection_id =
+                                ConnectionId(collaborator.connection_id as u32);
                         }
                     }
                 }
@@ -1474,7 +1477,8 @@ where
             .bind(user_id)
             .bind(connection_id.0 as i32)
             .fetch_one(&mut tx)
-            .await?;
+            .await
+            .unwrap();
 
             if !worktrees.is_empty() {
                 let mut params = "(?, ?, ?, ?, ?, ?, ?),".repeat(worktrees.len());
@@ -1505,7 +1509,7 @@ where
                         .bind(0)
                         .bind(false);
                 }
-                query.execute(&mut tx).await?;
+                query.execute(&mut tx).await.unwrap();
             }
 
             sqlx::query(
@@ -1526,7 +1530,8 @@ where
             .bind(0)
             .bind(true)
             .execute(&mut tx)
-            .await?;
+            .await
+            .unwrap();
 
             let room = self.commit_room_transaction(room_id, tx).await?;
             Ok((project_id, room))
@@ -2082,6 +2087,64 @@ where
                 },
                 replica_id as ReplicaId,
             ))
+        })
+        .await
+    }
+
+    pub async fn leave_project(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<LeftProject> {
+        self.transact(|mut tx| async move {
+            let result = sqlx::query(
+                "
+                DELETE FROM project_collaborators
+                WHERE project_id = $1 AND connection_id = $2
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .execute(&mut tx)
+            .await?;
+
+            if result.rows_affected() != 1 {
+                Err(anyhow!("not a collaborator on this project"))?;
+            }
+
+            let connection_ids = sqlx::query_scalar::<_, i32>(
+                "
+                SELECT connection_id
+                FROM project_collaborators
+                WHERE project_id = $1
+                ",
+            )
+            .bind(project_id)
+            .fetch_all(&mut tx)
+            .await?
+            .into_iter()
+            .map(|id| ConnectionId(id as u32))
+            .collect();
+
+            let (host_user_id, host_connection_id) = sqlx::query_as::<_, (i32, i32)>(
+                "
+                SELECT host_user_id, host_connection_id
+                FROM projects
+                WHERE id = $1
+                ",
+            )
+            .bind(project_id)
+            .fetch_one(&mut tx)
+            .await?;
+
+            tx.commit().await?;
+
+            Ok(LeftProject {
+                id: project_id,
+                host_user_id: UserId(host_user_id),
+                host_connection_id: ConnectionId(host_connection_id as u32),
+                connection_ids,
+            })
         })
         .await
     }
@@ -2645,6 +2708,7 @@ struct LanguageServer {
 pub struct LeftProject {
     pub id: ProjectId,
     pub host_user_id: UserId,
+    pub host_connection_id: ConnectionId,
     pub connection_ids: Vec<ConnectionId>,
 }
 
