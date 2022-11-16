@@ -1554,20 +1554,20 @@ where
                 .await?;
             }
 
-            let mut params = "(?, ?),".repeat(worktrees.len());
+            let mut params = "?,".repeat(worktrees.len());
             if !worktrees.is_empty() {
                 params.pop();
             }
             let query = format!(
                 "
                 DELETE FROM worktrees
-                WHERE (project_id, id) NOT IN ({params})
+                WHERE project_id = ? AND worktree_id NOT IN ({params})
                 ",
             );
 
-            let mut query = sqlx::query(&query);
+            let mut query = sqlx::query(&query).bind(project_id);
             for worktree in worktrees {
-                query = query.bind(project_id).bind(WorktreeId(worktree.id as i32));
+                query = query.bind(WorktreeId(worktree.id as i32));
             }
             query.execute(&mut tx).await?;
 
@@ -1685,21 +1685,18 @@ where
             }
 
             if !update.removed_entries.is_empty() {
-                let mut params = "(?, ?, ?),".repeat(update.removed_entries.len());
+                let mut params = "?,".repeat(update.removed_entries.len());
                 params.pop();
                 let query = format!(
                     "
                     DELETE FROM worktree_entries
-                    WHERE (project_id, worktree_id, entry_id) IN ({params})
+                    WHERE project_id = ? AND worktree_id = ? AND entry_id IN ({params})
                     "
                 );
 
-                let mut query = sqlx::query(&query);
+                let mut query = sqlx::query(&query).bind(project_id).bind(worktree_id);
                 for entry_id in &update.removed_entries {
-                    query = query
-                        .bind(project_id)
-                        .bind(worktree_id)
-                        .bind(*entry_id as i64);
+                    query = query.bind(*entry_id as i64);
                 }
                 query.execute(&mut tx).await?;
             }
@@ -1832,7 +1829,7 @@ where
                 })
                 .collect::<BTreeMap<_, _>>();
 
-            let mut params = "(?, ?),".repeat(worktrees.len());
+            let mut params = "?,".repeat(worktrees.len());
             if !worktrees.is_empty() {
                 params.pop();
             }
@@ -1843,12 +1840,12 @@ where
                     "
                         SELECT *
                         FROM worktree_entries
-                        WHERE (project_id, worktree_id) IN ({params})
+                        WHERE project_id = ? AND worktree_id IN ({params})
                     ",
                 );
-                let mut entries = sqlx::query_as::<_, WorktreeEntry>(&query);
+                let mut entries = sqlx::query_as::<_, WorktreeEntry>(&query).bind(project_id);
                 for worktree_id in worktrees.keys() {
-                    entries = entries.bind(project_id).bind(*worktree_id);
+                    entries = entries.bind(*worktree_id);
                 }
                 let mut entries = entries.fetch(&mut tx);
                 while let Some(entry) = entries.next().await {
@@ -1876,12 +1873,13 @@ where
                     "
                         SELECT *
                         FROM worktree_diagnostic_summaries
-                        WHERE (project_id, worktree_id) IN ({params})
+                        WHERE project_id = $1 AND worktree_id IN ({params})
                     ",
                 );
-                let mut summaries = sqlx::query_as::<_, WorktreeDiagnosticSummary>(&query);
+                let mut summaries =
+                    sqlx::query_as::<_, WorktreeDiagnosticSummary>(&query).bind(project_id);
                 for worktree_id in worktrees.keys() {
-                    summaries = summaries.bind(project_id).bind(*worktree_id);
+                    summaries = summaries.bind(*worktree_id);
                 }
                 let mut summaries = summaries.fetch(&mut tx);
                 while let Some(summary) = summaries.next().await {
