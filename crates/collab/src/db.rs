@@ -1330,6 +1330,27 @@ where
         Ok(room)
     }
 
+    async fn get_guest_connection_ids(
+        &self,
+        project_id: ProjectId,
+        tx: &mut sqlx::Transaction<'_, D>,
+    ) -> Result<Vec<ConnectionId>> {
+        let mut guest_connection_ids = Vec::new();
+        let mut db_guest_connection_ids = sqlx::query_scalar::<_, i32>(
+            "
+            SELECT connection_id
+            FROM project_collaborators
+            WHERE project_id = $1 AND is_host = FALSE
+            ",
+        )
+        .bind(project_id)
+        .fetch(tx);
+        while let Some(connection_id) = db_guest_connection_ids.next().await {
+            guest_connection_ids.push(ConnectionId(connection_id? as u32));
+        }
+        Ok(guest_connection_ids)
+    }
+
     async fn get_room(
         &self,
         room_id: RoomId,
@@ -1539,6 +1560,31 @@ where
         .await
     }
 
+    pub async fn unshare_project(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<(proto::Room, Vec<ConnectionId>)> {
+        self.transact(|mut tx| async move {
+            let guest_connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
+            let room_id: RoomId = sqlx::query_scalar(
+                "
+                DELETE FROM projects
+                WHERE id = $1 AND host_connection_id = $2
+                RETURNING room_id
+                ",
+            )
+            .bind(project_id)
+            .bind(connection_id.0 as i32)
+            .fetch_one(&mut tx)
+            .await?;
+            let room = self.commit_room_transaction(room_id, tx).await?;
+
+            Ok((room, guest_connection_ids))
+        })
+        .await
+    }
+
     pub async fn update_project(
         &self,
         project_id: ProjectId,
@@ -1608,23 +1654,9 @@ where
             }
             query.execute(&mut tx).await?;
 
-            let mut guest_connection_ids = Vec::new();
-            {
-                let mut db_guest_connection_ids = sqlx::query_scalar::<_, i32>(
-                    "
-                    SELECT connection_id
-                    FROM project_collaborators
-                    WHERE project_id = $1 AND is_host = FALSE
-                    ",
-                )
-                .bind(project_id)
-                .fetch(&mut tx);
-                while let Some(connection_id) = db_guest_connection_ids.next().await {
-                    guest_connection_ids.push(ConnectionId(connection_id? as u32));
-                }
-            }
-
+            let guest_connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
             let room = self.commit_room_transaction(room_id, tx).await?;
+
             Ok((room, guest_connection_ids))
         })
         .await
@@ -2108,7 +2140,7 @@ where
             .execute(&mut tx)
             .await?;
 
-            if result.rows_affected() != 1 {
+            if result.rows_affected() == 0 {
                 Err(anyhow!("not a collaborator on this project"))?;
             }
 
@@ -2205,23 +2237,6 @@ where
             }
         })
         .await
-    }
-
-    pub async fn unshare_project(&self, project_id: ProjectId) -> Result<()> {
-        todo!()
-        // test_support!(self, {
-        //     sqlx::query(
-        //         "
-        //         UPDATE projects
-        //         SET unregistered = TRUE
-        //         WHERE id = $1
-        //         ",
-        //     )
-        //     .bind(project_id)
-        //     .execute(&self.pool)
-        //     .await?;
-        //     Ok(())
-        // })
     }
 
     // contacts

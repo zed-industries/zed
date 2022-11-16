@@ -877,14 +877,19 @@ impl Server {
         message: Message<proto::UnshareProject>,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(message.payload.project_id);
-        let mut store = self.store().await;
-        let (room, project) = store.unshare_project(project_id, message.sender_connection_id)?;
+
+        let (room, guest_connection_ids) = self
+            .app_state
+            .db
+            .unshare_project(project_id, message.sender_connection_id)
+            .await?;
+
         broadcast(
             message.sender_connection_id,
-            project.guest_connection_ids(),
+            guest_connection_ids,
             |conn_id| self.peer.send(conn_id, message.payload.clone()),
         );
-        self.room_updated(room);
+        self.room_updated(&room);
 
         Ok(())
     }

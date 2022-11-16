@@ -1,6 +1,6 @@
 use crate::db::{self, ProjectId, UserId};
 use anyhow::{anyhow, Result};
-use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -71,14 +71,6 @@ pub struct Worktree {
 }
 
 pub type ReplicaId = u16;
-
-pub struct LeftProject {
-    pub id: ProjectId,
-    pub host_user_id: UserId,
-    pub host_connection_id: ConnectionId,
-    pub connection_ids: Vec<ConnectionId>,
-    pub remove_collaborator: bool,
-}
 
 #[derive(Copy, Clone)]
 pub struct Metrics {
@@ -209,48 +201,6 @@ impl Store {
         &self.rooms
     }
 
-    pub fn unshare_project(
-        &mut self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-    ) -> Result<(&proto::Room, Project)> {
-        match self.projects.entry(project_id) {
-            btree_map::Entry::Occupied(e) => {
-                if e.get().host_connection_id == connection_id {
-                    let project = e.remove();
-
-                    if let Some(host_connection) = self.connections.get_mut(&connection_id) {
-                        host_connection.projects.remove(&project_id);
-                    }
-
-                    for guest_connection in project.guests.keys() {
-                        if let Some(connection) = self.connections.get_mut(guest_connection) {
-                            connection.projects.remove(&project_id);
-                        }
-                    }
-
-                    let room = self
-                        .rooms
-                        .get_mut(&project.room_id)
-                        .ok_or_else(|| anyhow!("no such room"))?;
-                    let participant = room
-                        .participants
-                        .iter_mut()
-                        .find(|participant| participant.peer_id == connection_id.0)
-                        .ok_or_else(|| anyhow!("no such room"))?;
-                    participant
-                        .projects
-                        .retain(|project| project.id != project_id.to_proto());
-
-                    Ok((room, project))
-                } else {
-                    Err(anyhow!("no such project"))?
-                }
-            }
-            btree_map::Entry::Vacant(_) => Err(anyhow!("no such project"))?,
-        }
-    }
-
     #[cfg(test)]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
@@ -371,19 +321,5 @@ impl Store {
                 "project was not shared in room"
             );
         }
-    }
-}
-
-impl Project {
-    pub fn guest_connection_ids(&self) -> Vec<ConnectionId> {
-        self.guests.keys().copied().collect()
-    }
-
-    pub fn connection_ids(&self) -> Vec<ConnectionId> {
-        self.guests
-            .keys()
-            .copied()
-            .chain(Some(self.host_connection_id))
-            .collect()
     }
 }
