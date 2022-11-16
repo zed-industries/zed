@@ -166,7 +166,9 @@ enum ScanState {
 struct ShareState {
     project_id: u64,
     snapshots_tx: watch::Sender<LocalSnapshot>,
-    _maintain_remote_snapshot: Option<Task<Option<()>>>,
+    diagnostic_summaries_tx: mpsc::UnboundedSender<(Arc<Path>, DiagnosticSummary)>,
+    _maintain_remote_snapshot: Task<Option<()>>,
+    _maintain_remote_diagnostic_summaries: Task<()>,
 }
 
 pub enum Event {
@@ -524,18 +526,9 @@ impl LocalWorktree {
         let updated = !old_summary.is_empty() || !new_summary.is_empty();
         if updated {
             if let Some(share) = self.share.as_ref() {
-                self.client
-                    .send(proto::UpdateDiagnosticSummary {
-                        project_id: share.project_id,
-                        worktree_id: self.id().to_proto(),
-                        summary: Some(proto::DiagnosticSummary {
-                            path: worktree_path.to_string_lossy().to_string(),
-                            language_server_id: language_server_id as u64,
-                            error_count: new_summary.error_count as u32,
-                            warning_count: new_summary.warning_count as u32,
-                        }),
-                    })
-                    .log_err();
+                let _ = share
+                    .diagnostic_summaries_tx
+                    .unbounded_send((worktree_path.clone(), new_summary));
             }
         }
 
@@ -967,22 +960,10 @@ impl LocalWorktree {
             let _ = share_tx.send(Ok(()));
         } else {
             let (snapshots_tx, mut snapshots_rx) = watch::channel_with(self.snapshot());
-            let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
 
-            for (path, summary) in self.diagnostic_summaries.iter() {
-                if let Err(e) = rpc.send(proto::UpdateDiagnosticSummary {
-                    project_id,
-                    worktree_id,
-                    summary: Some(summary.to_proto(&path.0)),
-                }) {
-                    return Task::ready(Err(e));
-                }
-            }
-
             let maintain_remote_snapshot = cx.background().spawn({
-                let rpc = rpc;
-
+                let rpc = self.client.clone();
                 async move {
                     let mut prev_snapshot = match snapshots_rx.recv().await {
                         Some(snapshot) => {
@@ -1029,10 +1010,32 @@ impl LocalWorktree {
                 }
                 .log_err()
             });
+
+            let (diagnostic_summaries_tx, mut diagnostic_summaries_rx) = mpsc::unbounded();
+            for (path, summary) in self.diagnostic_summaries.iter() {
+                let _ = diagnostic_summaries_tx.unbounded_send((path.0.clone(), summary.clone()));
+            }
+            let maintain_remote_diagnostic_summaries = cx.background().spawn({
+                let rpc = self.client.clone();
+                async move {
+                    while let Some((path, summary)) = diagnostic_summaries_rx.next().await {
+                        rpc.request(proto::UpdateDiagnosticSummary {
+                            project_id,
+                            worktree_id,
+                            summary: Some(summary.to_proto(&path)),
+                        })
+                        .await
+                        .log_err();
+                    }
+                }
+            });
+
             self.share = Some(ShareState {
                 project_id,
                 snapshots_tx,
-                _maintain_remote_snapshot: Some(maintain_remote_snapshot),
+                diagnostic_summaries_tx,
+                _maintain_remote_snapshot: maintain_remote_snapshot,
+                _maintain_remote_diagnostic_summaries: maintain_remote_diagnostic_summaries,
             });
         }
 

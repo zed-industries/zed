@@ -228,6 +228,7 @@ request_messages!(
     (ShareProject, ShareProjectResponse),
     (Test, Test),
     (UpdateBuffer, Ack),
+    (UpdateDiagnosticSummary, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),

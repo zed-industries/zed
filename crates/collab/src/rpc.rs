@@ -154,7 +154,7 @@ impl Server {
             .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::start_language_server)
             .add_message_handler(Server::update_language_server)
-            .add_message_handler(Server::update_diagnostic_summary)
+            .add_request_handler(Server::update_diagnostic_summary)
             .add_request_handler(Server::forward_project_request::<proto::GetHover>)
             .add_request_handler(Server::forward_project_request::<proto::GetDefinition>)
             .add_request_handler(Server::forward_project_request::<proto::GetTypeDefinition>)
@@ -1127,6 +1127,7 @@ impl Server {
     async fn update_diagnostic_summary(
         self: Arc<Server>,
         request: Message<proto::UpdateDiagnosticSummary>,
+        response: Response<proto::UpdateDiagnosticSummary>,
     ) -> Result<()> {
         let guest_connection_ids = self
             .app_state
@@ -1145,6 +1146,8 @@ impl Server {
                 )
             },
         );
+
+        response.send(proto::Ack {})?;
         Ok(())
     }
 
