@@ -644,10 +644,14 @@ async fn test_signups() {
     let test_db = PostgresTestDb::new(build_background_executor());
     let db = test_db.db();
 
+    let usernames = (0..8).map(|i| format!("person-{i}")).collect::<Vec<_>>();
+
     // people sign up on the waitlist
-    for i in 0..8 {
-        db.create_signup(Signup {
-            email_address: format!("person-{i}@example.com"),
+    let all_signups = usernames
+        .iter()
+        .enumerate()
+        .map(|(i, username)| Signup {
+            email_address: format!("{username}@example.com"),
             platform_mac: true,
             platform_linux: i % 2 == 0,
             platform_windows: i % 4 == 0,
@@ -655,8 +659,13 @@ async fn test_signups() {
             programming_languages: vec!["rust".into(), "c".into()],
             device_id: Some(format!("device_id_{i}")),
         })
-        .await
-        .unwrap();
+        .collect::<Vec<Signup>>();
+
+    for signup in &all_signups {
+        // Users can sign up multiple times without issues
+        for _ in 0..2 {
+            db.create_signup(&signup).await.unwrap();
+        }
     }
 
     assert_eq!(
@@ -679,9 +688,9 @@ async fn test_signups() {
     assert_eq!(
         addresses,
         &[
-            "person-0@example.com",
-            "person-1@example.com",
-            "person-2@example.com"
+            all_signups[0].email_address.as_str(),
+            all_signups[1].email_address.as_str(),
+            all_signups[2].email_address.as_str()
         ]
     );
     assert_ne!(
@@ -705,9 +714,9 @@ async fn test_signups() {
     assert_eq!(
         addresses,
         &[
-            "person-3@example.com",
-            "person-4@example.com",
-            "person-5@example.com"
+            all_signups[3].email_address.as_str(),
+            all_signups[4].email_address.as_str(),
+            all_signups[5].email_address.as_str()
         ]
     );
 
@@ -733,11 +742,10 @@ async fn test_signups() {
     } = db
         .create_user_from_invite(
             &Invite {
-                email_address: signups_batch1[0].email_address.clone(),
-                email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
+                ..signups_batch1[0].clone()
             },
             NewUserParams {
-                github_login: "person-0".into(),
+                github_login: usernames[0].clone(),
                 github_user_id: 0,
                 invite_count: 5,
             },
@@ -747,8 +755,11 @@ async fn test_signups() {
         .unwrap();
     let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
     assert!(inviting_user_id.is_none());
-    assert_eq!(user.github_login, "person-0");
-    assert_eq!(user.email_address.as_deref(), Some("person-0@example.com"));
+    assert_eq!(user.github_login, usernames[0]);
+    assert_eq!(
+        user.email_address,
+        Some(all_signups[0].email_address.clone())
+    );
     assert_eq!(user.invite_count, 5);
     assert_eq!(signup_device_id.unwrap(), "device_id_0");
 
@@ -776,7 +787,7 @@ async fn test_signups() {
             email_confirmation_code: "the-wrong-code".to_string(),
         },
         NewUserParams {
-            github_login: "person-1".into(),
+            github_login: usernames[1].clone(),
             github_user_id: 2,
             invite_count: 5,
         },

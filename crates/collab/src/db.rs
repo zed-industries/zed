@@ -157,7 +157,7 @@ impl Db<sqlx::Sqlite> {
         unimplemented!()
     }
 
-    pub async fn create_signup(&self, _signup: Signup) -> Result<()> {
+    pub async fn create_signup(&self, _signup: &Signup) -> Result<()> {
         unimplemented!()
     }
 
@@ -375,7 +375,7 @@ impl Db<sqlx::Postgres> {
         })
     }
 
-    pub async fn create_signup(&self, signup: Signup) -> Result<()> {
+    pub async fn create_signup(&self, signup: &Signup) -> Result<()> {
         test_support!(self, {
             sqlx::query(
                 "
@@ -394,6 +394,8 @@ impl Db<sqlx::Postgres> {
                 )
                 VALUES
                     ($1, $2, FALSE, $3, $4, $5, FALSE, $6, $7, $8)
+                ON CONFLICT (email_address) DO UPDATE SET
+                    email_address = excluded.email_address
                 RETURNING id
                 ",
             )
@@ -1259,7 +1261,7 @@ pub struct IncomingContactRequest {
     pub should_notify: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct Signup {
     pub email_address: String,
     pub platform_mac: bool,
@@ -1284,7 +1286,7 @@ pub struct WaitlistSummary {
     pub unknown_count: i64,
 }
 
-#[derive(FromRow, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, FromRow, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,
     pub email_confirmation_code: String,
