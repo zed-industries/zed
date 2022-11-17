@@ -6,7 +6,7 @@ use std::{
     ops::Range,
 };
 use sum_tree::{self, Bias, SumTree};
-use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
+use text::{Anchor, FromAnchor, PointUtf16, ToOffset, Unclipped};
 
 #[derive(Clone, Debug, Default)]
 pub struct DiagnosticSet {
@@ -63,15 +63,15 @@ impl DiagnosticSet {
 
     pub fn new<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where
-        I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
+        I: IntoIterator<Item = DiagnosticEntry<Unclipped<PointUtf16>>>,
     {
         let mut entries = iter.into_iter().collect::<Vec<_>>();
         entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));
         Self {
             diagnostics: SumTree::from_iter(
                 entries.into_iter().map(|entry| DiagnosticEntry {
-                    range: buffer.clamped_anchor_before(entry.range.start)
-                        ..buffer.clamped_anchor_after(entry.range.end),
+                    range: buffer.anchor_before(entry.range.start)
+                        ..buffer.anchor_before(entry.range.end),
                     diagnostic: entry.diagnostic,
                 }),
                 buffer,

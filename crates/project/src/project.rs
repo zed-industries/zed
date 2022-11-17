@@ -25,8 +25,8 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetClipped, ToPointUtf16,
-    Transaction,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Transaction, Unclipped,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -2598,7 +2598,7 @@ impl Project {
         language_server_id: usize,
         abs_path: PathBuf,
         version: Option<i32>,
-        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Project>,
     ) -> Result<(), anyhow::Error> {
         let (worktree, relative_path) = self
@@ -2636,7 +2636,7 @@ impl Project {
     fn update_buffer_diagnostics(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -2677,16 +2677,14 @@ impl Project {
                 end = entry.range.end;
             }
 
-            let mut range = snapshot.clip_point_utf16(start, Bias::Left)
-                ..snapshot.clip_point_utf16(end, Bias::Right);
+            let mut range = start..end;
 
-            // Expand empty ranges by one character
+            // Expand empty ranges by one codepoint
             if range.start == range.end {
+                // This will be go to the next boundary when being clipped
                 range.end.column += 1;
-                range.end = snapshot.clip_point_utf16(range.end, Bias::Right);
                 if range.start == range.end && range.end.column > 0 {
                     range.start.column -= 1;
-                    range.start = snapshot.clip_point_utf16(range.start, Bias::Left);
                 }
             }
 
@@ -3290,7 +3288,7 @@ impl Project {
         };
 
         let position = position.to_point_utf16(source_buffer);
-        let anchor = source_buffer.clamped_anchor_after(position);
+        let anchor = source_buffer.anchor_after(position);
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
@@ -3356,7 +3354,7 @@ impl Project {
                                         return None;
                                     }
                                     (
-                                        snapshot.clamped_anchor_before(start)..snapshot.clamped_anchor_after(end),
+                                        snapshot.anchor_before(start)..snapshot.anchor_after(end),
                                         edit.new_text.clone(),
                                     )
                                 }
@@ -5779,11 +5777,11 @@ impl Project {
                         }
                     }
                 } else if range.end == range.start {
-                    let anchor = snapshot.clamped_anchor_after(range.start);
+                    let anchor = snapshot.anchor_after(range.start);
                     edits.push((anchor..anchor, new_text));
                 } else {
-                    let edit_start = snapshot.clamped_anchor_after(range.start);
-                    let edit_end = snapshot.clamped_anchor_before(range.end);
+                    let edit_start = snapshot.anchor_after(range.start);
+                    let edit_end = snapshot.anchor_before(range.end);
                     edits.push((edit_start..edit_end, new_text));
                 }
             }

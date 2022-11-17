@@ -12,6 +12,9 @@ pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
 pub use point_utf16::PointUtf16;
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Unclipped<T>(pub T);
+
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;
 
@@ -259,7 +262,15 @@ impl Rope {
                 .map_or(0, |chunk| chunk.point_to_offset(overshoot))
     }
 
-    pub fn point_utf16_to_offset_clipped(&self, point: PointUtf16) -> usize {
+    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        self.point_utf16_to_offset_impl(point, false)
+    }
+
+    pub fn unclipped_point_utf16_to_offset(&self, point: Unclipped<PointUtf16>) -> usize {
+        self.point_utf16_to_offset_impl(point.0, true)
+    }
+
+    fn point_utf16_to_offset_impl(&self, point: PointUtf16, clip: bool) -> usize {
         if point >= self.summary().lines_utf16() {
             return self.summary().len;
         }
@@ -269,10 +280,10 @@ impl Rope {
         cursor.start().1
             + cursor
                 .item()
-                .map_or(0, |chunk| chunk.point_utf16_to_offset_clipped(overshoot))
+                .map_or(0, |chunk| chunk.point_utf16_to_offset(overshoot, clip))
     }
 
-    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+    pub fn point_utf16_to_point_clipped(&self, point: PointUtf16) -> Point {
         if point >= self.summary().lines_utf16() {
             return self.summary().lines;
         }
@@ -280,9 +291,9 @@ impl Rope {
         cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.start().0;
         cursor.start().1
-            + cursor
-                .item()
-                .map_or(Point::zero(), |chunk| chunk.point_utf16_to_point(overshoot))
+            + cursor.item().map_or(Point::zero(), |chunk| {
+                chunk.point_utf16_to_point_clipped(overshoot)
+            })
     }
 
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
@@ -330,11 +341,11 @@ impl Rope {
         }
     }
 
-    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+    pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         let mut cursor = self.chunks.cursor::<PointUtf16>();
-        cursor.seek(&point, Bias::Right, &());
+        cursor.seek(&point.0, Bias::Right, &());
         if let Some(chunk) = cursor.item() {
-            let overshoot = point - cursor.start();
+            let overshoot = Unclipped(point.0 - cursor.start());
             *cursor.start() + chunk.clip_point_utf16(overshoot, bias)
         } else {
             self.summary().lines_utf16()
@@ -711,7 +722,7 @@ impl Chunk {
         point_utf16
     }
 
-    fn point_utf16_to_offset_clipped(&self, target: PointUtf16) -> usize {
+    fn point_utf16_to_offset(&self, target: PointUtf16, clip: bool) -> usize {
         let mut offset = 0;
         let mut point = PointUtf16::new(0, 0);
 
@@ -723,14 +734,26 @@ impl Chunk {
             if ch == '\n' {
                 point.row += 1;
                 point.column = 0;
+                if point.row > target.row {
+                    if clip {
+                        // Return the offset of the newline
+                        return offset;
+                    }
+                    panic!(
+                        "point {:?} is beyond the end of a line with length {}",
+                        target, point.column
+                    );
+                }
             } else {
                 point.column += ch.len_utf16() as u32;
             }
 
             if point > target {
-                // If the point is past the end of a line or inside of a code point,
-                // return the last valid offset before the point.
-                return offset;
+                if clip {
+                    // Return the offset of the codepoint which we have landed within, bias left
+                    return offset;
+                }
+                panic!("point {:?} is inside of codepoint {:?}", target, ch);
             }
 
             offset += ch.len_utf8();
@@ -739,15 +762,19 @@ impl Chunk {
         offset
     }
 
-    fn point_utf16_to_point(&self, target: PointUtf16) -> Point {
+    fn point_utf16_to_point_clipped(&self, target: PointUtf16) -> Point {
         let mut point = Point::zero();
         let mut point_utf16 = PointUtf16::zero();
+
         for ch in self.0.chars() {
-            if point_utf16 >= target {
-                if point_utf16 > target {
-                    panic!("point {:?} is inside of character {:?}", target, ch);
-                }
+            if point_utf16 == target {
                 break;
+            }
+
+            if point_utf16 > target {
+                // If the point is past the end of a line or inside of a code point,
+                // return the last valid point before the target.
+                return point;
             }
 
             if ch == '\n' {
@@ -758,6 +785,7 @@ impl Chunk {
                 point += Point::new(0, ch.len_utf8() as u32);
             }
         }
+
         point
     }
 
@@ -777,11 +805,11 @@ impl Chunk {
         unreachable!()
     }
 
-    fn clip_point_utf16(&self, target: PointUtf16, bias: Bias) -> PointUtf16 {
+    fn clip_point_utf16(&self, target: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         for (row, line) in self.0.split('\n').enumerate() {
-            if row == target.row as usize {
+            if row == target.0.row as usize {
                 let mut code_units = line.encode_utf16();
-                let mut column = code_units.by_ref().take(target.column as usize).count();
+                let mut column = code_units.by_ref().take(target.0.column as usize).count();
                 if char::decode_utf16(code_units).next().transpose().is_err() {
                     match bias {
                         Bias::Left => column -= 1,
@@ -1114,15 +1142,15 @@ mod tests {
         );
 
         assert_eq!(
-            rope.clip_point_utf16(PointUtf16::new(0, 1), Bias::Left),
+            rope.clip_point_utf16(Unclipped(PointUtf16::new(0, 1)), Bias::Left),
             PointUtf16::new(0, 0)
         );
         assert_eq!(
-            rope.clip_point_utf16(PointUtf16::new(0, 1), Bias::Right),
+            rope.clip_point_utf16(Unclipped(PointUtf16::new(0, 1)), Bias::Right),
             PointUtf16::new(0, 2)
         );
         assert_eq!(
-            rope.clip_point_utf16(PointUtf16::new(0, 3), Bias::Right),
+            rope.clip_point_utf16(Unclipped(PointUtf16::new(0, 3)), Bias::Right),
             PointUtf16::new(0, 2)
         );
 
@@ -1210,7 +1238,7 @@ mod tests {
                     point
                 );
                 assert_eq!(
-                    actual.point_utf16_to_offset_clipped(point_utf16),
+                    actual.point_utf16_to_offset(point_utf16),
                     ix,
                     "point_utf16_to_offset({:?})",
                     point_utf16
@@ -1238,7 +1266,7 @@ mod tests {
             }
 
             let mut offset_utf16 = OffsetUtf16(0);
-            let mut point_utf16 = PointUtf16::zero();
+            let mut point_utf16 = Unclipped(PointUtf16::zero());
             for unit in expected.encode_utf16() {
                 let left_offset = actual.clip_offset_utf16(offset_utf16, Bias::Left);
                 let right_offset = actual.clip_offset_utf16(offset_utf16, Bias::Right);
@@ -1250,15 +1278,15 @@ mod tests {
                 let left_point = actual.clip_point_utf16(point_utf16, Bias::Left);
                 let right_point = actual.clip_point_utf16(point_utf16, Bias::Right);
                 assert!(right_point >= left_point);
-                // Ensure translating UTF-16 points to offsets doesn't panic.
-                actual.point_utf16_to_offset_clipped(left_point);
-                actual.point_utf16_to_offset_clipped(right_point);
+                // Ensure translating valid UTF-16 points to offsets doesn't panic.
+                actual.point_utf16_to_offset(left_point);
+                actual.point_utf16_to_offset(right_point);
 
                 offset_utf16.0 += 1;
                 if unit == b'\n' as u16 {
-                    point_utf16 += PointUtf16::new(1, 0);
+                    point_utf16.0 += PointUtf16::new(1, 0);
                 } else {
-                    point_utf16 += PointUtf16::new(0, 1);
+                    point_utf16.0 += PointUtf16::new(0, 1);
                 }
             }
 

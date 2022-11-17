@@ -128,11 +128,11 @@ impl LspCommand for PrepareRename {
             ) = message
             {
                 let Range { start, end } = range_from_lsp(range);
-                if buffer.clip_point_utf16(start, Bias::Left) == start
-                    && buffer.clip_point_utf16(end, Bias::Left) == end
+                if buffer.clip_point_utf16(start, Bias::Left) == start.0
+                    && buffer.clip_point_utf16(end, Bias::Left) == end.0
                 {
                     return Ok(Some(
-                        buffer.clamped_anchor_after(start)..buffer.clamped_anchor_before(end),
+                        buffer.anchor_after(start)..buffer.anchor_before(end),
                     ));
                 }
             }
@@ -145,7 +145,7 @@ impl LspCommand for PrepareRename {
             project_id,
             buffer_id: buffer.remote_id(),
             position: Some(language::proto::serialize_anchor(
-                &buffer.clamped_anchor_before(self.position),
+                &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
         }
@@ -264,7 +264,7 @@ impl LspCommand for PerformRename {
             project_id,
             buffer_id: buffer.remote_id(),
             position: Some(language::proto::serialize_anchor(
-                &buffer.clamped_anchor_before(self.position),
+                &buffer.anchor_before(self.position),
             )),
             new_name: self.new_name.clone(),
             version: serialize_version(&buffer.version()),
@@ -362,7 +362,7 @@ impl LspCommand for GetDefinition {
             project_id,
             buffer_id: buffer.remote_id(),
             position: Some(language::proto::serialize_anchor(
-                &buffer.clamped_anchor_before(self.position),
+                &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
         }
@@ -448,7 +448,7 @@ impl LspCommand for GetTypeDefinition {
             project_id,
             buffer_id: buffer.remote_id(),
             position: Some(language::proto::serialize_anchor(
-                &buffer.clamped_anchor_before(self.position),
+                &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
         }
@@ -631,8 +631,8 @@ async fn location_links_from_lsp(
                     origin_buffer.clip_point_utf16(point_from_lsp(origin_range.end), Bias::Left);
                 Location {
                     buffer: buffer.clone(),
-                    range: origin_buffer.clamped_anchor_after(origin_start)
-                        ..origin_buffer.clamped_anchor_before(origin_end),
+                    range: origin_buffer.anchor_after(origin_start)
+                        ..origin_buffer.anchor_before(origin_end),
                 }
             });
 
@@ -643,8 +643,8 @@ async fn location_links_from_lsp(
                 target_buffer.clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
             let target_location = Location {
                 buffer: target_buffer_handle,
-                range: target_buffer.clamped_anchor_after(target_start)
-                    ..target_buffer.clamped_anchor_before(target_end),
+                range: target_buffer.anchor_after(target_start)
+                    ..target_buffer.anchor_before(target_end),
             };
 
             definitions.push(LocationLink {
@@ -743,8 +743,8 @@ impl LspCommand for GetReferences {
                         .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
                     references.push(Location {
                         buffer: target_buffer_handle,
-                        range: target_buffer.clamped_anchor_after(target_start)
-                            ..target_buffer.clamped_anchor_before(target_end),
+                        range: target_buffer.anchor_after(target_start)
+                            ..target_buffer.anchor_before(target_end),
                     });
                 });
             }
@@ -758,7 +758,7 @@ impl LspCommand for GetReferences {
             project_id,
             buffer_id: buffer.remote_id(),
             position: Some(language::proto::serialize_anchor(
-                &buffer.clamped_anchor_before(self.position),
+                &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
         }
@@ -884,8 +884,8 @@ impl LspCommand for GetDocumentHighlights {
                     let end = buffer
                         .clip_point_utf16(point_from_lsp(lsp_highlight.range.end), Bias::Left);
                     DocumentHighlight {
-                        range: buffer.clamped_anchor_after(start)
-                            ..buffer.clamped_anchor_before(end),
+                        range: buffer.anchor_after(start)
+                            ..buffer.anchor_before(end),
                         kind: lsp_highlight
                             .kind
                             .unwrap_or(lsp::DocumentHighlightKind::READ),
@@ -900,7 +900,7 @@ impl LspCommand for GetDocumentHighlights {
             project_id,
             buffer_id: buffer.remote_id(),
             position: Some(language::proto::serialize_anchor(
-                &buffer.clamped_anchor_before(self.position),
+                &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
         }
@@ -1020,8 +1020,8 @@ impl LspCommand for GetHover {
                     let token_start =
                         buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
                     let token_end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
-                    buffer.clamped_anchor_after(token_start)
-                        ..buffer.clamped_anchor_before(token_end)
+                    buffer.anchor_after(token_start)
+                        ..buffer.anchor_before(token_end)
                 })
             });
 
@@ -1103,7 +1103,7 @@ impl LspCommand for GetHover {
             project_id,
             buffer_id: buffer.remote_id(),
             position: Some(language::proto::serialize_anchor(
-                &buffer.clamped_anchor_before(self.position),
+                &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version),
         }
