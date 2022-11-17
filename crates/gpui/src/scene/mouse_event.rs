@@ -5,7 +5,7 @@ use std::{
 
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
-use crate::{MouseButton, MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent};
+use crate::{scene::mouse_region::HandlerKey, MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent};
 
 #[derive(Debug, Default, Clone)]
 pub struct MouseMove {
@@ -217,17 +217,17 @@ impl MouseEvent {
         discriminant(&MouseEvent::ScrollWheel(Default::default()))
     }
 
-    pub fn handler_key(&self) -> (Discriminant<MouseEvent>, Option<MouseButton>) {
+    pub fn handler_key(&self) -> HandlerKey {
         match self {
-            MouseEvent::Move(_) => (Self::move_disc(), None),
-            MouseEvent::Drag(e) => (Self::drag_disc(), e.pressed_button),
-            MouseEvent::Hover(_) => (Self::hover_disc(), None),
-            MouseEvent::Down(e) => (Self::down_disc(), Some(e.button)),
-            MouseEvent::Up(e) => (Self::up_disc(), Some(e.button)),
-            MouseEvent::Click(e) => (Self::click_disc(), Some(e.button)),
-            MouseEvent::UpOut(e) => (Self::up_out_disc(), Some(e.button)),
-            MouseEvent::DownOut(e) => (Self::down_out_disc(), Some(e.button)),
-            MouseEvent::ScrollWheel(_) => (Self::scroll_wheel_disc(), None),
+            MouseEvent::Move(_) => HandlerKey::new(Self::move_disc(), None),
+            MouseEvent::Drag(e) => HandlerKey::new(Self::drag_disc(), e.pressed_button),
+            MouseEvent::Hover(_) => HandlerKey::new(Self::hover_disc(), None),
+            MouseEvent::Down(e) => HandlerKey::new(Self::down_disc(), Some(e.button)),
+            MouseEvent::Up(e) => HandlerKey::new(Self::up_disc(), Some(e.button)),
+            MouseEvent::Click(e) => HandlerKey::new(Self::click_disc(), Some(e.button)),
+            MouseEvent::UpOut(e) => HandlerKey::new(Self::up_out_disc(), Some(e.button)),
+            MouseEvent::DownOut(e) => HandlerKey::new(Self::down_out_disc(), Some(e.button)),
+            MouseEvent::ScrollWheel(_) => HandlerKey::new(Self::scroll_wheel_disc(), None),
         }
     }
 }
