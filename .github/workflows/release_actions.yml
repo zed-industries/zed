@@ -17,7 +17,7 @@ jobs:
           Restart your Zed or head to https://zed.dev/releases to grab it.
         
           ```md
-          ### Changelog
+          # Changelog
           
           ${{ github.event.release.body }}
           ```
