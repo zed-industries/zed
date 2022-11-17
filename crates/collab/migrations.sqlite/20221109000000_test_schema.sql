@@ -82,6 +82,7 @@ CREATE TABLE "worktree_diagnostic_summaries" (
     "language_server_id" INTEGER NOT NULL,
     "error_count" INTEGER NOT NULL,
     "warning_count" INTEGER NOT NULL,
+    "version" INTEGER NOT NULL,
     PRIMARY KEY(project_id, worktree_id, path),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );

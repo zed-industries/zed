@@ -223,6 +223,7 @@ pub struct DiagnosticSummary {
     pub language_server_id: usize,
     pub error_count: usize,
     pub warning_count: usize,
+    pub version: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -293,12 +294,14 @@ pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transac
 impl DiagnosticSummary {
     fn new<'a, T: 'a>(
         language_server_id: usize,
+        version: usize,
         diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>,
     ) -> Self {
         let mut this = Self {
             language_server_id,
             error_count: 0,
             warning_count: 0,
+            version,
         };
 
         for entry in diagnostics {
@@ -324,6 +327,7 @@ impl DiagnosticSummary {
             language_server_id: self.language_server_id as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
+            version: self.version as u32,
         }
     }
 }

@@ -366,6 +366,7 @@ impl Worktree {
             Worktree::Remote(worktree) => &worktree.diagnostic_summaries,
         }
         .iter()
+        .filter(|(_, summary)| !summary.is_empty())
         .map(|(path, summary)| (path.0.clone(), *summary))
     }
 
@@ -516,7 +517,8 @@ impl LocalWorktree {
             .diagnostic_summaries
             .remove(&PathKey(worktree_path.clone()))
             .unwrap_or_default();
-        let new_summary = DiagnosticSummary::new(language_server_id, &diagnostics);
+        let new_summary =
+            DiagnosticSummary::new(language_server_id, old_summary.version + 1, &diagnostics);
         if !new_summary.is_empty() {
             self.diagnostic_summaries
                 .insert(PathKey(worktree_path.clone()), new_summary);
@@ -1106,15 +1108,17 @@ impl RemoteWorktree {
         path: Arc<Path>,
         summary: &proto::DiagnosticSummary,
     ) {
-        let summary = DiagnosticSummary {
+        let old_summary = self.diagnostic_summaries.get(&PathKey(path.clone()));
+        let new_summary = DiagnosticSummary {
             language_server_id: summary.language_server_id as usize,
             error_count: summary.error_count as usize,
             warning_count: summary.warning_count as usize,
+            version: summary.version as usize,
         };
-        if summary.is_empty() {
-            self.diagnostic_summaries.remove(&PathKey(path));
-        } else {
-            self.diagnostic_summaries.insert(PathKey(path), summary);
+        if old_summary.map_or(true, |old_summary| {
+            new_summary.version >= old_summary.version
+        }) {
+            self.diagnostic_summaries.insert(PathKey(path), new_summary);
         }
     }
 
