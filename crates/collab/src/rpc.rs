@@ -629,7 +629,7 @@ impl Server {
     ) -> Result<()> {
         let mut contacts_to_update = HashSet::default();
 
-        let Some(left_room) = self.app_state.db.leave_room_for_connection(leaving_connection_id).await? else {
+        let Some(left_room) = self.app_state.db.leave_room(leaving_connection_id).await? else {
             return Err(anyhow!("no room to leave"))?;
         };
         contacts_to_update.insert(leaving_user_id);

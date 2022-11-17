@@ -49,6 +49,7 @@ impl BeginTransaction for Db<sqlx::Postgres> {
 }
 
 // In Sqlite, transactions are inherently serializable.
+#[cfg(test)]
 impl BeginTransaction for Db<sqlx::Sqlite> {
     type Database = sqlx::Sqlite;
 
@@ -1141,10 +1142,7 @@ where
         .await
     }
 
-    pub async fn leave_room_for_connection(
-        &self,
-        connection_id: ConnectionId,
-    ) -> Result<Option<LeftRoom>> {
+    pub async fn leave_room(&self, connection_id: ConnectionId) -> Result<Option<LeftRoom>> {
         self.transact(|mut tx| async move {
             // Leave room.
             let room_id = sqlx::query_scalar::<_, RoomId>(
@@ -1498,8 +1496,7 @@ where
             .bind(user_id)
             .bind(connection_id.0 as i32)
             .fetch_one(&mut tx)
-            .await
-            .unwrap();
+            .await?;
 
             if !worktrees.is_empty() {
                 let mut params = "(?, ?, ?, ?, ?, ?, ?),".repeat(worktrees.len());
@@ -1530,7 +1527,7 @@ where
                         .bind(0)
                         .bind(false);
                 }
-                query.execute(&mut tx).await.unwrap();
+                query.execute(&mut tx).await?;
             }
 
             sqlx::query(
@@ -1551,8 +1548,7 @@ where
             .bind(0)
             .bind(true)
             .execute(&mut tx)
-            .await
-            .unwrap();
+            .await?;
 
             let room = self.commit_room_transaction(room_id, tx).await?;
             Ok((project_id, room))
