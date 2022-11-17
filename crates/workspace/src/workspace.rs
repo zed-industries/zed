@@ -18,7 +18,10 @@ use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
-use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures::{
+    channel::{mpsc, oneshot},
+    FutureExt, StreamExt,
+};
 use gpui::{
     actions,
     elements::*,
@@ -711,14 +714,13 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
             if let Some(message) = followed_item.to_state_proto(cx) {
-                workspace.update_followers(
-                    proto::update_followers::Variant::CreateView(proto::View {
+                workspace.update_followers(proto::update_followers::Variant::CreateView(
+                    proto::View {
                         id: followed_item.id() as u64,
                         variant: Some(message),
                         leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
-                    }),
-                    cx,
-                );
+                    },
+                ));
             }
         }
 
@@ -762,7 +764,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                             cx.after_window_update({
                                 let pending_update = pending_update.clone();
                                 let pending_update_scheduled = pending_update_scheduled.clone();
-                                move |this, cx| {
+                                move |this, _| {
                                     pending_update_scheduled.store(false, SeqCst);
                                     this.update_followers(
                                         proto::update_followers::Variant::UpdateView(
@@ -772,7 +774,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                                 leader_id: leader_id.map(|id| id.0),
                                             },
                                         ),
-                                        cx,
                                     );
                                 }
                             });
@@ -1081,9 +1082,11 @@ pub struct Workspace {
     leader_state: LeaderState,
     follower_states_by_leader: FollowerStatesByLeader,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
+    follower_updates: mpsc::UnboundedSender<proto::update_followers::Variant>,
     window_edited: bool,
     active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
     _observe_current_user: Task<()>,
+    _update_followers: Task<Option<()>>,
 }
 
 #[derive(Default)]
@@ -1166,6 +1169,34 @@ impl Workspace {
             }
         });
 
+        let (follower_updates_tx, mut follower_updates_rx) = mpsc::unbounded();
+        let _update_followers = cx.spawn_weak(|this, cx| async move {
+            while let Some(update) = follower_updates_rx.next().await {
+                let this = this.upgrade(&cx)?;
+                let update_followers = this.read_with(&cx, |this, cx| {
+                    if let Some(project_id) = this.project.read(cx).remote_id() {
+                        if this.leader_state.followers.is_empty() {
+                            None
+                        } else {
+                            Some(this.client.request(proto::UpdateFollowers {
+                                project_id,
+                                follower_ids:
+                                    this.leader_state.followers.iter().map(|f| f.0).collect(),
+                                variant: Some(update),
+                            }))
+                        }
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(update_followers) = update_followers {
+                    update_followers.await.log_err();
+                }
+            }
+            None
+        });
+
         let handle = cx.handle();
         let weak_handle = cx.weak_handle();
 
@@ -1224,10 +1255,12 @@ impl Workspace {
             project,
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
+            follower_updates: follower_updates_tx,
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
             _observe_current_user,
+            _update_followers,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -1967,13 +2000,12 @@ impl Workspace {
             cx.notify();
         }
 
-        self.update_followers(
-            proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+        self.update_followers(proto::update_followers::Variant::UpdateActiveView(
+            proto::UpdateActiveView {
                 id: self.active_item(cx).map(|item| item.id() as u64),
                 leader_id: self.leader_for_pane(&pane).map(|id| id.0),
-            }),
-            cx,
-        );
+            },
+        ));
     }
 
     fn handle_pane_event(
@@ -2594,22 +2626,8 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_followers(
-        &self,
-        update: proto::update_followers::Variant,
-        cx: &AppContext,
-    ) -> Option<()> {
-        let project_id = self.project.read(cx).remote_id()?;
-        if !self.leader_state.followers.is_empty() {
-            self.client
-                .send(proto::UpdateFollowers {
-                    project_id,
-                    follower_ids: self.leader_state.followers.iter().map(|f| f.0).collect(),
-                    variant: Some(update),
-                })
-                .log_err();
-        }
-        None
+    fn update_followers(&self, update: proto::update_followers::Variant) {
+        let _ = self.follower_updates.unbounded_send(update);
     }
 
     pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {

@@ -192,7 +192,7 @@ impl Server {
             .add_request_handler(Server::respond_to_contact_request)
             .add_request_handler(Server::follow)
             .add_message_handler(Server::unfollow)
-            .add_message_handler(Server::update_followers)
+            .add_request_handler(Server::update_followers)
             .add_message_handler(Server::update_diff_base)
             .add_request_handler(Server::get_private_user_info);
 
@@ -1437,6 +1437,7 @@ impl Server {
     async fn update_followers(
         self: Arc<Self>,
         request: Message<proto::UpdateFollowers>,
+        response: Response<proto::UpdateFollowers>,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let project_connection_ids = self
@@ -1464,6 +1465,7 @@ impl Server {
                 )?;
             }
         }
+        response.send(proto::Ack {})?;
         Ok(())
     }
 
