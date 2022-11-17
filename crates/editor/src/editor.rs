@@ -9,6 +9,7 @@ mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod multi_buffer;
+mod persistence;
 pub mod selections_collection;
 
 #[cfg(test)]

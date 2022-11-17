@@ -117,15 +117,18 @@ pub trait Item: View {
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
+
     fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox>> {
         None
     }
     fn serialized_item_kind() -> Option<&'static str>;
     fn deserialize(
+        project: ModelHandle<Project>,
+        workspace: WeakViewHandle<Workspace>,
         workspace_id: WorkspaceId,
         item_id: ItemId,
-        cx: &mut ViewContext<Self>,
-    ) -> Result<Self>;
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>>;
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
@@ -181,6 +184,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>>;
+    fn serialized_item_kind(&self) -> Option<&'static str>;
 }
 
 pub trait WeakItemHandle {
@@ -515,6 +519,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
+
+    fn serialized_item_kind(&self) -> Option<&'static str> {
+        T::serialized_item_kind()
+    }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyViewHandle {
@@ -645,15 +653,14 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 pub(crate) mod test {
     use std::{any::Any, borrow::Cow, cell::Cell};
 
-    use anyhow::anyhow;
     use gpui::{
         elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext, Task,
-        View, ViewContext,
+        View, ViewContext, ViewHandle, WeakViewHandle,
     };
     use project::{Project, ProjectEntryId, ProjectPath};
     use smallvec::SmallVec;
 
-    use crate::{sidebar::SidebarItem, ItemNavHistory};
+    use crate::{sidebar::SidebarItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
 
     use super::{Item, ItemEvent};
 
@@ -864,11 +871,13 @@ pub(crate) mod test {
         }
 
         fn deserialize(
-            workspace_id: crate::persistence::model::WorkspaceId,
-            item_id: crate::persistence::model::ItemId,
-            cx: &mut ViewContext<Self>,
-        ) -> anyhow::Result<Self> {
-            Err(anyhow!("Cannot deserialize test item"))
+            _project: ModelHandle<Project>,
+            _workspace: WeakViewHandle<Workspace>,
+            _workspace_id: WorkspaceId,
+            _item_id: ItemId,
+            _cx: &mut ViewContext<Pane>,
+        ) -> Task<anyhow::Result<ViewHandle<Self>>> {
+            unreachable!("Cannot deserialize test item")
         }
     }
 

@@ -2,6 +2,7 @@ use std::{
     ffi::OsStr,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::Result;
@@ -118,10 +119,24 @@ impl Bind for &str {
     }
 }
 
+impl Bind for Arc<str> {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        statement.bind_text(start_index, self.as_ref())?;
+        Ok(start_index + 1)
+    }
+}
+
 impl Bind for String {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_text(start_index, self)?;
         Ok(start_index + 1)
+    }
+}
+
+impl Column for Arc<str> {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let result = statement.column_text(start_index)?;
+        Ok((Arc::from(result), start_index + 1))
     }
 }
 

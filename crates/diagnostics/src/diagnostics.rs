@@ -31,7 +31,7 @@ use std::{
 use util::TryFutureExt;
 use workspace::{
     item::{Item, ItemEvent, ItemHandle},
-    ItemNavHistory, Workspace,
+    ItemNavHistory, Pane, Workspace,
 };
 
 actions!(diagnostics, [Deploy]);
@@ -612,6 +612,20 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| editor.deactivated(cx));
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("diagnostics")
+    }
+
+    fn deserialize(
+        project: ModelHandle<Project>,
+        workspace: WeakViewHandle<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        Task::ready(Ok(cx.add_view(|cx| Self::new(project, workspace, cx))))
     }
 }
 

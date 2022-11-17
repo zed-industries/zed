@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
 use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
@@ -26,7 +26,7 @@ use util::TryFutureExt;
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ItemNavHistory, StatusItemView, ToolbarItemLocation,
+    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -551,6 +551,21 @@ impl Item for Editor {
                 .boxed()
         }));
         Some(breadcrumbs)
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("Editor")
+    }
+
+    fn deserialize(
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: WorkspaceId,
+        _item_id: ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        // Look up the path with this key associated, create a self with that path
+        unimplemented!()
     }
 }
 

@@ -804,6 +804,7 @@ impl Project {
         &self.collaborators
     }
 
+    /// Collect all worktrees, including ones that don't appear in the project panel
     pub fn worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
@@ -813,6 +814,7 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade(cx))
     }
 
+    /// Collect all user-visible worktrees, the ones that appear in the project panel
     pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,

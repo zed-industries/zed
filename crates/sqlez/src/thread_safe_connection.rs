@@ -3,20 +3,23 @@ use std::{marker::PhantomData, ops::Deref, sync::Arc};
 use connection::Connection;
 use thread_local::ThreadLocal;
 
-use crate::{connection, domain::Domain};
+use crate::{
+    connection,
+    domain::{Domain, Migrator},
+};
 
-pub struct ThreadSafeConnection<D: Domain> {
+pub struct ThreadSafeConnection<M: Migrator> {
     uri: Arc<str>,
     persistent: bool,
     initialize_query: Option<&'static str>,
     connection: Arc<ThreadLocal<Connection>>,
-    _pd: PhantomData<D>,
+    _pd: PhantomData<M>,
 }
 
-unsafe impl<T: Domain> Send for ThreadSafeConnection<T> {}
-unsafe impl<T: Domain> Sync for ThreadSafeConnection<T> {}
+unsafe impl<T: Migrator> Send for ThreadSafeConnection<T> {}
+unsafe impl<T: Migrator> Sync for ThreadSafeConnection<T> {}
 
-impl<D: Domain> ThreadSafeConnection<D> {
+impl<M: Migrator> ThreadSafeConnection<M> {
     pub fn new(uri: &str, persistent: bool) -> Self {
         Self {
             uri: Arc::from(uri),
@@ -72,7 +75,11 @@ impl<D: Domain> Clone for ThreadSafeConnection<D> {
     }
 }
 
-impl<D: Domain> Deref for ThreadSafeConnection<D> {
+// TODO:
+//  1. When migration or initialization fails, move the corrupted db to a holding place and create a new one
+//  2. If the new db also fails, downgrade to a shared in memory db
+//  3. In either case notify the user about what went wrong
+impl<M: Migrator> Deref for ThreadSafeConnection<M> {
     type Target = Connection;
 
     fn deref(&self) -> &Self::Target {
@@ -91,7 +98,7 @@ impl<D: Domain> Deref for ThreadSafeConnection<D> {
                 .unwrap();
             }
 
-            D::migrate(&connection).expect("Migrations failed");
+            M::migrate(&connection).expect("Migrations failed");
 
             connection
         })

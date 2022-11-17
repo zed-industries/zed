@@ -44,7 +44,8 @@ use language::LanguageRegistry;
 use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::model::{ItemId, WorkspaceId};
+use persistence::model::SerializedItem;
+pub use persistence::model::{ItemId, WorkspaceId};
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use serde::Deserialize;
@@ -57,7 +58,7 @@ use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
-use crate::persistence::model::SerializedWorkspace;
+use crate::persistence::model::{SerializedPane, SerializedWorkspace};
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -337,22 +338,27 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
     });
 }
 
-type SerializableItemBuilders = HashMap<
-    &'static str,
-    fn(WorkspaceId, ItemId, &mut ViewContext<Pane>) -> Option<Box<dyn ItemHandle>>,
+type ItemDeserializers = HashMap<
+    Arc<str>,
+    fn(
+        ModelHandle<Project>,
+        WeakViewHandle<Workspace>,
+        WorkspaceId,
+        ItemId,
+        &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>>,
 >;
 pub fn register_deserializable_item<I: Item>(cx: &mut MutableAppContext) {
-    cx.update_default_global(|deserializers: &mut SerializableItemBuilders, _| {
+    cx.update_default_global(|deserializers: &mut ItemDeserializers, _cx| {
         if let Some(serialized_item_kind) = I::serialized_item_kind() {
-            deserializers.insert(serialized_item_kind, |workspace_id, item_id, cx| {
-                if let Some(v) =
-                    cx.add_option_view(|cx| I::deserialize(workspace_id, item_id, cx).log_err())
-                {
-                    Some(Box::new(v))
-                } else {
-                    None
-                }
-            });
+            deserializers.insert(
+                Arc::from(serialized_item_kind),
+                |project, workspace, workspace_id, item_id, cx| {
+                    let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+                    cx.foreground()
+                        .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
+                },
+            );
         }
     });
 }
@@ -549,6 +555,8 @@ impl Workspace {
                 }
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
+                    // TODO: Cache workspace_id on workspace and read from it here
+                    this.serialize_workspace(None, cx);
                 }
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(cx);
@@ -568,20 +576,8 @@ impl Workspace {
         .detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
-        let dock = Dock::new(
-            dock_default_factory,
-            serialized_workspace
-                .as_ref()
-                .map(|ws| ws.dock_position)
-                .clone(),
-            cx,
-        );
+        let dock = Dock::new(dock_default_factory, cx);
         let dock_pane = dock.pane().clone();
-
-        if let Some(serialized_workspace) = serialized_workspace {
-
-            // Fill them in?
-        }
 
         let fs = project.read(cx).fs().clone();
         let user_store = project.read(cx).user_store();
@@ -636,13 +632,13 @@ impl Workspace {
 
         let mut this = Workspace {
             modal: None,
-            weak_self: weak_handle,
+            weak_self: weak_handle.clone(),
             center: PaneGroup::new(center_pane.clone()),
             dock,
             // When removing an item, the last element remaining in this array
             // is used to find where focus should fallback to. As such, the order
             // of these two variables is important.
-            panes: vec![dock_pane, center_pane.clone()],
+            panes: vec![dock_pane.clone(), center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
@@ -655,7 +651,7 @@ impl Workspace {
             fs,
             left_sidebar,
             right_sidebar,
-            project,
+            project: project.clone(),
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
             last_leaders_by_pane: Default::default(),
@@ -663,8 +659,14 @@ impl Workspace {
             active_call,
             _observe_current_user,
         };
-        this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
+        this.project_remote_id_changed(project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
+
+        if let Some(serialized_workspace) = serialized_workspace {
+            cx.defer(move |_, cx| {
+                Self::load_from_serialized_workspace(weak_handle, serialized_workspace, cx)
+            });
+        }
 
         this
     }
@@ -1315,6 +1317,7 @@ impl Workspace {
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane().clone();
         Pane::add_item(self, &active_pane, item, true, true, None, cx);
+        self.serialize_workspace(None, cx);
     }
 
     pub fn open_path(
@@ -1519,6 +1522,7 @@ impl Workspace {
                             entry.remove();
                         }
                     }
+                    self.serialize_workspace(None, cx);
                 }
                 _ => {}
             }
@@ -2249,6 +2253,140 @@ impl Workspace {
             }
             _ => {}
         }
+    }
+
+    fn workspace_id(&self, cx: &AppContext) -> WorkspaceId {
+        self.project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path())
+            .collect::<Vec<_>>()
+            .into()
+    }
+
+    fn serialize_workspace(&self, old_id: Option<WorkspaceId>, cx: &mut MutableAppContext) {
+        let dock_pane = SerializedPane {
+            children: self
+                .dock
+                .pane()
+                .read(cx)
+                .items()
+                .filter_map(|item_handle| {
+                    Some(SerializedItem {
+                        kind: Arc::from(item_handle.serialized_item_kind()?),
+                        item_id: item_handle.id(),
+                    })
+                })
+                .collect::<Vec<_>>(),
+        };
+
+        let serialized_workspace = SerializedWorkspace {
+            workspace_id: self.workspace_id(cx),
+            dock_position: self.dock.position(),
+            dock_pane,
+            center_group: Default::default(),
+        };
+
+        cx.background()
+            .spawn(async move {
+                persistence::DB.save_workspace(old_id, &serialized_workspace);
+            })
+            .detach();
+    }
+
+    fn load_from_serialized_workspace(
+        workspace: WeakViewHandle<Workspace>,
+        serialized_workspace: SerializedWorkspace,
+        cx: &mut MutableAppContext,
+    ) {
+        // fn process_splits(
+        //     pane_group: SerializedPaneGroup,
+        //     parent: Option<PaneGroup>,
+        //     workspace: ViewHandle<Workspace>,
+        //     cx: &mut AsyncAppContext,
+        // ) {
+        //     match pane_group {
+        //         SerializedPaneGroup::Group { axis, children } => {
+        //             process_splits(pane_group, parent)
+        //         }
+        //         SerializedPaneGroup::Pane(pane) => {
+        //             process_pane(pane)
+        //         },
+        //     }
+        // }
+
+        async fn deserialize_pane(
+            project: ModelHandle<Project>,
+            pane: SerializedPane,
+            pane_handle: ViewHandle<Pane>,
+            workspace_id: WorkspaceId,
+            workspace: &ViewHandle<Workspace>,
+            cx: &mut AsyncAppContext,
+        ) {
+            for item in pane.children {
+                let project = project.clone();
+                let workspace_id = workspace_id.clone();
+                let item_handle = pane_handle
+                    .update(cx, |_, cx| {
+                        if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind)
+                        {
+                            deserializer(
+                                project,
+                                workspace.downgrade(),
+                                workspace_id,
+                                item.item_id,
+                                cx,
+                            )
+                        } else {
+                            Task::ready(Err(anyhow!(
+                                "Deserializer does not exist for item kind: {}",
+                                item.kind
+                            )))
+                        }
+                    })
+                    .await
+                    .log_err();
+
+                if let Some(item_handle) = item_handle {
+                    workspace.update(cx, |workspace, cx| {
+                        Pane::add_item(
+                            workspace,
+                            &pane_handle,
+                            item_handle,
+                            false,
+                            false,
+                            None,
+                            cx,
+                        );
+                    })
+                }
+            }
+        }
+
+        cx.spawn(|mut cx| async move {
+            if let Some(workspace) = workspace.upgrade(&cx) {
+                let (project, dock_pane_handle) = workspace.read_with(&cx, |workspace, _| {
+                    (workspace.project().clone(), workspace.dock_pane().clone())
+                });
+                deserialize_pane(
+                    project,
+                    serialized_workspace.dock_pane,
+                    dock_pane_handle,
+                    serialized_workspace.workspace_id,
+                    &workspace,
+                    &mut cx,
+                )
+                .await;
+
+                // Traverse the splits tree and add to things
+                // process_splits(serialized_workspace.center_group, None, workspace, &mut cx);
+
+                workspace.update(&mut cx, |workspace, cx| {
+                    Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx)
+                });
+            }
+        })
+        .detach();
     }
 }
 

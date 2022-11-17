@@ -52,7 +52,7 @@ use std::{
 use theme::ThemeRegistry;
 use unindent::Unindent as _;
 use util::post_inc;
-use workspace::{shared_screen::SharedScreen, item::Item, SplitDirection, ToggleFollow, Workspace};
+use workspace::{item::Item, shared_screen::SharedScreen, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {

@@ -20,19 +20,6 @@ impl Connection {
         Ok(move |bindings| statement.with_bindings(bindings)?.exec())
     }
 
-    pub fn insert<'a>(&'a self, query: &str) -> Result<impl 'a + FnMut() -> Result<i64>> {
-        let mut statement = Statement::prepare(&self, query)?;
-        Ok(move || statement.insert())
-    }
-
-    pub fn insert_bound<'a, B: Bind>(
-        &'a self,
-        query: &str,
-    ) -> Result<impl 'a + FnMut(B) -> Result<i64>> {
-        let mut statement = Statement::prepare(&self, query)?;
-        Ok(move |bindings| statement.with_bindings(bindings)?.insert())
-    }
-
     pub fn select<'a, C: Column>(
         &'a self,
         query: &str,

@@ -9,53 +9,27 @@ use indoc::{formatdoc, indoc};
 
 use crate::connection::Connection;
 
-const MIGRATIONS_MIGRATION: Migration = Migration::new(
-    "migrations",
-    // The migrations migration must be infallable because it runs to completion
-    // with every call to migration run and is run unchecked.
-    &[indoc! {"
-        CREATE TABLE IF NOT EXISTS migrations (
-            domain TEXT,
-            step INTEGER,
-            migration TEXT
-        )
-    "}],
-);
-
-#[derive(Debug)]
-pub struct Migration {
-    domain: &'static str,
-    migrations: &'static [&'static str],
-}
-
-impl Migration {
-    pub const fn new(domain: &'static str, migrations: &'static [&'static str]) -> Self {
-        Self { domain, migrations }
-    }
-
-    fn run_unchecked(&self, connection: &Connection) -> Result<()> {
-        for migration in self.migrations {
-            connection.exec(migration)?()?;
-        }
-
-        Ok(())
-    }
-
-    pub fn run(&self, connection: &Connection) -> Result<()> {
+impl Connection {
+    pub fn migrate(&self, domain: &'static str, migrations: &[&'static str]) -> Result<()> {
         // Setup the migrations table unconditionally
-        MIGRATIONS_MIGRATION.run_unchecked(connection)?;
+        self.exec(indoc! {"
+            CREATE TABLE IF NOT EXISTS migrations (
+                domain TEXT,
+                step INTEGER,
+                migration TEXT
+            )"})?()?;
 
         let completed_migrations =
-            connection.select_bound::<&str, (String, usize, String)>(indoc! {"
+            self.select_bound::<&str, (String, usize, String)>(indoc! {"
                     SELECT domain, step, migration FROM migrations
                     WHERE domain = ?
                     ORDER BY step
-                "})?(self.domain)?;
+                "})?(domain)?;
 
-        let mut store_completed_migration = connection
-            .insert_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
+        let mut store_completed_migration =
+            self.exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
 
-        for (index, migration) in self.migrations.iter().enumerate() {
+        for (index, migration) in migrations.iter().enumerate() {
             if let Some((_, _, completed_migration)) = completed_migrations.get(index) {
                 if completed_migration != migration {
                     return Err(anyhow!(formatdoc! {"
@@ -65,15 +39,15 @@ impl Migration {
                         {}
                         
                         Proposed migration:
-                        {}", self.domain, index, completed_migration, migration}));
+                        {}", domain, index, completed_migration, migration}));
                 } else {
                     // Migration already run. Continue
                     continue;
                 }
             }
 
-            connection.exec(migration)?()?;
-            store_completed_migration((self.domain, index, *migration))?;
+            self.exec(migration)?()?;
+            store_completed_migration((domain, index, *migration))?;
         }
 
         Ok(())
@@ -84,22 +58,23 @@ impl Migration {
 mod test {
     use indoc::indoc;
 
-    use crate::{connection::Connection, migrations::Migration};
+    use crate::connection::Connection;
 
     #[test]
     fn test_migrations_are_added_to_table() {
         let connection = Connection::open_memory("migrations_are_added_to_table");
 
         // Create first migration with a single step and run it
-        let mut migration = Migration::new(
-            "test",
-            &[indoc! {"
-            CREATE TABLE test1 (
-                a TEXT,
-                b TEXT
-            )"}],
-        );
-        migration.run(&connection).unwrap();
+        connection
+            .migrate(
+                "test",
+                &[indoc! {"
+                CREATE TABLE test1 (
+                    a TEXT,
+                    b TEXT
+                )"}],
+            )
+            .unwrap();
 
         // Verify it got added to the migrations table
         assert_eq!(
@@ -107,23 +82,31 @@ mod test {
                 .select::<String>("SELECT (migration) FROM migrations")
                 .unwrap()()
             .unwrap()[..],
-            migration.migrations
-        );
-
-        // Add another step to the migration and run it again
-        migration.migrations = &[
-            indoc! {"
+            &[indoc! {"
                 CREATE TABLE test1 (
                     a TEXT,
                     b TEXT
-                )"},
-            indoc! {"
-                CREATE TABLE test2 (
-                    c TEXT,
-                    d TEXT
-                )"},
-        ];
-        migration.run(&connection).unwrap();
+                )"}],
+        );
+
+        // Add another step to the migration and run it again
+        connection
+            .migrate(
+                "test",
+                &[
+                    indoc! {"
+                    CREATE TABLE test1 (
+                        a TEXT,
+                        b TEXT
+                    )"},
+                    indoc! {"
+                    CREATE TABLE test2 (
+                        c TEXT,
+                        d TEXT
+                    )"},
+                ],
+            )
+            .unwrap();
 
         // Verify it is also added to the migrations table
         assert_eq!(
@@ -131,7 +114,18 @@ mod test {
                 .select::<String>("SELECT (migration) FROM migrations")
                 .unwrap()()
             .unwrap()[..],
-            migration.migrations
+            &[
+                indoc! {"
+                    CREATE TABLE test1 (
+                        a TEXT,
+                        b TEXT
+                    )"},
+                indoc! {"
+                    CREATE TABLE test2 (
+                        c TEXT,
+                        d TEXT
+                    )"},
+            ],
         );
     }
 
@@ -150,7 +144,7 @@ mod test {
         .unwrap();
 
         let mut store_completed_migration = connection
-            .insert_bound::<(&str, usize, String)>(indoc! {"
+            .exec_bound::<(&str, usize, String)>(indoc! {"
                 INSERT INTO migrations (domain, step, migration)
                 VALUES (?, ?, ?)"})
             .unwrap();
@@ -171,8 +165,7 @@ mod test {
     fn migrations_dont_rerun() {
         let connection = Connection::open_memory("migrations_dont_rerun");
 
-        // Create migration which clears a table
-        let migration = Migration::new("test", &["DELETE FROM test_table"]);
+        // Create migration which clears a tabl
 
         // Manually create the table for that migration with a row
         connection
@@ -197,7 +190,9 @@ mod test {
         );
 
         // Run the migration verifying that the row got dropped
-        migration.run(&connection).unwrap();
+        connection
+            .migrate("test", &["DELETE FROM test_table"])
+            .unwrap();
         assert_eq!(
             connection
                 .select_row::<usize>("SELECT * FROM test_table")
@@ -213,7 +208,9 @@ mod test {
         .unwrap();
 
         // Run the same migration again and verify that the table was left unchanged
-        migration.run(&connection).unwrap();
+        connection
+            .migrate("test", &["DELETE FROM test_table"])
+            .unwrap();
         assert_eq!(
             connection
                 .select_row::<usize>("SELECT * FROM test_table")
@@ -228,22 +225,22 @@ mod test {
         let connection = Connection::open_memory("changed_migration_fails");
 
         // Create a migration with two steps and run it
-        Migration::new(
-            "test migration",
-            &[
-                indoc! {"
+        connection
+            .migrate(
+                "test migration",
+                &[
+                    indoc! {"
                 CREATE TABLE test (
                     col INTEGER
                 )"},
-                indoc! {"
-                INSERT INTO test (col) VALUES (1)"},
-            ],
-        )
-        .run(&connection)
-        .unwrap();
+                    indoc! {"
+                    INSERT INTO test (col) VALUES (1)"},
+                ],
+            )
+            .unwrap();
 
         // Create another migration with the same domain but different steps
-        let second_migration_result = Migration::new(
+        let second_migration_result = connection.migrate(
             "test migration",
             &[
                 indoc! {"
@@ -253,8 +250,7 @@ mod test {
                 indoc! {"
                 INSERT INTO test (color) VALUES (1)"},
             ],
-        )
-        .run(&connection);
+        );
 
         // Verify new migration returns error when run
         assert!(second_migration_result.is_err())

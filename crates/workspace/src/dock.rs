@@ -137,13 +137,8 @@ pub struct Dock {
 }
 
 impl Dock {
-    pub fn new(
-        default_item_factory: DefaultItemFactory,
-        position: Option<DockPosition>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Self {
-        let position = position
-            .unwrap_or_else(|| DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor));
+    pub fn new(default_item_factory: DefaultItemFactory, cx: &mut ViewContext<Workspace>) -> Self {
+        let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
 
         let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), cx));
         pane.update(cx, |pane, cx| {
@@ -175,7 +170,7 @@ impl Dock {
         self.position.is_visible() && self.position.anchor() == anchor
     }
 
-    fn set_dock_position(
+    pub(crate) fn set_dock_position(
         workspace: &mut Workspace,
         new_position: DockPosition,
         cx: &mut ViewContext<Workspace>,
@@ -211,6 +206,7 @@ impl Dock {
             cx.focus(last_active_center_pane);
         }
         cx.emit(crate::Event::DockAnchorChanged);
+        workspace.serialize_workspace(None, cx);
         cx.notify();
     }
 
@@ -346,6 +342,10 @@ impl Dock {
                         .boxed()
                 }
             })
+    }
+
+    pub fn position(&self) -> DockPosition {
+        self.position
     }
 }
 

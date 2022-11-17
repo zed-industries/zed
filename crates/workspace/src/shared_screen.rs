@@ -1,7 +1,7 @@
 use crate::{
     item::ItemEvent,
     persistence::model::{ItemId, WorkspaceId},
-    Item, ItemNavHistory,
+    Item, ItemNavHistory, Pane, Workspace,
 };
 use anyhow::{anyhow, Result};
 use call::participant::{Frame, RemoteVideoTrack};
@@ -10,8 +10,10 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext,
+    Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
+use project::Project;
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
@@ -191,10 +193,12 @@ impl Item for SharedScreen {
     }
 
     fn deserialize(
-        workspace_id: WorkspaceId,
-        item_id: ItemId,
-        cx: &mut ViewContext<Self>,
-    ) -> Result<Self> {
-        Err(anyhow!("SharedScreen can not be deserialized"))
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: WorkspaceId,
+        _item_id: ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        unreachable!("Shared screen can not be deserialized")
     }
 }

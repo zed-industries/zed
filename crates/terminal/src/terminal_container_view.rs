@@ -5,7 +5,7 @@ use alacritty_terminal::index::Point;
 use dirs::home_dir;
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
-    View, ViewContext, ViewHandle,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use util::truncate_and_trailoff;
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
@@ -13,6 +13,7 @@ use workspace::{
     item::{Item, ItemEvent},
     ToolbarItemLocation, Workspace,
 };
+use workspace::{register_deserializable_item, Pane};
 
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{AlternateScroll, Settings, WorkingDirectory};
@@ -26,6 +27,8 @@ actions!(terminal, [DeployModal]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalContainer::deploy);
+
+    register_deserializable_item::<TerminalContainer>(cx);
 }
 
 //Make terminal view an enum, that can give you views for the error and non-error states
@@ -127,7 +130,7 @@ impl TerminalContainer {
                 TerminalContainerContent::Error(view)
             }
         };
-        cx.focus(content.handle());
+        // cx.focus(content.handle());
 
         TerminalContainer {
             content,
@@ -374,6 +377,22 @@ impl Item for TerminalContainer {
             theme.breadcrumbs.text.clone(),
         )
         .boxed()])
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("Terminal")
+    }
+
+    fn deserialize(
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<anyhow::Result<ViewHandle<Self>>> {
+        // TODO: Pull the current working directory out of the DB.
+
+        Task::ready(Ok(cx.add_view(|cx| TerminalContainer::new(None, false, cx))))
     }
 }
 

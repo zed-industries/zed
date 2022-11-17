@@ -54,10 +54,6 @@ impl Connection {
         self.persistent
     }
 
-    pub(crate) fn last_insert_id(&self) -> i64 {
-        unsafe { sqlite3_last_insert_rowid(self.sqlite3) }
-    }
-
     pub fn backup_main(&self, destination: &Connection) -> Result<()> {
         unsafe {
             let backup = sqlite3_backup_init(
@@ -126,7 +122,7 @@ mod test {
         let text = "Some test text";
 
         connection
-            .insert_bound("INSERT INTO text (text) VALUES (?);")
+            .exec_bound("INSERT INTO text (text) VALUES (?);")
             .unwrap()(text)
         .unwrap();
 
@@ -155,7 +151,7 @@ mod test {
         let tuple2 = ("test2".to_string(), 32, vec![64, 32, 16, 8, 4, 2, 1, 0]);
 
         let mut insert = connection
-            .insert_bound::<(String, usize, Vec<u8>)>(
+            .exec_bound::<(String, usize, Vec<u8>)>(
                 "INSERT INTO test (text, integer, blob) VALUES (?, ?, ?)",
             )
             .unwrap();
@@ -185,7 +181,7 @@ mod test {
         .unwrap();
 
         connection
-            .insert_bound("INSERT INTO bools(t, f) VALUES (?, ?);")
+            .exec_bound("INSERT INTO bools(t, f) VALUES (?, ?)")
             .unwrap()((true, false))
         .unwrap();
 
@@ -210,7 +206,7 @@ mod test {
         .unwrap();
         let blob = vec![0, 1, 2, 4, 8, 16, 32, 64];
         connection1
-            .insert_bound::<Vec<u8>>("INSERT INTO blobs (data) VALUES (?);")
+            .exec_bound::<Vec<u8>>("INSERT INTO blobs (data) VALUES (?);")
             .unwrap()(blob.clone())
         .unwrap();
 

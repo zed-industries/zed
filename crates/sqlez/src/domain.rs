@@ -1,39 +1,50 @@
 use crate::connection::Connection;
 
 pub trait Domain {
-    fn migrate(conn: &Connection) -> anyhow::Result<()>;
+    fn name() -> &'static str;
+    fn migrations() -> &'static [&'static str];
 }
 
-impl<D1: Domain, D2: Domain> Domain for (D1, D2) {
-    fn migrate(conn: &Connection) -> anyhow::Result<()> {
-        D1::migrate(conn)?;
-        D2::migrate(conn)
+pub trait Migrator {
+    fn migrate(connection: &Connection) -> anyhow::Result<()>;
+}
+
+impl<D: Domain> Migrator for D {
+    fn migrate(connection: &Connection) -> anyhow::Result<()> {
+        connection.migrate(Self::name(), Self::migrations())
     }
 }
 
-impl<D1: Domain, D2: Domain, D3: Domain> Domain for (D1, D2, D3) {
-    fn migrate(conn: &Connection) -> anyhow::Result<()> {
-        D1::migrate(conn)?;
-        D2::migrate(conn)?;
-        D3::migrate(conn)
+impl<D1: Domain, D2: Domain> Migrator for (D1, D2) {
+    fn migrate(connection: &Connection) -> anyhow::Result<()> {
+        D1::migrate(connection)?;
+        D2::migrate(connection)
     }
 }
 
-impl<D1: Domain, D2: Domain, D3: Domain, D4: Domain> Domain for (D1, D2, D3, D4) {
-    fn migrate(conn: &Connection) -> anyhow::Result<()> {
-        D1::migrate(conn)?;
-        D2::migrate(conn)?;
-        D3::migrate(conn)?;
-        D4::migrate(conn)
+impl<D1: Domain, D2: Domain, D3: Domain> Migrator for (D1, D2, D3) {
+    fn migrate(connection: &Connection) -> anyhow::Result<()> {
+        D1::migrate(connection)?;
+        D2::migrate(connection)?;
+        D3::migrate(connection)
     }
 }
 
-impl<D1: Domain, D2: Domain, D3: Domain, D4: Domain, D5: Domain> Domain for (D1, D2, D3, D4, D5) {
-    fn migrate(conn: &Connection) -> anyhow::Result<()> {
-        D1::migrate(conn)?;
-        D2::migrate(conn)?;
-        D3::migrate(conn)?;
-        D4::migrate(conn)?;
-        D5::migrate(conn)
+impl<D1: Domain, D2: Domain, D3: Domain, D4: Domain> Migrator for (D1, D2, D3, D4) {
+    fn migrate(connection: &Connection) -> anyhow::Result<()> {
+        D1::migrate(connection)?;
+        D2::migrate(connection)?;
+        D3::migrate(connection)?;
+        D4::migrate(connection)
+    }
+}
+
+impl<D1: Domain, D2: Domain, D3: Domain, D4: Domain, D5: Domain> Migrator for (D1, D2, D3, D4, D5) {
+    fn migrate(connection: &Connection) -> anyhow::Result<()> {
+        D1::migrate(connection)?;
+        D2::migrate(connection)?;
+        D3::migrate(connection)?;
+        D4::migrate(connection)?;
+        D5::migrate(connection)
     }
 }

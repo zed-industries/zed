@@ -353,6 +353,20 @@ impl Item for ProjectSearchView {
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
         self.results_editor.breadcrumbs(theme, cx)
     }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
+
+    fn deserialize(
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<anyhow::Result<ViewHandle<Self>>> {
+        unimplemented!()
+    }
 }
 
 impl ProjectSearchView {

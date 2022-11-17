@@ -34,7 +34,9 @@ use mappings::mouse::{
 
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
+use terminal_container_view::TerminalContainer;
 use util::ResultExt;
+use workspace::register_deserializable_item;
 
 use std::{
     cmp::min,
@@ -67,6 +69,8 @@ use lazy_static::lazy_static;
 pub fn init(cx: &mut MutableAppContext) {
     terminal_view::init(cx);
     terminal_container_view::init(cx);
+
+    register_deserializable_item::<TerminalContainer>(cx);
 }
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable

@@ -256,11 +256,6 @@ impl<'a> Statement<'a> {
         }
     }
 
-    pub fn insert(&mut self) -> Result<i64> {
-        self.exec()?;
-        Ok(self.connection.last_insert_id())
-    }
-
     pub fn exec(&mut self) -> Result<()> {
         fn logic(this: &mut Statement) -> Result<()> {
             while this.step()? == StepResult::Row {}

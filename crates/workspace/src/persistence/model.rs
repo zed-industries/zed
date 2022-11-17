@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use gpui::Axis;
 
@@ -16,10 +16,10 @@ use sqlez::{
 use crate::dock::DockPosition;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WorkspaceId(Arc<Vec<PathBuf>>);
+pub struct WorkspaceId(Arc<Vec<PathBuf>>);
 
 impl WorkspaceId {
-    pub fn paths(self) -> Arc<Vec<PathBuf>> {
+    pub fn paths(&self) -> Arc<Vec<PathBuf>> {
         self.0.clone()
     }
 }
@@ -52,6 +52,7 @@ impl Column for WorkspaceId {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SerializedWorkspace {
+    pub workspace_id: WorkspaceId,
     pub dock_position: DockPosition,
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
@@ -90,67 +91,33 @@ pub type GroupId = i64;
 pub type PaneId = i64;
 pub type ItemId = usize;
 
-pub(crate) enum SerializedItemKind {
-    Editor,
-    Diagnostics,
-    ProjectSearch,
-    Terminal,
-}
-
-impl Bind for SerializedItemKind {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        match self {
-            SerializedItemKind::Editor => "Editor",
-            SerializedItemKind::Diagnostics => "Diagnostics",
-            SerializedItemKind::ProjectSearch => "ProjectSearch",
-            SerializedItemKind::Terminal => "Terminal",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl Column for SerializedItemKind {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(kind_text, next_index)| {
-            Ok((
-                match kind_text.as_ref() {
-                    "Editor" => SerializedItemKind::Editor,
-                    "Diagnostics" => SerializedItemKind::Diagnostics,
-                    "ProjectSearch" => SerializedItemKind::ProjectSearch,
-                    "Terminal" => SerializedItemKind::Terminal,
-                    _ => bail!("Stored serialized item kind is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SerializedItem {
-    Editor { item_id: usize, path: Arc<Path> },
-    Diagnostics { item_id: usize },
-    ProjectSearch { item_id: usize, query: String },
-    Terminal { item_id: usize },
+pub struct SerializedItem {
+    pub kind: Arc<str>,
+    pub item_id: ItemId,
 }
 
 impl SerializedItem {
-    pub fn item_id(&self) -> usize {
-        match self {
-            SerializedItem::Editor { item_id, .. } => *item_id,
-            SerializedItem::Diagnostics { item_id } => *item_id,
-            SerializedItem::ProjectSearch { item_id, .. } => *item_id,
-            SerializedItem::Terminal { item_id } => *item_id,
+    pub fn new(kind: impl AsRef<str>, item_id: ItemId) -> Self {
+        Self {
+            kind: Arc::from(kind.as_ref()),
+            item_id,
         }
     }
+}
 
-    pub(crate) fn kind(&self) -> SerializedItemKind {
-        match self {
-            SerializedItem::Editor { .. } => SerializedItemKind::Editor,
-            SerializedItem::Diagnostics { .. } => SerializedItemKind::Diagnostics,
-            SerializedItem::ProjectSearch { .. } => SerializedItemKind::ProjectSearch,
-            SerializedItem::Terminal { .. } => SerializedItemKind::Terminal,
-        }
+impl Bind for &SerializedItem {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(self.kind.clone(), start_index)?;
+        statement.bind(self.item_id, next_index)
+    }
+}
+
+impl Column for SerializedItem {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (kind, next_index) = Arc::<str>::column(statement, start_index)?;
+        let (item_id, next_index) = ItemId::column(statement, next_index)?;
+        Ok((SerializedItem { kind, item_id }, next_index))
     }
 }
 
@@ -187,8 +154,8 @@ mod tests {
 
         db.exec(indoc::indoc! {"
                 CREATE TABLE workspace_id_test(
-                workspace_id BLOB,
-                dock_anchor TEXT
+                    workspace_id BLOB,
+                    dock_anchor TEXT
                 );"})
             .unwrap()()
         .unwrap();

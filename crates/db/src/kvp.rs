@@ -1,21 +1,8 @@
 use anyhow::Result;
 use indoc::indoc;
 
-use sqlez::{
-    connection::Connection, domain::Domain, migrations::Migration,
-    thread_safe_connection::ThreadSafeConnection,
-};
+use sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
 use std::ops::Deref;
-
-pub(crate) const KVP_MIGRATION: Migration = Migration::new(
-    "kvp",
-    &[indoc! {"
-    CREATE TABLE kv_store(
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    ) STRICT;
-    "}],
-);
 
 lazy_static::lazy_static! {
     pub static ref KEY_VALUE_STORE: KeyValueStore =
@@ -26,8 +13,17 @@ lazy_static::lazy_static! {
 pub struct KeyValueStore(ThreadSafeConnection<KeyValueStore>);
 
 impl Domain for KeyValueStore {
-    fn migrate(conn: &Connection) -> anyhow::Result<()> {
-        KVP_MIGRATION.run(conn)
+    fn name() -> &'static str {
+        "kvp"
+    }
+
+    fn migrations() -> &'static [&'static str] {
+        &[indoc! {"
+           CREATE TABLE kv_store(
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
+           ) STRICT;
+       "}]
     }
 }
 
