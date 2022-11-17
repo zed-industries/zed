@@ -1,111 +1,32 @@
-use crate::db::{self, ProjectId, UserId};
+use crate::db::{self, UserId};
 use anyhow::{anyhow, Result};
-use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use collections::{BTreeMap, HashSet};
 use rpc::{proto, ConnectionId};
 use serde::Serialize;
-use std::path::PathBuf;
 use tracing::instrument;
-
-pub type RoomId = u64;
 
 #[derive(Default, Serialize)]
 pub struct Store {
-    connections: BTreeMap<ConnectionId, ConnectionState>,
+    connections: BTreeMap<ConnectionId, Connection>,
     connected_users: BTreeMap<UserId, ConnectedUser>,
-    next_room_id: RoomId,
-    rooms: BTreeMap<RoomId, proto::Room>,
-    projects: BTreeMap<ProjectId, Project>,
 }
 
 #[derive(Default, Serialize)]
 struct ConnectedUser {
     connection_ids: HashSet<ConnectionId>,
-    active_call: Option<Call>,
 }
 
 #[derive(Serialize)]
-struct ConnectionState {
-    user_id: UserId,
-    admin: bool,
-    projects: BTreeSet<ProjectId>,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Serialize)]
-pub struct Call {
-    pub calling_user_id: UserId,
-    pub room_id: RoomId,
-    pub connection_id: Option<ConnectionId>,
-    pub initial_project_id: Option<ProjectId>,
-}
-
-#[derive(Serialize)]
-pub struct Project {
-    pub id: ProjectId,
-    pub room_id: RoomId,
-    pub host_connection_id: ConnectionId,
-    pub host: Collaborator,
-    pub guests: HashMap<ConnectionId, Collaborator>,
-    pub active_replica_ids: HashSet<ReplicaId>,
-    pub worktrees: BTreeMap<u64, Worktree>,
-    pub language_servers: Vec<proto::LanguageServer>,
-}
-
-#[derive(Serialize)]
-pub struct Collaborator {
-    pub replica_id: ReplicaId,
+pub struct Connection {
     pub user_id: UserId,
     pub admin: bool,
 }
 
-#[derive(Default, Serialize)]
-pub struct Worktree {
-    pub abs_path: PathBuf,
-    pub root_name: String,
-    pub visible: bool,
-    #[serde(skip)]
-    pub entries: BTreeMap<u64, proto::Entry>,
-    #[serde(skip)]
-    pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
-    pub scan_id: u64,
-    pub is_complete: bool,
-}
-
-pub type ReplicaId = u16;
-
-#[derive(Copy, Clone)]
-pub struct Metrics {
-    pub connections: usize,
-    pub shared_projects: usize,
-}
-
 impl Store {
-    pub fn metrics(&self) -> Metrics {
-        let connections = self.connections.values().filter(|c| !c.admin).count();
-        let mut shared_projects = 0;
-        for project in self.projects.values() {
-            if let Some(connection) = self.connections.get(&project.host_connection_id) {
-                if !connection.admin {
-                    shared_projects += 1;
-                }
-            }
-        }
-
-        Metrics {
-            connections,
-            shared_projects,
-        }
-    }
-
     #[instrument(skip(self))]
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId, admin: bool) {
-        self.connections.insert(
-            connection_id,
-            ConnectionState {
-                user_id,
-                admin,
-                projects: Default::default(),
-            },
-        );
+        self.connections
+            .insert(connection_id, Connection { user_id, admin });
         let connected_user = self.connected_users.entry(user_id).or_default();
         connected_user.connection_ids.insert(connection_id);
     }
@@ -127,10 +48,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn connection_ids_for_user(
-        &self,
-        user_id: UserId,
-    ) -> impl Iterator<Item = ConnectionId> + '_ {
+    pub fn connections(&self) -> impl Iterator<Item = &Connection> {
+        self.connections.values()
+    }
+
+    pub fn user_connection_ids(&self, user_id: UserId) -> impl Iterator<Item = ConnectionId> + '_ {
         self.connected_users
             .get(&user_id)
             .into_iter()
@@ -197,35 +119,9 @@ impl Store {
         }
     }
 
-    pub fn rooms(&self) -> &BTreeMap<RoomId, proto::Room> {
-        &self.rooms
-    }
-
     #[cfg(test)]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
-            for project_id in &connection.projects {
-                let project = &self.projects.get(project_id).unwrap();
-                if project.host_connection_id != *connection_id {
-                    assert!(project.guests.contains_key(connection_id));
-                }
-
-                for (worktree_id, worktree) in project.worktrees.iter() {
-                    let mut paths = HashMap::default();
-                    for entry in worktree.entries.values() {
-                        let prev_entry = paths.insert(&entry.path, entry);
-                        assert_eq!(
-                            prev_entry,
-                            None,
-                            "worktree {:?}, duplicate path for entries {:?} and {:?}",
-                            worktree_id,
-                            prev_entry.unwrap(),
-                            entry
-                        );
-                    }
-                }
-            }
-
             assert!(self
                 .connected_users
                 .get(&connection.user_id)
@@ -241,85 +137,6 @@ impl Store {
                     *user_id
                 );
             }
-
-            if let Some(active_call) = state.active_call.as_ref() {
-                if let Some(active_call_connection_id) = active_call.connection_id {
-                    assert!(
-                        state.connection_ids.contains(&active_call_connection_id),
-                        "call is active on a dead connection"
-                    );
-                    assert!(
-                        state.connection_ids.contains(&active_call_connection_id),
-                        "call is active on a dead connection"
-                    );
-                }
-            }
-        }
-
-        for (room_id, room) in &self.rooms {
-            // for pending_user_id in &room.pending_participant_user_ids {
-            //     assert!(
-            //         self.connected_users
-            //             .contains_key(&UserId::from_proto(*pending_user_id)),
-            //         "call is active on a user that has disconnected"
-            //     );
-            // }
-
-            for participant in &room.participants {
-                assert!(
-                    self.connections
-                        .contains_key(&ConnectionId(participant.peer_id)),
-                    "room {} contains participant {:?} that has disconnected",
-                    room_id,
-                    participant
-                );
-
-                for participant_project in &participant.projects {
-                    let project = &self.projects[&ProjectId::from_proto(participant_project.id)];
-                    assert_eq!(
-                        project.room_id, *room_id,
-                        "project was shared on a different room"
-                    );
-                }
-            }
-
-            // assert!(
-            //     !room.pending_participant_user_ids.is_empty() || !room.participants.is_empty(),
-            //     "room can't be empty"
-            // );
-        }
-
-        for (project_id, project) in &self.projects {
-            let host_connection = self.connections.get(&project.host_connection_id).unwrap();
-            assert!(host_connection.projects.contains(project_id));
-
-            for guest_connection_id in project.guests.keys() {
-                let guest_connection = self.connections.get(guest_connection_id).unwrap();
-                assert!(guest_connection.projects.contains(project_id));
-            }
-            assert_eq!(project.active_replica_ids.len(), project.guests.len());
-            assert_eq!(
-                project.active_replica_ids,
-                project
-                    .guests
-                    .values()
-                    .map(|guest| guest.replica_id)
-                    .collect::<HashSet<_>>(),
-            );
-
-            let room = &self.rooms[&project.room_id];
-            let room_participant = room
-                .participants
-                .iter()
-                .find(|participant| participant.peer_id == project.host_connection_id.0)
-                .unwrap();
-            assert!(
-                room_participant
-                    .projects
-                    .iter()
-                    .any(|project| project.id == project_id.to_proto()),
-                "project was not shared in room"
-            );
         }
     }
 }

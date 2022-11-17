@@ -49,7 +49,7 @@ use std::{
     },
     time::Duration,
 };
-pub use store::{Store, Worktree};
+pub use store::Store;
 use tokio::{
     sync::{Mutex, MutexGuard},
     time::Sleep,
@@ -437,7 +437,7 @@ impl Server {
         let decline_calls = {
             let mut store = self.store().await;
             store.remove_connection(connection_id)?;
-            let mut connections = store.connection_ids_for_user(user_id);
+            let mut connections = store.user_connection_ids(user_id);
             connections.next().is_none()
         };
 
@@ -470,7 +470,7 @@ impl Server {
             if let Some(code) = &user.invite_code {
                 let store = self.store().await;
                 let invitee_contact = store.contact_for_user(invitee_id, true, false);
-                for connection_id in store.connection_ids_for_user(inviter_id) {
+                for connection_id in store.user_connection_ids(inviter_id) {
                     self.peer.send(
                         connection_id,
                         proto::UpdateContacts {
@@ -495,7 +495,7 @@ impl Server {
         if let Some(user) = self.app_state.db.get_user_by_id(user_id).await? {
             if let Some(invite_code) = &user.invite_code {
                 let store = self.store().await;
-                for connection_id in store.connection_ids_for_user(user_id) {
+                for connection_id in store.user_connection_ids(user_id) {
                     self.peer.send(
                         connection_id,
                         proto::UpdateInviteInfo {
@@ -582,7 +582,7 @@ impl Server {
                 session.connection_id,
             )
             .await?;
-        for connection_id in self.store().await.connection_ids_for_user(session.user_id) {
+        for connection_id in self.store().await.user_connection_ids(session.user_id) {
             self.peer
                 .send(connection_id, proto::CallCanceled {})
                 .trace_err();
@@ -674,7 +674,7 @@ impl Server {
         {
             let store = self.store().await;
             for canceled_user_id in left_room.canceled_calls_to_user_ids {
-                for connection_id in store.connection_ids_for_user(canceled_user_id) {
+                for connection_id in store.user_connection_ids(canceled_user_id) {
                     self.peer
                         .send(connection_id, proto::CallCanceled {})
                         .trace_err();
@@ -744,7 +744,7 @@ impl Server {
         let mut calls = self
             .store()
             .await
-            .connection_ids_for_user(called_user_id)
+            .user_connection_ids(called_user_id)
             .map(|connection_id| self.peer.request(connection_id, incoming_call.clone()))
             .collect::<FuturesUnordered<_>>();
 
@@ -784,7 +784,7 @@ impl Server {
             .db
             .cancel_call(Some(room_id), session.connection_id, called_user_id)
             .await?;
-        for connection_id in self.store().await.connection_ids_for_user(called_user_id) {
+        for connection_id in self.store().await.user_connection_ids(called_user_id) {
             self.peer
                 .send(connection_id, proto::CallCanceled {})
                 .trace_err();
@@ -807,7 +807,7 @@ impl Server {
             .db
             .decline_call(Some(room_id), session.user_id)
             .await?;
-        for connection_id in self.store().await.connection_ids_for_user(session.user_id) {
+        for connection_id in self.store().await.user_connection_ids(session.user_id) {
             self.peer
                 .send(connection_id, proto::CallCanceled {})
                 .trace_err();
@@ -905,7 +905,7 @@ impl Server {
                 ..
             } = contact
             {
-                for contact_conn_id in store.connection_ids_for_user(contact_user_id) {
+                for contact_conn_id in store.user_connection_ids(contact_user_id) {
                     self.peer
                         .send(
                             contact_conn_id,
@@ -1522,7 +1522,7 @@ impl Server {
         // Update outgoing contact requests of requester
         let mut update = proto::UpdateContacts::default();
         update.outgoing_requests.push(responder_id.to_proto());
-        for connection_id in self.store().await.connection_ids_for_user(requester_id) {
+        for connection_id in self.store().await.user_connection_ids(requester_id) {
             self.peer.send(connection_id, update.clone())?;
         }
 
@@ -1534,7 +1534,7 @@ impl Server {
                 requester_id: requester_id.to_proto(),
                 should_notify: true,
             });
-        for connection_id in self.store().await.connection_ids_for_user(responder_id) {
+        for connection_id in self.store().await.user_connection_ids(responder_id) {
             self.peer.send(connection_id, update.clone())?;
         }
 
@@ -1574,7 +1574,7 @@ impl Server {
             update
                 .remove_incoming_requests
                 .push(requester_id.to_proto());
-            for connection_id in store.connection_ids_for_user(responder_id) {
+            for connection_id in store.user_connection_ids(responder_id) {
                 self.peer.send(connection_id, update.clone())?;
             }
 
@@ -1588,7 +1588,7 @@ impl Server {
             update
                 .remove_outgoing_requests
                 .push(responder_id.to_proto());
-            for connection_id in store.connection_ids_for_user(requester_id) {
+            for connection_id in store.user_connection_ids(requester_id) {
                 self.peer.send(connection_id, update.clone())?;
             }
         }
@@ -1615,7 +1615,7 @@ impl Server {
         update
             .remove_outgoing_requests
             .push(responder_id.to_proto());
-        for connection_id in self.store().await.connection_ids_for_user(requester_id) {
+        for connection_id in self.store().await.user_connection_ids(requester_id) {
             self.peer.send(connection_id, update.clone())?;
         }
 
@@ -1624,7 +1624,7 @@ impl Server {
         update
             .remove_incoming_requests
             .push(requester_id.to_proto());
-        for connection_id in self.store().await.connection_ids_for_user(responder_id) {
+        for connection_id in self.store().await.user_connection_ids(responder_id) {
             self.peer.send(connection_id, update.clone())?;
         }
 
@@ -1819,21 +1819,25 @@ pub async fn handle_websocket_request(
     })
 }
 
-pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> axum::response::Response {
-    let metrics = server.store().await.metrics();
-    METRIC_CONNECTIONS.set(metrics.connections as _);
-    METRIC_SHARED_PROJECTS.set(metrics.shared_projects as _);
+pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result<String> {
+    let connections = server
+        .store()
+        .await
+        .connections()
+        .filter(|connection| !connection.admin)
+        .count();
+
+    METRIC_CONNECTIONS.set(connections as _);
+
+    let shared_projects = server.app_state.db.project_count_excluding_admins().await?;
+    METRIC_SHARED_PROJECTS.set(shared_projects as _);
 
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
-    match encoder.encode_to_string(&metric_families) {
-        Ok(string) => (StatusCode::OK, string).into_response(),
-        Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to encode metrics {:?}", error),
-        )
-            .into_response(),
-    }
+    let encoded_metrics = encoder
+        .encode_to_string(&metric_families)
+        .map_err(|err| anyhow!("{}", err))?;
+    Ok(encoded_metrics)
 }
 
 fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {

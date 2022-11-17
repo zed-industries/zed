@@ -1464,6 +1464,21 @@ where
 
     // projects
 
+    pub async fn project_count_excluding_admins(&self) -> Result<usize> {
+        self.transact(|mut tx| async move {
+            Ok(sqlx::query_scalar::<_, i32>(
+                "
+                SELECT COUNT(*)
+                FROM projects, users
+                WHERE projects.host_user_id = users.id AND users.admin IS FALSE
+                ",
+            )
+            .fetch_one(&mut tx)
+            .await? as usize)
+        })
+        .await
+    }
+
     pub async fn share_project(
         &self,
         expected_room_id: RoomId,
