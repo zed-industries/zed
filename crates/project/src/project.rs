@@ -3329,88 +3329,91 @@ impl Project {
                     let snapshot = this.snapshot();
                     let clipped_position = this.clip_point_utf16(position, Bias::Left);
                     let mut range_for_token = None;
-                    completions.into_iter().filter_map(move |lsp_completion| {
-                        // For now, we can only handle additional edits if they are returned
-                        // when resolving the completion, not if they are present initially.
-                        if lsp_completion
-                            .additional_text_edits
-                            .as_ref()
-                            .map_or(false, |edits| !edits.is_empty())
-                        {
-                            return None;
-                        }
-
-                        let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref() {
-                            // If the language server provides a range to overwrite, then
-                            // check that the range is valid.
-                            Some(lsp::CompletionTextEdit::Edit(edit)) => {
-                                let range = range_from_lsp(edit.range);
-                                let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                                let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                                if start != range.start || end != range.end {
-                                    log::info!("completion out of expected range");
-                                    return None;
-                                }
-                                (
-                                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                                    edit.new_text.clone(),
-                                )
-                            }
-                            // If the language server does not provide a range, then infer
-                            // the range based on the syntax tree.
-                            None => {
-                                if position != clipped_position {
-                                    log::info!("completion out of expected range");
-                                    return None;
-                                }
-                                let Range { start, end } = range_for_token
-                                    .get_or_insert_with(|| {
-                                        let offset = position.to_offset(&snapshot);
-                                        let (range, kind) = snapshot.surrounding_word(offset);
-                                        if kind == Some(CharKind::Word) {
-                                            range
-                                        } else {
-                                            offset..offset
-                                        }
-                                    })
-                                    .clone();
-                                let text = lsp_completion
-                                    .insert_text
-                                    .as_ref()
-                                    .unwrap_or(&lsp_completion.label)
-                                    .clone();
-                                (
-                                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                                    text,
-                                )
-                            }
-                            Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
-                                log::info!("unsupported insert/replace completion");
+                    completions
+                        .into_iter()
+                        .filter_map(move |mut lsp_completion| {
+                            // For now, we can only handle additional edits if they are returned
+                            // when resolving the completion, not if they are present initially.
+                            if lsp_completion
+                                .additional_text_edits
+                                .as_ref()
+                                .map_or(false, |edits| !edits.is_empty())
+                            {
                                 return None;
                             }
-                        };
 
-                        LineEnding::normalize(&mut new_text);
-                        let language = language.clone();
-                        Some(async move {
-                            let label = if let Some(language) = language {
-                                language.label_for_completion(&lsp_completion).await
-                            } else {
-                                None
-                            };
-                            Completion {
-                                old_range,
-                                new_text,
-                                label: label.unwrap_or_else(|| {
-                                    CodeLabel::plain(
-                                        lsp_completion.label.clone(),
-                                        lsp_completion.filter_text.as_deref(),
+                            let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref()
+                            {
+                                // If the language server provides a range to overwrite, then
+                                // check that the range is valid.
+                                Some(lsp::CompletionTextEdit::Edit(edit)) => {
+                                    let range = range_from_lsp(edit.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                                    if start != range.start || end != range.end {
+                                        log::info!("completion out of expected range");
+                                        return None;
+                                    }
+                                    (
+                                        snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                        edit.new_text.clone(),
                                     )
-                                }),
-                                lsp_completion,
-                            }
+                                }
+                                // If the language server does not provide a range, then infer
+                                // the range based on the syntax tree.
+                                None => {
+                                    if position != clipped_position {
+                                        log::info!("completion out of expected range");
+                                        return None;
+                                    }
+                                    let Range { start, end } = range_for_token
+                                        .get_or_insert_with(|| {
+                                            let offset = position.to_offset(&snapshot);
+                                            let (range, kind) = snapshot.surrounding_word(offset);
+                                            if kind == Some(CharKind::Word) {
+                                                range
+                                            } else {
+                                                offset..offset
+                                            }
+                                        })
+                                        .clone();
+                                    let text = lsp_completion
+                                        .insert_text
+                                        .as_ref()
+                                        .unwrap_or(&lsp_completion.label)
+                                        .clone();
+                                    (
+                                        snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                        text,
+                                    )
+                                }
+                                Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
+                                    log::info!("unsupported insert/replace completion");
+                                    return None;
+                                }
+                            };
+
+                            LineEnding::normalize(&mut new_text);
+                            let language = language.clone();
+                            Some(async move {
+                                let mut label = None;
+                                if let Some(language) = language {
+                                    language.process_completion(&mut lsp_completion).await;
+                                    label = language.label_for_completion(&lsp_completion).await;
+                                }
+                                Completion {
+                                    old_range,
+                                    new_text,
+                                    label: label.unwrap_or_else(|| {
+                                        CodeLabel::plain(
+                                            lsp_completion.label.clone(),
+                                            lsp_completion.filter_text.as_deref(),
+                                        )
+                                    }),
+                                    lsp_completion,
+                                }
+                            })
                         })
-                    })
                 });
 
                 Ok(futures::future::join_all(completions).await)

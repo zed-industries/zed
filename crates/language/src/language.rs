@@ -135,6 +135,10 @@ impl CachedLspAdapter {
         self.adapter.process_diagnostics(params).await
     }
 
+    pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
+        self.adapter.process_completion(completion_item).await
+    }
+
     pub async fn label_for_completion(
         &self,
         completion_item: &lsp::CompletionItem,
@@ -174,6 +178,8 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf>;
 
     async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+
+    async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
 
     async fn label_for_completion(
         &self,
@@ -823,6 +829,12 @@ impl Language {
     pub async fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
         if let Some(processor) = self.adapter.as_ref() {
             processor.process_diagnostics(diagnostics).await;
+        }
+    }
+
+    pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp::CompletionItem) {
+        if let Some(adapter) = self.adapter.as_ref() {
+            adapter.process_completion(completion).await;
         }
     }
 
