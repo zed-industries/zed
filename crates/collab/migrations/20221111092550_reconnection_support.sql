@@ -15,7 +15,7 @@ CREATE TABLE "worktrees" (
     "root_name" VARCHAR NOT NULL,
     "abs_path" VARCHAR NOT NULL,
     "visible" BOOL NOT NULL,
-    "scan_id" INTEGER NOT NULL,
+    "scan_id" INT8 NOT NULL,
     "is_complete" BOOL NOT NULL,
     PRIMARY KEY(project_id, id)
 );
@@ -27,7 +27,7 @@ CREATE TABLE "worktree_entries" (
     "id" INTEGER NOT NULL,
     "is_dir" BOOL NOT NULL,
     "path" VARCHAR NOT NULL,
-    "inode" INTEGER NOT NULL,
+    "inode" INT8 NOT NULL,
     "mtime_seconds" INTEGER NOT NULL,
     "mtime_nanos" INTEGER NOT NULL,
     "is_symlink" BOOL NOT NULL,
