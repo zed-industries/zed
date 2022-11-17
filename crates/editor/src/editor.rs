@@ -373,6 +373,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
+    workspace::register_deserializable_item::<Editor>(cx);
 }
 
 trait InvalidationRegion {

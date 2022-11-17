@@ -69,8 +69,6 @@ use lazy_static::lazy_static;
 pub fn init(cx: &mut MutableAppContext) {
     terminal_view::init(cx);
     terminal_container_view::init(cx);
-
-    register_deserializable_item::<TerminalContainer>(cx);
 }
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable

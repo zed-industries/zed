@@ -1,9 +1,9 @@
 use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
+    movement::surrounding_word, Anchor, Autoscroll, Editor, EditorMode, Event, ExcerptId,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
@@ -558,14 +558,36 @@ impl Item for Editor {
     }
 
     fn deserialize(
-        _project: ModelHandle<Project>,
+        project: ModelHandle<Project>,
         _workspace: WeakViewHandle<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
-        _cx: &mut ViewContext<Pane>,
+        cx: &mut ViewContext<Pane>,
     ) -> Task<Result<ViewHandle<Self>>> {
         // Look up the path with this key associated, create a self with that path
-        unimplemented!()
+        let path = Path::new(".");
+        if let Some(project_item) = project.update(cx, |project, cx| {
+            let (worktree, path) = project.find_local_worktree(path, cx)?;
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: path.into(),
+            };
+
+            Some(project.open_path(project_path, cx))
+        }) {
+            cx.spawn(|pane, mut cx| async move {
+                let (_, project_item) = project_item.await?;
+                let buffer = project_item
+                    .downcast::<Buffer>()
+                    .context("Project item at stored path was not a buffer")?;
+
+                Ok(cx.update(|cx| {
+                    cx.add_view(pane, |cx| Editor::for_buffer(buffer, Some(project), cx))
+                }))
+            })
+        } else {
+            Task::ready(Err(anyhow!("Could not load file from stored path")))
+        }
     }
 }
 
