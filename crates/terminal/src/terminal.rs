@@ -429,16 +429,17 @@ impl TerminalBuilder {
                         }
                     }
 
-                    if events.is_empty() {
+                    if events.is_empty() && wakeup == false {
                         smol::future::yield_now().await;
                         break 'outer;
                     } else {
                         this.upgrade(&cx)?.update(&mut cx, |this, cx| {
-                            for event in events {
-                                this.process_event(&event, cx);
-                            }
                             if wakeup {
                                 this.process_event(&AlacTermEvent::Wakeup, cx);
+                            }
+
+                            for event in events {
+                                this.process_event(&event, cx);
                             }
                         });
                         smol::future::yield_now().await;
