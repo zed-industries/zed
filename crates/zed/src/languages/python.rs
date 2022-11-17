@@ -87,6 +87,25 @@ impl LspAdapter for PythonLspAdapter {
         .log_err()
     }
 
+    async fn process_completion(&self, item: &mut lsp::CompletionItem) {
+        // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
+        // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
+        // and `name` is the symbol name itself.
+        //
+        // Because the the symbol name is included, there generally are not ties when
+        // sorting by the `sortText`, so the symbol's fuzzy match score is not taken
+        // into account. Here, we remove the symbol name from the sortText in order
+        // to allow our own fuzzy score to be used to break ties.
+        //
+        // see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
+        let Some(sort_text) = &mut item.sort_text else { return };
+        let mut parts = sort_text.split('.');
+        let Some(first) = parts.next() else { return };
+        let Some(second) = parts.next() else { return };
+        let Some(_) = parts.next() else { return };
+        sort_text.replace_range(first.len() + second.len() + 1.., "");
+    }
+
     async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
