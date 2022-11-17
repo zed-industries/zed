@@ -59,7 +59,7 @@ CREATE TABLE "language_servers" (
 CREATE INDEX "index_language_servers_on_project_id" ON "language_servers" ("project_id");
 
 CREATE TABLE "project_collaborators" (
-    "id" INTEGER PRIMARY KEY,
+    "id" SERIAL PRIMARY KEY,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "connection_id" INTEGER NOT NULL,
     "user_id" INTEGER NOT NULL,
@@ -70,7 +70,7 @@ CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborato
 CREATE UNIQUE INDEX "index_project_collaborators_on_project_id_and_replica_id" ON "project_collaborators" ("project_id", "replica_id");
 
 CREATE TABLE "room_participants" (
-    "id" INTEGER PRIMARY KEY,
+    "id" SERIAL PRIMARY KEY,
     "room_id" INTEGER NOT NULL REFERENCES rooms (id),
     "user_id" INTEGER NOT NULL REFERENCES users (id),
     "answering_connection_id" INTEGER,
