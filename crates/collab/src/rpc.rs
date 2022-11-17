@@ -2,7 +2,7 @@ mod store;
 
 use crate::{
     auth,
-    db::{self, ProjectId, RoomId, User, UserId},
+    db::{self, DefaultDb, ProjectId, RoomId, User, UserId},
     AppState, Result,
 };
 use anyhow::anyhow;
@@ -80,6 +80,17 @@ struct Response<R> {
 struct Session {
     user_id: UserId,
     connection_id: ConnectionId,
+    db: Arc<Mutex<DbHandle>>,
+}
+
+struct DbHandle(Arc<DefaultDb>);
+
+impl Deref for DbHandle {
+    type Target = DefaultDb;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
 }
 
 impl<R: RequestMessage> Response<R> {
@@ -352,6 +363,8 @@ impl Server {
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
 
+            let db = Arc::new(Mutex::new(DbHandle(this.app_state.db.clone())));
+
             // Handlers for foreground messages are pushed into the following `FuturesUnordered`.
             // This prevents deadlocks when e.g., client A performs a request to client B and
             // client B performs a request to client A. If both clients stop processing further
@@ -382,6 +395,7 @@ impl Server {
                                 let session = Session {
                                     user_id,
                                     connection_id,
+                                    db: db.clone(),
                                 };
                                 let handle_message = (handler)(this.clone(), message, session);
                                 drop(span_enter);
@@ -1409,9 +1423,10 @@ impl Server {
         session: Session,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.project_id);
-        let project_connection_ids = self
-            .app_state
+        let project_connection_ids = session
             .db
+            .lock()
+            .await
             .project_connection_ids(project_id, session.connection_id)
             .await?;
 

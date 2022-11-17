@@ -19,7 +19,6 @@ rpc = { path = "../rpc" }
 util = { path = "../util" }
 
 anyhow = "1.0.40"
-async-trait = "0.1.50"
 async-tungstenite = "0.16"
 axum = { version = "0.5", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.3", features = ["erased-json"] }
