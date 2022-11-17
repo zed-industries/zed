@@ -4672,7 +4672,7 @@ async fn test_following(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
+    cx_a.foreground().forbid_parking();
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
@@ -4791,14 +4791,11 @@ async fn test_following(
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.activate_item(&editor_a1, cx)
     });
-    deterministic.run_until_parked();
-    assert_eq!(
-        workspace_b.read_with(cx_b, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .id()),
-        editor_b1.id()
-    );
+    workspace_b
+        .condition(cx_b, |workspace, cx| {
+            workspace.active_item(cx).unwrap().id() == editor_b1.id()
+        })
+        .await;
 
     // When client A navigates back and forth, client B does so as well.
     workspace_a
@@ -4806,74 +4803,49 @@ async fn test_following(
             workspace::Pane::go_back(workspace, None, cx)
         })
         .await;
-    deterministic.run_until_parked();
-    assert_eq!(
-        workspace_b.read_with(cx_b, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .id()),
-        editor_b2.id()
-    );
+    workspace_b
+        .condition(cx_b, |workspace, cx| {
+            workspace.active_item(cx).unwrap().id() == editor_b2.id()
+        })
+        .await;
 
     workspace_a
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_forward(workspace, None, cx)
         })
         .await;
-    workspace_a
-        .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_back(workspace, None, cx)
+    workspace_b
+        .condition(cx_b, |workspace, cx| {
+            workspace.active_item(cx).unwrap().id() == editor_b1.id()
         })
         .await;
-    workspace_a
-        .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_forward(workspace, None, cx)
-        })
-        .await;
-    deterministic.run_until_parked();
-    assert_eq!(
-        workspace_b.read_with(cx_b, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .id()),
-        editor_b1.id()
-    );
 
     // Changes to client A's editor are reflected on client B.
     editor_a1.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2]));
     });
-    deterministic.run_until_parked();
-    assert_eq!(
-        editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![1..1, 2..2]
-    );
+    editor_b1
+        .condition(cx_b, |editor, cx| {
+            editor.selections.ranges(cx) == vec![1..1, 2..2]
+        })
+        .await;
 
     editor_a1.update(cx_a, |editor, cx| editor.set_text("TWO", cx));
-    deterministic.run_until_parked();
-    assert_eq!(
-        editor_b1.read_with(cx_b, |editor, cx| editor.text(cx)),
-        "TWO"
-    );
+    editor_b1
+        .condition(cx_b, |editor, cx| editor.text(cx) == "TWO")
+        .await;
 
     editor_a1.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
         editor.set_scroll_position(vec2f(0., 100.), cx);
     });
-    deterministic.run_until_parked();
-    assert_eq!(
-        editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![3..3]
-    );
+    editor_b1
+        .condition(cx_b, |editor, cx| {
+            editor.selections.ranges(cx) == vec![3..3]
+        })
+        .await;
 
     // After unfollowing, client B stops receiving updates from client A.
-    assert_eq!(
-        workspace_b.read_with(cx_b, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .id()),
-        editor_b1.id()
-    );
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.unfollow(&workspace.active_pane().clone(), cx)
     });

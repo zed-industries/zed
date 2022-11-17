@@ -229,7 +229,6 @@ request_messages!(
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateDiagnosticSummary, Ack),
-    (UpdateFollowers, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
