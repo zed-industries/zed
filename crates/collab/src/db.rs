@@ -1809,15 +1809,13 @@ where
                     path,
                     language_server_id,
                     error_count,
-                    warning_count,
-                    version
+                    warning_count
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 ON CONFLICT (project_id, worktree_id, path) DO UPDATE SET
                     language_server_id = excluded.language_server_id,
                     error_count = excluded.error_count, 
-                    warning_count = excluded.warning_count,
-                    version = excluded.version
+                    warning_count = excluded.warning_count
                 ",
             )
             .bind(project_id)
@@ -1826,7 +1824,6 @@ where
             .bind(summary.language_server_id as i64)
             .bind(summary.error_count as i32)
             .bind(summary.warning_count as i32)
-            .bind(summary.version as i32)
             .execute(&mut tx)
             .await?;
 
@@ -2041,7 +2038,6 @@ where
                                 language_server_id: summary.language_server_id as u64,
                                 error_count: summary.error_count as u32,
                                 warning_count: summary.warning_count as u32,
-                                version: summary.version as u32,
                             });
                     }
                 }
@@ -2666,7 +2662,6 @@ struct WorktreeDiagnosticSummary {
     language_server_id: i64,
     error_count: i32,
     warning_count: i32,
-    version: i32,
 }
 
 id_type!(LanguageServerId);

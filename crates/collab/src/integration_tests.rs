@@ -2412,10 +2412,9 @@ async fn test_collaborating_with_diagnostics(
                     path: Arc::from(Path::new("a.rs")),
                 },
                 DiagnosticSummary {
-                    language_server_id: 0,
                     error_count: 1,
                     warning_count: 0,
-                    version: 2,
+                    ..Default::default()
                 },
             )]
         )
@@ -2445,10 +2444,9 @@ async fn test_collaborating_with_diagnostics(
                 path: Arc::from(Path::new("a.rs")),
             },
             DiagnosticSummary {
-                language_server_id: 0,
                 error_count: 1,
                 warning_count: 0,
-                version: 2,
+                ..Default::default()
             },
         )]
     );
@@ -2486,10 +2484,9 @@ async fn test_collaborating_with_diagnostics(
                     path: Arc::from(Path::new("a.rs")),
                 },
                 DiagnosticSummary {
-                    language_server_id: 0,
                     error_count: 1,
                     warning_count: 1,
-                    version: 3,
+                    ..Default::default()
                 },
             )]
         );
@@ -2503,10 +2500,9 @@ async fn test_collaborating_with_diagnostics(
                     path: Arc::from(Path::new("a.rs")),
                 },
                 DiagnosticSummary {
-                    language_server_id: 0,
                     error_count: 1,
                     warning_count: 1,
-                    version: 3,
+                    ..Default::default()
                 },
             )]
         );
