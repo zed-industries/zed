@@ -862,8 +862,7 @@ impl Server {
                 request.sender_connection_id,
                 &request.payload.worktrees,
             )
-            .await
-            .unwrap();
+            .await?;
         response.send(proto::ShareProjectResponse {
             project_id: project_id.to_proto(),
         })?;
