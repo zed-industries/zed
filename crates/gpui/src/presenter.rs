@@ -475,27 +475,33 @@ impl Presenter {
                 if let MouseEvent::Down(e) = &mouse_event {
                     if valid_region
                         .handlers
-                        .contains_handler(MouseEvent::click_disc(), Some(e.button))
+                        .contains(MouseEvent::click_disc(), Some(e.button))
                         || valid_region
                             .handlers
-                            .contains_handler(MouseEvent::drag_disc(), Some(e.button))
+                            .contains(MouseEvent::drag_disc(), Some(e.button))
                     {
                         event_cx.handled = true;
                     }
                 }
 
-                if let Some(callback) = valid_region.handlers.get(&mouse_event.handler_key()) {
-                    event_cx.handled = true;
-                    event_cx.with_current_view(valid_region.id().view_id(), {
-                        let region_event = mouse_event.clone();
-                        |cx| callback(region_event, cx)
-                    });
+                // `event_consumed` should only be true if there are any handlers for this event.
+                let mut event_consumed = false;
+                if let Some(callbacks) = valid_region.handlers.get(&mouse_event.handler_key()) {
+                    event_consumed = true;
+                    for callback in callbacks {
+                        event_cx.handled = true;
+                        event_cx.with_current_view(valid_region.id().view_id(), {
+                            let region_event = mouse_event.clone();
+                            |cx| callback(region_event, cx)
+                        });
+                        event_consumed &= event_cx.handled;
+                        any_event_handled |= event_cx.handled;
+                    }
                 }
 
-                any_event_handled = any_event_handled || event_cx.handled;
-                // For bubbling events, if the event was handled, don't continue dispatching
-                // This only makes sense for local events.
-                if event_cx.handled && mouse_event.is_capturable() {
+                // For bubbling events, if the event was handled, don't continue dispatching.
+                // This only makes sense for local events which return false from is_capturable.
+                if event_consumed && mouse_event.is_capturable() {
                     break;
                 }
             }
