@@ -1771,24 +1771,9 @@ where
                 query.execute(&mut tx).await?;
             }
 
-            let connection_ids = sqlx::query_scalar::<_, i32>(
-                "
-                SELECT connection_id
-                FROM project_collaborators
-                WHERE project_id = $1 AND connection_id != $2
-                ",
-            )
-            .bind(project_id)
-            .bind(connection_id.0 as i32)
-            .fetch_all(&mut tx)
-            .await?;
-
+            let connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
             tx.commit().await?;
-
-            Ok(connection_ids
-                .into_iter()
-                .map(|connection_id| ConnectionId(connection_id as u32))
-                .collect())
+            Ok(connection_ids)
         })
         .await
     }
@@ -1846,24 +1831,9 @@ where
             .execute(&mut tx)
             .await?;
 
-            let connection_ids = sqlx::query_scalar::<_, i32>(
-                "
-                SELECT connection_id
-                FROM project_collaborators
-                WHERE project_id = $1 AND connection_id != $2
-                ",
-            )
-            .bind(project_id)
-            .bind(connection_id.0 as i32)
-            .fetch_all(&mut tx)
-            .await?;
-
+            let connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
             tx.commit().await?;
-
-            Ok(connection_ids
-                .into_iter()
-                .map(|connection_id| ConnectionId(connection_id as u32))
-                .collect())
+            Ok(connection_ids)
         })
         .await
     }
@@ -1908,24 +1878,9 @@ where
             .execute(&mut tx)
             .await?;
 
-            let connection_ids = sqlx::query_scalar::<_, i32>(
-                "
-                SELECT connection_id
-                FROM project_collaborators
-                WHERE project_id = $1 AND connection_id != $2
-                ",
-            )
-            .bind(project_id)
-            .bind(connection_id.0 as i32)
-            .fetch_all(&mut tx)
-            .await?;
-
+            let connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
             tx.commit().await?;
-
-            Ok(connection_ids
-                .into_iter()
-                .map(|connection_id| ConnectionId(connection_id as u32))
-                .collect())
+            Ok(connection_ids)
         })
         .await
     }
