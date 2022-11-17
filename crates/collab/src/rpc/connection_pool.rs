@@ -1,12 +1,12 @@
-use crate::db::{self, UserId};
+use crate::db::UserId;
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashSet};
-use rpc::{proto, ConnectionId};
+use rpc::ConnectionId;
 use serde::Serialize;
 use tracing::instrument;
 
 #[derive(Default, Serialize)]
-pub struct Store {
+pub struct ConnectionPool {
     connections: BTreeMap<ConnectionId, Connection>,
     connected_users: BTreeMap<UserId, ConnectedUser>,
 }
@@ -22,7 +22,7 @@ pub struct Connection {
     pub admin: bool,
 }
 
-impl Store {
+impl ConnectionPool {
     #[instrument(skip(self))]
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId, admin: bool) {
         self.connections
@@ -68,55 +68,6 @@ impl Store {
             .unwrap_or(&Default::default())
             .connection_ids
             .is_empty()
-    }
-
-    pub fn build_initial_contacts_update(
-        &self,
-        contacts: Vec<db::Contact>,
-    ) -> proto::UpdateContacts {
-        let mut update = proto::UpdateContacts::default();
-
-        for contact in contacts {
-            match contact {
-                db::Contact::Accepted {
-                    user_id,
-                    should_notify,
-                    busy,
-                } => {
-                    update
-                        .contacts
-                        .push(self.contact_for_user(user_id, should_notify, busy));
-                }
-                db::Contact::Outgoing { user_id } => {
-                    update.outgoing_requests.push(user_id.to_proto())
-                }
-                db::Contact::Incoming {
-                    user_id,
-                    should_notify,
-                } => update
-                    .incoming_requests
-                    .push(proto::IncomingContactRequest {
-                        requester_id: user_id.to_proto(),
-                        should_notify,
-                    }),
-            }
-        }
-
-        update
-    }
-
-    pub fn contact_for_user(
-        &self,
-        user_id: UserId,
-        should_notify: bool,
-        busy: bool,
-    ) -> proto::Contact {
-        proto::Contact {
-            user_id: user_id.to_proto(),
-            online: self.is_user_online(user_id),
-            busy,
-            should_notify,
-        }
     }
 
     #[cfg(test)]

@@ -1,5 +1,5 @@
 use crate::{
-    db::{NewUserParams, SqliteTestDb as TestDb, UserId},
+    db::{self, NewUserParams, SqliteTestDb as TestDb, UserId},
     rpc::{Executor, Server},
     AppState,
 };
@@ -5469,18 +5469,15 @@ async fn test_random_collaboration(
                 }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
-                    let contacts = server
-                        .store
-                        .lock()
-                        .await
-                        .build_initial_contacts_update(contacts)
-                        .contacts;
+                    let pool = server.connection_pool.lock().await;
                     for contact in contacts {
-                        if contact.online {
-                            assert_ne!(
-                                contact.user_id, removed_guest_id.0 as u64,
-                                "removed guest is still a contact of another peer"
-                            );
+                        if let db::Contact::Accepted { user_id, .. } = contact {
+                            if pool.is_user_online(user_id) {
+                                assert_ne!(
+                                    user_id, removed_guest_id,
+                                    "removed guest is still a contact of another peer"
+                                );
+                            }
                         }
                     }
                 }
