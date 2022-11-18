@@ -160,10 +160,9 @@ message LeaveRoom {}
 
 message Room {
     uint64 id = 1;
-    uint64 version = 2;
-    repeated Participant participants = 3;
-    repeated PendingParticipant pending_participants = 4;
-    string live_kit_room = 5;
+    repeated Participant participants = 2;
+    repeated PendingParticipant pending_participants = 3;
+    string live_kit_room = 4;
 }
 
 message Participant {

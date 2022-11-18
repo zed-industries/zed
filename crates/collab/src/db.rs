@@ -931,13 +931,12 @@ where
             let live_kit_room = nanoid::nanoid!(30);
             let room_id = sqlx::query_scalar(
                 "
-                INSERT INTO rooms (live_kit_room, version)
-                VALUES ($1, $2)
+                INSERT INTO rooms (live_kit_room)
+                VALUES ($1)
                 RETURNING id
                 ",
             )
             .bind(&live_kit_room)
-            .bind(0)
             .fetch_one(&mut tx)
             .await
             .map(RoomId)?;
@@ -956,7 +955,9 @@ where
             .execute(&mut tx)
             .await?;
 
-            self.commit_room_transaction(room_id, tx).await
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
+            Ok(room)
         }).await
     }
 
@@ -983,7 +984,9 @@ where
             .execute(&mut tx)
             .await?;
 
-            let room = self.commit_room_transaction(room_id, tx).await?;
+            let room = self.get_room(room_id, &mut tx).await?;
+                tx.commit().await?;
+
             let incoming_call = Self::build_incoming_call(&room, called_user_id)
                 .ok_or_else(|| anyhow!("failed to build incoming call"))?;
             Ok((room, incoming_call))
@@ -1061,7 +1064,9 @@ where
             .execute(&mut tx)
             .await?;
 
-            self.commit_room_transaction(room_id, tx).await
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
+            Ok(room)
         })
         .await
     }
@@ -1086,7 +1091,9 @@ where
                 return Err(anyhow!("declining call on unexpected room"))?;
             }
 
-            self.commit_room_transaction(room_id, tx).await
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
+            Ok(room)
         })
         .await
     }
@@ -1113,7 +1120,9 @@ where
                 return Err(anyhow!("canceling call on unexpected room"))?;
             }
 
-            self.commit_room_transaction(room_id, tx).await
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
+            Ok(room)
         }).await
     }
 
@@ -1137,7 +1146,10 @@ where
             .bind(user_id)
             .fetch_one(&mut tx)
             .await?;
-            self.commit_room_transaction(room_id, tx).await
+
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
+            Ok(room)
         })
         .await
     }
@@ -1245,7 +1257,9 @@ where
                 .execute(&mut tx)
                 .await?;
 
-                let room = self.commit_room_transaction(room_id, tx).await?;
+                let room = self.get_room(room_id, &mut tx).await?;
+                tx.commit().await?;
+
                 Ok(Some(LeftRoom {
                     room,
                     left_projects,
@@ -1302,30 +1316,11 @@ where
             .fetch_one(&mut tx)
             .await?;
 
-            self.commit_room_transaction(room_id, tx).await
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
+            Ok(room)
         })
         .await
-    }
-
-    async fn commit_room_transaction(
-        &self,
-        room_id: RoomId,
-        mut tx: sqlx::Transaction<'_, D>,
-    ) -> Result<proto::Room> {
-        sqlx::query(
-            "
-            UPDATE rooms
-            SET version = version + 1
-            WHERE id = $1
-            ",
-        )
-        .bind(room_id)
-        .execute(&mut tx)
-        .await?;
-        let room = self.get_room(room_id, &mut tx).await?;
-        tx.commit().await?;
-
-        Ok(room)
     }
 
     async fn get_guest_connection_ids(
@@ -1455,7 +1450,6 @@ where
 
         Ok(proto::Room {
             id: room.id.to_proto(),
-            version: room.version as u64,
             live_kit_room: room.live_kit_room,
             participants: participants.into_values().collect(),
             pending_participants,
@@ -1565,7 +1559,9 @@ where
             .execute(&mut tx)
             .await?;
 
-            let room = self.commit_room_transaction(room_id, tx).await?;
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
+
             Ok((project_id, room))
         })
         .await
@@ -1589,7 +1585,8 @@ where
             .bind(connection_id.0 as i32)
             .fetch_one(&mut tx)
             .await?;
-            let room = self.commit_room_transaction(room_id, tx).await?;
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
 
             Ok((room, guest_connection_ids))
         })
@@ -1666,7 +1663,8 @@ where
             query.execute(&mut tx).await?;
 
             let guest_connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
-            let room = self.commit_room_transaction(room_id, tx).await?;
+            let room = self.get_room(room_id, &mut tx).await?;
+            tx.commit().await?;
 
             Ok((room, guest_connection_ids))
         })
@@ -2614,7 +2612,6 @@ id_type!(RoomId);
 #[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
 pub struct Room {
     pub id: RoomId,
-    pub version: i32,
     pub live_kit_room: String,
 }
 

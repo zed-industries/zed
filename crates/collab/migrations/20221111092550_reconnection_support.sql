@@ -1,6 +1,5 @@
 CREATE TABLE IF NOT EXISTS "rooms" (
     "id" SERIAL PRIMARY KEY,
-    "version" INTEGER NOT NULL,
     "live_kit_room" VARCHAR NOT NULL
 );
 

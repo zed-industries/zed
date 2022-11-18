@@ -36,7 +36,6 @@ CREATE INDEX "index_contacts_user_id_b" ON "contacts" ("user_id_b");
 
 CREATE TABLE "rooms" (
     "id" INTEGER PRIMARY KEY,
-    "version" INTEGER NOT NULL,
     "live_kit_room" VARCHAR NOT NULL
 );
 
