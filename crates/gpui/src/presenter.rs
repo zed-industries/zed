@@ -485,7 +485,7 @@ impl Presenter {
                 }
 
                 // `event_consumed` should only be true if there are any handlers for this event.
-                let mut event_consumed = false;
+                let mut event_consumed = event_cx.handled;
                 if let Some(callbacks) = valid_region.handlers.get(&mouse_event.handler_key()) {
                     event_consumed = true;
                     for callback in callbacks {
@@ -498,6 +498,8 @@ impl Presenter {
                         any_event_handled |= event_cx.handled;
                     }
                 }
+
+                any_event_handled |= event_cx.handled;
 
                 // For bubbling events, if the event was handled, don't continue dispatching.
                 // This only makes sense for local events which return false from is_capturable.
