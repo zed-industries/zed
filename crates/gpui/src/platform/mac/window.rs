@@ -324,12 +324,12 @@ struct WindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
+    display_callback: Option<Box<dyn FnMut(Vector2F, f32) -> Option<Scene>>>,
     input_handler: Option<Box<dyn InputHandler>>,
     pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
     performed_key_equivalent: bool,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
-    scene_to_render: Option<Scene>,
     renderer: Renderer,
     last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Vector2F>,
@@ -429,12 +429,12 @@ impl Window {
                 activate_callback: None,
                 fullscreen_callback: None,
                 appearance_changed_callback: None,
+                display_callback: None,
                 input_handler: None,
                 pending_key_down: None,
                 performed_key_equivalent: false,
                 synthetic_drag_counter: 0,
                 executor,
-                scene_to_render: Default::default(),
                 renderer: Renderer::new(true, fonts),
                 last_fresh_keydown: None,
                 traffic_light_position: options
@@ -564,6 +564,10 @@ impl platform::Window for Window {
         self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
 
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().activate_callback = Some(callback);
+    }
+
     fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
@@ -580,8 +584,8 @@ impl platform::Window for Window {
         self.0.as_ref().borrow_mut().close_callback = Some(callback);
     }
 
-    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().borrow_mut().activate_callback = Some(callback);
+    fn on_display(&mut self, callback: Box<dyn FnMut(Vector2F, f32) -> Option<Scene>>) {
+        self.0.as_ref().borrow_mut().display_callback = Some(callback);
     }
 
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>) {
@@ -649,7 +653,7 @@ impl platform::Window for Window {
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
-            let window = self.0.borrow().native_window;
+            let window = self.0.borrow_mut().native_window;
             let title = ns_string(title);
             msg_send![app, changeWindowsItem:window title:title filename:false]
         }
@@ -717,19 +721,16 @@ impl platform::Window for Window {
         self.0.as_ref().borrow().scale_factor()
     }
 
-    fn present_scene(&mut self, scene: Scene) {
-        self.0.as_ref().borrow_mut().present_scene(scene);
-    }
-
     fn titlebar_height(&self) -> f32 {
         self.0.as_ref().borrow().titlebar_height()
     }
 
+    fn request_frame(&self) {
+        self.0.as_ref().borrow().request_frame()
+    }
+
     fn appearance(&self) -> crate::Appearance {
-        unsafe {
-            let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
-            crate::Appearance::from_native(appearance)
-        }
+        self.0.as_ref().borrow().appearance()
     }
 
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
@@ -799,6 +800,13 @@ impl WindowState {
         }
     }
 
+    fn appearance(&self) -> crate::Appearance {
+        unsafe {
+            let appearance: id = msg_send![self.native_window, effectiveAppearance];
+            crate::Appearance::from_native(appearance)
+        }
+    }
+
     fn content_size(&self) -> Vector2F {
         let NSSize { width, height, .. } =
             unsafe { NSView::frame(self.native_window.contentView()) }.size;
@@ -817,8 +825,7 @@ impl WindowState {
         }
     }
 
-    fn present_scene(&mut self, scene: Scene) {
-        self.scene_to_render = Some(scene);
+    fn request_frame(&self) {
         unsafe {
             let _: () = msg_send![self.native_window.contentView(), setNeedsDisplay: YES];
         }
@@ -1217,9 +1224,16 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
-        let mut window_state = window_state.as_ref().borrow_mut();
-        if let Some(scene) = window_state.scene_to_render.take() {
-            window_state.renderer.render(&scene);
+        let mut window_state_borrow = window_state.as_ref().borrow_mut();
+        let content_size = window_state_borrow.content_size();
+        let scale_factor = window_state_borrow.scale_factor();
+        if let Some(mut display_callback) = window_state_borrow.display_callback.take() {
+            drop(window_state_borrow);
+            if let Some(scene) = display_callback(content_size, scale_factor) {
+                let mut window_state_borrow = window_state.borrow_mut();
+                window_state_borrow.renderer.render(&scene);
+                window_state_borrow.display_callback = Some(display_callback);
+            }
         };
     }
 }

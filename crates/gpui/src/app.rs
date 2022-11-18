@@ -879,13 +879,6 @@ impl MutableAppContext {
             .and_then(|window| window.root_view.clone().downcast::<T>())
     }
 
-    pub fn window_is_active(&self, window_id: usize) -> bool {
-        self.cx
-            .windows
-            .get(&window_id)
-            .map_or(false, |window| window.is_active)
-    }
-
     pub fn window_is_fullscreen(&self, window_id: usize) -> bool {
         self.cx
             .windows
@@ -1710,19 +1703,19 @@ impl MutableAppContext {
     fn register_platform_window(
         &mut self,
         window_id: usize,
-        mut window: Box<dyn platform::Window>,
+        mut platform_window: Box<dyn platform::Window>,
     ) {
         let presenter = Rc::new(RefCell::new(self.build_presenter(
             window_id,
-            window.titlebar_height(),
-            window.appearance(),
+            platform_window.titlebar_height(),
+            platform_window.appearance(),
         )));
 
         {
             let mut app = self.upgrade();
             let presenter = Rc::downgrade(&presenter);
 
-            window.on_event(Box::new(move |event| {
+            platform_window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Some(presenter) = presenter.upgrade() {
                         if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
@@ -1741,51 +1734,63 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
-            window.on_active_status_change(Box::new(move |is_active| {
+            platform_window.on_active_status_change(Box::new(move |is_active| {
                 app.update(|cx| cx.window_changed_active_status(window_id, is_active))
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_resize(Box::new(move || {
+            platform_window.on_resize(Box::new(move || {
                 app.update(|cx| cx.window_was_resized(window_id))
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_fullscreen(Box::new(move |is_fullscreen| {
+            platform_window.on_fullscreen(Box::new(move |is_fullscreen| {
                 app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_close(Box::new(move || {
+            platform_window.on_close(Box::new(move || {
                 app.update(|cx| cx.remove_window(window_id));
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
+            platform_window
+                .on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
         }
 
-        window.set_input_handler(Box::new(WindowInputHandler {
+        {
+            let mut app = self.upgrade();
+            platform_window.on_display(Box::new(move |content_size, scale_factor| {
+                app.update(|app| {
+                    let (presenter, platform_window) =
+                        app.presenters_and_platform_windows.remove(&window_id)?;
+                    let scene = {
+                        let mut presenter = presenter.borrow_mut();
+                        presenter.build_scene(content_size, scale_factor, app)
+                    };
+                    app.presenters_and_platform_windows
+                        .insert(window_id, (presenter, platform_window));
+                    Some(scene)
+                })
+            }))
+        }
+
+        platform_window.set_input_handler(Box::new(WindowInputHandler {
             app: self.upgrade().0,
             window_id,
         }));
 
-        let scene = presenter.borrow_mut().build_scene(
-            window.content_size(),
-            window.scale_factor(),
-            false,
-            self,
-        );
-        window.present_scene(scene);
+        platform_window.request_frame();
         self.presenters_and_platform_windows
-            .insert(window_id, (presenter.clone(), window));
+            .insert(window_id, (presenter.clone(), platform_window));
     }
 
     pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
@@ -2115,10 +2120,40 @@ impl MutableAppContext {
                     self.remove_dropped_entities();
                 } else {
                     self.remove_dropped_entities();
-                    if refreshing {
-                        self.perform_window_refresh();
-                    } else {
-                        self.update_windows();
+
+                    let windows = self
+                        .cx
+                        .windows
+                        .iter_mut()
+                        .map(|(window_id, window)| (*window_id, window.invalidation.take()))
+                        .collect::<Vec<_>>();
+
+                    for (window_id, invalidation) in windows.into_iter() {
+                        if invalidation.is_some() || refreshing {
+                            if let Some((presenter, platform_window)) =
+                                self.presenters_and_platform_windows.remove(&window_id)
+                            {
+                                {
+                                    let mut presenter = presenter.borrow_mut();
+
+                                    presenter.invalidate(
+                                        invalidation,
+                                        platform_window.appearance(),
+                                        refreshing,
+                                        self,
+                                    );
+                                    presenter.layout(
+                                        platform_window.content_size(),
+                                        refreshing,
+                                        self,
+                                    );
+                                }
+                                platform_window.request_frame();
+
+                                self.presenters_and_platform_windows
+                                    .insert(window_id, (presenter, platform_window));
+                            }
+                        }
                     }
 
                     if self.pending_effects.is_empty() {
@@ -2136,35 +2171,6 @@ impl MutableAppContext {
 
                     refreshing = false;
                 }
-            }
-        }
-    }
-
-    fn update_windows(&mut self) {
-        let mut invalidations: HashMap<_, _> = Default::default();
-        for (window_id, window) in &mut self.cx.windows {
-            if let Some(invalidation) = window.invalidation.take() {
-                invalidations.insert(*window_id, invalidation);
-            }
-        }
-
-        for (window_id, mut invalidation) in invalidations {
-            if let Some((presenter, mut window)) =
-                self.presenters_and_platform_windows.remove(&window_id)
-            {
-                {
-                    let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(&mut invalidation, window.appearance(), self);
-                    let scene = presenter.build_scene(
-                        window.content_size(),
-                        window.scale_factor(),
-                        false,
-                        self,
-                    );
-                    window.present_scene(scene);
-                }
-                self.presenters_and_platform_windows
-                    .insert(window_id, (presenter, window));
             }
         }
     }
@@ -2207,29 +2213,6 @@ impl MutableAppContext {
             view_id,
             action,
         });
-    }
-
-    fn perform_window_refresh(&mut self) {
-        let mut presenters = mem::take(&mut self.presenters_and_platform_windows);
-        for (window_id, (presenter, window)) in &mut presenters {
-            let mut invalidation = self
-                .cx
-                .windows
-                .get_mut(window_id)
-                .unwrap()
-                .invalidation
-                .take();
-            let mut presenter = presenter.borrow_mut();
-            presenter.refresh(
-                invalidation.as_mut().unwrap_or(&mut Default::default()),
-                window.appearance(),
-                self,
-            );
-            let scene =
-                presenter.build_scene(window.content_size(), window.scale_factor(), true, self);
-            window.present_scene(scene);
-        }
-        self.presenters_and_platform_windows = presenters;
     }
 
     fn emit_global_event(&mut self, payload: Box<dyn Any>) {
@@ -2667,6 +2650,12 @@ impl AppContext {
 
     pub fn platform(&self) -> &Arc<dyn Platform> {
         &self.platform
+    }
+
+    pub fn window_is_active(&self, window_id: usize) -> bool {
+        self.windows
+            .get(&window_id)
+            .map_or(false, |window| window.is_active)
     }
 
     pub fn has_global<T: 'static>(&self) -> bool {

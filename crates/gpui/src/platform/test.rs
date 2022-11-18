@@ -36,7 +36,6 @@ struct Dispatcher;
 pub struct Window {
     pub(crate) size: Vector2F,
     scale_factor: f32,
-    current_scene: Option<crate::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
@@ -229,7 +228,6 @@ impl Window {
             active_status_change_handlers: Default::default(),
             fullscreen_handlers: Default::default(),
             scale_factor: 1.0,
-            current_scene: None,
             title: None,
             edited: false,
             pending_prompts: Default::default(),
@@ -264,16 +262,24 @@ impl super::Window for Window {
         self.active_status_change_handlers.push(callback);
     }
 
-    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.fullscreen_handlers.push(callback)
-    }
-
     fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.resize_handlers.push(callback);
     }
 
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.fullscreen_handlers.push(callback)
+    }
+
+    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
+        self.should_close_handler = Some(callback);
+    }
+
     fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
         self.close_handlers.push(callback);
+    }
+
+    fn on_display(&mut self, callback: Box<dyn FnMut(Vector2F, f32) -> Option<crate::Scene>>) {
+        todo!()
     }
 
     fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
@@ -292,10 +298,6 @@ impl super::Window for Window {
 
     fn set_edited(&mut self, edited: bool) {
         self.edited = edited;
-    }
-
-    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
-        self.should_close_handler = Some(callback);
     }
 
     fn show_character_palette(&self) {}
@@ -322,9 +324,7 @@ impl super::Window for Window {
         24.
     }
 
-    fn present_scene(&mut self, scene: crate::Scene) {
-        self.current_scene = Some(scene);
-    }
+    fn request_frame(&self) {}
 
     fn appearance(&self) -> crate::Appearance {
         crate::Appearance::Light

@@ -74,46 +74,23 @@ impl Presenter {
 
     pub fn invalidate(
         &mut self,
-        invalidation: &mut WindowInvalidation,
+        mut invalidation: Option<WindowInvalidation>,
         appearance: Appearance,
+        refresh: bool,
         cx: &mut MutableAppContext,
     ) {
         cx.start_frame();
         self.appearance = appearance;
-        for view_id in &invalidation.removed {
-            invalidation.updated.remove(view_id);
-            self.rendered_views.remove(view_id);
-        }
-        for view_id in &invalidation.updated {
-            self.rendered_views.insert(
-                *view_id,
-                cx.render_view(RenderParams {
-                    window_id: self.window_id,
-                    view_id: *view_id,
-                    titlebar_height: self.titlebar_height,
-                    hovered_region_ids: self.hovered_region_ids.clone(),
-                    clicked_region_ids: self
-                        .clicked_button
-                        .map(|button| (self.clicked_region_ids.clone(), button)),
-                    refreshing: false,
-                    appearance,
-                })
-                .unwrap(),
-            );
-        }
-    }
 
-    pub fn refresh(
-        &mut self,
-        invalidation: &mut WindowInvalidation,
-        appearance: Appearance,
-        cx: &mut MutableAppContext,
-    ) {
-        self.invalidate(invalidation, appearance, cx);
-        for (view_id, view) in &mut self.rendered_views {
-            if !invalidation.updated.contains(view_id) {
-                *view = cx
-                    .render_view(RenderParams {
+        if let Some(invalidation) = invalidation.as_mut() {
+            for view_id in &invalidation.removed {
+                invalidation.updated.remove(view_id);
+                self.rendered_views.remove(view_id);
+            }
+            for view_id in &invalidation.updated {
+                self.rendered_views.insert(
+                    *view_id,
+                    cx.render_view(RenderParams {
                         window_id: self.window_id,
                         view_id: *view_id,
                         titlebar_height: self.titlebar_height,
@@ -121,10 +98,34 @@ impl Presenter {
                         clicked_region_ids: self
                             .clicked_button
                             .map(|button| (self.clicked_region_ids.clone(), button)),
-                        refreshing: true,
+                        refreshing: refresh,
                         appearance,
                     })
-                    .unwrap();
+                    .unwrap(),
+                );
+            }
+        }
+
+        if refresh {
+            for (view_id, view) in &mut self.rendered_views {
+                if invalidation
+                    .as_ref()
+                    .map_or(true, |invalidation| !invalidation.updated.contains(view_id))
+                {
+                    *view = cx
+                        .render_view(RenderParams {
+                            window_id: self.window_id,
+                            view_id: *view_id,
+                            titlebar_height: self.titlebar_height,
+                            hovered_region_ids: self.hovered_region_ids.clone(),
+                            clicked_region_ids: self
+                                .clicked_button
+                                .map(|button| (self.clicked_region_ids.clone(), button)),
+                            refreshing: true,
+                            appearance,
+                        })
+                        .unwrap();
+                }
             }
         }
     }
@@ -133,13 +134,11 @@ impl Presenter {
         &mut self,
         window_size: Vector2F,
         scale_factor: f32,
-        refreshing: bool,
         cx: &mut MutableAppContext,
     ) -> Scene {
         let mut scene_builder = SceneBuilder::new(scale_factor);
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout(window_size, refreshing, cx);
             let mut paint_cx = self.build_paint_context(&mut scene_builder, window_size, cx);
             paint_cx.paint(
                 root_view_id,
@@ -164,7 +163,7 @@ impl Presenter {
         }
     }
 
-    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
+    pub fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             self.build_layout_context(window_size, refreshing, cx)
                 .layout(root_view_id, SizeConstraint::strict(window_size));

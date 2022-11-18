@@ -128,6 +128,7 @@ pub trait Window {
     fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>);
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
+    fn on_display(&mut self, callback: Box<dyn FnMut(Vector2F, f32) -> Option<Scene>>);
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
@@ -137,12 +138,11 @@ pub trait Window {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
-
     fn bounds(&self) -> RectF;
     fn content_size(&self) -> Vector2F;
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> f32;
-    fn present_scene(&mut self, scene: Scene);
+    fn request_frame(&self);
     fn appearance(&self) -> Appearance;
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
 }

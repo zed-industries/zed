@@ -175,10 +175,6 @@ impl platform::Window for StatusItem {
         self.0.borrow_mut().event_callback = Some(callback);
     }
 
-    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().appearance_changed_callback = Some(callback);
-    }
-
     fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&mut self, _: Box<dyn FnMut()>) {}
@@ -188,6 +184,10 @@ impl platform::Window for StatusItem {
     fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {}
 
     fn on_close(&mut self, _: Box<dyn FnOnce()>) {}
+
+    fn on_display(&mut self, callback: Box<dyn FnMut(Vector2F, f32) -> Option<Scene>>) {
+        todo!()
+    }
 
     fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
 
@@ -244,8 +244,7 @@ impl platform::Window for StatusItem {
         0.
     }
 
-    fn present_scene(&mut self, scene: Scene) {
-        self.0.borrow_mut().scene = Some(scene);
+    fn request_frame(&self) {
         unsafe {
             let _: () = msg_send![*self.0.borrow().native_view, setNeedsDisplay: YES];
         }
@@ -257,6 +256,10 @@ impl platform::Window for StatusItem {
                 msg_send![self.0.borrow().native_item.button(), effectiveAppearance];
             crate::Appearance::from_native(appearance)
         }
+    }
+
+    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
 }
 
