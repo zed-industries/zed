@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_nested_savepoints() -> Result<()> {
-        let connection = Connection::open_memory("nested_savepoints");
+        let connection = Connection::open_memory(Some("nested_savepoints"));
 
         connection
             .exec(indoc! {"

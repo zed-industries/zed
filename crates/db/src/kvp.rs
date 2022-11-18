@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn test_kvp() -> Result<()> {
-        let db = KeyValueStore(crate::open_memory_db("test_kvp"));
+        let db = KeyValueStore(crate::open_memory_db(Some("test_kvp")));
 
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
 

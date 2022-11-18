@@ -352,7 +352,7 @@ mod test {
 
     #[test]
     fn blob_round_trips() {
-        let connection1 = Connection::open_memory("blob_round_trips");
+        let connection1 = Connection::open_memory(Some("blob_round_trips"));
         connection1
             .exec(indoc! {"
                 CREATE TABLE blobs (
@@ -369,7 +369,7 @@ mod test {
         assert_eq!(write.step().unwrap(), StepResult::Done);
 
         // Read the blob from the
-        let connection2 = Connection::open_memory("blob_round_trips");
+        let connection2 = Connection::open_memory(Some("blob_round_trips"));
         let mut read = Statement::prepare(&connection2, "SELECT * FROM blobs").unwrap();
         assert_eq!(read.step().unwrap(), StepResult::Row);
         assert_eq!(read.column_blob(0).unwrap(), blob);
@@ -383,7 +383,7 @@ mod test {
 
     #[test]
     pub fn maybe_returns_options() {
-        let connection = Connection::open_memory("maybe_returns_options");
+        let connection = Connection::open_memory(Some("maybe_returns_options"));
         connection
             .exec(indoc! {"
                 CREATE TABLE texts (

@@ -55,8 +55,8 @@ impl Domain for Workspace {
             CREATE TABLE panes(
                 pane_id INTEGER PRIMARY KEY,
                 workspace_id BLOB NOT NULL,
-                parent_group_id INTEGER, -- NULL, this is a dock pane
-                position INTEGER, -- NULL, this is a dock pane
+                parent_group_id INTEGER, -- NULL means that this is a dock pane
+                position INTEGER, -- NULL means that this is a dock pane
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
                     ON DELETE CASCADE 
                     ON UPDATE CASCADE,
@@ -164,7 +164,7 @@ impl WorkspaceDb {
         })
         .with_context(|| {
             format!(
-                "Update workspace with roots {:?}",
+                "Update workspace with roots {:?} failed.",
                 workspace.workspace_id.paths()
             )
         })
@@ -196,6 +196,17 @@ impl WorkspaceDb {
             .into_iter()
             .next()
             .context("No center pane group")
+            .map(|pane_group| {
+                // Rewrite the special case of the root being a leaf node
+                if let SerializedPaneGroup::Group { axis: Axis::Horizontal, ref children } = pane_group {
+                    if children.len() == 1 {
+                        if let Some(SerializedPaneGroup::Pane(pane)) = children.get(0) {
+                            return SerializedPaneGroup::Pane(pane.clone())
+                        }
+                    }
+                }
+                pane_group
+            })
     }
 
     fn get_pane_group_children<'a>(
@@ -242,9 +253,12 @@ impl WorkspaceDb {
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
-        if parent.is_none() && !matches!(pane_group, SerializedPaneGroup::Group { .. }) {
-            bail!("Pane groups must have a SerializedPaneGroup::Group at the root")
-        }
+        // Rewrite the root node to fit with the database
+        let pane_group = if parent.is_none() && matches!(pane_group, SerializedPaneGroup::Pane { .. }) {
+            SerializedPaneGroup::Group { axis: Axis::Horizontal, children: vec![pane_group.clone()] }
+        } else {
+            pane_group.clone()
+        };
 
         match pane_group {
             SerializedPaneGroup::Group { axis, children } => {
@@ -254,7 +268,7 @@ impl WorkspaceDb {
                     INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) 
                     VALUES (?, ?, ?, ?) 
                     RETURNING group_id"})?
-                    ((workspace_id, parent_id, position, *axis))?
+                    ((workspace_id, parent_id, position, axis))?
                     .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
                 
                 for (position, group) in children.iter().enumerate() {
@@ -262,7 +276,9 @@ impl WorkspaceDb {
                 }
                 Ok(())
             }
-            SerializedPaneGroup::Pane(pane) => self.save_pane(workspace_id, pane, parent),
+            SerializedPaneGroup::Pane(pane) => {
+                self.save_pane(workspace_id, &pane, parent)
+            },
         }
     }
 
@@ -324,7 +340,7 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
-    use db::open_memory_db;
+    use db::{open_memory_db, write_db_to};
     use settings::DockAnchor;
 
     use super::*;
@@ -333,7 +349,7 @@ mod tests {
     fn test_full_workspace_serialization() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_full_workspace_serialization"));
+        let db = WorkspaceDb(open_memory_db(Some("test_full_workspace_serialization")));
 
         let dock_pane = crate::persistence::model::SerializedPane {
             children: vec![
@@ -407,7 +423,7 @@ mod tests {
     fn test_workspace_assignment() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_basic_functionality"));
+        let db = WorkspaceDb(open_memory_db(Some("test_basic_functionality")));
 
         let workspace_1 = SerializedWorkspace {
             workspace_id: (["/tmp", "/tmp2"]).into(),
@@ -500,7 +516,7 @@ mod tests {
     fn test_basic_dock_pane() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("basic_dock_pane"));
+        let db = WorkspaceDb(open_memory_db(Some("basic_dock_pane")));
 
         let dock_pane = crate::persistence::model::SerializedPane {
             children: vec![
@@ -514,7 +530,7 @@ mod tests {
         let workspace = default_workspace(&["/tmp"], dock_pane, &Default::default());
 
         db.save_workspace(None, &workspace);
-        
+        write_db_to(&db, "dest.db").unwrap();
         let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
         assert_eq!(workspace.dock_pane, new_workspace.dock_pane);
@@ -524,7 +540,7 @@ mod tests {
     fn test_simple_split() {
         // env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("simple_split"));
+        let db = WorkspaceDb(open_memory_db(Some("simple_split")));
 
         //  -----------------
         //  | 1,2   | 5,6   |

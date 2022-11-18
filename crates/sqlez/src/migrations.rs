@@ -62,7 +62,7 @@ mod test {
 
     #[test]
     fn test_migrations_are_added_to_table() {
-        let connection = Connection::open_memory("migrations_are_added_to_table");
+        let connection = Connection::open_memory(Some("migrations_are_added_to_table"));
 
         // Create first migration with a single step and run it
         connection
@@ -131,7 +131,7 @@ mod test {
 
     #[test]
     fn test_migration_setup_works() {
-        let connection = Connection::open_memory("migration_setup_works");
+        let connection = Connection::open_memory(Some("migration_setup_works"));
 
         connection
             .exec(indoc! {"
@@ -163,7 +163,7 @@ mod test {
 
     #[test]
     fn migrations_dont_rerun() {
-        let connection = Connection::open_memory("migrations_dont_rerun");
+        let connection = Connection::open_memory(Some("migrations_dont_rerun"));
 
         // Create migration which clears a tabl
 
@@ -222,7 +222,7 @@ mod test {
 
     #[test]
     fn changed_migration_fails() {
-        let connection = Connection::open_memory("changed_migration_fails");
+        let connection = Connection::open_memory(Some("changed_migration_fails"));
 
         // Create a migration with two steps and run it
         connection

@@ -13,10 +13,14 @@ use theme::Theme;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneGroup {
-    root: Member,
+    pub(crate) root: Member,
 }
 
 impl PaneGroup {
+    pub(crate) fn with_root(root: Member) -> Self {
+        Self { root }
+    }
+
     pub fn new(pane: ViewHandle<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
@@ -85,7 +89,7 @@ impl PaneGroup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Member {
+pub(crate) enum Member {
     Axis(PaneAxis),
     Pane(ViewHandle<Pane>),
 }
@@ -276,9 +280,9 @@ impl Member {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PaneAxis {
-    axis: Axis,
-    members: Vec<Member>,
+pub(crate) struct PaneAxis {
+    pub axis: Axis,
+    pub members: Vec<Member>,
 }
 
 impl PaneAxis {

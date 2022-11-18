@@ -5,15 +5,20 @@ use std::{
 
 use anyhow::Result;
 
-use gpui::Axis;
+use async_recursion::async_recursion;
+use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle};
 
+use project::Project;
 use settings::DockAnchor;
 use sqlez::{
     bindable::{Bind, Column},
     statement::Statement,
 };
+use util::ResultExt;
 
-use crate::dock::DockPosition;
+use crate::{
+    dock::DockPosition, item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceId(Arc<Vec<PathBuf>>);
@@ -69,9 +74,42 @@ pub enum SerializedPaneGroup {
 
 impl Default for SerializedPaneGroup {
     fn default() -> Self {
-        Self::Group {
-            axis: Axis::Horizontal,
-            children: vec![Self::Pane(Default::default())],
+        Self::Pane(SerializedPane {
+            children: Vec::new(),
+        })
+    }
+}
+
+impl SerializedPaneGroup {
+    #[async_recursion(?Send)]
+    pub(crate) async fn deserialize(
+        &self,
+        project: &ModelHandle<Project>,
+        workspace_id: &WorkspaceId,
+        workspace: &ViewHandle<Workspace>,
+        cx: &mut AsyncAppContext,
+    ) -> Member {
+        match self {
+            SerializedPaneGroup::Group { axis, children } => {
+                let mut members = Vec::new();
+                for child in children {
+                    let new_member = child
+                        .deserialize(project, workspace_id, workspace, cx)
+                        .await;
+                    members.push(new_member);
+                }
+                Member::Axis(PaneAxis {
+                    axis: *axis,
+                    members,
+                })
+            }
+            SerializedPaneGroup::Pane(serialized_pane) => {
+                let pane = workspace.update(cx, |workspace, cx| workspace.add_pane(cx));
+                serialized_pane
+                    .deserialize_to(project, &pane, workspace_id, workspace, cx)
+                    .await;
+                Member::Pane(pane)
+            }
         }
     }
 }
@@ -84,6 +122,44 @@ pub struct SerializedPane {
 impl SerializedPane {
     pub fn new(children: Vec<SerializedItem>) -> Self {
         SerializedPane { children }
+    }
+
+    pub async fn deserialize_to(
+        &self,
+        project: &ModelHandle<Project>,
+        pane_handle: &ViewHandle<Pane>,
+        workspace_id: &WorkspaceId,
+        workspace: &ViewHandle<Workspace>,
+        cx: &mut AsyncAppContext,
+    ) {
+        for item in self.children.iter() {
+            let project = project.clone();
+            let workspace_id = workspace_id.clone();
+            let item_handle = pane_handle
+                .update(cx, |_, cx| {
+                    if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
+                        deserializer(
+                            project,
+                            workspace.downgrade(),
+                            workspace_id,
+                            item.item_id,
+                            cx,
+                        )
+                    } else {
+                        Task::ready(Err(anyhow::anyhow!(
+                            "Deserializer does not exist for item kind: {}",
+                            item.kind
+                        )))
+                    }
+                })
+                .await
+                .log_err();
+            if let Some(item_handle) = item_handle {
+                workspace.update(cx, |workspace, cx| {
+                    Pane::add_item(workspace, &pane_handle, item_handle, false, false, None, cx);
+                })
+            }
+        }
     }
 }
 
@@ -150,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_workspace_round_trips() {
-        let db = Connection::open_memory("workspace_id_round_trips");
+        let db = Connection::open_memory(Some("workspace_id_round_trips"));
 
         db.exec(indoc::indoc! {"
                 CREATE TABLE workspace_id_test(

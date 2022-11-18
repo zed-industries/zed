@@ -42,11 +42,16 @@ impl Connection {
     /// Attempts to open the database at uri. If it fails, a shared memory db will be opened
     /// instead.
     pub fn open_file(uri: &str) -> Self {
-        Self::open(uri, true).unwrap_or_else(|_| Self::open_memory(uri))
+        Self::open(uri, true).unwrap_or_else(|_| Self::open_memory(Some(uri)))
     }
 
-    pub fn open_memory(uri: &str) -> Self {
-        let in_memory_path = format!("file:{}?mode=memory&cache=shared", uri);
+    pub fn open_memory(uri: Option<&str>) -> Self {
+        let in_memory_path = if let Some(uri) = uri {
+            format!("file:{}?mode=memory&cache=shared", uri)
+        } else {
+            ":memory:".to_string()
+        };
+
         Self::open(&in_memory_path, false).expect("Could not create fallback in memory db")
     }
 
@@ -110,7 +115,7 @@ mod test {
 
     #[test]
     fn string_round_trips() -> Result<()> {
-        let connection = Connection::open_memory("string_round_trips");
+        let connection = Connection::open_memory(Some("string_round_trips"));
         connection
             .exec(indoc! {"
             CREATE TABLE text (
@@ -136,7 +141,7 @@ mod test {
 
     #[test]
     fn tuple_round_trips() {
-        let connection = Connection::open_memory("tuple_round_trips");
+        let connection = Connection::open_memory(Some("tuple_round_trips"));
         connection
             .exec(indoc! {"
                 CREATE TABLE test (
@@ -170,7 +175,7 @@ mod test {
 
     #[test]
     fn bool_round_trips() {
-        let connection = Connection::open_memory("bool_round_trips");
+        let connection = Connection::open_memory(Some("bool_round_trips"));
         connection
             .exec(indoc! {"
                 CREATE TABLE bools (
@@ -196,7 +201,7 @@ mod test {
 
     #[test]
     fn backup_works() {
-        let connection1 = Connection::open_memory("backup_works");
+        let connection1 = Connection::open_memory(Some("backup_works"));
         connection1
             .exec(indoc! {"
                 CREATE TABLE blobs (
@@ -211,7 +216,7 @@ mod test {
         .unwrap();
 
         // Backup connection1 to connection2
-        let connection2 = Connection::open_memory("backup_works_other");
+        let connection2 = Connection::open_memory(Some("backup_works_other"));
         connection1.backup_main(&connection2).unwrap();
 
         // Delete the added blob and verify its deleted on the other side
@@ -224,7 +229,7 @@ mod test {
 
     #[test]
     fn multi_step_statement_works() {
-        let connection = Connection::open_memory("multi_step_statement_works");
+        let connection = Connection::open_memory(Some("multi_step_statement_works"));
 
         connection
             .exec(indoc! {"

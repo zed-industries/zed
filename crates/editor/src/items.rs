@@ -554,7 +554,8 @@ impl Item for Editor {
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
-        Some("Editor")
+        // TODO: Some("Editor")
+        None
     }
 
     fn deserialize(

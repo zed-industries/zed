@@ -1,6 +1,6 @@
 pub mod kvp;
 
-use std::fs::create_dir_all;
+use std::fs::{create_dir_all, remove_dir_all};
 use std::path::Path;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -10,7 +10,7 @@ use indoc::indoc;
 use sqlez::connection::Connection;
 use sqlez::domain::{Domain, Migrator};
 use sqlez::thread_safe_connection::ThreadSafeConnection;
-use util::channel::RELEASE_CHANNEL_NAME;
+use util::channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::paths::DB_DIR;
 
 const INITIALIZE_QUERY: &'static str = indoc! {"
@@ -26,18 +26,18 @@ pub fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
     // Use 0 for now. Will implement incrementing and clearing of old db files soon TM
     let current_db_dir = (*DB_DIR).join(Path::new(&format!("0-{}", *RELEASE_CHANNEL_NAME)));
 
-    // if *RELEASE_CHANNEL == ReleaseChannel::Dev {
-    //     remove_dir_all(&current_db_dir).ok();
-    // }
+    if *RELEASE_CHANNEL == ReleaseChannel::Dev && std::env::var("WIPE_DB").is_ok() {
+        remove_dir_all(&current_db_dir).ok();
+    }
 
     create_dir_all(&current_db_dir).expect("Should be able to create the database directory");
     let db_path = current_db_dir.join(Path::new("db.sqlite"));
 
-    ThreadSafeConnection::new(db_path.to_string_lossy().as_ref(), true)
+    ThreadSafeConnection::new(Some(db_path.to_string_lossy().as_ref()), true)
         .with_initialize_query(INITIALIZE_QUERY)
 }
 
-pub fn open_memory_db<D: Domain>(db_name: &str) -> ThreadSafeConnection<D> {
+pub fn open_memory_db<M: Migrator>(db_name: Option<&str>) -> ThreadSafeConnection<M> {
     ThreadSafeConnection::new(db_name, false).with_initialize_query(INITIALIZE_QUERY)
 }
 
@@ -65,7 +65,11 @@ macro_rules! connection {
         }
 
         lazy_static! {
-            pub static ref $id: $t = $t(::db::open_file_db());
+            pub static ref $id: $t = $t(if cfg!(any(test, feature = "test-support")) {
+                ::db::open_memory_db(None)
+            } else {
+                ::db::open_file_db()
+            });
         }
     };
 }

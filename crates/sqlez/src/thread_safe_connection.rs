@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub struct ThreadSafeConnection<M: Migrator> {
-    uri: Arc<str>,
+    uri: Option<Arc<str>>,
     persistent: bool,
     initialize_query: Option<&'static str>,
     connection: Arc<ThreadLocal<Connection>>,
@@ -20,9 +20,13 @@ unsafe impl<T: Migrator> Send for ThreadSafeConnection<T> {}
 unsafe impl<T: Migrator> Sync for ThreadSafeConnection<T> {}
 
 impl<M: Migrator> ThreadSafeConnection<M> {
-    pub fn new(uri: &str, persistent: bool) -> Self {
+    pub fn new(uri: Option<&str>, persistent: bool) -> Self {
+        if persistent == true && uri == None {
+            // This panic is securing the unwrap in open_file(), don't remove it!
+            panic!("Cannot create a persistent connection without a URI")
+        }
         Self {
-            uri: Arc::from(uri),
+            uri: uri.map(|str| Arc::from(str)),
             persistent,
             initialize_query: None,
             connection: Default::default(),
@@ -41,13 +45,14 @@ impl<M: Migrator> ThreadSafeConnection<M> {
     /// called from the deref function.
     /// If opening fails, the connection falls back to a shared memory connection
     fn open_file(&self) -> Connection {
-        Connection::open_file(self.uri.as_ref())
+        // This unwrap is secured by a panic in the constructor. Be careful if you remove it!
+        Connection::open_file(self.uri.as_ref().unwrap())
     }
 
     /// Opens a shared memory connection using the file path as the identifier. This unwraps
     /// as we expect it always to succeed
     fn open_shared_memory(&self) -> Connection {
-        Connection::open_memory(self.uri.as_ref())
+        Connection::open_memory(self.uri.as_ref().map(|str| str.deref()))
     }
 
     // Open a new connection for the given domain, leaving this

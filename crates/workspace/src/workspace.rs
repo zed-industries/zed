@@ -58,7 +58,7 @@ use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
-use crate::persistence::model::{SerializedPane, SerializedWorkspace};
+use crate::persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace};
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -2264,27 +2264,62 @@ impl Workspace {
             .into()
     }
 
-    fn serialize_workspace(&self, old_id: Option<WorkspaceId>, cx: &mut MutableAppContext) {
-        let dock_pane = SerializedPane {
-            children: self
-                .dock
-                .pane()
-                .read(cx)
-                .items()
-                .filter_map(|item_handle| {
-                    Some(SerializedItem {
-                        kind: Arc::from(item_handle.serialized_item_kind()?),
-                        item_id: item_handle.id(),
+    fn remove_panes(&mut self, member: Member, cx: &mut ViewContext<Workspace>) {
+        match member {
+            Member::Axis(PaneAxis { members, .. }) => {
+                for child in members.iter() {
+                    self.remove_panes(child.clone(), cx)
+                }
+            }
+            Member::Pane(pane) => self.remove_pane(pane.clone(), cx),
+        }
+    }
+
+    fn serialize_workspace(&self, old_id: Option<WorkspaceId>, cx: &AppContext) {
+        fn serialize_pane_handle(
+            pane_handle: &ViewHandle<Pane>,
+            cx: &AppContext,
+        ) -> SerializedPane {
+            SerializedPane {
+                children: pane_handle
+                    .read(cx)
+                    .items()
+                    .filter_map(|item_handle| {
+                        Some(SerializedItem {
+                            kind: Arc::from(item_handle.serialized_item_kind()?),
+                            item_id: item_handle.id(),
+                        })
                     })
-                })
-                .collect::<Vec<_>>(),
-        };
+                    .collect::<Vec<_>>(),
+            }
+        }
+
+        let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
+
+        fn build_serialized_pane_group(
+            pane_group: &Member,
+            cx: &AppContext,
+        ) -> SerializedPaneGroup {
+            match pane_group {
+                Member::Axis(PaneAxis { axis, members }) => SerializedPaneGroup::Group {
+                    axis: *axis,
+                    children: members
+                        .iter()
+                        .map(|member| build_serialized_pane_group(member, cx))
+                        .collect::<Vec<_>>(),
+                },
+                Member::Pane(pane_handle) => {
+                    SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
+                }
+            }
+        }
+        let center_group = build_serialized_pane_group(&self.center.root, cx);
 
         let serialized_workspace = SerializedWorkspace {
             workspace_id: self.workspace_id(cx),
             dock_position: self.dock.position(),
             dock_pane,
-            center_group: Default::default(),
+            center_group,
         };
 
         cx.background()
@@ -2299,87 +2334,43 @@ impl Workspace {
         serialized_workspace: SerializedWorkspace,
         cx: &mut MutableAppContext,
     ) {
-        // fn process_splits(
-        //     pane_group: SerializedPaneGroup,
-        //     parent: Option<PaneGroup>,
-        //     workspace: ViewHandle<Workspace>,
-        //     cx: &mut AsyncAppContext,
-        // ) {
-        //     match pane_group {
-        //         SerializedPaneGroup::Group { axis, children } => {
-        //             process_splits(pane_group, parent)
-        //         }
-        //         SerializedPaneGroup::Pane(pane) => {
-        //             process_pane(pane)
-        //         },
-        //     }
-        // }
-
-        async fn deserialize_pane(
-            project: ModelHandle<Project>,
-            pane: SerializedPane,
-            pane_handle: ViewHandle<Pane>,
-            workspace_id: WorkspaceId,
-            workspace: &ViewHandle<Workspace>,
-            cx: &mut AsyncAppContext,
-        ) {
-            for item in pane.children {
-                let project = project.clone();
-                let workspace_id = workspace_id.clone();
-                let item_handle = pane_handle
-                    .update(cx, |_, cx| {
-                        if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind)
-                        {
-                            deserializer(
-                                project,
-                                workspace.downgrade(),
-                                workspace_id,
-                                item.item_id,
-                                cx,
-                            )
-                        } else {
-                            Task::ready(Err(anyhow!(
-                                "Deserializer does not exist for item kind: {}",
-                                item.kind
-                            )))
-                        }
-                    })
-                    .await
-                    .log_err();
-
-                if let Some(item_handle) = item_handle {
-                    workspace.update(cx, |workspace, cx| {
-                        Pane::add_item(
-                            workspace,
-                            &pane_handle,
-                            item_handle,
-                            false,
-                            false,
-                            None,
-                            cx,
-                        );
-                    })
-                }
-            }
-        }
-
         cx.spawn(|mut cx| async move {
             if let Some(workspace) = workspace.upgrade(&cx) {
                 let (project, dock_pane_handle) = workspace.read_with(&cx, |workspace, _| {
                     (workspace.project().clone(), workspace.dock_pane().clone())
                 });
-                deserialize_pane(
-                    project,
-                    serialized_workspace.dock_pane,
-                    dock_pane_handle,
-                    serialized_workspace.workspace_id,
-                    &workspace,
-                    &mut cx,
-                )
-                .await;
+
+                serialized_workspace
+                    .dock_pane
+                    .deserialize_to(
+                        &project,
+                        &dock_pane_handle,
+                        &serialized_workspace.workspace_id,
+                        &workspace,
+                        &mut cx,
+                    )
+                    .await;
 
                 // Traverse the splits tree and add to things
-                // process_splits(serialized_workspace.center_group, None, workspace, &mut cx);
+
+                let root = serialized_workspace
+                    .center_group
+                    .deserialize(
+                        &project,
+                        &serialized_workspace.workspace_id,
+                        &workspace,
+                        &mut cx,
+                    )
+                    .await;
+
+                // Remove old panes from workspace panes list
+                workspace.update(&mut cx, |workspace, cx| {
+                    workspace.remove_panes(workspace.center.root.clone(), cx);
+
+                    // Swap workspace center group
+                    workspace.center = PaneGroup::with_root(root);
+                    cx.notify();
+                });
 
                 workspace.update(&mut cx, |workspace, cx| {
                     Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx)
