@@ -349,6 +349,7 @@ impl ContextMenu {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
+                            .on_down(MouseButton::Left, |_, _| {})
                             .on_click(MouseButton::Left, move |_, cx| {
                                 cx.dispatch_action(Clicked);
                                 cx.dispatch_any_action(action.boxed_clone());
