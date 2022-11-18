@@ -2787,6 +2787,7 @@ impl View for Workspace {
                                                         &theme,
                                                         &self.follower_states_by_leader,
                                                         self.active_call(),
+                                                        self.active_pane(),
                                                         cx,
                                                     ))
                                                     .flex(1., true)

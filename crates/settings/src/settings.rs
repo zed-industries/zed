@@ -28,6 +28,7 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
+    pub active_pane_magnification: f32,
     pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
@@ -253,6 +254,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
+    pub active_pane_magnification: Option<f32>,
+    #[serde(default)]
     pub cursor_blink: Option<bool>,
     #[serde(default)]
     pub hover_popover_enabled: Option<bool>,
@@ -312,6 +315,7 @@ impl Settings {
                 .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
                 .unwrap(),
             buffer_font_size: defaults.buffer_font_size.unwrap(),
+            active_pane_magnification: defaults.active_pane_magnification.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
             cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
@@ -367,6 +371,10 @@ impl Settings {
             data.projects_online_by_default,
         );
         merge(&mut self.buffer_font_size, data.buffer_font_size);
+        merge(
+            &mut self.active_pane_magnification,
+            data.active_pane_magnification,
+        );
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.cursor_blink, data.cursor_blink);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
@@ -458,6 +466,7 @@ impl Settings {
             experiments: FeatureFlags::default(),
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
+            active_pane_magnification: 1.,
             default_buffer_font_size: 14.,
             cursor_blink: true,
             hover_popover_enabled: true,
