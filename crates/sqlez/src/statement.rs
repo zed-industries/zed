@@ -59,11 +59,11 @@ impl<'a> Statement<'a> {
                 );
                 remaining_sql = CStr::from_ptr(remaining_sql_ptr);
                 statement.raw_statements.push(raw_statement);
-            }
 
-            connection
-                .last_error()
-                .with_context(|| format!("Prepare call failed for query:\n{}", query.as_ref()))?;
+                connection.last_error().with_context(|| {
+                    format!("Prepare call failed for query:\n{}", query.as_ref())
+                })?;
+            }
         }
 
         Ok(statement)

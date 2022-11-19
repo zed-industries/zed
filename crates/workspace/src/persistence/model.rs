@@ -76,6 +76,7 @@ impl Default for SerializedPaneGroup {
     fn default() -> Self {
         Self::Pane(SerializedPane {
             children: Vec::new(),
+            active: false,
         })
     }
 }
@@ -88,27 +89,35 @@ impl SerializedPaneGroup {
         workspace_id: &WorkspaceId,
         workspace: &ViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
-    ) -> Member {
+    ) -> (Member, Option<ViewHandle<Pane>>) {
         match self {
             SerializedPaneGroup::Group { axis, children } => {
+                let mut current_active_pane = None;
                 let mut members = Vec::new();
                 for child in children {
-                    let new_member = child
+                    let (new_member, active_pane) = child
                         .deserialize(project, workspace_id, workspace, cx)
                         .await;
                     members.push(new_member);
+
+                    current_active_pane = current_active_pane.or(active_pane);
                 }
-                Member::Axis(PaneAxis {
-                    axis: *axis,
-                    members,
-                })
+                (
+                    Member::Axis(PaneAxis {
+                        axis: *axis,
+                        members,
+                    }),
+                    current_active_pane,
+                )
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace.update(cx, |workspace, cx| workspace.add_pane(cx));
+                let active = serialized_pane.active;
                 serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace, cx)
                     .await;
-                Member::Pane(pane)
+
+                (Member::Pane(pane.clone()), active.then(|| pane))
             }
         }
     }
@@ -116,12 +125,13 @@ impl SerializedPaneGroup {
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct SerializedPane {
+    pub(crate) active: bool,
     pub(crate) children: Vec<SerializedItem>,
 }
 
 impl SerializedPane {
-    pub fn new(children: Vec<SerializedItem>) -> Self {
-        SerializedPane { children }
+    pub fn new(children: Vec<SerializedItem>, active: bool) -> Self {
+        SerializedPane { children, active }
     }
 
     pub async fn deserialize_to(
@@ -154,6 +164,7 @@ impl SerializedPane {
                 })
                 .await
                 .log_err();
+
             if let Some(item_handle) = item_handle {
                 workspace.update(cx, |workspace, cx| {
                     Pane::add_item(workspace, &pane_handle, item_handle, false, false, None, cx);

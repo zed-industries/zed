@@ -26,6 +26,7 @@ use model::{
 
 connection!(DB: WorkspaceDb<Workspace>);
 
+
 impl Domain for Workspace {
     fn name() -> &'static str {
         "workspace"
@@ -37,7 +38,9 @@ impl Domain for Workspace {
                 workspace_id BLOB PRIMARY KEY,
                 dock_visible INTEGER, -- Boolean
                 dock_anchor TEXT, -- Enum: 'Bottom' / 'Right' / 'Expanded'
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+                dock_pane INTEGER, -- NULL indicates that we don't have a dock pane yet
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
             ) STRICT;
             
             CREATE TABLE pane_groups(
@@ -55,14 +58,21 @@ impl Domain for Workspace {
             CREATE TABLE panes(
                 pane_id INTEGER PRIMARY KEY,
                 workspace_id BLOB NOT NULL,
-                parent_group_id INTEGER, -- NULL means that this is a dock pane
-                position INTEGER, -- NULL means that this is a dock pane
+                active INTEGER NOT NULL, -- Boolean
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
                     ON DELETE CASCADE 
-                    ON UPDATE CASCADE,
-                FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+                    ON UPDATE CASCADE
             ) STRICT;
             
+            CREATE TABLE center_panes(
+                pane_id INTEGER PRIMARY KEY,
+                parent_group_id INTEGER, -- NULL means that this is a root pane
+                position INTEGER, -- NULL means that this is a root pane
+                FOREIGN KEY(pane_id) REFERENCES panes(pane_id) 
+                    ON DELETE CASCADE,
+                FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+            ) STRICT;
+                            
             CREATE TABLE items(
                 item_id INTEGER NOT NULL, -- This is the item's view id, so this is not unique
                 workspace_id BLOB NOT NULL,
@@ -131,12 +141,13 @@ impl WorkspaceDb {
         workspace: &SerializedWorkspace,
     ) {
         self.with_savepoint("update_worktrees", || {
+            self.exec_bound(indoc! {"
+                UPDATE workspaces SET dock_pane = NULL WHERE workspace_id = ?1;
+                DELETE FROM pane_groups WHERE workspace_id = ?1;
+                DELETE FROM panes WHERE workspace_id = ?1;"})?
+            (old_id.as_ref().unwrap_or(&workspace.workspace_id)).context("Clearing old panes")?;
+            
             if let Some(old_id) = old_id {
-                self.exec_bound(indoc! {"
-                    DELETE FROM pane_groups WHERE workspace_id = ?"})?(&old_id)?;
-                
-                // If collision, delete
-                
                 self.exec_bound(indoc! {"
                     UPDATE OR REPLACE workspaces
                     SET workspace_id = ?,
@@ -147,18 +158,26 @@ impl WorkspaceDb {
                     &workspace.workspace_id,
                     workspace.dock_position,
                     &old_id,
-                ))?;
+                )).context("Updating workspace with new worktree roots")?;
             } else {
-                self.exec_bound(indoc! {"
-                    DELETE FROM pane_groups WHERE workspace_id = ?"})?(&workspace.workspace_id)?;
                 self.exec_bound(
                     "INSERT OR REPLACE INTO workspaces(workspace_id, dock_visible, dock_anchor) VALUES (?, ?, ?)",
-                )?((&workspace.workspace_id, workspace.dock_position))?;
+                )?((&workspace.workspace_id, workspace.dock_position)).context("Uodating workspace")?;
             }
             
             // Save center pane group and dock pane
-            self.save_pane_group(&workspace.workspace_id, &workspace.center_group, None)?;
-            self.save_pane(&workspace.workspace_id, &workspace.dock_pane, None)?;
+            self.save_pane_group(&workspace.workspace_id, &workspace.center_group, None).context("save pane group in save workspace")?;
+            
+            let dock_id = self.save_pane(&workspace.workspace_id, &workspace.dock_pane, None, true).context("save pane in save workspace")?;
+        
+            // Complete workspace initialization
+            self.exec_bound(indoc! {"
+                UPDATE workspaces
+                SET dock_pane = ?
+                WHERE workspace_id = ?"})?((
+                dock_id,
+                &workspace.workspace_id,
+            )).context("Finishing initialization with dock pane")?;
 
             Ok(())
         })
@@ -196,38 +215,42 @@ impl WorkspaceDb {
             .into_iter()
             .next()
             .context("No center pane group")
-            .map(|pane_group| {
-                // Rewrite the special case of the root being a leaf node
-                if let SerializedPaneGroup::Group { axis: Axis::Horizontal, ref children } = pane_group {
-                    if children.len() == 1 {
-                        if let Some(SerializedPaneGroup::Pane(pane)) = children.get(0) {
-                            return SerializedPaneGroup::Pane(pane.clone())
-                        }
-                    }
-                }
-                pane_group
-            })
     }
 
-    fn get_pane_group_children<'a>(
+    fn get_pane_group_children(
         &self,
         workspace_id: &WorkspaceId,
         group_id: Option<GroupId>,
     ) -> Result<Vec<SerializedPaneGroup>> {
-        self.select_bound::<(Option<GroupId>, &WorkspaceId), (Option<GroupId>, Option<Axis>, Option<PaneId>)>(indoc! {"
-            SELECT group_id, axis, pane_id
-            FROM (SELECT group_id, axis, NULL as pane_id, position,  parent_group_id, workspace_id
-                  FROM pane_groups
-                 UNION
-                  SELECT NULL, NULL,  pane_id,  position,  parent_group_id, workspace_id
-                  FROM panes
-                  -- Remove the dock panes from the union
-                  WHERE parent_group_id IS NOT NULL and position IS NOT NULL) 
+        type GroupKey<'a> = (Option<GroupId>, &'a WorkspaceId);
+        type GroupOrPane = (Option<GroupId>, Option<Axis>, Option<PaneId>, Option<bool>);
+        self.select_bound::<GroupKey, GroupOrPane>(indoc! {"
+            SELECT group_id, axis, pane_id, active
+                FROM (SELECT 
+                        group_id,
+                        axis,
+                        NULL as pane_id,
+                        NULL as active,
+                        position,
+                        parent_group_id,
+                        workspace_id
+                      FROM pane_groups
+                     UNION
+                      SELECT 
+                        NULL,
+                        NULL,  
+                        center_panes.pane_id,
+                        panes.active as active,
+                        position,
+                        parent_group_id,
+                        panes.workspace_id as workspace_id
+                      FROM center_panes
+                      JOIN panes ON center_panes.pane_id = panes.pane_id) 
             WHERE parent_group_id IS ? AND workspace_id = ?
             ORDER BY position
             "})?((group_id, workspace_id))?
         .into_iter()
-        .map(|(group_id, axis, pane_id)| {
+        .map(|(group_id, axis, pane_id, active)| {
             if let Some((group_id, axis)) = group_id.zip(axis) {
                 Ok(SerializedPaneGroup::Group {
                     axis,
@@ -236,10 +259,8 @@ impl WorkspaceDb {
                         Some(group_id),
                     )?,
                 })
-            } else if let Some(pane_id) = pane_id {
-                Ok(SerializedPaneGroup::Pane(SerializedPane {
-                    children: self.get_items( pane_id)?,
-                }))
+            } else if let Some((pane_id, active)) = pane_id.zip(active) {
+                Ok(SerializedPaneGroup::Pane(SerializedPane::new(self.get_items( pane_id)?, active)))
             } else {
                 bail!("Pane Group Child was neither a pane group or a pane");
             }
@@ -253,22 +274,15 @@ impl WorkspaceDb {
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
-        // Rewrite the root node to fit with the database
-        let pane_group = if parent.is_none() && matches!(pane_group, SerializedPaneGroup::Pane { .. }) {
-            SerializedPaneGroup::Group { axis: Axis::Horizontal, children: vec![pane_group.clone()] }
-        } else {
-            pane_group.clone()
-        };
-
         match pane_group {
             SerializedPaneGroup::Group { axis, children } => {
                 let (parent_id, position) = unzip_option(parent);
 
                 let group_id = self.select_row_bound::<_, i64>(indoc!{"
-                    INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) 
-                    VALUES (?, ?, ?, ?) 
-                    RETURNING group_id"})?
-                    ((workspace_id, parent_id, position, axis))?
+                        INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) 
+                        VALUES (?, ?, ?, ?) 
+                        RETURNING group_id"})?
+                    ((workspace_id, parent_id, position, *axis))?
                     .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
                 
                 for (position, group) in children.iter().enumerate() {
@@ -277,21 +291,24 @@ impl WorkspaceDb {
                 Ok(())
             }
             SerializedPaneGroup::Pane(pane) => {
-                self.save_pane(workspace_id, &pane, parent)
+                self.save_pane(workspace_id, &pane, parent, false)?;
+                Ok(())
             },
         }
     }
 
     pub(crate) fn get_dock_pane(&self, workspace_id: &WorkspaceId) -> Result<SerializedPane> {
-        let pane_id = self.select_row_bound(indoc! {"
-            SELECT pane_id FROM panes 
-            WHERE workspace_id = ? AND parent_group_id IS NULL AND position IS NULL"})?(
+        let (pane_id, active) = self.select_row_bound(indoc! {"
+            SELECT pane_id, active
+            FROM panes
+            WHERE pane_id = (SELECT dock_pane FROM workspaces WHERE workspace_id = ?)"})?(
             workspace_id,
         )?
         .context("No dock pane for workspace")?;
 
         Ok(SerializedPane::new(
             self.get_items(pane_id).context("Reading items")?,
+            active
         ))
     }
 
@@ -299,20 +316,32 @@ impl WorkspaceDb {
         &self,
         workspace_id: &WorkspaceId,
         pane: &SerializedPane,
-        parent: Option<(GroupId, usize)>,
-    ) -> Result<()> {
-        let (parent_id, order) = unzip_option(parent);
-        
+        parent: Option<(GroupId, usize)>, // None indicates BOTH dock pane AND center_pane
+        dock: bool,
+    ) -> Result<PaneId> {
         let pane_id = self.select_row_bound::<_, i64>(indoc!{"
-            INSERT INTO panes(workspace_id, parent_group_id, position) 
-            VALUES (?, ?, ?) 
+            INSERT INTO panes(workspace_id, active) 
+            VALUES (?, ?) 
             RETURNING pane_id"},
-        )?((workspace_id, parent_id, order))?
+        )?((workspace_id, pane.active))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
+        
+        if !dock {
+            let (parent_id, order) = unzip_option(parent);
+            self.exec_bound(indoc! {"
+                INSERT INTO center_panes(pane_id, parent_group_id, position)
+                VALUES (?, ?, ?)"})?((
+                    pane_id, parent_id, order
+                ))?;
+        }
 
         self.save_items(workspace_id, pane_id, &pane.children)
-            .context("Saving items")
+            .context("Saving items")?;
+        
+        Ok(pane_id)
     }
+    
+  
 
     pub(crate) fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
         Ok(self.select_bound(indoc! {"
@@ -352,6 +381,7 @@ mod tests {
         let db = WorkspaceDb(open_memory_db(Some("test_full_workspace_serialization")));
 
         let dock_pane = crate::persistence::model::SerializedPane {
+            
             children: vec![
                 SerializedItem::new("Terminal", 1),
                 SerializedItem::new("Terminal", 2),
@@ -359,6 +389,7 @@ mod tests {
                 SerializedItem::new("Terminal", 4),
 
             ],
+            active: false
         };
 
         //  -----------------
@@ -372,28 +403,30 @@ mod tests {
                 SerializedPaneGroup::Group {
                     axis: gpui::Axis::Vertical,
                     children: vec![
-                        SerializedPaneGroup::Pane(SerializedPane {
-                            children: vec![
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
                                 SerializedItem::new("Terminal", 5),
                                 SerializedItem::new("Terminal", 6),
                             ],
-                        }),
-                        SerializedPaneGroup::Pane(SerializedPane {
-                            children: vec![
+                            false)
+                        ),
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![
                                 SerializedItem::new("Terminal", 7),
                                 SerializedItem::new("Terminal", 8),
-
                             ],
-                        }),
+                            false,
+                        )),
                     ],
                 },
-                SerializedPaneGroup::Pane(SerializedPane {
-                    children: vec![
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
                         SerializedItem::new("Terminal", 9),
                         SerializedItem::new("Terminal", 10),
 
                     ],
-                }),
+                    false,
+                )),
             ],
         };
 
@@ -518,14 +551,14 @@ mod tests {
 
         let db = WorkspaceDb(open_memory_db(Some("basic_dock_pane")));
 
-        let dock_pane = crate::persistence::model::SerializedPane {
-            children: vec![
+        let dock_pane = crate::persistence::model::SerializedPane::new(
+            vec![
                 SerializedItem::new("Terminal", 1),
                 SerializedItem::new("Terminal", 4),
                 SerializedItem::new("Terminal", 2),
                 SerializedItem::new("Terminal", 3),
-            ],
-        };
+            ], false
+        );
 
         let workspace = default_workspace(&["/tmp"], dock_pane, &Default::default());
 
@@ -538,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_simple_split() {
-        // env_logger::try_init().ok();
+        env_logger::try_init().ok();
 
         let db = WorkspaceDb(open_memory_db(Some("simple_split")));
 
@@ -553,33 +586,96 @@ mod tests {
                 SerializedPaneGroup::Group {
                     axis: gpui::Axis::Vertical,
                     children: vec![
-                        SerializedPaneGroup::Pane(SerializedPane {
-                            children: vec![
-                                SerializedItem::new("Terminal", 1),
-                                SerializedItem::new("Terminal", 2),
-                            ],
-                        }),
-                        SerializedPaneGroup::Pane(SerializedPane {
-                            children: vec![
-                                SerializedItem::new("Terminal", 4),
-                                SerializedItem::new("Terminal", 3),
-                            ],
-                        }),
+                    SerializedPaneGroup::Pane(SerializedPane::new( 
+                        vec![
+                            SerializedItem::new("Terminal", 1),
+                            SerializedItem::new("Terminal", 2),
+                        ],
+                        false)),
+                    SerializedPaneGroup::Pane(SerializedPane::new(vec![
+                            SerializedItem::new("Terminal", 4),
+                            SerializedItem::new("Terminal", 3),
+                        ], true)),  
                     ],
                 },
-                SerializedPaneGroup::Pane(SerializedPane {
-                    children: vec![
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
                         SerializedItem::new("Terminal", 5),
                         SerializedItem::new("Terminal", 6),
                     ],
-                }),
+                    false)),
             ],
         };
 
         let workspace = default_workspace(&["/tmp"], Default::default(), &center_pane);
 
         db.save_workspace(None, &workspace);
+                
+        let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
-        assert_eq!(workspace.center_group, center_pane);
+        assert_eq!(workspace.center_group, new_workspace.center_group);
+    }
+    
+    #[test]
+    fn test_cleanup_panes() {
+        env_logger::try_init().ok();
+        
+        let db = WorkspaceDb(open_memory_db(Some("test_cleanup_panes")));
+        
+        let center_pane = SerializedPaneGroup::Group {
+            axis: gpui::Axis::Horizontal,
+            children: vec![
+                SerializedPaneGroup::Group {
+                    axis: gpui::Axis::Vertical,
+                    children: vec![
+                    SerializedPaneGroup::Pane(SerializedPane::new( 
+                        vec![
+                            SerializedItem::new("Terminal", 1),
+                            SerializedItem::new("Terminal", 2),
+                        ],
+                        false)),
+                    SerializedPaneGroup::Pane(SerializedPane::new(vec![
+                            SerializedItem::new("Terminal", 4),
+                            SerializedItem::new("Terminal", 3),
+                        ], true)),  
+                    ],
+                },
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![
+                        SerializedItem::new("Terminal", 5),
+                        SerializedItem::new("Terminal", 6),
+                    ],
+                    false)),
+            ],
+        };
+
+        let id = &["/tmp"];
+        
+        let mut workspace = default_workspace(id, Default::default(), &center_pane);
+
+        db.save_workspace(None, &workspace);
+        
+        workspace.center_group = SerializedPaneGroup::Group {
+            axis: gpui::Axis::Vertical,
+            children: vec![
+            SerializedPaneGroup::Pane(SerializedPane::new( 
+                vec![
+                    SerializedItem::new("Terminal", 1),
+                    SerializedItem::new("Terminal", 2),
+                ],
+                false)),
+            SerializedPaneGroup::Pane(SerializedPane::new(vec![
+                    SerializedItem::new("Terminal", 4),
+                    SerializedItem::new("Terminal", 3),
+                ], true)),  
+            ],
+        };
+        
+        db.save_workspace(None, &workspace);
+                
+        let new_workspace = db.workspace_for_roots(id).unwrap();
+
+        assert_eq!(workspace.center_group, new_workspace.center_group);
+
     }
 }

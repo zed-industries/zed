@@ -2280,18 +2280,22 @@ impl Workspace {
             pane_handle: &ViewHandle<Pane>,
             cx: &AppContext,
         ) -> SerializedPane {
-            SerializedPane {
-                children: pane_handle
-                    .read(cx)
-                    .items()
-                    .filter_map(|item_handle| {
-                        Some(SerializedItem {
-                            kind: Arc::from(item_handle.serialized_item_kind()?),
-                            item_id: item_handle.id(),
+            let (items, active) = {
+                let pane = pane_handle.read(cx);
+                (
+                    pane.items()
+                        .filter_map(|item_handle| {
+                            Some(SerializedItem {
+                                kind: Arc::from(item_handle.serialized_item_kind()?),
+                                item_id: item_handle.id(),
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>(),
-            }
+                        .collect::<Vec<_>>(),
+                    pane.is_active(),
+                )
+            };
+
+            SerializedPane::new(items, active)
         }
 
         let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
@@ -2353,7 +2357,7 @@ impl Workspace {
 
                 // Traverse the splits tree and add to things
 
-                let root = serialized_workspace
+                let (root, active_pane) = serialized_workspace
                     .center_group
                     .deserialize(
                         &project,
@@ -2369,11 +2373,14 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(root);
-                    cx.notify();
-                });
 
-                workspace.update(&mut cx, |workspace, cx| {
-                    Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx)
+                    Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+
+                    if let Some(active_pane) = active_pane {
+                        cx.focus(active_pane);
+                    }
+
+                    cx.notify();
                 });
             }
         })
