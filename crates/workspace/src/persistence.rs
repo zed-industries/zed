@@ -211,13 +211,13 @@ impl WorkspaceDb {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<SerializedPaneGroup> {
-        self.get_pane_group_children(workspace_id, None)?
+        self.get_pane_group(workspace_id, None)?
             .into_iter()
             .next()
             .context("No center pane group")
     }
 
-    fn get_pane_group_children(
+    fn get_pane_group(
         &self,
         workspace_id: &WorkspaceId,
         group_id: Option<GroupId>,
@@ -254,7 +254,7 @@ impl WorkspaceDb {
             if let Some((group_id, axis)) = group_id.zip(axis) {
                 Ok(SerializedPaneGroup::Group {
                     axis,
-                    children: self.get_pane_group_children(
+                    children: self.get_pane_group(
                         workspace_id,
                         Some(group_id),
                     )?,
@@ -263,6 +263,14 @@ impl WorkspaceDb {
                 Ok(SerializedPaneGroup::Pane(SerializedPane::new(self.get_items( pane_id)?, active)))
             } else {
                 bail!("Pane Group Child was neither a pane group or a pane");
+            }
+        })
+        // Filter out panes and pane groups which don't have any children or items
+        .filter(|pane_group| {
+            match pane_group {
+                Ok(SerializedPaneGroup::Group { children, .. }) => !children.is_empty(),
+                Ok(SerializedPaneGroup::Pane(pane)) => !pane.children.is_empty(),
+                _ => true,
             }
         })
         .collect::<Result<_>>()
