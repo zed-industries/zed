@@ -5889,6 +5889,7 @@ dependencies = [
  "anyhow",
  "client",
  "context_menu",
+ "db",
  "dirs 4.0.0",
  "editor",
  "futures 0.3.25",
@@ -7659,7 +7660,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "sqlez",
  "theme",
  "util",
 ]

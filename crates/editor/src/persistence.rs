@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use db::connection;
 use indoc::indoc;
-use lazy_static::lazy_static;
 use sqlez::domain::Domain;
 use workspace::{ItemId, Workspace, WorkspaceId};
 
@@ -22,7 +21,11 @@ impl Domain for Editor {
                 item_id INTEGER NOT NULL,
                 workspace_id BLOB NOT NULL,
                 path BLOB NOT NULL,
-                PRIMARY KEY(item_id, workspace_id)
+                PRIMARY KEY(item_id, workspace_id),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE
+
             ) STRICT;
         "}]
     }

@@ -1,11 +1,15 @@
 pub mod kvp;
 
+// Re-export indoc and sqlez so clients only need to include us
+pub use indoc::indoc;
+pub use lazy_static;
+pub use sqlez;
+
 use std::fs::{create_dir_all, remove_dir_all};
 use std::path::Path;
 
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
-use indoc::indoc;
 #[cfg(any(test, feature = "test-support"))]
 use sqlez::connection::Connection;
 use sqlez::domain::{Domain, Migrator};
@@ -54,17 +58,17 @@ pub fn write_db_to<D: Domain, P: AsRef<Path>>(
 #[macro_export]
 macro_rules! connection {
     ($id:ident: $t:ident<$d:ty>) => {
-        pub struct $t(::sqlez::thread_safe_connection::ThreadSafeConnection<$d>);
+        pub struct $t(::db::sqlez::thread_safe_connection::ThreadSafeConnection<$d>);
 
         impl ::std::ops::Deref for $t {
-            type Target = ::sqlez::thread_safe_connection::ThreadSafeConnection<$d>;
+            type Target = ::db::sqlez::thread_safe_connection::ThreadSafeConnection<$d>;
 
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
         }
 
-        lazy_static! {
+        ::db::lazy_static::lazy_static! {
             pub static ref $id: $t = $t(if cfg!(any(test, feature = "test-support")) {
                 ::db::open_memory_db(None)
             } else {

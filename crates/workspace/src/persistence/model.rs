@@ -8,12 +8,12 @@ use anyhow::Result;
 use async_recursion::async_recursion;
 use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle};
 
-use project::Project;
-use settings::DockAnchor;
-use sqlez::{
+use db::sqlez::{
     bindable::{Bind, Column},
     statement::Statement,
 };
+use project::Project;
+use settings::DockAnchor;
 use util::ResultExt;
 
 use crate::{dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace};
@@ -228,8 +228,8 @@ impl Column for DockPosition {
 
 #[cfg(test)]
 mod tests {
+    use db::sqlez::connection::Connection;
     use settings::DockAnchor;
-    use sqlez::connection::Connection;
 
     use super::WorkspaceId;
 

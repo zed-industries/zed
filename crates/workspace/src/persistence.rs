@@ -9,10 +9,9 @@ use anyhow::{anyhow, bail, Result, Context};
 use db::connection;
 use gpui::Axis;
 use indoc::indoc;
-use lazy_static::lazy_static;
 
 
-use sqlez::domain::Domain;
+use db::sqlez::domain::Domain;
 use util::{iife, unzip_option, ResultExt};
 
 use crate::dock::DockPosition;
