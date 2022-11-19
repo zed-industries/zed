@@ -83,7 +83,7 @@ use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, Workspace};
 
-use crate::git::diff_hunk_to_display;
+use crate::{git::diff_hunk_to_display, persistence::DB};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
@@ -1137,6 +1137,31 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        if let Some(project) = project.as_ref() {
+            if let Some(file) = buffer
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).file())
+                .and_then(|file| file.as_local())
+            {
+                let item_id = cx.weak_handle().id();
+                let workspace_id = project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path())
+                    .collect::<Vec<_>>()
+                    .into();
+                let path = file.abs_path(cx);
+                dbg!(&path);
+
+                cx.background()
+                    .spawn(async move {
+                        DB.save_path(item_id, workspace_id, path).log_err();
+                    })
+                    .detach();
+            }
+        }
+
         Self::new(EditorMode::Full, buffer, project, None, cx)
     }
 

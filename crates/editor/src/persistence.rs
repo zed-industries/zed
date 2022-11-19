@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use db::connection;
 use indoc::indoc;
 use lazy_static::lazy_static;
-use project::WorktreeId;
 use sqlez::domain::Domain;
-use workspace::{ItemId, Workspace};
+use workspace::{ItemId, Workspace, WorkspaceId};
 
 use crate::Editor;
 
@@ -18,13 +18,32 @@ impl Domain for Editor {
 
     fn migrations() -> &'static [&'static str] {
         &[indoc! {"
-                
+            CREATE TABLE editors(
+                item_id INTEGER NOT NULL,
+                workspace_id BLOB NOT NULL,
+                path BLOB NOT NULL,
+                PRIMARY KEY(item_id, workspace_id)
+            ) STRICT;
         "}]
     }
 }
 
 impl EditorDb {
-    fn _get_path(_item_id: ItemId, _workspace_id: WorktreeId) -> PathBuf {
-        unimplemented!();
+    pub fn get_path(&self, item_id: ItemId, workspace_id: WorkspaceId) -> Result<PathBuf> {
+        self.select_row_bound(indoc! {"
+            SELECT path FROM editors 
+            WHERE item_id = ? AND workspace_id = ?"})?((item_id, &workspace_id))?
+        .context("Path not found for serialized editor")
+    }
+
+    pub fn save_path(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        path: PathBuf,
+    ) -> Result<()> {
+        self.exec_bound::<(ItemId, &WorkspaceId, &Path)>(indoc! {"
+            INSERT OR REPLACE INTO editors(item_id, workspace_id, path)
+            VALUES (?, ?, ?)"})?((item_id, &workspace_id, &path))
     }
 }

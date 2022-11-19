@@ -1,8 +1,3 @@
-use crate::{
-    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
-};
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;
 use gpui::{
@@ -27,6 +22,12 @@ use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, Workspace, WorkspaceId,
+};
+
+use crate::{
+    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
+    movement::surrounding_word, persistence::DB, Anchor, Autoscroll, Editor, Event, ExcerptId,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -554,21 +555,21 @@ impl Item for Editor {
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
-        // TODO: Some("Editor")
-        None
+        Some("Editor")
     }
 
     fn deserialize(
         project: ModelHandle<Project>,
         _workspace: WeakViewHandle<Workspace>,
-        _workspace_id: WorkspaceId,
-        _item_id: ItemId,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<ViewHandle<Self>>> {
-        // Look up the path with this key associated, create a self with that path
-        let path = Path::new(".");
         if let Some(project_item) = project.update(cx, |project, cx| {
-            let (worktree, path) = project.find_local_worktree(path, cx)?;
+            // Look up the path with this key associated, create a self with that path
+            let path = DB.get_path(item_id, workspace_id).ok()?;
+            dbg!(&path);
+            let (worktree, path) = project.find_local_worktree(&path, cx)?;
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
                 path: path.into(),
