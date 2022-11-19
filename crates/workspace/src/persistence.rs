@@ -377,7 +377,7 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
-    use db::{open_memory_db, write_db_to};
+    use db::{open_memory_db};
     use settings::DockAnchor;
 
     use super::*;
@@ -571,7 +571,7 @@ mod tests {
         let workspace = default_workspace(&["/tmp"], dock_pane, &Default::default());
 
         db.save_workspace(None, &workspace);
-        write_db_to(&db, "dest.db").unwrap();
+
         let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
         assert_eq!(workspace.dock_pane, new_workspace.dock_pane);
