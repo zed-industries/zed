@@ -58,7 +58,7 @@ impl Connection {
 mod test {
     use indoc::indoc;
 
-    use crate::{connection::Connection, thread_safe_connection::ThreadSafeConnection};
+    use crate::connection::Connection;
 
     #[test]
     fn test_migrations_are_added_to_table() {

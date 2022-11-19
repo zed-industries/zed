@@ -1,7 +1,7 @@
 use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, Anchor, Autoscroll, Editor, EditorMode, Event, ExcerptId,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
+    movement::surrounding_word, Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer,
+    MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
 };
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt;

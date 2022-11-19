@@ -677,7 +677,7 @@ impl Workspace {
         cx: &mut MutableAppContext,
     ) -> Task<(
         ViewHandle<Workspace>,
-        Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
+        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )> {
         let project_handle = Project::local(
             app_state.client.clone(),
@@ -740,7 +740,7 @@ impl Workspace {
                                 Some(
                                     workspace
                                         .update(&mut cx, |workspace, cx| {
-                                            workspace.open_path(project_path, true, cx)
+                                            workspace.open_path(project_path, None, true, cx)
                                         })
                                         .await,
                                 )

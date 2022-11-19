@@ -24,7 +24,7 @@ impl Domain for Editor {
 }
 
 impl EditorDb {
-    fn get_path(_item_id: ItemId, _workspace_id: WorktreeId) -> PathBuf {
+    fn _get_path(_item_id: ItemId, _workspace_id: WorktreeId) -> PathBuf {
         unimplemented!();
     }
 }

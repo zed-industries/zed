@@ -34,9 +34,7 @@ use mappings::mouse::{
 
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
-use terminal_container_view::TerminalContainer;
 use util::ResultExt;
-use workspace::register_deserializable_item;
 
 use std::{
     cmp::min,

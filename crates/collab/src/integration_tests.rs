@@ -1,6 +1,6 @@
 use crate::{
-    db::{NewUserParams, ProjectId, TestDb, UserId},
-    rpc::{Executor, Server, Store},
+    db::{NewUserParams, ProjectId, SqliteTestDb as TestDb, UserId},
+    rpc::{Executor, Server},
     AppState,
 };
 

@@ -16,9 +16,7 @@ use sqlez::{
 };
 use util::ResultExt;
 
-use crate::{
-    dock::DockPosition, item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace,
-};
+use crate::{dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceId(Arc<Vec<PathBuf>>);
