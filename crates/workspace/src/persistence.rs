@@ -147,14 +147,19 @@ impl WorkspaceDb {
                 DELETE FROM panes WHERE workspace_id = ?1;"})?(workspace.id)
             .context("Clearing old panes")?;
 
+            self.exec_bound(indoc! {"
+                DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
+                "})?((&workspace.location, workspace.id))
+            .context("clearing out old locations")?;
+            
             // Update or insert
             self.exec_bound(indoc! {
                 "INSERT INTO
                     workspaces(workspace_id, workspace_location, dock_visible, dock_anchor, timestamp) 
                  VALUES 
                     (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
-                 ON CONFLICT DO UPDATE SET 
-                 workspace_location = ?2, dock_visible = ?3, dock_anchor = ?4, timestamp = CURRENT_TIMESTAMP"
+                 ON CONFLICT DO UPDATE SET
+                    workspace_location = ?2, dock_visible = ?3, dock_anchor = ?4, timestamp = CURRENT_TIMESTAMP"
             })?((workspace.id, &workspace.location, workspace.dock_position))
             .context("Updating workspace")?;
 
@@ -372,10 +377,82 @@ impl WorkspaceDb {
 #[cfg(test)]
 mod tests {
 
+    use std::sync::Arc;
+
     use db::open_memory_db;
     use settings::DockAnchor;
 
     use super::*;
+
+    #[test]
+    fn test_workspace_id_stability() {
+        env_logger::try_init().ok();
+
+        let db = WorkspaceDb(open_memory_db(Some("test_workspace_id_stability")));
+
+        db.migrate(
+            "test_table",
+            &["CREATE TABLE test_table(
+                text TEXT,
+                workspace_id INTEGER,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+            ) STRICT;"],
+        )
+        .unwrap();
+
+        let mut workspace_1 = SerializedWorkspace {
+            id: 1,
+            location: (["/tmp", "/tmp2"]).into(),
+            dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
+            center_group: Default::default(),
+            dock_pane: Default::default(),
+        };
+
+        let mut workspace_2 = SerializedWorkspace {
+            id: 2,
+            location: (["/tmp"]).into(),
+            dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
+            center_group: Default::default(),
+            dock_pane: Default::default(),
+        };
+
+        db.save_workspace(&workspace_1);
+
+        db.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+            .unwrap()(("test-text-1", 1))
+        .unwrap();
+
+        db.save_workspace(&workspace_2);
+
+        db.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+            .unwrap()(("test-text-2", 2))
+        .unwrap();
+
+        workspace_1.location = (["/tmp", "/tmp3"]).into();
+        db.save_workspace(&workspace_1);
+        db.save_workspace(&workspace_1);
+
+        workspace_2.dock_pane.children.push(SerializedItem {
+            kind: Arc::from("Test"),
+            item_id: 10,
+        });
+        db.save_workspace(&workspace_2);
+
+        let test_text_1 = db
+            .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
+            .unwrap()(2)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_1, "test-text-2");
+
+        let test_text_2 = db
+            .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
+            .unwrap()(1)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_2, "test-text-1");
+    }
 
     #[test]
     fn test_full_workspace_serialization() {
