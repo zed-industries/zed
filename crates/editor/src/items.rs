@@ -568,6 +568,7 @@ impl Item for Editor {
         if let Some(project_item) = project.update(cx, |project, cx| {
             // Look up the path with this key associated, create a self with that path
             let path = DB.get_path(item_id, workspace_id).ok()?;
+
             let (worktree, path) = project.find_local_worktree(&path, cx)?;
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),

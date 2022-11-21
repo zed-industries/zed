@@ -83,7 +83,7 @@ macro_rules! connection {
 
 #[macro_export]
 macro_rules! sql_method {
-    ($id:ident() ->  Result<()>: $sql:literal) => {
+    ($id:ident() ->  Result<()>: $sql:expr) => {
         pub fn $id(&self) -> $crate::sqlez::anyhow::Result<()> {
             use $crate::anyhow::Context;
 
@@ -94,7 +94,7 @@ macro_rules! sql_method {
             ))
         }
     };
-    ($id:ident($($arg:ident: $arg_type:ty),+) -> Result<()>: $sql:literal) => {
+    ($id:ident($($arg:ident: $arg_type:ty),+) -> Result<()>: $sql:expr) => {
         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<()> {
             use $crate::anyhow::Context;
 
@@ -106,7 +106,7 @@ macro_rules! sql_method {
                 ))
         }
     };
-    ($id:ident() ->  Result<Vec<$return_type:ty>>: $sql:literal) => {
+    ($id:ident() ->  Result<Vec<$return_type:ty>>: $sql:expr) => {
          pub fn $id(&self) -> $crate::sqlez::anyhow::Result<Vec<$return_type>> {
              use $crate::anyhow::Context;
 
@@ -118,7 +118,7 @@ macro_rules! sql_method {
                  ))
          }
     };
-    ($id:ident($($arg:ident: $arg_type:ty),+) -> Result<Vec<$return_type:ty>>: $sql:literal) => {
+    ($id:ident($($arg:ident: $arg_type:ty),+) -> Result<Vec<$return_type:ty>>: $sql:expr) => {
          pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<Vec<$return_type>> {
              use $crate::anyhow::Context;
 
@@ -130,7 +130,7 @@ macro_rules! sql_method {
                  ))
          }
     };
-    ($id:ident() ->  Result<Option<$return_type:ty>>: $sql:literal) => {
+    ($id:ident() ->  Result<Option<$return_type:ty>>: $sql:expr) => {
          pub fn $id(&self) -> $crate::sqlez::anyhow::Result<Option<$return_type>> {
              use $crate::anyhow::Context;
 
@@ -142,7 +142,7 @@ macro_rules! sql_method {
                  ))
          }
     };
-    ($id:ident($($arg:ident: $arg_type:ty),+) ->  Result<Option<$return_type:ty>>: $sql:literal) => {
+    ($id:ident($($arg:ident: $arg_type:ty),+) ->  Result<Option<$return_type:ty>>: $sql:expr) => {
          pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<Option<$return_type>>  {
              use $crate::anyhow::Context;
 
@@ -153,6 +153,40 @@ macro_rules! sql_method {
                      ::std::stringify!($sql),
                  ))
 
+         }
+    };
+    ($id:ident() ->  Result<$return_type:ty>>: $sql:expr) => {
+         pub fn $id(&self) ->  $crate::sqlez::anyhow::Result<$return_type>  {
+             use $crate::anyhow::Context;
+
+             self.select_row::<$return_type>($sql)?(($($arg),+))
+                 .context(::std::format!(
+                     "Error in {}, select_row_bound failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))?
+                 .context(::std::format!(
+                     "Error in {}, select_row_bound expected single row result but found none for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
+         }
+    };
+    ($id:ident($($arg:ident: $arg_type:ty),+) ->  Result<$return_type:ty>>: $sql:expr) => {
+         pub fn $id(&self, $($arg: $arg_type),+) ->  $crate::sqlez::anyhow::Result<$return_type>  {
+             use $crate::anyhow::Context;
+
+             self.select_row_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
+                 .context(::std::format!(
+                     "Error in {}, select_row_bound failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))?
+                 .context(::std::format!(
+                     "Error in {}, select_row_bound expected single row result but found none for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
          }
     };
 }
