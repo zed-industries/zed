@@ -25,8 +25,8 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Transaction, Unclipped,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -2660,7 +2660,7 @@ impl Project {
         let mut sanitized_diagnostics = Vec::new();
         let edits_since_save = Patch::new(
             snapshot
-                .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
+                .edits_since::<Unclipped<PointUtf16>>(buffer.read(cx).saved_version())
                 .collect(),
         );
         for entry in diagnostics {

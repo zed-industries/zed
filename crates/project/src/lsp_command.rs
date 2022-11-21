@@ -131,9 +131,7 @@ impl LspCommand for PrepareRename {
                 if buffer.clip_point_utf16(start, Bias::Left) == start.0
                     && buffer.clip_point_utf16(end, Bias::Left) == end.0
                 {
-                    return Ok(Some(
-                        buffer.anchor_after(start)..buffer.anchor_before(end),
-                    ));
+                    return Ok(Some(buffer.anchor_after(start)..buffer.anchor_before(end)));
                 }
             }
             Ok(None)
@@ -884,8 +882,7 @@ impl LspCommand for GetDocumentHighlights {
                     let end = buffer
                         .clip_point_utf16(point_from_lsp(lsp_highlight.range.end), Bias::Left);
                     DocumentHighlight {
-                        range: buffer.anchor_after(start)
-                            ..buffer.anchor_before(end),
+                        range: buffer.anchor_after(start)..buffer.anchor_before(end),
                         kind: lsp_highlight
                             .kind
                             .unwrap_or(lsp::DocumentHighlightKind::READ),
@@ -1020,8 +1017,7 @@ impl LspCommand for GetHover {
                     let token_start =
                         buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
                     let token_end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
-                    buffer.anchor_after(token_start)
-                        ..buffer.anchor_before(token_end)
+                    buffer.anchor_after(token_start)..buffer.anchor_before(token_end)
                 })
             });
 

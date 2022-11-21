@@ -500,7 +500,10 @@ impl LocalWorktree {
         })
     }
 
-    pub fn diagnostics_for_path(&self, path: &Path) -> Option<Vec<DiagnosticEntry<Unclipped<PointUtf16>>>> {
+    pub fn diagnostics_for_path(
+        &self,
+        path: &Path,
+    ) -> Option<Vec<DiagnosticEntry<Unclipped<PointUtf16>>>> {
         self.diagnostics.get(path).cloned()
     }
 
