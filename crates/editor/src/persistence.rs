@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use db::connection;
+use db::{connection, exec_method};
 use indoc::indoc;
 use sqlez::domain::Domain;
 use workspace::{ItemId, Workspace, WorkspaceId};
@@ -35,18 +35,12 @@ impl EditorDb {
     pub fn get_path(&self, item_id: ItemId, workspace_id: WorkspaceId) -> Result<PathBuf> {
         self.select_row_bound(indoc! {"
             SELECT path FROM editors 
-            WHERE item_id = ? AND workspace_id = ?"})?((item_id, &workspace_id))?
+            WHERE item_id = ? AND workspace_id = ?"})?((item_id, workspace_id))?
         .context("Path not found for serialized editor")
     }
 
-    pub fn save_path(
-        &self,
-        item_id: ItemId,
-        workspace_id: WorkspaceId,
-        path: PathBuf,
-    ) -> Result<()> {
-        self.exec_bound::<(ItemId, &WorkspaceId, &Path)>(indoc! {"
-            INSERT OR REPLACE INTO editors(item_id, workspace_id, path)
-            VALUES (?, ?, ?)"})?((item_id, &workspace_id, &path))
-    }
+    exec_method!(save_path(item_id: ItemId, workspace_id: WorkspaceId, path: &Path):
+        "INSERT OR REPLACE INTO editors(item_id, workspace_id, path)
+         VALUES (?, ?, ?)"
+    );
 }

@@ -584,7 +584,11 @@ impl Item for ProjectDiagnosticsEditor {
         });
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(
+        &self,
+        _workspace_id: workspace::WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self>
     where
         Self: Sized,
     {

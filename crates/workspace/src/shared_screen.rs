@@ -1,7 +1,5 @@
 use crate::{
-    item::ItemEvent,
-    persistence::model::{ItemId, WorkspaceId},
-    Item, ItemNavHistory, Pane, Workspace,
+    item::ItemEvent, persistence::model::ItemId, Item, ItemNavHistory, Pane, Workspace, WorkspaceId,
 };
 use anyhow::{anyhow, Result};
 use call::participant::{Frame, RemoteVideoTrack};
@@ -148,7 +146,11 @@ impl Item for SharedScreen {
         self.nav_history = Some(history);
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
+    fn clone_on_split(
+        &self,
+        _workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self> {
         let track = self.track.upgrade()?;
         Some(Self::new(&track, self.peer_id, self.user.clone(), cx))
     }

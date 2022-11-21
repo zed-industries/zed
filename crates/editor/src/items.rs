@@ -368,7 +368,7 @@ impl Item for Editor {
         self.buffer.read(cx).is_singleton()
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(&self, _workspace_id: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
@@ -561,14 +561,13 @@ impl Item for Editor {
     fn deserialize(
         project: ModelHandle<Project>,
         _workspace: WeakViewHandle<Workspace>,
-        workspace_id: WorkspaceId,
+        workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<ViewHandle<Self>>> {
         if let Some(project_item) = project.update(cx, |project, cx| {
             // Look up the path with this key associated, create a self with that path
             let path = DB.get_path(item_id, workspace_id).ok()?;
-            dbg!(&path);
             let (worktree, path) = project.find_local_worktree(&path, cx)?;
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),

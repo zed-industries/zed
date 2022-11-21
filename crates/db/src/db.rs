@@ -1,21 +1,26 @@
 pub mod kvp;
 
-// Re-export indoc and sqlez so clients only need to include us
+// Re-export
+pub use anyhow;
 pub use indoc::indoc;
 pub use lazy_static;
 pub use sqlez;
-
-use std::fs::{create_dir_all, remove_dir_all};
-use std::path::Path;
+use sqlez::bindable::{Bind, Column};
 
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
 use sqlez::connection::Connection;
-use sqlez::domain::{Domain, Migrator};
+#[cfg(any(test, feature = "test-support"))]
+use sqlez::domain::Domain;
+
+use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
+use std::fs::{create_dir_all, remove_dir_all};
+use std::path::Path;
 use util::channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::paths::DB_DIR;
+use uuid::Uuid as RealUuid;
 
 const INITIALIZE_QUERY: &'static str = indoc! {"
     PRAGMA journal_mode=WAL;
@@ -24,6 +29,47 @@ const INITIALIZE_QUERY: &'static str = indoc! {"
     PRAGMA foreign_keys=TRUE;
     PRAGMA case_sensitive_like=TRUE;
 "};
+
+#[derive(Debug, Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Uuid(RealUuid);
+
+impl std::ops::Deref for Uuid {
+    type Target = RealUuid;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Bind for Uuid {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        statement.bind(self.as_bytes(), start_index)
+    }
+}
+
+impl Column for Uuid {
+    fn column(
+        statement: &mut sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<(Self, i32)> {
+        let blob = statement.column_blob(start_index)?;
+        Ok((Uuid::from_bytes(blob)?, start_index + 1))
+    }
+}
+
+impl Uuid {
+    pub fn new() -> Self {
+        Uuid(RealUuid::new_v4())
+    }
+
+    fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        Ok(Uuid(RealUuid::from_bytes(bytes.try_into()?)))
+    }
+}
 
 /// Open or create a database at the given directory path.
 pub fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
@@ -75,5 +121,90 @@ macro_rules! connection {
                 ::db::open_file_db()
             });
         }
+    };
+}
+
+#[macro_export]
+macro_rules! exec_method {
+    ($id:ident(): $sql:literal) => {
+         pub fn $id(&self) -> $crate::sqlez::anyhow::Result<()> {
+             use $crate::anyhow::Context;
+
+             self.exec($sql)?()
+                 .context(::std::format!(
+                     "Error in {}, exec failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
+         }
+    };
+    ($id:ident($($arg:ident: $arg_type:ty),+): $sql:literal) => {
+         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<()> {
+             use $crate::anyhow::Context;
+
+             self.exec_bound::<($($arg_type),+)>($sql)?(($($arg),+))
+                 .context(::std::format!(
+                     "Error in {}, exec_bound failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
+         }
+    };
+}
+
+#[macro_export]
+macro_rules! select_method {
+    ($id:ident() ->  $return_type:ty: $sql:literal) => {
+         pub fn $id(&self) -> $crate::sqlez::anyhow::Result<Vec<$return_type>> {
+             use $crate::anyhow::Context;
+
+             self.select::<$return_type>($sql)?(())
+                 .context(::std::format!(
+                     "Error in {}, select_row failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
+         }
+    };
+    ($id:ident($($arg:ident: $arg_type:ty),+) -> $return_type:ty: $sql:literal) => {
+         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<Vec<$return_type>> {
+             use $crate::anyhow::Context;
+
+             self.select_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
+                 .context(::std::format!(
+                     "Error in {}, exec_bound failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
+         }
+    };
+}
+
+#[macro_export]
+macro_rules! select_row_method {
+    ($id:ident() ->  $return_type:ty: $sql:literal) => {
+         pub fn $id(&self) -> $crate::sqlez::anyhow::Result<Option<$return_type>> {
+             use $crate::anyhow::Context;
+
+             self.select_row::<$return_type>($sql)?(())
+                 .context(::std::format!(
+                     "Error in {}, select_row failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
+         }
+    };
+    ($id:ident($($arg:ident: $arg_type:ty),+) ->  $return_type:ty: $sql:literal) => {
+         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<Option<$return_type>>  {
+             use $crate::anyhow::Context;
+
+             self.select_row_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
+                 .context(::std::format!(
+                     "Error in {}, select_row_bound failed to execute or parse for: {}",
+                     ::std::stringify!($id),
+                     ::std::stringify!($sql),
+                 ))
+
+         }
     };
 }

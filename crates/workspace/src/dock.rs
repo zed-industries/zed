@@ -206,7 +206,7 @@ impl Dock {
             cx.focus(last_active_center_pane);
         }
         cx.emit(crate::Event::DockAnchorChanged);
-        workspace.serialize_workspace(None, cx);
+        workspace.serialize_workspace(cx);
         cx.notify();
     }
 

@@ -22,11 +22,8 @@ use theme::Theme;
 use util::ResultExt;
 
 use crate::{
-    pane,
-    persistence::model::{ItemId, WorkspaceId},
-    searchable::SearchableItemHandle,
-    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation,
-    Workspace,
+    pane, persistence::model::ItemId, searchable::SearchableItemHandle, DelayedDebouncedEditAction,
+    FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 #[derive(Eq, PartialEq, Hash)]
@@ -52,7 +49,7 @@ pub trait Item: View {
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
-    fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
@@ -121,7 +118,9 @@ pub trait Item: View {
     fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox>> {
         None
     }
+
     fn serialized_item_kind() -> Option<&'static str>;
+
     fn deserialize(
         project: ModelHandle<Project>,
         workspace: WeakViewHandle<Workspace>,
@@ -144,7 +143,11 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
-    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
+    fn clone_on_split(
+        &self,
+        workspace_id: WorkspaceId,
+        cx: &mut MutableAppContext,
+    ) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
         &self,
         workspace: &mut Workspace,
@@ -246,9 +249,13 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         Box::new(self.clone())
     }
 
-    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>> {
+    fn clone_on_split(
+        &self,
+        workspace_id: WorkspaceId,
+        cx: &mut MutableAppContext,
+    ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
-            cx.add_option_view(|cx| item.clone_on_split(cx))
+            cx.add_option_view(|cx| item.clone_on_split(workspace_id, cx))
         })
         .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
     }
@@ -812,7 +819,11 @@ pub(crate) mod test {
             self.push_to_nav_history(cx);
         }
 
-        fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
+        fn clone_on_split(
+            &self,
+            _workspace_id: WorkspaceId,
+            _: &mut ViewContext<Self>,
+        ) -> Option<Self>
         where
             Self: Sized,
         {

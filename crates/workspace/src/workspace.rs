@@ -26,6 +26,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
+use db::Uuid;
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -45,7 +46,7 @@ use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
 use persistence::model::SerializedItem;
-pub use persistence::model::{ItemId, WorkspaceId};
+pub use persistence::model::{ItemId, WorkspaceLocation};
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use serde::Deserialize;
@@ -127,6 +128,8 @@ pub struct OpenProjectEntryInPane {
     pane: WeakViewHandle<Pane>,
     project_entry: ProjectEntryId,
 }
+
+pub type WorkspaceId = Uuid;
 
 impl_internal_actions!(
     workspace,
@@ -530,6 +533,7 @@ pub struct Workspace {
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
     active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
+    database_id: WorkspaceId,
     _observe_current_user: Task<()>,
 }
 
@@ -556,7 +560,7 @@ impl Workspace {
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
                     // TODO: Cache workspace_id on workspace and read from it here
-                    this.serialize_workspace(None, cx);
+                    this.serialize_workspace(cx);
                 }
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(cx);
@@ -630,6 +634,12 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
+        let id = if let Some(id) = serialized_workspace.as_ref().map(|ws| ws.id) {
+            id
+        } else {
+            WorkspaceId::new()
+        };
+
         let mut this = Workspace {
             modal: None,
             weak_self: weak_handle.clone(),
@@ -657,6 +667,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
+            database_id: id,
             _observe_current_user,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
@@ -1317,7 +1328,7 @@ impl Workspace {
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane().clone();
         Pane::add_item(self, &active_pane, item, true, true, None, cx);
-        self.serialize_workspace(None, cx);
+        self.serialize_workspace(cx);
     }
 
     pub fn open_path(
@@ -1522,7 +1533,7 @@ impl Workspace {
                             entry.remove();
                         }
                     }
-                    self.serialize_workspace(None, cx);
+                    self.serialize_workspace(cx);
                 }
                 _ => {}
             }
@@ -1544,7 +1555,7 @@ impl Workspace {
 
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
-            if let Some(clone) = item.clone_on_split(cx.as_mut()) {
+            if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
                 Pane::add_item(self, &new_pane, clone, true, true, None, cx);
             }
             self.center.split(&pane, &new_pane, direction).unwrap();
@@ -2255,7 +2266,11 @@ impl Workspace {
         }
     }
 
-    fn workspace_id(&self, cx: &AppContext) -> WorkspaceId {
+    pub fn database_id(&self) -> WorkspaceId {
+        self.database_id
+    }
+
+    fn location(&self, cx: &AppContext) -> WorkspaceLocation {
         self.project()
             .read(cx)
             .visible_worktrees(cx)
@@ -2275,7 +2290,7 @@ impl Workspace {
         }
     }
 
-    fn serialize_workspace(&self, old_id: Option<WorkspaceId>, cx: &AppContext) {
+    fn serialize_workspace(&self, cx: &AppContext) {
         fn serialize_pane_handle(
             pane_handle: &ViewHandle<Pane>,
             cx: &AppContext,
@@ -2320,7 +2335,8 @@ impl Workspace {
         let center_group = build_serialized_pane_group(&self.center.root, cx);
 
         let serialized_workspace = SerializedWorkspace {
-            workspace_id: self.workspace_id(cx),
+            id: self.database_id,
+            location: self.location(cx),
             dock_position: self.dock.position(),
             dock_pane,
             center_group,
@@ -2328,7 +2344,7 @@ impl Workspace {
 
         cx.background()
             .spawn(async move {
-                persistence::DB.save_workspace(old_id, &serialized_workspace);
+                persistence::DB.save_workspace(&serialized_workspace);
             })
             .detach();
     }
@@ -2349,7 +2365,7 @@ impl Workspace {
                     .deserialize_to(
                         &project,
                         &dock_pane_handle,
-                        &serialized_workspace.workspace_id,
+                        serialized_workspace.id,
                         &workspace,
                         &mut cx,
                     )
@@ -2359,12 +2375,7 @@ impl Workspace {
 
                 let (root, active_pane) = serialized_workspace
                     .center_group
-                    .deserialize(
-                        &project,
-                        &serialized_workspace.workspace_id,
-                        &workspace,
-                        &mut cx,
-                    )
+                    .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
                     .await;
 
                 // Remove old panes from workspace panes list

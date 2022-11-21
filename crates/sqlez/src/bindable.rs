@@ -36,6 +36,13 @@ impl Bind for &[u8] {
     }
 }
 
+impl<const C: usize> Bind for &[u8; C] {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        statement.bind_blob(start_index, self.as_slice())?;
+        Ok(start_index + 1)
+    }
+}
+
 impl Bind for Vec<u8> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_blob(start_index, self)?;

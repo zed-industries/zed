@@ -597,6 +597,8 @@ pub fn default_item_factory(
 
     let working_directory = get_working_directory(workspace, cx, strategy);
 
-    let terminal_handle = cx.add_view(|cx| TerminalContainer::new(working_directory, false, cx));
+    let terminal_handle = cx.add_view(|cx| {
+        TerminalContainer::new(working_directory, false, workspace.database_id(), cx)
+    });
     Box::new(terminal_handle)
 }

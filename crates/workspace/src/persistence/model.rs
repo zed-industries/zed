@@ -16,18 +16,20 @@ use project::Project;
 use settings::DockAnchor;
 use util::ResultExt;
 
-use crate::{dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace};
+use crate::{
+    dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceId(Arc<Vec<PathBuf>>);
+pub struct WorkspaceLocation(Arc<Vec<PathBuf>>);
 
-impl WorkspaceId {
+impl WorkspaceLocation {
     pub fn paths(&self) -> Arc<Vec<PathBuf>> {
         self.0.clone()
     }
 }
 
-impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceId {
+impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
     fn from(iterator: T) -> Self {
         let mut roots = iterator
             .into_iter()
@@ -38,7 +40,7 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceId {
     }
 }
 
-impl Bind for &WorkspaceId {
+impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         bincode::serialize(&self.0)
             .expect("Bincode serialization of paths should not fail")
@@ -46,16 +48,20 @@ impl Bind for &WorkspaceId {
     }
 }
 
-impl Column for WorkspaceId {
+impl Column for WorkspaceLocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;
-        Ok((WorkspaceId(bincode::deserialize(blob)?), start_index + 1))
+        Ok((
+            WorkspaceLocation(bincode::deserialize(blob)?),
+            start_index + 1,
+        ))
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SerializedWorkspace {
-    pub workspace_id: WorkspaceId,
+    pub id: WorkspaceId,
+    pub location: WorkspaceLocation,
     pub dock_position: DockPosition,
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
@@ -70,10 +76,11 @@ pub enum SerializedPaneGroup {
     Pane(SerializedPane),
 }
 
+#[cfg(test)]
 impl Default for SerializedPaneGroup {
     fn default() -> Self {
         Self::Pane(SerializedPane {
-            children: Vec::new(),
+            children: vec![SerializedItem::default()],
             active: false,
         })
     }
@@ -84,7 +91,7 @@ impl SerializedPaneGroup {
     pub(crate) async fn deserialize(
         &self,
         project: &ModelHandle<Project>,
-        workspace_id: &WorkspaceId,
+        workspace_id: WorkspaceId,
         workspace: &ViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
     ) -> (Member, Option<ViewHandle<Pane>>) {
@@ -136,13 +143,12 @@ impl SerializedPane {
         &self,
         project: &ModelHandle<Project>,
         pane_handle: &ViewHandle<Pane>,
-        workspace_id: &WorkspaceId,
+        workspace_id: WorkspaceId,
         workspace: &ViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
     ) {
         for item in self.children.iter() {
             let project = project.clone();
-            let workspace_id = workspace_id.clone();
             let item_handle = pane_handle
                 .update(cx, |_, cx| {
                     if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
@@ -191,6 +197,16 @@ impl SerializedItem {
     }
 }
 
+#[cfg(test)]
+impl Default for SerializedItem {
+    fn default() -> Self {
+        SerializedItem {
+            kind: Arc::from("Terminal"),
+            item_id: 100000,
+        }
+    }
+}
+
 impl Bind for &SerializedItem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(self.kind.clone(), start_index)?;
@@ -231,7 +247,7 @@ mod tests {
     use db::sqlez::connection::Connection;
     use settings::DockAnchor;
 
-    use super::WorkspaceId;
+    use super::WorkspaceLocation;
 
     #[test]
     fn test_workspace_round_trips() {
@@ -245,7 +261,7 @@ mod tests {
             .unwrap()()
         .unwrap();
 
-        let workspace_id: WorkspaceId = WorkspaceId::from(&["\test2", "\test1"]);
+        let workspace_id: WorkspaceLocation = WorkspaceLocation::from(&["\test2", "\test1"]);
 
         db.exec_bound("INSERT INTO workspace_id_test(workspace_id, dock_anchor) VALUES (?,?)")
             .unwrap()((&workspace_id, DockAnchor::Bottom))
@@ -255,7 +271,10 @@ mod tests {
             db.select_row("SELECT workspace_id, dock_anchor FROM workspace_id_test LIMIT 1")
                 .unwrap()()
             .unwrap(),
-            Some((WorkspaceId::from(&["\test1", "\test2"]), DockAnchor::Bottom))
+            Some((
+                WorkspaceLocation::from(&["\test1", "\test2"]),
+                DockAnchor::Bottom
+            ))
         );
     }
 }

@@ -33,9 +33,11 @@ use mappings::mouse::{
     alt_scroll, grid_point, mouse_button_report, mouse_moved_report, mouse_side, scroll_report,
 };
 
+use persistence::TERMINAL_CONNECTION;
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use util::ResultExt;
+use workspace::{ItemId, WorkspaceId};
 
 use std::{
     cmp::min,
@@ -282,6 +284,8 @@ impl TerminalBuilder {
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: &AlternateScroll,
         window_id: usize,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -386,6 +390,8 @@ impl TerminalBuilder {
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
+            workspace_id,
+            item_id,
         };
 
         Ok(TerminalBuilder {
@@ -529,6 +535,8 @@ pub struct Terminal {
     scroll_px: f32,
     next_link_id: usize,
     selection_phase: SelectionPhase,
+    workspace_id: WorkspaceId,
+    item_id: ItemId,
 }
 
 impl Terminal {
@@ -566,20 +574,6 @@ impl Terminal {
             }
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
-
-                if self.update_process_info() {
-                    cx.emit(Event::TitleChanged);
-
-                    // if let Some(foreground_info) = self.foreground_process_info {
-                    // cx.background().spawn(async move {
-                    //     TERMINAL_CONNECTION.save_working_directory(
-                    //         self.item_id,
-                    //         &self.workspace_id,
-                    //         &foreground_info.cwd,
-                    //     );
-                    // });
-                    // }
-                }
             }
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
                 self.events
@@ -888,6 +882,19 @@ impl Terminal {
 
         if self.update_process_info() {
             cx.emit(Event::TitleChanged);
+
+            if let Some(foreground_info) = &self.foreground_process_info {
+                let cwd = foreground_info.cwd.clone();
+                let item_id = self.item_id;
+                let workspace_id = self.workspace_id;
+                cx.background()
+                    .spawn(async move {
+                        TERMINAL_CONNECTION
+                            .save_working_directory(item_id, workspace_id, cwd.as_path())
+                            .log_err();
+                    })
+                    .detach();
+            }
         }
 
         //Note that the ordering of events matters for event processing
