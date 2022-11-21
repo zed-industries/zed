@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use db::{connection, exec_method, indoc, select_row_method, sqlez::domain::Domain};
+use db::{connection, indoc, sql_method, sqlez::domain::Domain};
 
 use workspace::{ItemId, Workspace, WorkspaceId};
 
@@ -28,16 +28,16 @@ impl Domain for Terminal {
 }
 
 impl TerminalDb {
-    exec_method!(
-        save_working_directory(item_id: ItemId, workspace_id: WorkspaceId, working_directory: &Path):
+    sql_method! {
+        save_working_directory(item_id: ItemId, workspace_id: WorkspaceId, working_directory: &Path) -> Result<()>:
             "INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
              VALUES (?1, ?2, ?3)"
-    );
+    }
 
-    select_row_method!(
-        get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> PathBuf:
+    sql_method! {
+        get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>>:
             "SELECT working_directory
              FROM terminals 
              WHERE item_id = ? AND workspace_id = ?"
-    );
+    }
 }

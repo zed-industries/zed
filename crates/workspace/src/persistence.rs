@@ -5,7 +5,7 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use db::{connection, select_row_method};
+use db::{connection, sql_method};
 use gpui::Axis;
 use indoc::indoc;
 
@@ -190,10 +190,10 @@ impl WorkspaceDb {
         .log_err();
     }
 
-    select_row_method!(
-        next_id() -> WorkspaceId:
+    sql_method! {
+        next_id() -> Result<Option<WorkspaceId>>:
             "INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id"
-    );
+    }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
     pub fn recent_workspaces(&self, limit: usize) -> Vec<(WorkspaceId, WorkspaceLocation)> {
@@ -385,6 +385,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_next_id_stability() {
+        env_logger::try_init().ok();
+
+        let db = WorkspaceDb(open_memory_db(Some("test_workspace_id_stability")));
+
+        db.migrate(
+            "test_table",
+            &["CREATE TABLE test_table(
+                text TEXT,
+                workspace_id INTEGER,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+            ) STRICT;"],
+        )
+        .unwrap();
+        
+        let id = db.next_id().unwrap();
+    
+        db.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+            .unwrap()(("test-text-1", id))
+        .unwrap();
+
+        let test_text_1 = db
+            .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
+            .unwrap()(1)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_1, "test-text-1");
+    }
+    
+    #[test]
     fn test_workspace_id_stability() {
         env_logger::try_init().ok();
 
@@ -439,19 +470,19 @@ mod tests {
         });
         db.save_workspace(&workspace_2);
 
-        let test_text_1 = db
+        let test_text_2 = db
             .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
             .unwrap()(2)
         .unwrap()
         .unwrap();
-        assert_eq!(test_text_1, "test-text-2");
+        assert_eq!(test_text_2, "test-text-2");
 
-        let test_text_2 = db
+        let test_text_1 = db
             .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
             .unwrap()(1)
         .unwrap()
         .unwrap();
-        assert_eq!(test_text_2, "test-text-1");
+        assert_eq!(test_text_1, "test-text-1");
     }
 
     #[test]
