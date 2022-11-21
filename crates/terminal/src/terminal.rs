@@ -574,6 +574,23 @@ impl Terminal {
             }
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
+
+                if self.update_process_info() {
+                    cx.emit(Event::TitleChanged);
+
+                    if let Some(foreground_info) = &self.foreground_process_info {
+                        let cwd = foreground_info.cwd.clone();
+                        let item_id = self.item_id;
+                        let workspace_id = self.workspace_id;
+                        cx.background()
+                            .spawn(async move {
+                                TERMINAL_CONNECTION
+                                    .save_working_directory(item_id, workspace_id, cwd.as_path())
+                                    .log_err();
+                            })
+                            .detach();
+                    }
+                }
             }
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
                 self.events
@@ -879,23 +896,6 @@ impl Terminal {
             //No lock and delayed rendering already scheduled, nothing to do
             return;
         };
-
-        if self.update_process_info() {
-            cx.emit(Event::TitleChanged);
-
-            if let Some(foreground_info) = &self.foreground_process_info {
-                let cwd = foreground_info.cwd.clone();
-                let item_id = self.item_id;
-                let workspace_id = self.workspace_id;
-                cx.background()
-                    .spawn(async move {
-                        TERMINAL_CONNECTION
-                            .save_working_directory(item_id, workspace_id, cwd.as_path())
-                            .log_err();
-                    })
-                    .detach();
-            }
-        }
 
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
