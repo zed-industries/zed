@@ -16,7 +16,7 @@ impl Domain for Terminal {
     fn migrations() -> &'static [&'static str] {
         &[indoc! {"
             CREATE TABLE terminals (
-                workspace_id BLOB,
+                workspace_id INTEGER,
                 item_id INTEGER,
                 working_directory BLOB,
                 PRIMARY KEY(workspace_id, item_id),
@@ -29,7 +29,7 @@ impl Domain for Terminal {
 
 impl TerminalDb {
     exec_method!(
-        save_working_directory(model_id: ItemId, workspace_id: WorkspaceId, working_directory: &Path):
+        save_working_directory(item_id: ItemId, workspace_id: WorkspaceId, working_directory: &Path):
             "INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
              VALUES (?1, ?2, ?3)"
     );

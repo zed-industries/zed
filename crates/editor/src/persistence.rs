@@ -19,7 +19,7 @@ impl Domain for Editor {
         &[indoc! {"
             CREATE TABLE editors(
                 item_id INTEGER NOT NULL,
-                workspace_id BLOB NOT NULL,
+                workspace_id INTEGER NOT NULL,
                 path BLOB NOT NULL,
                 PRIMARY KEY(item_id, workspace_id),
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)

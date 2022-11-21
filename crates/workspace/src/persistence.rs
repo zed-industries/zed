@@ -5,7 +5,7 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use db::connection;
+use db::{connection, select_row_method};
 use gpui::Axis;
 use indoc::indoc;
 
@@ -32,8 +32,8 @@ impl Domain for Workspace {
     fn migrations() -> &'static [&'static str] {
         &[indoc! {"
             CREATE TABLE workspaces(
-                workspace_id BLOB PRIMARY KEY,
-                workspace_location BLOB NOT NULL UNIQUE,
+                workspace_id INTEGER PRIMARY KEY,
+                workspace_location BLOB UNIQUE,
                 dock_visible INTEGER, -- Boolean
                 dock_anchor TEXT, -- Enum: 'Bottom' / 'Right' / 'Expanded'
                 dock_pane INTEGER, -- NULL indicates that we don't have a dock pane yet
@@ -43,7 +43,7 @@ impl Domain for Workspace {
             
             CREATE TABLE pane_groups(
                 group_id INTEGER PRIMARY KEY,
-                workspace_id BLOB NOT NULL,
+                workspace_id INTEGER NOT NULL,
                 parent_group_id INTEGER, -- NULL indicates that this is a root node
                 position INTEGER, -- NULL indicates that this is a root node
                 axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
@@ -55,7 +55,7 @@ impl Domain for Workspace {
             
             CREATE TABLE panes(
                 pane_id INTEGER PRIMARY KEY,
-                workspace_id BLOB NOT NULL,
+                workspace_id INTEGER NOT NULL,
                 active INTEGER NOT NULL, -- Boolean
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
                     ON DELETE CASCADE 
@@ -73,7 +73,7 @@ impl Domain for Workspace {
                             
             CREATE TABLE items(
                 item_id INTEGER NOT NULL, -- This is the item's view id, so this is not unique
-                workspace_id BLOB NOT NULL,
+                workspace_id INTEGER NOT NULL,
                 pane_id INTEGER NOT NULL,
                 kind TEXT NOT NULL,
                 position INTEGER NOT NULL,
@@ -149,10 +149,12 @@ impl WorkspaceDb {
 
             // Update or insert
             self.exec_bound(indoc! {
-                "INSERT OR REPLACE INTO
+                "INSERT INTO
                     workspaces(workspace_id, workspace_location, dock_visible, dock_anchor, timestamp) 
                  VALUES 
-                    (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)"
+                    (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                 ON CONFLICT DO UPDATE SET 
+                 workspace_location = ?2, dock_visible = ?3, dock_anchor = ?4, timestamp = CURRENT_TIMESTAMP"
             })?((workspace.id, &workspace.location, workspace.dock_position))
             .context("Updating workspace")?;
 
@@ -183,6 +185,11 @@ impl WorkspaceDb {
         .log_err();
     }
 
+    select_row_method!(
+        next_id() -> WorkspaceId:
+            "INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id"
+    );
+
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
     pub fn recent_workspaces(&self, limit: usize) -> Vec<(WorkspaceId, WorkspaceLocation)> {
         iife!({
@@ -199,10 +206,7 @@ impl WorkspaceDb {
         .unwrap_or_default()
     }
 
-    pub(crate) fn get_center_pane_group(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<SerializedPaneGroup> {
+    fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
         self.get_pane_group(workspace_id, None)?
             .into_iter()
             .next()
@@ -266,7 +270,7 @@ impl WorkspaceDb {
         .collect::<Result<_>>()
     }
 
-    pub(crate) fn save_pane_group(
+    fn save_pane_group(
         &self,
         workspace_id: WorkspaceId,
         pane_group: &SerializedPaneGroup,
@@ -300,7 +304,7 @@ impl WorkspaceDb {
         }
     }
 
-    pub(crate) fn get_dock_pane(&self, workspace_id: WorkspaceId) -> Result<SerializedPane> {
+    fn get_dock_pane(&self, workspace_id: WorkspaceId) -> Result<SerializedPane> {
         let (pane_id, active) = self.select_row_bound(indoc! {"
             SELECT pane_id, active
             FROM panes
@@ -315,7 +319,7 @@ impl WorkspaceDb {
         ))
     }
 
-    pub(crate) fn save_pane(
+    fn save_pane(
         &self,
         workspace_id: WorkspaceId,
         pane: &SerializedPane,
@@ -341,14 +345,14 @@ impl WorkspaceDb {
         Ok(pane_id)
     }
 
-    pub(crate) fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
+    fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
         Ok(self.select_bound(indoc! {"
             SELECT kind, item_id FROM items
             WHERE pane_id = ?
             ORDER BY position"})?(pane_id)?)
     }
 
-    pub(crate) fn save_items(
+    fn save_items(
         &self,
         workspace_id: WorkspaceId,
         pane_id: PaneId,
@@ -368,7 +372,7 @@ impl WorkspaceDb {
 #[cfg(test)]
 mod tests {
 
-    use db::{open_memory_db, Uuid};
+    use db::open_memory_db;
     use settings::DockAnchor;
 
     use super::*;
@@ -427,7 +431,7 @@ mod tests {
         };
 
         let workspace = SerializedWorkspace {
-            id: Uuid::new(),
+            id: 5,
             location: (["/tmp", "/tmp2"]).into(),
             dock_position: DockPosition::Shown(DockAnchor::Bottom),
             center_group,
@@ -454,7 +458,7 @@ mod tests {
         let db = WorkspaceDb(open_memory_db(Some("test_basic_functionality")));
 
         let workspace_1 = SerializedWorkspace {
-            id: WorkspaceId::new(),
+            id: 1,
             location: (["/tmp", "/tmp2"]).into(),
             dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
             center_group: Default::default(),
@@ -462,7 +466,7 @@ mod tests {
         };
 
         let mut workspace_2 = SerializedWorkspace {
-            id: WorkspaceId::new(),
+            id: 2,
             location: (["/tmp"]).into(),
             dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
             center_group: Default::default(),
@@ -497,7 +501,7 @@ mod tests {
 
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
-            id: WorkspaceId::new(),
+            id: 3,
             location: (&["/tmp", "/tmp2"]).into(),
             dock_position: DockPosition::Shown(DockAnchor::Right),
             center_group: Default::default(),
@@ -531,7 +535,7 @@ mod tests {
         center_group: &SerializedPaneGroup,
     ) -> SerializedWorkspace {
         SerializedWorkspace {
-            id: WorkspaceId::new(),
+            id: 4,
             location: workspace_id.into(),
             dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Right),
             center_group: center_group.clone(),

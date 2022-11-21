@@ -130,7 +130,7 @@ mod test {
             fn migrations() -> &'static [&'static str] {
                 &["
                     CREATE TABLE workspaces(
-                        workspace_id BLOB PRIMARY KEY,
+                        workspace_id INTEGER PRIMARY KEY,
                         dock_visible INTEGER, -- Boolean
                         dock_anchor TEXT, -- Enum: 'Bottom' / 'Right' / 'Expanded'
                         dock_pane INTEGER, -- NULL indicates that we don't have a dock pane yet
@@ -141,7 +141,7 @@ mod test {
                     
                     CREATE TABLE panes(
                         pane_id INTEGER PRIMARY KEY,
-                        workspace_id BLOB NOT NULL,
+                        workspace_id INTEGER NOT NULL,
                         active INTEGER NOT NULL, -- Boolean
                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
                             ON DELETE CASCADE 

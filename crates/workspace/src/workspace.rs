@@ -26,7 +26,6 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use db::Uuid;
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
@@ -45,8 +44,8 @@ use language::LanguageRegistry;
 use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::model::SerializedItem;
 pub use persistence::model::{ItemId, WorkspaceLocation};
+use persistence::{model::SerializedItem, DB};
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use serde::Deserialize;
@@ -129,7 +128,7 @@ pub struct OpenProjectEntryInPane {
     project_entry: ProjectEntryId,
 }
 
-pub type WorkspaceId = Uuid;
+pub type WorkspaceId = i64;
 
 impl_internal_actions!(
     workspace,
@@ -637,7 +636,7 @@ impl Workspace {
         let id = if let Some(id) = serialized_workspace.as_ref().map(|ws| ws.id) {
             id
         } else {
-            WorkspaceId::new()
+            DB.next_id().log_err().flatten().unwrap_or(0)
         };
 
         let mut this = Workspace {

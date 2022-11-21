@@ -255,7 +255,7 @@ mod tests {
 
         db.exec(indoc::indoc! {"
                 CREATE TABLE workspace_id_test(
-                    workspace_id BLOB,
+                    workspace_id INTEGER,
                     dock_anchor TEXT
                 );"})
             .unwrap()()
