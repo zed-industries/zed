@@ -1,3 +1,5 @@
+pub use anyhow;
+
 pub mod bindable;
 pub mod connection;
 pub mod domain;

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use db::{connection, indoc, sqlez::domain::Domain};
-use util::{iife, ResultExt};
+use db::{
+    connection, indoc,
+    sqlez::{domain::Domain, exec_method, select_row_method},
+};
+use util::iife;
 use workspace::{ItemId, Workspace, WorkspaceId};
 
 use crate::Terminal;
@@ -29,33 +32,16 @@ impl Domain for Terminal {
 }
 
 impl TerminalDb {
-    pub fn save_working_directory(
-        &self,
-        item_id: ItemId,
-        workspace_id: &WorkspaceId,
-        working_directory: &Path,
-    ) {
-        iife!({
-            self.exec_bound::<(ItemId, &WorkspaceId, &Path)>(indoc! {"
-                INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory) 
-                VALUES (?, ?, ?)  
-            "})?((item_id, workspace_id, working_directory))
-        })
-        .log_err();
-    }
+    exec_method!(
+        save_working_directory(item_id: ItemId, workspace_id: &WorkspaceId, working_directory: &Path):
+            "INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
+             VALUES (?, ?, ?)"
+    );
 
-    pub fn get_working_directory(
-        &self,
-        item_id: ItemId,
-        workspace_id: &WorkspaceId,
-    ) -> Option<PathBuf> {
-        iife!({
-            self.select_row_bound::<(ItemId, &WorkspaceId), PathBuf>(indoc! {"
-            SELECT working_directory 
-            FROM terminals 
-            WHERE item_id = ? workspace_id = ?"})?((item_id, workspace_id))
-        })
-        .log_err()
-        .flatten()
-    }
+    select_row_method!(
+        get_working_directory(item_id: ItemId, workspace_id: &WorkspaceId) -> PathBuf:
+            "SELECT working_directory
+             FROM terminals 
+             WHERE item_id = ? workspace_id = ?"
+    );
 }

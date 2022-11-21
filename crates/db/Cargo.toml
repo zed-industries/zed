@@ -23,7 +23,6 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 serde = { version = "1.0", features = ["derive"] }
 
-
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 tempdir = { version = "0.3.7" }

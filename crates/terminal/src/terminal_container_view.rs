@@ -8,13 +8,13 @@ use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use util::truncate_and_trailoff;
+use util::{truncate_and_trailoff, ResultExt};
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
 use workspace::{
     item::{Item, ItemEvent},
     ToolbarItemLocation, Workspace,
 };
-use workspace::{register_deserializable_item, ItemId, Pane, WorkspaceId};
+use workspace::{register_deserializable_item, Pane};
 
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{AlternateScroll, Settings, WorkingDirectory};
@@ -90,8 +90,6 @@ impl TerminalContainer {
     pub fn new(
         working_directory: Option<PathBuf>,
         modal: bool,
-        item_id: ItemId,
-        workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let settings = cx.global::<Settings>();
@@ -118,8 +116,6 @@ impl TerminalContainer {
             settings.terminal_overrides.blinking.clone(),
             scroll,
             cx.window_id(),
-            item_id,
-            workspace_id,
         ) {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
@@ -397,7 +393,7 @@ impl Item for TerminalContainer {
     ) -> Task<anyhow::Result<ViewHandle<Self>>> {
         let working_directory = TERMINAL_CONNECTION.get_working_directory(item_id, &workspace_id);
         Task::ready(Ok(cx.add_view(|cx| {
-            TerminalContainer::new(working_directory, false, cx)
+            TerminalContainer::new(working_directory.log_err().flatten(), false, cx)
         })))
     }
 }
