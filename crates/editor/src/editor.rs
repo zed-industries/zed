@@ -73,6 +73,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::{Deref, DerefMut, Range, RangeInclusive},
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -6536,15 +6537,13 @@ impl Editor {
                 .as_singleton()
                 .and_then(|b| b.read(cx).file()),
         ) {
-            project.read(cx).client().report_event(
-                name,
-                json!({
-                    "File Extension": file
-                        .path()
-                        .extension()
-                        .and_then(|e| e.to_str())
-                }),
-            );
+            let extension = Path::new(file.file_name(cx))
+                .extension()
+                .and_then(|e| e.to_str());
+            project
+                .read(cx)
+                .client()
+                .report_event(name, json!({ "File Extension": extension }));
         }
     }
 }
