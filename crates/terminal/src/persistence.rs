@@ -29,15 +29,21 @@ impl Domain for Terminal {
 
 impl TerminalDb {
     sql_method! {
-        save_working_directory(item_id: ItemId, workspace_id: WorkspaceId, working_directory: &Path) -> Result<()>:
-            "INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
-             VALUES (?1, ?2, ?3)"
+        save_working_directory(item_id: ItemId,
+        workspace_id: WorkspaceId,
+        working_directory: &Path) -> Result<()>:
+        indoc!{"
+            INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
+            VALUES (?1, ?2, ?3)
+        "}
     }
 
     sql_method! {
         get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>>:
-            "SELECT working_directory
-             FROM terminals 
-             WHERE item_id = ? AND workspace_id = ?"
+        indoc!{"
+            SELECT working_directory
+            FROM terminals 
+            WHERE item_id = ? AND workspace_id = ?
+        "}
     }
 }

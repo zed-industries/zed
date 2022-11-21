@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use async_recursion::async_recursion;
 use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle};
@@ -52,7 +52,7 @@ impl Column for WorkspaceLocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;
         Ok((
-            WorkspaceLocation(bincode::deserialize(blob)?),
+            WorkspaceLocation(bincode::deserialize(blob).context("Bincode failed")?),
             start_index + 1,
         ))
     }

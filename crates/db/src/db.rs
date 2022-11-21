@@ -6,17 +6,11 @@ pub use indoc::indoc;
 pub use lazy_static;
 pub use sqlez;
 
-#[cfg(any(test, feature = "test-support"))]
-use anyhow::Result;
-#[cfg(any(test, feature = "test-support"))]
-use sqlez::connection::Connection;
-#[cfg(any(test, feature = "test-support"))]
-use sqlez::domain::Domain;
-
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use std::fs::{create_dir_all, remove_dir_all};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use util::channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::paths::DB_DIR;
 
@@ -28,13 +22,21 @@ const INITIALIZE_QUERY: &'static str = indoc! {"
     PRAGMA case_sensitive_like=TRUE;
 "};
 
+lazy_static::lazy_static! {
+    static ref DB_WIPED: AtomicBool = AtomicBool::new(false);
+}
+
 /// Open or create a database at the given directory path.
 pub fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
     // Use 0 for now. Will implement incrementing and clearing of old db files soon TM
     let current_db_dir = (*DB_DIR).join(Path::new(&format!("0-{}", *RELEASE_CHANNEL_NAME)));
 
-    if *RELEASE_CHANNEL == ReleaseChannel::Dev && std::env::var("WIPE_DB").is_ok() {
+    if *RELEASE_CHANNEL == ReleaseChannel::Dev
+        && std::env::var("WIPE_DB").is_ok()
+        && !DB_WIPED.load(Ordering::Acquire)
+    {
         remove_dir_all(&current_db_dir).ok();
+        DB_WIPED.store(true, Ordering::Relaxed);
     }
 
     create_dir_all(&current_db_dir).expect("Should be able to create the database directory");
@@ -46,15 +48,6 @@ pub fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
 
 pub fn open_memory_db<M: Migrator>(db_name: Option<&str>) -> ThreadSafeConnection<M> {
     ThreadSafeConnection::new(db_name, false).with_initialize_query(INITIALIZE_QUERY)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub fn write_db_to<D: Domain, P: AsRef<Path>>(
-    conn: &ThreadSafeConnection<D>,
-    dest: P,
-) -> Result<()> {
-    let destination = Connection::open_file(dest.as_ref().to_string_lossy().as_ref());
-    conn.backup_main(&destination)
 }
 
 /// Implements a basic DB wrapper for a given domain
@@ -155,11 +148,11 @@ macro_rules! sql_method {
 
          }
     };
-    ($id:ident() ->  Result<$return_type:ty>>: $sql:expr) => {
+    ($id:ident() ->  Result<$return_type:ty>: $sql:expr) => {
          pub fn $id(&self) ->  $crate::sqlez::anyhow::Result<$return_type>  {
              use $crate::anyhow::Context;
 
-             self.select_row::<$return_type>($sql)?(($($arg),+))
+             self.select_row::<$return_type>($sql)?()
                  .context(::std::format!(
                      "Error in {}, select_row_bound failed to execute or parse for: {}",
                      ::std::stringify!($id),
@@ -172,7 +165,7 @@ macro_rules! sql_method {
                  ))
          }
     };
-    ($id:ident($($arg:ident: $arg_type:ty),+) ->  Result<$return_type:ty>>: $sql:expr) => {
+    ($id:ident($($arg:ident: $arg_type:ty),+) ->  Result<$return_type:ty>: $sql:expr) => {
          pub fn $id(&self, $($arg: $arg_type),+) ->  $crate::sqlez::anyhow::Result<$return_type>  {
              use $crate::anyhow::Context;
 

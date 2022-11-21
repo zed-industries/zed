@@ -32,7 +32,7 @@ impl Domain for Editor {
 
 impl EditorDb {
     sql_method! {
-        get_path(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>>:
+        get_path(item_id: ItemId, workspace_id: WorkspaceId) -> Result<PathBuf>:
             indoc! {"
                 SELECT path FROM editors 
                 WHERE item_id = ? AND workspace_id = ?"}

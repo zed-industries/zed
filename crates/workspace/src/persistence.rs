@@ -152,7 +152,7 @@ impl WorkspaceDb {
                 "})?((&workspace.location, workspace.id))
             .context("clearing out old locations")?;
             
-            // Update or insert
+            // Upsert
             self.exec_bound(indoc! {
                 "INSERT INTO
                     workspaces(workspace_id, workspace_location, dock_visible, dock_anchor, timestamp) 
@@ -190,8 +190,8 @@ impl WorkspaceDb {
         .log_err();
     }
 
-    sql_method! {
-        next_id() -> Result<Option<WorkspaceId>>:
+    sql_method!{
+        next_id() -> Result<WorkspaceId>: 
             "INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id"
     }
 
@@ -402,6 +402,10 @@ mod tests {
         .unwrap();
         
         let id = db.next_id().unwrap();
+        // Assert the empty row got inserted
+        assert_eq!(Some(id), db.select_row_bound::<WorkspaceId, WorkspaceId>
+            ("SELECT workspace_id FROM workspaces WHERE workspace_id = ?").unwrap()
+            (id).unwrap());
     
         db.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
             .unwrap()(("test-text-1", id))

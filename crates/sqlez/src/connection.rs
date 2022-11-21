@@ -1,6 +1,7 @@
 use std::{
     ffi::{CStr, CString},
     marker::PhantomData,
+    path::Path,
 };
 
 use anyhow::{anyhow, Result};
@@ -71,6 +72,11 @@ impl Connection {
             sqlite3_backup_finish(backup);
             destination.last_error()
         }
+    }
+
+    pub fn backup_main_to(&self, destination: impl AsRef<Path>) -> Result<()> {
+        let destination = Self::open_file(destination.as_ref().to_string_lossy().as_ref());
+        self.backup_main(&destination)
     }
 
     pub(crate) fn last_error(&self) -> Result<()> {

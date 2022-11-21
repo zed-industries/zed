@@ -633,11 +633,11 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
-        let id = if let Some(id) = serialized_workspace.as_ref().map(|ws| ws.id) {
-            id
-        } else {
-            DB.next_id().log_err().flatten().unwrap_or(0)
-        };
+        let database_id = serialized_workspace
+            .as_ref()
+            .map(|ws| ws.id)
+            .or_else(|| DB.next_id().log_err())
+            .unwrap_or(0);
 
         let mut this = Workspace {
             modal: None,
@@ -666,7 +666,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
-            database_id: id,
+            database_id,
             _observe_current_user,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);

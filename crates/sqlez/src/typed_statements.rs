@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::{
     bindable::{Bind, Column},
@@ -49,6 +49,12 @@ impl Connection {
         query: &str,
     ) -> Result<impl 'a + FnMut(B) -> Result<Option<C>>> {
         let mut statement = Statement::prepare(&self, query)?;
-        Ok(move |bindings| statement.with_bindings(bindings)?.maybe_row::<C>())
+        Ok(move |bindings| {
+            statement
+                .with_bindings(bindings)
+                .context("Bindings failed")?
+                .maybe_row::<C>()
+                .context("Maybe row failed")
+        })
     }
 }
