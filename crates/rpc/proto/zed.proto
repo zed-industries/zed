@@ -412,8 +412,8 @@ message Symbol {
     string name = 4;
     int32 kind = 5;
     string path = 6;
-    Point start = 7;
-    Point end = 8;
+    UnclippedPoint start = 7;
+    UnclippedPoint end = 8;
     bytes signature = 9;
 }
 
@@ -1043,6 +1043,11 @@ message Range {
 }
 
 message Point {
+    uint32 row = 1;
+    uint32 column = 2;
+}
+
+message UnclippedPoint {
     uint32 row = 1;
     uint32 column = 2;
 }

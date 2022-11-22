@@ -2475,28 +2475,6 @@ impl ToOffsetUtf16 for OffsetUtf16 {
     }
 }
 
-// pub trait Clip {
-//     fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self;
-// }
-
-// impl Clip for usize {
-//     fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self {
-//         snapshot.clip_offset(*self, bias)
-//     }
-// }
-
-// impl Clip for Point {
-//     fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self {
-//         snapshot.clip_point(*self, bias)
-//     }
-// }
-
-// impl Clip for Unclipped<PointUtf16> {
-//     fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self {
-//         snapshot.clip_point_utf16(self.0, bias)
-//     }
-// }
-
 pub trait FromAnchor {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self;
 }

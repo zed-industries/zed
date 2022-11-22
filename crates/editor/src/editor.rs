@@ -55,7 +55,7 @@ use link_go_to_definition::{
 };
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
-    ToOffsetClipped, ToPoint,
+    ToPoint,
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;

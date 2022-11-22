@@ -14,7 +14,6 @@ use util::post_inc;
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
-    ToOffsetClipped,
 };
 
 #[derive(Clone)]
@@ -548,18 +547,6 @@ impl<'a> MutableSelectionsCollection<'a> {
         let ranges = ranges
             .into_iter()
             .map(|range| range.start.to_offset(&buffer)..range.end.to_offset(&buffer));
-        self.select_offset_ranges(ranges);
-    }
-
-    pub fn select_clipped_ranges<I, T>(&mut self, ranges: I)
-    where
-        I: IntoIterator<Item = Range<T>>,
-        T: ToOffsetClipped,
-    {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-        let ranges = ranges.into_iter().map(|range| {
-            range.start.to_offset_clipped(&buffer)..range.end.to_offset_clipped(&buffer)
-        });
         self.select_offset_ranges(ranges);
     }
 
