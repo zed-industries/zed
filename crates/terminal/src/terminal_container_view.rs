@@ -400,6 +400,14 @@ impl Item for TerminalContainer {
             )
         })))
     }
+
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        if let Some(connected) = self.connected() {
+            let id = workspace.database_id();
+            let terminal_handle = connected.read(cx).terminal().clone();
+            terminal_handle.update(cx, |terminal, cx| terminal.set_workspace_id(id, cx))
+        }
+    }
 }
 
 impl SearchableItem for TerminalContainer {

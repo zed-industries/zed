@@ -81,7 +81,7 @@ use std::{
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, Workspace};
+use workspace::{ItemNavHistory, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
 
@@ -584,6 +584,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    workspace_id: Option<WorkspaceId>,
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
@@ -1137,31 +1138,6 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        // if let Some(project) = project.as_ref() {
-        //     if let Some(file) = buffer
-        //         .read(cx)
-        //         .as_singleton()
-        //         .and_then(|buffer| buffer.read(cx).file())
-        //         .and_then(|file| file.as_local())
-        //     {
-        //         // let item_id = cx.weak_handle().id();
-        //         // let workspace_id = project
-        //         //     .read(cx)
-        //         //     .visible_worktrees(cx)
-        //         //     .map(|worktree| worktree.read(cx).abs_path())
-        //         //     .collect::<Vec<_>>()
-        //         //     .into();
-        //         let path = file.abs_path(cx);
-        //         dbg!(&path);
-
-        //         // cx.background()
-        //         //     .spawn(async move {
-        //         //         DB.save_path(item_id, workspace_id, path).log_err();
-        //         //     })
-        //         //     .detach();
-        //     }
-        // }
-
         Self::new(EditorMode::Full, buffer, project, None, cx)
     }
 
@@ -1262,6 +1238,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            workspace_id: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,

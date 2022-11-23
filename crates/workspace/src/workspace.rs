@@ -539,6 +539,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(
         serialized_workspace: Option<SerializedWorkspace>,
+        workspace_id: WorkspaceId,
         project: ModelHandle<Project>,
         dock_default_factory: DefaultItemFactory,
         cx: &mut ViewContext<Self>,
@@ -558,7 +559,6 @@ impl Workspace {
                 }
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
-                    // TODO: Cache workspace_id on workspace and read from it here
                     this.serialize_workspace(cx);
                 }
                 project::Event::DisconnectedFromHost => {
@@ -633,12 +633,6 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
-        let database_id = serialized_workspace
-            .as_ref()
-            .map(|ws| ws.id)
-            .or_else(|| DB.next_id().log_err())
-            .unwrap_or(0);
-
         let mut this = Workspace {
             modal: None,
             weak_self: weak_handle.clone(),
@@ -666,7 +660,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
-            database_id,
+            database_id: workspace_id,
             _observe_current_user,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
@@ -699,10 +693,17 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
+            let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+
+            let paths_to_open = serialized_workspace
+                .as_ref()
+                .map(|workspace| workspace.location.paths())
+                .unwrap_or(Arc::new(abs_paths));
+
             // Get project paths for all of the abs_paths
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
             let mut project_paths = Vec::new();
-            for path in abs_paths.iter() {
+            for path in paths_to_open.iter() {
                 if let Some((worktree, project_entry)) = cx
                     .update(|cx| {
                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
@@ -717,14 +718,17 @@ impl Workspace {
                 }
             }
 
-            // Use the resolved worktree roots to get the serialized_db from the database
-            let serialized_workspace = persistence::DB
-                .workspace_for_roots(&Vec::from_iter(worktree_roots.into_iter())[..]);
+            let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
+                serialized_workspace.id
+            } else {
+                DB.next_id().await.unwrap_or(0)
+            };
 
             // Use the serialized workspace to construct the new window
             let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                 let mut workspace = Workspace::new(
                     serialized_workspace,
+                    workspace_id,
                     project_handle,
                     app_state.default_item_factory,
                     cx,
@@ -735,8 +739,8 @@ impl Workspace {
 
             // Call open path for each of the project paths
             // (this will bring them to the front if they were in the serialized workspace)
-            debug_assert!(abs_paths.len() == project_paths.len());
-            let tasks = abs_paths
+            debug_assert!(paths_to_open.len() == project_paths.len());
+            let tasks = paths_to_open
                 .iter()
                 .cloned()
                 .zip(project_paths.into_iter())
@@ -1327,7 +1331,6 @@ impl Workspace {
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane().clone();
         Pane::add_item(self, &active_pane, item, true, true, None, cx);
-        self.serialize_workspace(cx);
     }
 
     pub fn open_path(
@@ -1532,10 +1535,11 @@ impl Workspace {
                             entry.remove();
                         }
                     }
-                    self.serialize_workspace(cx);
                 }
                 _ => {}
             }
+
+            self.serialize_workspace(cx);
         } else if self.dock.visible_pane().is_none() {
             error!("pane {} not found", pane_id);
         }
@@ -2342,9 +2346,7 @@ impl Workspace {
         };
 
         cx.background()
-            .spawn(async move {
-                persistence::DB.save_workspace(&serialized_workspace);
-            })
+            .spawn(persistence::DB.save_workspace(serialized_workspace))
             .detach();
     }
 
@@ -2642,9 +2644,13 @@ pub fn open_paths(
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
     let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
     cx.spawn(|mut cx| async move {
-        let (workspace, _) = task.await;
+        let (workspace, opened_paths) = task.await;
 
-        workspace.update(&mut cx, |_, cx| cx.dispatch_action(NewFile))
+        workspace.update(&mut cx, |_, cx| {
+            if opened_paths.is_empty() {
+                cx.dispatch_action(NewFile);
+            }
+        })
     })
 }
 
@@ -2677,6 +2683,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 default_item_factory,
                 cx,
@@ -2748,6 +2755,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 default_item_factory,
                 cx,
@@ -2851,6 +2859,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 default_item_factory,
                 cx,
@@ -2895,8 +2904,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (window_id, workspace) = cx
-            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -2991,8 +3001,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx
-            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -3093,8 +3104,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx
-            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3211,8 +3223,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx
-            .add_window(|cx| Workspace::new(Default::default(), project, default_item_factory, cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();

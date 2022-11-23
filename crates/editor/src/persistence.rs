@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use db::{connection, sql_method};
 use indoc::indoc;
@@ -39,7 +39,7 @@ impl EditorDb {
     }
 
     sql_method! {
-        save_path(item_id: ItemId, workspace_id: WorkspaceId, path: &Path) -> Result<()>:
+        async save_path(item_id: ItemId, workspace_id: WorkspaceId, path: PathBuf) -> Result<()>:
             indoc! {"
                 INSERT OR REPLACE INTO editors(item_id, workspace_id, path)
                 VALUES (?, ?, ?)"}

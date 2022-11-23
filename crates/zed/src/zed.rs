@@ -809,7 +809,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -930,7 +930,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
 
         // Open a file within an existing worktree.
@@ -1091,7 +1091,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
 
         // Open a file within an existing worktree.
@@ -1135,7 +1135,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
@@ -1226,7 +1226,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
 
         // Create a new untitled buffer
@@ -1281,7 +1281,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), project, |_, _| unimplemented!(), cx)
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -1359,6 +1359,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 |_, _| unimplemented!(),
                 cx,
@@ -1630,6 +1631,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 |_, _| unimplemented!(),
                 cx,

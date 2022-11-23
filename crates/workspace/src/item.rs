@@ -119,6 +119,8 @@ pub trait Item: View {
         None
     }
 
+    fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
+
     fn serialized_item_kind() -> Option<&'static str>;
 
     fn deserialize(
@@ -267,7 +269,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         cx: &mut ViewContext<Workspace>,
     ) {
         let history = pane.read(cx).nav_history_for_item(self);
-        self.update(cx, |this, cx| this.set_nav_history(history, cx));
+        self.update(cx, |this, cx| {
+            this.set_nav_history(history, cx);
+            this.added_to_workspace(workspace, cx);
+        });
 
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
             if let Some(message) = followed_item.to_state_proto(cx) {
@@ -426,6 +431,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             })
             .detach();
         }
+
+        cx.defer(|workspace, cx| {
+            workspace.serialize_workspace(cx);
+        });
     }
 
     fn deactivated(&self, cx: &mut MutableAppContext) {

@@ -5,7 +5,7 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use db::{connection, sql_method};
+use db::{connection, sql_method, sqlez::connection::Connection};
 use gpui::Axis;
 use indoc::indoc;
 
@@ -138,60 +138,71 @@ impl WorkspaceDb {
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
-    pub fn save_workspace(&self, workspace: &SerializedWorkspace) {
-        self.with_savepoint("update_worktrees", || {
-            // Clear out panes and pane_groups
-            self.exec_bound(indoc! {"
-                UPDATE workspaces SET dock_pane = NULL WHERE workspace_id = ?1;
-                DELETE FROM pane_groups WHERE workspace_id = ?1;
-                DELETE FROM panes WHERE workspace_id = ?1;"})?(workspace.id)
-            .context("Clearing old panes")?;
+    pub async fn save_workspace(&self, workspace: SerializedWorkspace) {
+        self.write(move |conn| {
+            conn.with_savepoint("update_worktrees", || {
+                // Clear out panes and pane_groups
+                conn.exec_bound(indoc! {"
+                    UPDATE workspaces SET dock_pane = NULL WHERE workspace_id = ?1;
+                    DELETE FROM pane_groups WHERE workspace_id = ?1;
+                    DELETE FROM panes WHERE workspace_id = ?1;"})?(workspace.id)
+                .context("Clearing old panes")?;
 
-            self.exec_bound(indoc! {"
-                DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
-                "})?((&workspace.location, workspace.id))
-            .context("clearing out old locations")?;
-            
-            // Upsert
-            self.exec_bound(indoc! {
-                "INSERT INTO
-                    workspaces(workspace_id, workspace_location, dock_visible, dock_anchor, timestamp) 
-                 VALUES 
-                    (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
-                 ON CONFLICT DO UPDATE SET
-                    workspace_location = ?2, dock_visible = ?3, dock_anchor = ?4, timestamp = CURRENT_TIMESTAMP"
-            })?((workspace.id, &workspace.location, workspace.dock_position))
-            .context("Updating workspace")?;
+                conn.exec_bound(indoc! {"
+                DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?"})?(
+                    (
+                    &workspace.location,
+                    workspace.id.clone(),
+                )
+                )
+                .context("clearing out old locations")?;
 
-            // Save center pane group and dock pane
-            self.save_pane_group(workspace.id, &workspace.center_group, None)
-                .context("save pane group in save workspace")?;
+                // Upsert
+                conn.exec_bound(indoc! {"
+                        INSERT INTO workspaces(
+                            workspace_id, 
+                            workspace_location, 
+                            dock_visible, 
+                            dock_anchor, 
+                            timestamp
+                        ) 
+                        VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                        ON CONFLICT DO
+                            UPDATE SET 
+                            workspace_location = ?2,
+                            dock_visible = ?3,
+                            dock_anchor = ?4,
+                            timestamp = CURRENT_TIMESTAMP
+                    "})?((
+                    workspace.id,
+                    &workspace.location,
+                    workspace.dock_position,
+                ))
+                .context("Updating workspace")?;
 
-            let dock_id = self
-                .save_pane(workspace.id, &workspace.dock_pane, None, true)
-                .context("save pane in save workspace")?;
+                // Save center pane group and dock pane
+                Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
+                    .context("save pane group in save workspace")?;
 
-            // Complete workspace initialization
-            self.exec_bound(indoc! {"
-                UPDATE workspaces
-                SET dock_pane = ?
-                WHERE workspace_id = ?"})?((dock_id, workspace.id))
-            .context("Finishing initialization with dock pane")?;
+                let dock_id = Self::save_pane(conn, workspace.id, &workspace.dock_pane, None, true)
+                    .context("save pane in save workspace")?;
 
-            Ok(())
+                // Complete workspace initialization
+                conn.exec_bound(indoc! {"
+                    UPDATE workspaces
+                    SET dock_pane = ?
+                    WHERE workspace_id = ?"})?((dock_id, workspace.id))
+                .context("Finishing initialization with dock pane")?;
+
+                Ok(())
+            })
+            .log_err();
         })
-        .with_context(|| {
-            format!(
-                "Update workspace with roots {:?} and id {:?} failed.",
-                workspace.location.paths(),
-                workspace.id
-            )
-        })
-        .log_err();
+        .await;
     }
 
-    sql_method!{
-        next_id() -> Result<WorkspaceId>: 
+    sql_method! {
+        async next_id() -> Result<WorkspaceId>:
             "INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id"
     }
 
@@ -276,7 +287,7 @@ impl WorkspaceDb {
     }
 
     fn save_pane_group(
-        &self,
+        conn: &Connection,
         workspace_id: WorkspaceId,
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
@@ -285,7 +296,7 @@ impl WorkspaceDb {
             SerializedPaneGroup::Group { axis, children } => {
                 let (parent_id, position) = unzip_option(parent);
 
-                let group_id = self.select_row_bound::<_, i64>(indoc! {"
+                let group_id = conn.select_row_bound::<_, i64>(indoc! {"
                         INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) 
                         VALUES (?, ?, ?, ?) 
                         RETURNING group_id"})?((
@@ -297,13 +308,13 @@ impl WorkspaceDb {
                 .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
 
                 for (position, group) in children.iter().enumerate() {
-                    self.save_pane_group(workspace_id, group, Some((group_id, position)))?
+                    Self::save_pane_group(conn, workspace_id, group, Some((group_id, position)))?
                 }
 
                 Ok(())
             }
             SerializedPaneGroup::Pane(pane) => {
-                self.save_pane(workspace_id, &pane, parent, false)?;
+                Self::save_pane(conn, workspace_id, &pane, parent, false)?;
                 Ok(())
             }
         }
@@ -325,13 +336,13 @@ impl WorkspaceDb {
     }
 
     fn save_pane(
-        &self,
+        conn: &Connection,
         workspace_id: WorkspaceId,
         pane: &SerializedPane,
         parent: Option<(GroupId, usize)>, // None indicates BOTH dock pane AND center_pane
         dock: bool,
     ) -> Result<PaneId> {
-        let pane_id = self.select_row_bound::<_, i64>(indoc! {"
+        let pane_id = conn.select_row_bound::<_, i64>(indoc! {"
             INSERT INTO panes(workspace_id, active) 
             VALUES (?, ?) 
             RETURNING pane_id"})?((workspace_id, pane.active))?
@@ -339,13 +350,12 @@ impl WorkspaceDb {
 
         if !dock {
             let (parent_id, order) = unzip_option(parent);
-            self.exec_bound(indoc! {"
+            conn.exec_bound(indoc! {"
                 INSERT INTO center_panes(pane_id, parent_group_id, position)
                 VALUES (?, ?, ?)"})?((pane_id, parent_id, order))?;
         }
 
-        self.save_items(workspace_id, pane_id, &pane.children)
-            .context("Saving items")?;
+        Self::save_items(conn, workspace_id, pane_id, &pane.children).context("Saving items")?;
 
         Ok(pane_id)
     }
@@ -358,12 +368,12 @@ impl WorkspaceDb {
     }
 
     fn save_items(
-        &self,
+        conn: &Connection,
         workspace_id: WorkspaceId,
         pane_id: PaneId,
         items: &[SerializedItem],
     ) -> Result<()> {
-        let mut insert = self.exec_bound(
+        let mut insert = conn.exec_bound(
             "INSERT INTO items(workspace_id, pane_id, position, kind, item_id) VALUES (?, ?, ?, ?, ?)",
         ).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
@@ -384,32 +394,44 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_next_id_stability() {
+    #[gpui::test]
+    async fn test_next_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db(Some("test_workspace_id_stability")));
+        let db = WorkspaceDb(open_memory_db("test_next_id_stability"));
 
-        db.migrate(
-            "test_table",
-            &["CREATE TABLE test_table(
-                text TEXT,
-                workspace_id INTEGER,
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-            ) STRICT;"],
-        )
-        .unwrap();
-        
-        let id = db.next_id().unwrap();
+        db.write(|conn| {
+            conn.migrate(
+                "test_table",
+                &[indoc! {"
+                    CREATE TABLE test_table(
+                        text TEXT,
+                        workspace_id INTEGER,
+                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                    ) STRICT;"}],
+            )
+            .unwrap();
+        })
+        .await;
+
+        let id = db.next_id().await.unwrap();
         // Assert the empty row got inserted
-        assert_eq!(Some(id), db.select_row_bound::<WorkspaceId, WorkspaceId>
-            ("SELECT workspace_id FROM workspaces WHERE workspace_id = ?").unwrap()
-            (id).unwrap());
-    
-        db.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
-            .unwrap()(("test-text-1", id))
-        .unwrap();
+        assert_eq!(
+            Some(id),
+            db.select_row_bound::<WorkspaceId, WorkspaceId>(
+                "SELECT workspace_id FROM workspaces WHERE workspace_id = ?"
+            )
+            .unwrap()(id)
+            .unwrap()
+        );
+
+        db.write(move |conn| {
+            conn.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+                .unwrap()(("test-text-1", id))
+            .unwrap()
+        })
+        .await;
 
         let test_text_1 = db
             .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
@@ -418,22 +440,27 @@ mod tests {
         .unwrap();
         assert_eq!(test_text_1, "test-text-1");
     }
-    
-    #[test]
-    fn test_workspace_id_stability() {
+
+    #[gpui::test]
+    async fn test_workspace_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db(Some("test_workspace_id_stability")));
+        let db = WorkspaceDb(open_memory_db("test_workspace_id_stability"));
 
-        db.migrate(
-            "test_table",
-            &["CREATE TABLE test_table(
-                text TEXT,
-                workspace_id INTEGER,
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-            ) STRICT;"],
-        )
+        db.write(|conn| {
+            conn.migrate(
+                "test_table",
+                &[indoc! {"
+                    CREATE TABLE test_table(
+                        text TEXT,
+                        workspace_id INTEGER,
+                        FOREIGN KEY(workspace_id) 
+                            REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                    ) STRICT;"}],
+            )
+        })
+        .await
         .unwrap();
 
         let mut workspace_1 = SerializedWorkspace {
@@ -452,27 +479,33 @@ mod tests {
             dock_pane: Default::default(),
         };
 
-        db.save_workspace(&workspace_1);
+        db.save_workspace(workspace_1.clone()).await;
 
-        db.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
-            .unwrap()(("test-text-1", 1))
-        .unwrap();
+        db.write(|conn| {
+            conn.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+                .unwrap()(("test-text-1", 1))
+            .unwrap();
+        })
+        .await;
 
-        db.save_workspace(&workspace_2);
+        db.save_workspace(workspace_2.clone()).await;
 
-        db.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
-            .unwrap()(("test-text-2", 2))
-        .unwrap();
+        db.write(|conn| {
+            conn.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+                .unwrap()(("test-text-2", 2))
+            .unwrap();
+        })
+        .await;
 
         workspace_1.location = (["/tmp", "/tmp3"]).into();
-        db.save_workspace(&workspace_1);
-        db.save_workspace(&workspace_1);
+        db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace(workspace_1).await;
 
         workspace_2.dock_pane.children.push(SerializedItem {
             kind: Arc::from("Test"),
             item_id: 10,
         });
-        db.save_workspace(&workspace_2);
+        db.save_workspace(workspace_2).await;
 
         let test_text_2 = db
             .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
@@ -489,11 +522,11 @@ mod tests {
         assert_eq!(test_text_1, "test-text-1");
     }
 
-    #[test]
-    fn test_full_workspace_serialization() {
+    #[gpui::test]
+    async fn test_full_workspace_serialization() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db(Some("test_full_workspace_serialization")));
+        let db = WorkspaceDb(open_memory_db("test_full_workspace_serialization"));
 
         let dock_pane = crate::persistence::model::SerializedPane {
             children: vec![
@@ -550,24 +583,24 @@ mod tests {
             dock_pane,
         };
 
-        db.save_workspace(&workspace);
+        db.save_workspace(workspace.clone()).await;
         let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
 
         assert_eq!(workspace, round_trip_workspace.unwrap());
 
         // Test guaranteed duplicate IDs
-        db.save_workspace(&workspace);
-        db.save_workspace(&workspace);
+        db.save_workspace(workspace.clone()).await;
+        db.save_workspace(workspace.clone()).await;
 
         let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
         assert_eq!(workspace, round_trip_workspace.unwrap());
     }
 
-    #[test]
-    fn test_workspace_assignment() {
+    #[gpui::test]
+    async fn test_workspace_assignment() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db(Some("test_basic_functionality")));
+        let db = WorkspaceDb(open_memory_db("test_basic_functionality"));
 
         let workspace_1 = SerializedWorkspace {
             id: 1,
@@ -585,8 +618,8 @@ mod tests {
             dock_pane: Default::default(),
         };
 
-        db.save_workspace(&workspace_1);
-        db.save_workspace(&workspace_2);
+        db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace(workspace_2.clone()).await;
 
         // Test that paths are treated as a set
         assert_eq!(
@@ -605,7 +638,7 @@ mod tests {
         // Test 'mutate' case of updating a pre-existing id
         workspace_2.location = (["/tmp", "/tmp2"]).into();
 
-        db.save_workspace(&workspace_2);
+        db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
             workspace_2
@@ -620,7 +653,7 @@ mod tests {
             dock_pane: Default::default(),
         };
 
-        db.save_workspace(&workspace_3);
+        db.save_workspace(workspace_3.clone()).await;
         assert_eq!(
             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
             workspace_3
@@ -628,7 +661,7 @@ mod tests {
 
         // Make sure that updating paths differently also works
         workspace_3.location = (["/tmp3", "/tmp4", "/tmp2"]).into();
-        db.save_workspace(&workspace_3);
+        db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
             db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"])
@@ -655,11 +688,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_basic_dock_pane() {
+    #[gpui::test]
+    async fn test_basic_dock_pane() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db(Some("basic_dock_pane")));
+        let db = WorkspaceDb(open_memory_db("basic_dock_pane"));
 
         let dock_pane = crate::persistence::model::SerializedPane::new(
             vec![
@@ -673,18 +706,18 @@ mod tests {
 
         let workspace = default_workspace(&["/tmp"], dock_pane, &Default::default());
 
-        db.save_workspace(&workspace);
+        db.save_workspace(workspace.clone()).await;
 
         let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
         assert_eq!(workspace.dock_pane, new_workspace.dock_pane);
     }
 
-    #[test]
-    fn test_simple_split() {
+    #[gpui::test]
+    async fn test_simple_split() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db(Some("simple_split")));
+        let db = WorkspaceDb(open_memory_db("simple_split"));
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -725,18 +758,18 @@ mod tests {
 
         let workspace = default_workspace(&["/tmp"], Default::default(), &center_pane);
 
-        db.save_workspace(&workspace);
+        db.save_workspace(workspace.clone()).await;
 
         let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
         assert_eq!(workspace.center_group, new_workspace.center_group);
     }
 
-    #[test]
-    fn test_cleanup_panes() {
+    #[gpui::test]
+    async fn test_cleanup_panes() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db(Some("test_cleanup_panes")));
+        let db = WorkspaceDb(open_memory_db("test_cleanup_panes"));
 
         let center_pane = SerializedPaneGroup::Group {
             axis: gpui::Axis::Horizontal,
@@ -774,7 +807,7 @@ mod tests {
 
         let mut workspace = default_workspace(id, Default::default(), &center_pane);
 
-        db.save_workspace(&workspace);
+        db.save_workspace(workspace.clone()).await;
 
         workspace.center_group = SerializedPaneGroup::Group {
             axis: gpui::Axis::Vertical,
@@ -796,7 +829,7 @@ mod tests {
             ],
         };
 
-        db.save_workspace(&workspace);
+        db.save_workspace(workspace.clone()).await;
 
         let new_workspace = db.workspace_for_roots(id).unwrap();
 

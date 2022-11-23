@@ -31,6 +31,7 @@ impl<'a> TerminalTestContext<'a> {
         let (_, workspace) = self.cx.add_window(|cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 |_, _| unimplemented!(),
                 cx,

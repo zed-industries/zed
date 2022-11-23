@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use text::Selection;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -552,6 +552,43 @@ impl Item for Editor {
                 .boxed()
         }));
         Some(breadcrumbs)
+    }
+
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        let workspace_id = workspace.database_id();
+        let item_id = cx.view_id();
+
+        fn serialize(
+            buffer: ModelHandle<Buffer>,
+            workspace_id: WorkspaceId,
+            item_id: ItemId,
+            cx: &mut MutableAppContext,
+        ) {
+            if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
+                let path = file.abs_path(cx);
+
+                cx.background()
+                    .spawn(async move {
+                        DB.save_path(item_id, workspace_id, path.clone())
+                            .await
+                            .log_err()
+                    })
+                    .detach();
+            }
+        }
+
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            serialize(buffer.clone(), workspace_id, item_id, cx);
+
+            cx.subscribe(&buffer, |this, buffer, event, cx| {
+                if let Some(workspace_id) = this.workspace_id {
+                    if let language::Event::FileHandleChanged = event {
+                        serialize(buffer, workspace_id, cx.view_id(), cx);
+                    }
+                }
+            })
+            .detach();
+        }
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

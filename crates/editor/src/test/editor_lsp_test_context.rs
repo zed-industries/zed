@@ -66,6 +66,7 @@ impl<'a> EditorLspTestContext<'a> {
         let (window_id, workspace) = cx.add_window(|cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 |_, _| unimplemented!(),
                 cx,

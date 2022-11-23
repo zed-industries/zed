@@ -42,11 +42,11 @@ pub fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
     create_dir_all(&current_db_dir).expect("Should be able to create the database directory");
     let db_path = current_db_dir.join(Path::new("db.sqlite"));
 
-    ThreadSafeConnection::new(Some(db_path.to_string_lossy().as_ref()), true)
+    ThreadSafeConnection::new(db_path.to_string_lossy().as_ref(), true)
         .with_initialize_query(INITIALIZE_QUERY)
 }
 
-pub fn open_memory_db<M: Migrator>(db_name: Option<&str>) -> ThreadSafeConnection<M> {
+pub fn open_memory_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M> {
     ThreadSafeConnection::new(db_name, false).with_initialize_query(INITIALIZE_QUERY)
 }
 
@@ -66,7 +66,7 @@ macro_rules! connection {
 
         ::db::lazy_static::lazy_static! {
             pub static ref $id: $t = $t(if cfg!(any(test, feature = "test-support")) {
-                ::db::open_memory_db(None)
+                ::db::open_memory_db(stringify!($id))
             } else {
                 ::db::open_file_db()
             });
@@ -77,7 +77,7 @@ macro_rules! connection {
 #[macro_export]
 macro_rules! sql_method {
     ($id:ident() ->  Result<()>: $sql:expr) => {
-        pub fn $id(&self) -> $crate::sqlez::anyhow::Result<()> {
+        pub fn $id(&self) -> $crate::anyhow::Result<()> {
             use $crate::anyhow::Context;
 
             self.exec($sql)?().context(::std::format!(
@@ -87,8 +87,21 @@ macro_rules! sql_method {
             ))
         }
     };
+    (async $id:ident() -> Result<()>: $sql:expr) => {
+        pub async fn $id(&self) -> $crate::anyhow::Result<()> {
+            use $crate::anyhow::Context;
+
+            self.write(|connection| {
+                connection.exec($sql)?().context(::std::format!(
+                    "Error in {}, exec failed to execute or parse for: {}",
+                    ::std::stringify!($id),
+                    ::std::stringify!($sql),
+                ))
+            }).await
+        }
+    };
     ($id:ident($($arg:ident: $arg_type:ty),+) -> Result<()>: $sql:expr) => {
-        pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<()> {
+        pub fn $id(&self, $($arg: $arg_type),+) -> $crate::anyhow::Result<()> {
             use $crate::anyhow::Context;
 
             self.exec_bound::<($($arg_type),+)>($sql)?(($($arg),+))
@@ -99,8 +112,22 @@ macro_rules! sql_method {
                 ))
         }
     };
+    (async $id:ident($($arg:ident: $arg_type:ty),+) -> Result<()>: $sql:expr) => {
+        pub async fn $id(&self, $($arg: $arg_type),+) -> $crate::anyhow::Result<()> {
+            use $crate::anyhow::Context;
+
+            self.write(move |connection| {
+                connection.exec_bound::<($($arg_type),+)>($sql)?(($($arg),+))
+                    .context(::std::format!(
+                        "Error in {}, exec_bound failed to execute or parse for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))
+            }).await
+        }
+    };
     ($id:ident() ->  Result<Vec<$return_type:ty>>: $sql:expr) => {
-         pub fn $id(&self) -> $crate::sqlez::anyhow::Result<Vec<$return_type>> {
+         pub fn $id(&self) -> $crate::anyhow::Result<Vec<$return_type>> {
              use $crate::anyhow::Context;
 
              self.select::<$return_type>($sql)?(())
@@ -111,8 +138,22 @@ macro_rules! sql_method {
                  ))
          }
     };
+    (async $id:ident() ->  Result<Vec<$return_type:ty>>: $sql:expr) => {
+        pub async fn $id(&self) -> $crate::anyhow::Result<Vec<$return_type>> {
+            use $crate::anyhow::Context;
+
+            self.write(|connection| {
+                connection.select::<$return_type>($sql)?(())
+                    .context(::std::format!(
+                        "Error in {}, select_row failed to execute or parse for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))
+            }).await
+        }
+    };
     ($id:ident($($arg:ident: $arg_type:ty),+) -> Result<Vec<$return_type:ty>>: $sql:expr) => {
-         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<Vec<$return_type>> {
+         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::anyhow::Result<Vec<$return_type>> {
              use $crate::anyhow::Context;
 
              self.select_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
@@ -123,8 +164,22 @@ macro_rules! sql_method {
                  ))
          }
     };
+    (async $id:ident($($arg:ident: $arg_type:ty),+) -> Result<Vec<$return_type:ty>>: $sql:expr) => {
+        pub async fn $id(&self, $($arg: $arg_type),+) -> $crate::anyhow::Result<Vec<$return_type>> {
+            use $crate::anyhow::Context;
+
+            self.write(|connection| {
+                connection.select_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
+                    .context(::std::format!(
+                        "Error in {}, exec_bound failed to execute or parse for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))
+            }).await
+        }
+    };
     ($id:ident() ->  Result<Option<$return_type:ty>>: $sql:expr) => {
-         pub fn $id(&self) -> $crate::sqlez::anyhow::Result<Option<$return_type>> {
+         pub fn $id(&self) -> $crate::anyhow::Result<Option<$return_type>> {
              use $crate::anyhow::Context;
 
              self.select_row::<$return_type>($sql)?()
@@ -135,8 +190,22 @@ macro_rules! sql_method {
                  ))
          }
     };
+    (async $id:ident() ->  Result<Option<$return_type:ty>>: $sql:expr) => {
+        pub async fn $id(&self) -> $crate::anyhow::Result<Option<$return_type>> {
+            use $crate::anyhow::Context;
+
+            self.write(|connection| {
+                connection.select_row::<$return_type>($sql)?()
+                    .context(::std::format!(
+                        "Error in {}, select_row failed to execute or parse for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))
+            }).await
+        }
+    };
     ($id:ident($($arg:ident: $arg_type:ty),+) ->  Result<Option<$return_type:ty>>: $sql:expr) => {
-         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::sqlez::anyhow::Result<Option<$return_type>>  {
+         pub fn $id(&self, $($arg: $arg_type),+) -> $crate::anyhow::Result<Option<$return_type>>  {
              use $crate::anyhow::Context;
 
              self.select_row_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
@@ -148,8 +217,22 @@ macro_rules! sql_method {
 
          }
     };
+    (async $id:ident($($arg:ident: $arg_type:ty),+) ->  Result<Option<$return_type:ty>>: $sql:expr) => {
+        pub async fn $id(&self, $($arg: $arg_type),+) -> $crate::anyhow::Result<Option<$return_type>>  {
+            use $crate::anyhow::Context;
+
+            self.write(|connection| {
+                connection.select_row_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
+                    .context(::std::format!(
+                        "Error in {}, select_row_bound failed to execute or parse for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))
+            }).await
+        }
+    };
     ($id:ident() ->  Result<$return_type:ty>: $sql:expr) => {
-         pub fn $id(&self) ->  $crate::sqlez::anyhow::Result<$return_type>  {
+         pub fn $id(&self) ->  $crate::anyhow::Result<$return_type>  {
              use $crate::anyhow::Context;
 
              self.select_row::<$return_type>($sql)?()
@@ -165,8 +248,27 @@ macro_rules! sql_method {
                  ))
          }
     };
+    (async $id:ident() ->  Result<$return_type:ty>: $sql:expr) => {
+        pub async fn $id(&self) ->  $crate::anyhow::Result<$return_type>  {
+            use $crate::anyhow::Context;
+
+            self.write(|connection| {
+                connection.select_row::<$return_type>($sql)?()
+                    .context(::std::format!(
+                        "Error in {}, select_row_bound failed to execute or parse for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))?
+                    .context(::std::format!(
+                        "Error in {}, select_row_bound expected single row result but found none for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))
+            }).await
+        }
+    };
     ($id:ident($($arg:ident: $arg_type:ty),+) ->  Result<$return_type:ty>: $sql:expr) => {
-         pub fn $id(&self, $($arg: $arg_type),+) ->  $crate::sqlez::anyhow::Result<$return_type>  {
+         pub fn $id(&self, $($arg: $arg_type),+) ->  $crate::anyhow::Result<$return_type>  {
              use $crate::anyhow::Context;
 
              self.select_row_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
@@ -181,5 +283,24 @@ macro_rules! sql_method {
                      ::std::stringify!($sql),
                  ))
          }
+    };
+    (async $id:ident($($arg:ident: $arg_type:ty),+) ->  Result<$return_type:ty>: $sql:expr) => {
+        pub async fn $id(&self, $($arg: $arg_type),+) ->  $crate::anyhow::Result<$return_type>  {
+            use $crate::anyhow::Context;
+
+            self.write(|connection| {
+                connection.select_row_bound::<($($arg_type),+), $return_type>($sql)?(($($arg),+))
+                    .context(::std::format!(
+                        "Error in {}, select_row_bound failed to execute or parse for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))?
+                    .context(::std::format!(
+                        "Error in {}, select_row_bound expected single row result but found none for: {}",
+                        ::std::stringify!($id),
+                        ::std::stringify!($sql),
+                    ))
+            }).await
+        }
     };
 }

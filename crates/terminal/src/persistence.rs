@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use db::{connection, indoc, sql_method, sqlez::domain::Domain};
 
@@ -17,7 +17,7 @@ impl Domain for Terminal {
         &[indoc! {"
             CREATE TABLE terminals (
                 workspace_id INTEGER,
-                item_id INTEGER,
+                item_id INTEGER UNIQUE,
                 working_directory BLOB,
                 PRIMARY KEY(workspace_id, item_id),
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
@@ -29,21 +29,35 @@ impl Domain for Terminal {
 
 impl TerminalDb {
     sql_method! {
-        save_working_directory(item_id: ItemId,
-        workspace_id: WorkspaceId,
-        working_directory: &Path) -> Result<()>:
-        indoc!{"
-            INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
-            VALUES (?1, ?2, ?3)
+        async update_workspace_id(
+            new_id: WorkspaceId,
+            old_id: WorkspaceId,
+            item_id: ItemId
+        ) -> Result<()>:
+        indoc! {"
+            UPDATE terminals
+            SET workspace_id = ?
+            WHERE workspace_id = ? AND item_id = ?
         "}
     }
 
     sql_method! {
+        async save_working_directory(
+            item_id: ItemId,
+            workspace_id: WorkspaceId,
+            working_directory: PathBuf) -> Result<()>:
+                indoc!{"
+                    INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
+                    VALUES (?1, ?2, ?3)
+                "}
+    }
+
+    sql_method! {
         get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>>:
-        indoc!{"
-            SELECT working_directory
-            FROM terminals 
-            WHERE item_id = ? AND workspace_id = ?
-        "}
+            indoc!{"
+                SELECT working_directory
+                FROM terminals 
+                WHERE item_id = ? AND workspace_id = ?
+            "}
     }
 }

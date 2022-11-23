@@ -57,7 +57,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
-    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext, Task,
+    AppContext, ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent,
+    MutableAppContext, Task,
 };
 
 use crate::mappings::{
@@ -585,7 +586,8 @@ impl Terminal {
                         cx.background()
                             .spawn(async move {
                                 TERMINAL_CONNECTION
-                                    .save_working_directory(item_id, workspace_id, cwd.as_path())
+                                    .save_working_directory(item_id, workspace_id, cwd)
+                                    .await
                                     .log_err();
                             })
                             .detach();
@@ -1190,6 +1192,21 @@ impl Terminal {
             ),
             _ => None,
         }
+    }
+
+    pub fn set_workspace_id(&mut self, id: WorkspaceId, cx: &AppContext) {
+        let old_workspace_id = self.workspace_id;
+        let item_id = self.item_id;
+        cx.background()
+            .spawn(async move {
+                TERMINAL_CONNECTION
+                    .update_workspace_id(id, old_workspace_id, item_id)
+                    .await
+                    .log_err()
+            })
+            .detach();
+
+        self.workspace_id = id;
     }
 
     pub fn find_matches(

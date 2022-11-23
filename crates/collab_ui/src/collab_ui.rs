@@ -53,6 +53,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                     let mut workspace = Workspace::new(
                         Default::default(),
+                        0,
                         project,
                         app_state.default_item_factory,
                         cx,

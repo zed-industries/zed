@@ -2,7 +2,7 @@ use std::ffi::{c_int, CStr, CString};
 use std::marker::PhantomData;
 use std::{ptr, slice, str};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use libsqlite3_sys::*;
 
 use crate::bindable::{Bind, Column};
@@ -57,12 +57,21 @@ impl<'a> Statement<'a> {
                     &mut raw_statement,
                     &mut remaining_sql_ptr,
                 );
+
                 remaining_sql = CStr::from_ptr(remaining_sql_ptr);
                 statement.raw_statements.push(raw_statement);
 
                 connection.last_error().with_context(|| {
                     format!("Prepare call failed for query:\n{}", query.as_ref())
                 })?;
+
+                if !connection.can_write() && sqlite3_stmt_readonly(raw_statement) == 0 {
+                    let sql = CStr::from_ptr(sqlite3_sql(raw_statement));
+
+                    bail!(
+                        "Write statement prepared with connection that is not write capable. SQL:\n{} ",
+                        sql.to_str()?)
+                }
             }
         }
 

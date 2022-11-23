@@ -909,6 +909,7 @@ async fn test_host_disconnect(
     let (_, workspace_b) = cx_b.add_window(|cx| {
         Workspace::new(
             Default::default(),
+            0,
             project_b.clone(),
             |_, _| unimplemented!(),
             cx,
@@ -3711,6 +3712,7 @@ async fn test_collaborating_with_code_actions(
     let (_window_b, workspace_b) = cx_b.add_window(|cx| {
         Workspace::new(
             Default::default(),
+            0,
             project_b.clone(),
             |_, _| unimplemented!(),
             cx,
@@ -3938,6 +3940,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     let (_window_b, workspace_b) = cx_b.add_window(|cx| {
         Workspace::new(
             Default::default(),
+            0,
             project_b.clone(),
             |_, _| unimplemented!(),
             cx,
@@ -6075,6 +6078,7 @@ impl TestClient {
         cx.add_view(&root_view, |cx| {
             Workspace::new(
                 Default::default(),
+                0,
                 project.clone(),
                 |_, _| unimplemented!(),
                 cx,

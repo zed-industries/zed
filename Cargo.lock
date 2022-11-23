@@ -5590,8 +5590,11 @@ name = "sqlez"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.25",
  "indoc",
+ "lazy_static",
  "libsqlite3-sys",
+ "parking_lot 0.11.2",
  "thread_local",
 ]
 

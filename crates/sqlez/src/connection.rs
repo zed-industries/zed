@@ -10,16 +10,18 @@ use libsqlite3_sys::*;
 pub struct Connection {
     pub(crate) sqlite3: *mut sqlite3,
     persistent: bool,
-    phantom: PhantomData<sqlite3>,
+    pub(crate) write: bool,
+    _sqlite: PhantomData<sqlite3>,
 }
 unsafe impl Send for Connection {}
 
 impl Connection {
-    fn open(uri: &str, persistent: bool) -> Result<Self> {
+    pub(crate) fn open(uri: &str, persistent: bool) -> Result<Self> {
         let mut connection = Self {
             sqlite3: 0 as *mut _,
             persistent,
-            phantom: PhantomData,
+            write: true,
+            _sqlite: PhantomData,
         };
 
         let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_READWRITE;
@@ -58,6 +60,10 @@ impl Connection {
 
     pub fn persistent(&self) -> bool {
         self.persistent
+    }
+
+    pub fn can_write(&self) -> bool {
+        self.write
     }
 
     pub fn backup_main(&self, destination: &Connection) -> Result<()> {

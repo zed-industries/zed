@@ -10,3 +10,6 @@ anyhow = { version = "1.0.38", features = ["backtrace"] }
 indoc = "1.0.7"
 libsqlite3-sys = { version = "0.25.2", features = ["bundled"] }
 thread_local = "1.1.4"
+lazy_static = "1.4"
+parking_lot = "0.11.1"
+futures = "0.3"

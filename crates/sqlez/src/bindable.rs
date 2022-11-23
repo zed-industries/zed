@@ -322,6 +322,18 @@ impl Bind for &Path {
     }
 }
 
+impl Bind for Arc<Path> {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.as_ref().bind(statement, start_index)
+    }
+}
+
+impl Bind for PathBuf {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        (self.as_ref() as &Path).bind(statement, start_index)
+    }
+}
+
 impl Column for PathBuf {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;

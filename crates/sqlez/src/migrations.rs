@@ -11,46 +11,48 @@ use crate::connection::Connection;
 
 impl Connection {
     pub fn migrate(&self, domain: &'static str, migrations: &[&'static str]) -> Result<()> {
-        // Setup the migrations table unconditionally
-        self.exec(indoc! {"
-            CREATE TABLE IF NOT EXISTS migrations (
+        self.with_savepoint("migrating", || {
+            // Setup the migrations table unconditionally
+            self.exec(indoc! {"
+                CREATE TABLE IF NOT EXISTS migrations (
                 domain TEXT,
                 step INTEGER,
                 migration TEXT
-            )"})?()?;
+                )"})?()?;
 
-        let completed_migrations =
-            self.select_bound::<&str, (String, usize, String)>(indoc! {"
+            let completed_migrations =
+                self.select_bound::<&str, (String, usize, String)>(indoc! {"
                     SELECT domain, step, migration FROM migrations
                     WHERE domain = ?
                     ORDER BY step
-                "})?(domain)?;
+                    "})?(domain)?;
 
-        let mut store_completed_migration =
-            self.exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
+            let mut store_completed_migration = self
+                .exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
 
-        for (index, migration) in migrations.iter().enumerate() {
-            if let Some((_, _, completed_migration)) = completed_migrations.get(index) {
-                if completed_migration != migration {
-                    return Err(anyhow!(formatdoc! {"
-                        Migration changed for {} at step {}
-                        
-                        Stored migration:
-                        {}
-                        
-                        Proposed migration:
-                        {}", domain, index, completed_migration, migration}));
-                } else {
-                    // Migration already run. Continue
-                    continue;
+            for (index, migration) in migrations.iter().enumerate() {
+                if let Some((_, _, completed_migration)) = completed_migrations.get(index) {
+                    if completed_migration != migration {
+                        return Err(anyhow!(formatdoc! {"
+                            Migration changed for {} at step {}
+                            
+                            Stored migration:
+                            {}
+                            
+                            Proposed migration:
+                            {}", domain, index, completed_migration, migration}));
+                    } else {
+                        // Migration already run. Continue
+                        continue;
+                    }
                 }
+
+                self.exec(migration)?()?;
+                store_completed_migration((domain, index, *migration))?;
             }
 
-            self.exec(migration)?()?;
-            store_completed_migration((domain, index, *migration))?;
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 }
 

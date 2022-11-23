@@ -575,7 +575,7 @@ mod tests {
             cx.update(|cx| init(cx));
             let project = Project::test(fs, [], cx).await;
             let (window_id, workspace) = cx.add_window(|cx| {
-                Workspace::new(Default::default(), project, default_item_factory, cx)
+                Workspace::new(Default::default(), 0, project, default_item_factory, cx)
             });
 
             workspace.update(cx, |workspace, cx| {
