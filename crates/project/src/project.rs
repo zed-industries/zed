@@ -26,6 +26,7 @@ use language::{
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
     Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -252,7 +253,7 @@ pub struct Symbol {
     pub label: CodeLabel,
     pub name: String,
     pub kind: lsp::SymbolKind,
-    pub range: Range<PointUtf16>,
+    pub range: Range<Unclipped<PointUtf16>>,
     pub signature: [u8; 32],
 }
 
@@ -2597,7 +2598,7 @@ impl Project {
         language_server_id: usize,
         abs_path: PathBuf,
         version: Option<i32>,
-        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Project>,
     ) -> Result<(), anyhow::Error> {
         let (worktree, relative_path) = self
@@ -2635,7 +2636,7 @@ impl Project {
     fn update_buffer_diagnostics(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -2659,7 +2660,7 @@ impl Project {
         let mut sanitized_diagnostics = Vec::new();
         let edits_since_save = Patch::new(
             snapshot
-                .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
+                .edits_since::<Unclipped<PointUtf16>>(buffer.read(cx).saved_version())
                 .collect(),
         );
         for entry in diagnostics {
@@ -2679,13 +2680,14 @@ impl Project {
             let mut range = snapshot.clip_point_utf16(start, Bias::Left)
                 ..snapshot.clip_point_utf16(end, Bias::Right);
 
-            // Expand empty ranges by one character
+            // Expand empty ranges by one codepoint
             if range.start == range.end {
+                // This will be go to the next boundary when being clipped
                 range.end.column += 1;
-                range.end = snapshot.clip_point_utf16(range.end, Bias::Right);
+                range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Right);
                 if range.start == range.end && range.end.column > 0 {
                     range.start.column -= 1;
-                    range.start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                    range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Left);
                 }
             }
 
@@ -3288,7 +3290,7 @@ impl Project {
             return Task::ready(Ok(Default::default()));
         };
 
-        let position = position.to_point_utf16(source_buffer);
+        let position = Unclipped(position.to_point_utf16(source_buffer));
         let anchor = source_buffer.anchor_after(position);
 
         if worktree.read(cx).as_local().is_some() {
@@ -3307,7 +3309,7 @@ impl Project {
                             lsp::TextDocumentIdentifier::new(
                                 lsp::Url::from_file_path(buffer_abs_path).unwrap(),
                             ),
-                            point_to_lsp(position),
+                            point_to_lsp(position.0),
                         ),
                         context: Default::default(),
                         work_done_progress_params: Default::default(),
@@ -3350,7 +3352,7 @@ impl Project {
                                     let range = range_from_lsp(edit.range);
                                     let start = snapshot.clip_point_utf16(range.start, Bias::Left);
                                     let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                                    if start != range.start || end != range.end {
+                                    if start != range.start.0 || end != range.end.0 {
                                         log::info!("completion out of expected range");
                                         return None;
                                     }
@@ -3362,7 +3364,7 @@ impl Project {
                                 // If the language server does not provide a range, then infer
                                 // the range based on the syntax tree.
                                 None => {
-                                    if position != clipped_position {
+                                    if position.0 != clipped_position {
                                         log::info!("completion out of expected range");
                                         return None;
                                     }
@@ -5117,22 +5119,30 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::GetCompletionsResponse> {
-        let position = envelope
-            .payload
-            .position
-            .and_then(language::proto::deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
-        let version = deserialize_version(envelope.payload.version);
         let buffer = this.read_with(&cx, |this, cx| {
             this.opened_buffers
                 .get(&envelope.payload.buffer_id)
                 .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
+
+        let position = envelope
+            .payload
+            .position
+            .and_then(language::proto::deserialize_anchor)
+            .map(|p| {
+                buffer.read_with(&cx, |buffer, _| {
+                    buffer.clip_point_utf16(Unclipped(p.to_point_utf16(buffer)), Bias::Left)
+                })
+            })
+            .ok_or_else(|| anyhow!("invalid position"))?;
+
+        let version = deserialize_version(envelope.payload.version);
         buffer
             .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
             .await;
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
+
         let completions = this
             .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))
             .await?;
@@ -5619,8 +5629,8 @@ impl Project {
                 },
 
                 name: serialized_symbol.name,
-                range: PointUtf16::new(start.row, start.column)
-                    ..PointUtf16::new(end.row, end.column),
+                range: Unclipped(PointUtf16::new(start.row, start.column))
+                    ..Unclipped(PointUtf16::new(end.row, end.column)),
                 kind,
                 signature: serialized_symbol
                     .signature
@@ -5706,10 +5716,10 @@ impl Project {
 
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
-            while let Some((mut range, mut new_text)) = lsp_edits.next() {
+            while let Some((range, mut new_text)) = lsp_edits.next() {
                 // Clip invalid ranges provided by the language server.
-                range.start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                range.end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                let mut range = snapshot.clip_point_utf16(range.start, Bias::Left)
+                    ..snapshot.clip_point_utf16(range.end, Bias::Left);
 
                 // Combine any LSP edits that are adjacent.
                 //
@@ -5721,11 +5731,11 @@ impl Project {
                 // In order for the diffing logic below to work properly, any edits that
                 // cancel each other out must be combined into one.
                 while let Some((next_range, next_text)) = lsp_edits.peek() {
-                    if next_range.start > range.end {
-                        if next_range.start.row > range.end.row + 1
-                            || next_range.start.column > 0
+                    if next_range.start.0 > range.end {
+                        if next_range.start.0.row > range.end.row + 1
+                            || next_range.start.0.column > 0
                             || snapshot.clip_point_utf16(
-                                PointUtf16::new(range.end.row, u32::MAX),
+                                Unclipped(PointUtf16::new(range.end.row, u32::MAX)),
                                 Bias::Left,
                             ) > range.end
                         {
@@ -5733,7 +5743,7 @@ impl Project {
                         }
                         new_text.push('\n');
                     }
-                    range.end = next_range.end;
+                    range.end = snapshot.clip_point_utf16(next_range.end, Bias::Left);
                     new_text.push_str(next_text);
                     lsp_edits.next();
                 }
@@ -6054,13 +6064,13 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
         path: symbol.path.path.to_string_lossy().to_string(),
         name: symbol.name.clone(),
         kind: unsafe { mem::transmute(symbol.kind) },
-        start: Some(proto::Point {
-            row: symbol.range.start.row,
-            column: symbol.range.start.column,
+        start: Some(proto::PointUtf16 {
+            row: symbol.range.start.0.row,
+            column: symbol.range.start.0.column,
         }),
-        end: Some(proto::Point {
-            row: symbol.range.end.row,
-            column: symbol.range.end.column,
+        end: Some(proto::PointUtf16 {
+            row: symbol.range.end.0.row,
+            column: symbol.range.end.0.column,
         }),
         signature: symbol.signature.to_vec(),
     }

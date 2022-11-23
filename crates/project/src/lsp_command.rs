@@ -128,8 +128,8 @@ impl LspCommand for PrepareRename {
             ) = message
             {
                 let Range { start, end } = range_from_lsp(range);
-                if buffer.clip_point_utf16(start, Bias::Left) == start
-                    && buffer.clip_point_utf16(end, Bias::Left) == end
+                if buffer.clip_point_utf16(start, Bias::Left) == start.0
+                    && buffer.clip_point_utf16(end, Bias::Left) == end.0
                 {
                     return Ok(Some(buffer.anchor_after(start)..buffer.anchor_before(end)));
                 }

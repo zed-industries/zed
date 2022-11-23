@@ -11,7 +11,7 @@ use language::{
     char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
     DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Outline,
     OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _,
-    ToPoint as _, ToPointUtf16 as _, TransactionId,
+    ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
 use std::{
@@ -1749,20 +1749,20 @@ impl MultiBufferSnapshot {
         *cursor.start() + overshoot
     }
 
-    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+    pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         if let Some((_, _, buffer)) = self.as_singleton() {
             return buffer.clip_point_utf16(point, bias);
         }
 
         let mut cursor = self.excerpts.cursor::<PointUtf16>();
-        cursor.seek(&point, Bias::Right, &());
+        cursor.seek(&point.0, Bias::Right, &());
         let overshoot = if let Some(excerpt) = cursor.item() {
             let excerpt_start = excerpt
                 .buffer
                 .offset_to_point_utf16(excerpt.range.context.start.to_offset(&excerpt.buffer));
             let buffer_point = excerpt
                 .buffer
-                .clip_point_utf16(excerpt_start + (point - cursor.start()), bias);
+                .clip_point_utf16(Unclipped(excerpt_start + (point.0 - cursor.start())), bias);
             buffer_point.saturating_sub(excerpt_start)
         } else {
             PointUtf16::zero()
@@ -3274,12 +3274,6 @@ impl ToOffset for Point {
     }
 }
 
-impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        snapshot.point_utf16_to_offset(*self)
-    }
-}
-
 impl ToOffset for usize {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         assert!(*self <= snapshot.len(), "offset is out of range");
@@ -3290,6 +3284,12 @@ impl ToOffset for usize {
 impl ToOffset for OffsetUtf16 {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.offset_utf16_to_offset(*self)
+    }
+}
+
+impl ToOffset for PointUtf16 {
+    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+        snapshot.point_utf16_to_offset(*self)
     }
 }
 
@@ -4158,12 +4158,14 @@ mod tests {
                     }
 
                     for _ in 0..ch.len_utf16() {
-                        let left_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Left);
-                        let right_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Right);
+                        let left_point_utf16 =
+                            snapshot.clip_point_utf16(Unclipped(point_utf16), Bias::Left);
+                        let right_point_utf16 =
+                            snapshot.clip_point_utf16(Unclipped(point_utf16), Bias::Right);
                         let buffer_left_point_utf16 =
-                            buffer.clip_point_utf16(buffer_point_utf16, Bias::Left);
+                            buffer.clip_point_utf16(Unclipped(buffer_point_utf16), Bias::Left);
                         let buffer_right_point_utf16 =
-                            buffer.clip_point_utf16(buffer_point_utf16, Bias::Right);
+                            buffer.clip_point_utf16(Unclipped(buffer_point_utf16), Bias::Right);
                         assert_eq!(
                             left_point_utf16,
                             excerpt_start.lines_utf16()
