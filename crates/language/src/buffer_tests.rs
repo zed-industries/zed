@@ -1337,7 +1337,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                         (0..entry_count).map(|_| {
                             let range = buffer.random_byte_range(0, &mut rng);
                             let range = range.to_point_utf16(buffer);
-                            let range = Unclipped(range.start)..Unclipped(range.end);
+                            let range = range.start..range.end;
                             DiagnosticEntry {
                                 range,
                                 diagnostic: Diagnostic {

@@ -2677,14 +2677,17 @@ impl Project {
                 end = entry.range.end;
             }
 
-            let mut range = start..end;
+            let mut range = snapshot.clip_point_utf16(start, Bias::Left)
+                ..snapshot.clip_point_utf16(end, Bias::Right);
 
             // Expand empty ranges by one codepoint
             if range.start == range.end {
                 // This will be go to the next boundary when being clipped
-                range.end.0.column += 1;
-                if range.start == range.end && range.end.0.column > 0 {
-                    range.start.0.column -= 1;
+                range.end.column += 1;
+                range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Right);
+                if range.start == range.end && range.end.column > 0 {
+                    range.start.column -= 1;
+                    range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Left);
                 }
             }
 
