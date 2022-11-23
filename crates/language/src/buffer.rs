@@ -2225,11 +2225,12 @@ impl BufferSnapshot {
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
-        let mut matches = self.syntax.matches(range, &self.text, |grammar| {
-            grammar.brackets_config.as_ref().map(|c| &c.query)
-        });
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut matches = self.syntax.matches(
+            range.start.saturating_sub(1)..self.len().min(range.end + 1),
+            &self.text,
+            |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
+        );
         let configs = matches
             .grammars()
             .iter()
@@ -2252,18 +2253,20 @@ impl BufferSnapshot {
 
             matches.advance();
 
-            if let Some((open, close)) = open.zip(close) {
-                let len = close.end - open.start;
-
-                if let Some((existing_open, existing_close)) = &result {
-                    let existing_len = existing_close.end - existing_open.start;
-                    if len > existing_len {
-                        continue;
-                    }
-                }
-
-                result = Some((open, close));
+            let Some((open, close)) = open.zip(close) else { continue };
+            if open.start > range.start || close.end < range.end {
+                continue;
             }
+            let len = close.end - open.start;
+
+            if let Some((existing_open, existing_close)) = &result {
+                let existing_len = existing_close.end - existing_open.start;
+                if len > existing_len {
+                    continue;
+                }
+            }
+
+            result = Some((open, close));
         }
 
         result

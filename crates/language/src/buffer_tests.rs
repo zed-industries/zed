@@ -573,12 +573,70 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         ))
     );
 
-    // Regression test: avoid crash when querying at the end of the buffer.
     assert_eq!(
-        buffer.enclosing_bracket_point_ranges(buffer.len() - 1..buffer.len()),
+        buffer.enclosing_bracket_point_ranges(Point::new(4, 1)..Point::new(4, 1)),
         Some((
             Point::new(0, 6)..Point::new(0, 7),
             Point::new(4, 0)..Point::new(4, 1)
+        ))
+    );
+
+    // Regression test: avoid crash when querying at the end of the buffer.
+    assert_eq!(
+        buffer.enclosing_bracket_point_ranges(Point::new(4, 1)..Point::new(5, 0)),
+        None
+    );
+}
+
+#[gpui::test]
+fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
+    cx: &mut MutableAppContext,
+) {
+    let javascript_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_javascript::language()),
+        )
+        .with_brackets_query(
+            r#"
+            ("{" @open "}" @close)
+            ("(" @open ")" @close)
+            "#,
+        )
+        .unwrap(),
+    );
+
+    cx.set_global(Settings::test(cx));
+    let buffer = cx.add_model(|cx| {
+        let text = "
+            for (const a in b) {
+                // a comment that's longer than the for-loop header
+            }
+        "
+        .unindent();
+        Buffer::new(0, text, cx).with_language(javascript_language, cx)
+    });
+
+    let buffer = buffer.read(cx);
+    assert_eq!(
+        buffer.enclosing_bracket_point_ranges(Point::new(0, 18)..Point::new(0, 18)),
+        Some((
+            Point::new(0, 4)..Point::new(0, 5),
+            Point::new(0, 17)..Point::new(0, 18)
+        ))
+    );
+
+    // Regression test: even though the parent node of the parentheses (the for loop) does
+    // intersect the given range, the parentheses themselves do not contain the range, so
+    // they should not be returned. Only the curly braces contain the range.
+    assert_eq!(
+        buffer.enclosing_bracket_point_ranges(Point::new(0, 20)..Point::new(0, 20)),
+        Some((
+            Point::new(0, 19)..Point::new(0, 20),
+            Point::new(2, 0)..Point::new(2, 1)
         ))
     );
 }
