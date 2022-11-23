@@ -1598,8 +1598,8 @@ impl BufferSnapshot {
         self.visible_text.unclipped_point_utf16_to_offset(point)
     }
 
-    pub fn point_utf16_to_point_clipped(&self, point: PointUtf16) -> Point {
-        self.visible_text.point_utf16_to_point_clipped(point)
+    pub fn unclipped_point_utf16_to_point(&self, point: Unclipped<PointUtf16>) -> Point {
+        self.visible_text.unclipped_point_utf16_to_point(point)
     }
 
     pub fn offset_utf16_to_offset(&self, offset: OffsetUtf16) -> usize {
@@ -2421,7 +2421,7 @@ impl ToPoint for Point {
 
 impl ToPoint for Unclipped<PointUtf16> {
     fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point {
-        snapshot.point_utf16_to_point_clipped(self.0)
+        snapshot.unclipped_point_utf16_to_point(*self)
     }
 }
 

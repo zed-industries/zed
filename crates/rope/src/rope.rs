@@ -351,16 +351,16 @@ impl Rope {
                 .map_or(0, |chunk| chunk.point_utf16_to_offset(overshoot, clip))
     }
 
-    pub fn point_utf16_to_point_clipped(&self, point: PointUtf16) -> Point {
-        if point >= self.summary().lines_utf16() {
+    pub fn unclipped_point_utf16_to_point(&self, point: Unclipped<PointUtf16>) -> Point {
+        if point.0 >= self.summary().lines_utf16() {
             return self.summary().lines;
         }
         let mut cursor = self.chunks.cursor::<(PointUtf16, Point)>();
-        cursor.seek(&point, Bias::Left, &());
-        let overshoot = point - cursor.start().0;
+        cursor.seek(&point.0, Bias::Left, &());
+        let overshoot = Unclipped(point.0 - cursor.start().0);
         cursor.start().1
             + cursor.item().map_or(Point::zero(), |chunk| {
-                chunk.point_utf16_to_point_clipped(overshoot)
+                chunk.unclipped_point_utf16_to_point(overshoot)
             })
     }
 
@@ -830,16 +830,16 @@ impl Chunk {
         offset
     }
 
-    fn point_utf16_to_point_clipped(&self, target: PointUtf16) -> Point {
+    fn unclipped_point_utf16_to_point(&self, target: Unclipped<PointUtf16>) -> Point {
         let mut point = Point::zero();
         let mut point_utf16 = PointUtf16::zero();
 
         for ch in self.0.chars() {
-            if point_utf16 == target {
+            if point_utf16 == target.0 {
                 break;
             }
 
-            if point_utf16 > target {
+            if point_utf16 > target.0 {
                 // If the point is past the end of a line or inside of a code point,
                 // return the last valid point before the target.
                 return point;
