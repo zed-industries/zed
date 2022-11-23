@@ -1,13 +1,14 @@
 mod offset_utf16;
 mod point;
 mod point_utf16;
+mod unclipped;
 
 use arrayvec::ArrayString;
 use bromberg_sl2::{DigestString, HashMatrix};
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
-    ops::{Add, AddAssign, Range, Sub, SubAssign},
+    ops::{AddAssign, Range},
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
@@ -15,73 +16,7 @@ use sum_tree::{Bias, Dimension, SumTree};
 pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
 pub use point_utf16::PointUtf16;
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Unclipped<T>(pub T);
-
-impl<T: std::fmt::Debug> std::fmt::Debug for Unclipped<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Unclipped").field(&self.0).finish()
-    }
-}
-
-impl<T: Default> Default for Unclipped<T> {
-    fn default() -> Self {
-        Unclipped(T::default())
-    }
-}
-
-impl<T> From<T> for Unclipped<T> {
-    fn from(value: T) -> Self {
-        Unclipped(value)
-    }
-}
-
-impl<'a, T: sum_tree::Dimension<'a, ChunkSummary>> sum_tree::Dimension<'a, ChunkSummary>
-    for Unclipped<T>
-{
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
-        self.0.add_summary(summary, &());
-    }
-}
-
-impl<T: TextDimension> TextDimension for Unclipped<T> {
-    fn from_text_summary(summary: &TextSummary) -> Self {
-        Unclipped(T::from_text_summary(summary))
-    }
-
-    fn add_assign(&mut self, other: &Self) {
-        TextDimension::add_assign(&mut self.0, &other.0);
-    }
-}
-
-impl<T: Add<T, Output = T>> Add<Unclipped<T>> for Unclipped<T> {
-    type Output = Unclipped<T>;
-
-    fn add(self, rhs: Unclipped<T>) -> Self::Output {
-        Unclipped(self.0 + rhs.0)
-    }
-}
-
-impl<T: Sub<T, Output = T>> Sub<Unclipped<T>> for Unclipped<T> {
-    type Output = Unclipped<T>;
-
-    fn sub(self, rhs: Unclipped<T>) -> Self::Output {
-        Unclipped(self.0 - rhs.0)
-    }
-}
-
-impl<T: AddAssign<T>> AddAssign<Unclipped<T>> for Unclipped<T> {
-    fn add_assign(&mut self, rhs: Unclipped<T>) {
-        self.0 += rhs.0;
-    }
-}
-
-impl<T: SubAssign<T>> SubAssign<Unclipped<T>> for Unclipped<T> {
-    fn sub_assign(&mut self, rhs: Unclipped<T>) {
-        self.0 -= rhs.0;
-    }
-}
+pub use unclipped::Unclipped;
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;
