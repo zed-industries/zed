@@ -6064,11 +6064,11 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
         path: symbol.path.path.to_string_lossy().to_string(),
         name: symbol.name.clone(),
         kind: unsafe { mem::transmute(symbol.kind) },
-        start: Some(proto::UnclippedPoint {
+        start: Some(proto::PointUtf16 {
             row: symbol.range.start.0.row,
             column: symbol.range.start.0.column,
         }),
-        end: Some(proto::UnclippedPoint {
+        end: Some(proto::PointUtf16 {
             row: symbol.range.end.0.row,
             column: symbol.range.end.0.column,
         }),
