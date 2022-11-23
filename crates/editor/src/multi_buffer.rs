@@ -1755,7 +1755,6 @@ impl MultiBufferSnapshot {
         }
 
         let mut cursor = self.excerpts.cursor::<PointUtf16>();
-        //Cannot not panic if out of bounds as it will just not reach the target position
         cursor.seek(&point.0, Bias::Right, &());
         let overshoot = if let Some(excerpt) = cursor.item() {
             let excerpt_start = excerpt

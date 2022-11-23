@@ -357,7 +357,6 @@ pub fn deserialize_diagnostics(
         .collect()
 }
 
-//TODO: Deserialize anchors into `Unclipped<Anchor>`?
 pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     Some(Anchor {
         timestamp: clock::Local {
