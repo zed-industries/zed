@@ -6,7 +6,7 @@ use std::{
 };
 use sum_tree::Bias;
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
     pub(crate) buffer_id: Option<usize>,
     pub(crate) excerpt_id: ExcerptId,

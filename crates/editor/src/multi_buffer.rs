@@ -2305,7 +2305,7 @@ impl MultiBufferSnapshot {
                     break;
                 }
                 let (anchor_ix, anchor) = anchors.next().unwrap();
-                let mut anchor = anchor.clone();
+                let mut anchor = *anchor;
 
                 // Leave min and max anchors unchanged if invalid or
                 // if the old excerpt still exists at this location

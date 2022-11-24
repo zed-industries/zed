@@ -1607,16 +1607,13 @@ impl Element for EditorElement {
 
             highlighted_rows = view.highlighted_rows();
             let theme = cx.global::<Settings>().theme.as_ref();
-            highlighted_ranges = view.background_highlights_in_range(
-                start_anchor.clone()..end_anchor.clone(),
-                &display_map,
-                theme,
-            );
+            highlighted_ranges =
+                view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
 
             let mut remote_selections = HashMap::default();
             for (replica_id, line_mode, cursor_shape, selection) in display_map
                 .buffer_snapshot
-                .remote_selections_in_range(&(start_anchor.clone()..end_anchor.clone()))
+                .remote_selections_in_range(&(start_anchor..end_anchor))
             {
                 // The local selections match the leader's selections.
                 if Some(replica_id) == view.leader_replica_id {

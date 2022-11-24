@@ -1162,7 +1162,7 @@ impl Editor {
         });
         clone.selections.set_state(&self.selections);
         clone.scroll_position = self.scroll_position;
-        clone.scroll_top_anchor = self.scroll_top_anchor.clone();
+        clone.scroll_top_anchor = self.scroll_top_anchor;
         clone.searchable = self.searchable;
         clone
     }
@@ -1305,7 +1305,7 @@ impl Editor {
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             ongoing_scroll: self.ongoing_scroll,
             scroll_position: self.scroll_position,
-            scroll_top_anchor: self.scroll_top_anchor.clone(),
+            scroll_top_anchor: self.scroll_top_anchor,
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self
                 .handle
@@ -1791,17 +1791,15 @@ impl Editor {
             .pending_anchor()
             .expect("extend_selection not called with pending selection");
         if position >= tail {
-            pending_selection.start = tail_anchor.clone();
+            pending_selection.start = tail_anchor;
         } else {
-            pending_selection.end = tail_anchor.clone();
+            pending_selection.end = tail_anchor;
             pending_selection.reversed = true;
         }
 
         let mut pending_mode = self.selections.pending_mode().unwrap();
         match &mut pending_mode {
-            SelectMode::Word(range) | SelectMode::Line(range) => {
-                *range = tail_anchor.clone()..tail_anchor
-            }
+            SelectMode::Word(range) | SelectMode::Line(range) => *range = tail_anchor..tail_anchor,
             _ => {}
         }
 
@@ -2145,10 +2143,9 @@ impl Editor {
                                     ));
                             if following_text_allows_autoclose && preceding_text_matches_prefix {
                                 let anchor = snapshot.anchor_before(selection.end);
-                                new_selections
-                                    .push((selection.map(|_| anchor.clone()), text.len()));
+                                new_selections.push((selection.map(|_| anchor), text.len()));
                                 new_autoclose_regions.push((
-                                    anchor.clone(),
+                                    anchor,
                                     text.len(),
                                     selection.id,
                                     bracket_pair.clone(),
@@ -2169,10 +2166,8 @@ impl Editor {
                                 && text.as_ref() == region.pair.end.as_str();
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
-                                new_selections.push((
-                                    selection.map(|_| anchor.clone()),
-                                    region.pair.end.len(),
-                                ));
+                                new_selections
+                                    .push((selection.map(|_| anchor), region.pair.end.len()));
                                 continue;
                             }
                         }
@@ -2204,7 +2199,7 @@ impl Editor {
             // text with the given input and move the selection to the end of the
             // newly inserted text.
             let anchor = snapshot.anchor_after(selection.end);
-            new_selections.push((selection.map(|_| anchor.clone()), 0));
+            new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
         }
 
@@ -2306,7 +2301,7 @@ impl Editor {
                         }
 
                         let anchor = buffer.anchor_after(end);
-                        let new_selection = selection.map(|_| anchor.clone());
+                        let new_selection = selection.map(|_| anchor);
                         (
                             (start..end, new_text),
                             (insert_extra_newline, new_selection),
@@ -2386,7 +2381,7 @@ impl Editor {
                         .iter()
                         .map(|s| {
                             let anchor = snapshot.anchor_after(s.end);
-                            s.map(|_| anchor.clone())
+                            s.map(|_| anchor)
                         })
                         .collect::<Vec<_>>()
                 };
@@ -3650,7 +3645,7 @@ impl Editor {
                         String::new(),
                     ));
                     let insertion_anchor = buffer.anchor_after(insertion_point);
-                    edits.push((insertion_anchor.clone()..insertion_anchor, text));
+                    edits.push((insertion_anchor..insertion_anchor, text));
 
                     let row_delta = range_to_move.start.row - insertion_point.row + 1;
 
@@ -3755,7 +3750,7 @@ impl Editor {
                         String::new(),
                     ));
                     let insertion_anchor = buffer.anchor_after(insertion_point);
-                    edits.push((insertion_anchor.clone()..insertion_anchor, text));
+                    edits.push((insertion_anchor..insertion_anchor, text));
 
                     let row_delta = insertion_point.row - range_to_move.end.row + 1;
 
@@ -4625,7 +4620,7 @@ impl Editor {
                     cursor_anchor: position,
                     cursor_position: point,
                     scroll_position: self.scroll_position,
-                    scroll_top_anchor: self.scroll_top_anchor.clone(),
+                    scroll_top_anchor: self.scroll_top_anchor,
                     scroll_top_row,
                 }),
                 cx,
