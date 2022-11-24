@@ -297,9 +297,16 @@ impl AutoUpdater {
     ) -> Task<Result<()>> {
         cx.background().spawn(async move {
             if should_show {
-                KEY_VALUE_STORE.write_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY, "")?;
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string(),
+                        "".to_string(),
+                    )
+                    .await?;
             } else {
-                KEY_VALUE_STORE.delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?;
+                KEY_VALUE_STORE
+                    .delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string())
+                    .await?;
             }
             Ok(())
         })

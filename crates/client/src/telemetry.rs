@@ -157,7 +157,9 @@ impl Telemetry {
                             device_id
                         } else {
                             let device_id = Uuid::new_v4().to_string();
-                            KEY_VALUE_STORE.write_kvp("device_id", &device_id)?;
+                            KEY_VALUE_STORE
+                                .write_kvp("device_id".to_string(), device_id.clone())
+                                .await?;
                             device_id
                         };
 

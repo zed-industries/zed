@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use db::{connection, indoc, sql_method, sqlez::domain::Domain};
+use db::{connection, indoc, query, sqlez::domain::Domain};
 
 use workspace::{ItemId, Workspace, WorkspaceId};
 
@@ -28,36 +28,40 @@ impl Domain for Terminal {
 }
 
 impl TerminalDb {
-    sql_method! {
-        async update_workspace_id(
+    query! {
+       pub async fn update_workspace_id(
             new_id: WorkspaceId,
             old_id: WorkspaceId,
             item_id: ItemId
-        ) -> Result<()>:
-        indoc! {"
-            UPDATE terminals
-            SET workspace_id = ?
-            WHERE workspace_id = ? AND item_id = ?
-        "}
+        ) -> Result<()> {
+            indoc!{"
+                UPDATE terminals
+                SET workspace_id = ?
+                WHERE workspace_id = ? AND item_id = ?
+            "}
+        }
     }
 
-    sql_method! {
-        async save_working_directory(
+    query! {
+        pub async fn save_working_directory(
             item_id: ItemId,
             workspace_id: WorkspaceId,
-            working_directory: PathBuf) -> Result<()>:
-                indoc!{"
-                    INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
-                    VALUES (?1, ?2, ?3)
-                "}
+            working_directory: PathBuf
+        ) -> Result<()> {
+            indoc!{"
+                INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
+                VALUES (?1, ?2, ?3)
+            "}
+        }
     }
 
-    sql_method! {
-        get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>>:
+    query! {
+        pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             indoc!{"
                 SELECT working_directory
-                FROM terminals 
+                FROM terminals
                 WHERE item_id = ? AND workspace_id = ?
             "}
+        }
     }
 }

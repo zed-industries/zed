@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use db::{connection, sql_method};
+use db::{connection, query};
 use indoc::indoc;
 use sqlez::domain::Domain;
 use workspace::{ItemId, Workspace, WorkspaceId};
@@ -31,17 +31,21 @@ impl Domain for Editor {
 }
 
 impl EditorDb {
-    sql_method! {
-        get_path(item_id: ItemId, workspace_id: WorkspaceId) -> Result<PathBuf>:
-            indoc! {"
-                SELECT path FROM editors 
-                WHERE item_id = ? AND workspace_id = ?"}
+    query! {
+        pub fn get_path(item_id: ItemId, workspace_id: WorkspaceId) -> Result<PathBuf> {
+            indoc!{"
+                SELECT path FROM editors
+                WHERE item_id = ? AND workspace_id = ?
+            "}
+        }
     }
 
-    sql_method! {
-        async save_path(item_id: ItemId, workspace_id: WorkspaceId, path: PathBuf) -> Result<()>:
-            indoc! {"
+    query! {
+        pub async fn save_path(item_id: ItemId, workspace_id: WorkspaceId, path: PathBuf) -> Result<()> {
+            indoc!{"
                 INSERT OR REPLACE INTO editors(item_id, workspace_id, path)
-                VALUES (?, ?, ?)"}
+                VALUES (?, ?, ?)
+            "}
+        }
     }
 }

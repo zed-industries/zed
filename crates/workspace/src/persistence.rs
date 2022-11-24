@@ -5,7 +5,7 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use db::{connection, sql_method, sqlez::connection::Connection};
+use db::{connection, query, sqlez::connection::Connection};
 use gpui::Axis;
 use indoc::indoc;
 
@@ -201,9 +201,10 @@ impl WorkspaceDb {
         .await;
     }
 
-    sql_method! {
-        async next_id() -> Result<WorkspaceId>:
+    query! {
+        pub async fn next_id() -> Result<WorkspaceId> {
             "INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id"
+        }
     }
 
     /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots

@@ -1,16 +1,26 @@
-use anyhow::Result;
 use indoc::indoc;
 
 use sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
-use std::ops::Deref;
 
-lazy_static::lazy_static! {
-    pub static ref KEY_VALUE_STORE: KeyValueStore =
-        KeyValueStore(crate::open_file_db());
+use crate::{open_file_db, open_memory_db, query};
+
+pub struct KeyValueStore(ThreadSafeConnection<KeyValueStore>);
+
+impl std::ops::Deref for KeyValueStore {
+    type Target = ThreadSafeConnection<KeyValueStore>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-#[derive(Clone)]
-pub struct KeyValueStore(ThreadSafeConnection<KeyValueStore>);
+lazy_static::lazy_static! {
+    pub static ref KEY_VALUE_STORE: KeyValueStore = KeyValueStore(if cfg!(any(test, feature = "test-support")) {
+        open_memory_db(stringify!($id))
+    } else {
+        open_file_db()
+    });
+}
 
 impl Domain for KeyValueStore {
     fn name() -> &'static str {
@@ -27,56 +37,52 @@ impl Domain for KeyValueStore {
     }
 }
 
-impl Deref for KeyValueStore {
-    type Target = ThreadSafeConnection<KeyValueStore>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 impl KeyValueStore {
-    pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
-        self.select_row_bound("SELECT value FROM kv_store WHERE key = (?)")?(key)
+    query! {
+        pub fn read_kvp(key: &str) -> Result<Option<String>> {
+            "SELECT value FROM kv_store WHERE key = (?)"
+        }
     }
 
-    pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
-        self.exec_bound("INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))")?((
-            key, value,
-        ))?;
-
-        Ok(())
+    query! {
+        pub async fn write_kvp(key: String, value: String) -> Result<()> {
+            "INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))"
+        }
     }
 
-    pub fn delete_kvp(&self, key: &str) -> Result<()> {
-        self.exec_bound("DELETE FROM kv_store WHERE key = (?)")?(key)
+    query! {
+        pub async fn delete_kvp(key: String) -> Result<()> {
+            "DELETE FROM kv_store WHERE key = (?)"
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
-
     use crate::kvp::KeyValueStore;
 
-    #[test]
-    fn test_kvp() -> Result<()> {
+    #[gpui::test]
+    async fn test_kvp() {
         let db = KeyValueStore(crate::open_memory_db("test_kvp"));
 
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
 
-        db.write_kvp("key-1", "one").unwrap();
+        db.write_kvp("key-1".to_string(), "one".to_string())
+            .await
+            .unwrap();
         assert_eq!(db.read_kvp("key-1").unwrap(), Some("one".to_string()));
 
-        db.write_kvp("key-1", "one-2").unwrap();
+        db.write_kvp("key-1".to_string(), "one-2".to_string())
+            .await
+            .unwrap();
         assert_eq!(db.read_kvp("key-1").unwrap(), Some("one-2".to_string()));
 
-        db.write_kvp("key-2", "two").unwrap();
+        db.write_kvp("key-2".to_string(), "two".to_string())
+            .await
+            .unwrap();
         assert_eq!(db.read_kvp("key-2").unwrap(), Some("two".to_string()));
 
-        db.delete_kvp("key-1").unwrap();
+        db.delete_kvp("key-1".to_string()).await.unwrap();
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
-
-        Ok(())
     }
 }
