@@ -4718,9 +4718,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
 
     // Refreshing selections is a no-op when excerpts haven't changed.
     editor.update(cx, |editor, cx| {
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -4731,7 +4729,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     editor.update(cx, |editor, cx| {
         // Removing an excerpt causes the first selection to become degenerate.
@@ -4745,9 +4743,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
 
         // Refreshing selections will relocate the first selection to the original buffer
         // location.
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -4801,7 +4797,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppC
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     editor.update(cx, |editor, cx| {
         assert_eq!(
@@ -4810,9 +4806,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppC
         );
 
         // Ensure we don't panic when selections are refreshed and that the pending selection is finalized.
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [Point::new(0, 3)..Point::new(0, 3)]

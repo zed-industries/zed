@@ -1334,12 +1334,13 @@ impl EditorElement {
                     })
                 }
                 TransformBlock::ExcerptHeader {
-                    key,
+                    id,
                     buffer,
                     range,
                     starts_new_buffer,
                     ..
                 } => {
+                    let id = *id;
                     let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_position = range
                             .primary
@@ -1356,7 +1357,7 @@ impl EditorElement {
 
                         enum JumpIcon {}
                         cx.render(&editor, |_, cx| {
-                            MouseEventHandler::<JumpIcon>::new(*key, cx, |state, _| {
+                            MouseEventHandler::<JumpIcon>::new(id.into(), cx, |state, _| {
                                 let style = style.jump_icon.style_for(state, false);
                                 Svg::new("icons/arrow_up_right_8.svg")
                                     .with_color(style.color)
@@ -1375,7 +1376,7 @@ impl EditorElement {
                                 cx.dispatch_action(jump_action.clone())
                             })
                             .with_tooltip::<JumpIcon, _>(
-                                *key,
+                                id.into(),
                                 "Jump to Buffer".to_string(),
                                 Some(Box::new(crate::OpenExcerpts)),
                                 tooltip_style.clone(),

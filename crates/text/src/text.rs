@@ -1770,9 +1770,9 @@ impl BufferSnapshot {
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
         if *anchor == Anchor::MIN {
-            &locator::MIN
+            Locator::min_ref()
         } else if *anchor == Anchor::MAX {
-            &locator::MAX
+            Locator::max_ref()
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,

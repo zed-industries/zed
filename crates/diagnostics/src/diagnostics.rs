@@ -322,7 +322,7 @@ impl ProjectDiagnosticsEditor {
                             );
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(
-                                    &prev_excerpt_id,
+                                    prev_excerpt_id,
                                     buffer.clone(),
                                     [ExcerptRange {
                                         context: excerpt_start..excerpt_end,
@@ -384,7 +384,7 @@ impl ProjectDiagnosticsEditor {
 
                     groups_to_add.push(group_state);
                 } else if let Some((group_ix, group_state)) = to_remove {
-                    excerpts.remove_excerpts(group_state.excerpts.iter(), excerpts_cx);
+                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), excerpts_cx);
                     group_ixs_to_remove.push(group_ix);
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group)) = to_keep {
@@ -457,10 +457,15 @@ impl ProjectDiagnosticsEditor {
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.
+            let snapshot = editor.snapshot(cx);
             for selection in &mut selections {
                 if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
                     let group_ix = match groups.binary_search_by(|probe| {
-                        probe.excerpts.last().unwrap().cmp(new_excerpt_id)
+                        probe
+                            .excerpts
+                            .last()
+                            .unwrap()
+                            .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
                     }) {
                         Ok(ix) | Err(ix) => ix,
                     };

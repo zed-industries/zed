@@ -30,16 +30,16 @@ impl Anchor {
         }
     }
 
-    pub fn excerpt_id(&self) -> &ExcerptId {
-        &self.excerpt_id
+    pub fn excerpt_id(&self) -> ExcerptId {
+        self.excerpt_id
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id);
+        let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
         if excerpt_id_cmp.is_eq() {
             if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
                 Ordering::Equal
-            } else if let Some(excerpt) = snapshot.excerpt(&self.excerpt_id) {
+            } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
             } else {
                 Ordering::Equal
@@ -51,7 +51,7 @@ impl Anchor {
 
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
         if self.text_anchor.bias != Bias::Left {
-            if let Some(excerpt) = snapshot.excerpt(&self.excerpt_id) {
+            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id.clone(),
@@ -64,7 +64,7 @@ impl Anchor {
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
         if self.text_anchor.bias != Bias::Right {
-            if let Some(excerpt) = snapshot.excerpt(&self.excerpt_id) {
+            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id.clone(),
