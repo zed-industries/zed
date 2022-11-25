@@ -657,6 +657,7 @@ async fn test_signups() {
             editor_features: vec!["speed".into()],
             programming_languages: vec!["rust".into(), "c".into()],
             device_id: Some(format!("device_id_{i}")),
+            added_to_mailing_list: i != 0, // One user failed to subscribe
         })
         .collect::<Vec<Signup>>();
 

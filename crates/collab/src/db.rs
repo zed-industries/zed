@@ -390,10 +390,11 @@ impl Db<sqlx::Postgres> {
                     platform_unknown,
                     editor_features,
                     programming_languages,
-                    device_id
+                    device_id,
+                    added_to_mailing_list
                 )
                 VALUES
-                    ($1, $2, FALSE, $3, $4, $5, FALSE, $6, $7, $8)
+                    ($1, $2, FALSE, $3, $4, $5, FALSE, $6, $7, $8, $9)
                 ON CONFLICT (email_address) DO UPDATE SET
                     email_address = excluded.email_address
                 RETURNING id
@@ -407,6 +408,7 @@ impl Db<sqlx::Postgres> {
             .bind(&signup.editor_features)
             .bind(&signup.programming_languages)
             .bind(&signup.device_id)
+            .bind(&signup.added_to_mailing_list)
             .execute(&self.pool)
             .await?;
             Ok(())
@@ -1270,6 +1272,7 @@ pub struct Signup {
     pub editor_features: Vec<String>,
     pub programming_languages: Vec<String>,
     pub device_id: Option<String>,
+    pub added_to_mailing_list: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromRow)]
