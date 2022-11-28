@@ -1,11 +1,13 @@
 use crate::{
-    elements::Empty, executor, platform, Element, ElementBox, Entity, FontCache, Handle,
-    LeakDetector, MutableAppContext, Platform, RenderContext, Subscription, TestAppContext, View,
+    elements::Empty, executor, platform, util::CwdBacktrace, Element, ElementBox, Entity,
+    FontCache, Handle, LeakDetector, MutableAppContext, Platform, RenderContext, Subscription,
+    TestAppContext, View,
 };
 use futures::StreamExt;
 use parking_lot::Mutex;
 use smol::channel;
 use std::{
+    fmt::Write,
     panic::{self, RefUnwindSafe},
     rc::Rc,
     sync::{
@@ -29,13 +31,13 @@ pub fn run_test(
     mut num_iterations: u64,
     mut starting_seed: u64,
     max_retries: usize,
+    detect_nondeterminism: bool,
     test_fn: &mut (dyn RefUnwindSafe
               + Fn(
         &mut MutableAppContext,
         Rc<platform::test::ForegroundPlatform>,
         Arc<executor::Deterministic>,
         u64,
-        bool,
     )),
     fn_name: String,
 ) {
@@ -60,10 +62,10 @@ pub fn run_test(
             let platform = Arc::new(platform::test::platform());
             let font_system = platform.fonts();
             let font_cache = Arc::new(FontCache::new(font_system));
+            let mut prev_runnable_history: Option<Vec<usize>> = None;
 
-            loop {
-                let seed = atomic_seed.fetch_add(1, SeqCst);
-                let is_last_iteration = seed + 1 >= starting_seed + num_iterations;
+            for _ in 0..num_iterations {
+                let seed = atomic_seed.load(SeqCst);
 
                 if is_randomized {
                     dbg!(seed);
@@ -82,13 +84,7 @@ pub fn run_test(
                     fn_name.clone(),
                 );
                 cx.update(|cx| {
-                    test_fn(
-                        cx,
-                        foreground_platform.clone(),
-                        deterministic.clone(),
-                        seed,
-                        is_last_iteration,
-                    );
+                    test_fn(cx, foreground_platform.clone(), deterministic.clone(), seed);
                 });
 
                 cx.update(|cx| cx.remove_all_windows());
@@ -96,8 +92,64 @@ pub fn run_test(
                 cx.update(|cx| cx.clear_globals());
 
                 leak_detector.lock().detect();
-                if is_last_iteration {
-                    break;
+
+                if detect_nondeterminism {
+                    let curr_runnable_history = deterministic.runnable_history();
+                    if let Some(prev_runnable_history) = prev_runnable_history {
+                        let mut prev_entries = prev_runnable_history.iter().fuse();
+                        let mut curr_entries = curr_runnable_history.iter().fuse();
+
+                        let mut nondeterministic = false;
+                        let mut common_history_prefix = Vec::new();
+                        let mut prev_history_suffix = Vec::new();
+                        let mut curr_history_suffix = Vec::new();
+                        loop {
+                            match (prev_entries.next(), curr_entries.next()) {
+                                (None, None) => break,
+                                (None, Some(curr_id)) => curr_history_suffix.push(*curr_id),
+                                (Some(prev_id), None) => prev_history_suffix.push(*prev_id),
+                                (Some(prev_id), Some(curr_id)) => {
+                                    if nondeterministic {
+                                        prev_history_suffix.push(*prev_id);
+                                        curr_history_suffix.push(*curr_id);
+                                    } else if prev_id == curr_id {
+                                        common_history_prefix.push(*curr_id);
+                                    } else {
+                                        nondeterministic = true;
+                                        prev_history_suffix.push(*prev_id);
+                                        curr_history_suffix.push(*curr_id);
+                                    }
+                                }
+                            }
+                        }
+
+                        if nondeterministic {
+                            let mut error = String::new();
+                            writeln!(&mut error, "Common prefix: {:?}", common_history_prefix)
+                                .unwrap();
+                            writeln!(&mut error, "Previous suffix: {:?}", prev_history_suffix)
+                                .unwrap();
+                            writeln!(&mut error, "Current suffix: {:?}", curr_history_suffix)
+                                .unwrap();
+
+                            let last_common_backtrace = common_history_prefix
+                                .last()
+                                .map(|runnable_id| deterministic.runnable_backtrace(*runnable_id));
+
+                            writeln!(
+                                &mut error,
+                                "Last future that ran on both executions: {:?}",
+                                last_common_backtrace.as_ref().map(CwdBacktrace)
+                            )
+                            .unwrap();
+                            panic!("Detected non-determinism.\n{}", error);
+                        }
+                    }
+                    prev_runnable_history = Some(curr_runnable_history);
+                }
+
+                if !detect_nondeterminism {
+                    atomic_seed.fetch_add(1, SeqCst);
                 }
             }
         });
@@ -112,7 +164,7 @@ pub fn run_test(
                     println!("retrying: attempt {}", retries);
                 } else {
                     if is_randomized {
-                        eprintln!("failing seed: {}", atomic_seed.load(SeqCst) - 1);
+                        eprintln!("failing seed: {}", atomic_seed.load(SeqCst));
                     }
                     panic::resume_unwind(error);
                 }
