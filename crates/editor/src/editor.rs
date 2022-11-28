@@ -6368,22 +6368,22 @@ impl Editor {
     fn on_buffer_event(
         &mut self,
         _: ModelHandle<MultiBuffer>,
-        event: &language::Event,
+        event: &multi_buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited => {
+            multi_buffer::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 cx.emit(Event::BufferEdited);
             }
-            language::Event::Reparsed => cx.emit(Event::Reparsed),
-            language::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
-            language::Event::Saved => cx.emit(Event::Saved),
-            language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
-            language::Event::Reloaded => cx.emit(Event::TitleChanged),
-            language::Event::Closed => cx.emit(Event::Closed),
-            language::Event::DiagnosticsUpdated => {
+            multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
+            multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
+            multi_buffer::Event::Saved => cx.emit(Event::Saved),
+            multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Closed => cx.emit(Event::Closed),
+            multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
             _ => {}
