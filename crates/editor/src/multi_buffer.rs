@@ -36,13 +36,13 @@ use util::post_inc;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
-pub type ExcerptId = Locator;
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExcerptId(usize);
 
 pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     buffers: RefCell<HashMap<usize, BufferState>>,
-    used_excerpt_ids: SumTree<ExcerptId>,
-    next_excerpt_key: usize,
+    next_excerpt_id: usize,
     subscriptions: Topic,
     singleton: bool,
     replica_id: ReplicaId,
@@ -92,7 +92,7 @@ struct BufferState {
     last_diagnostics_update_count: usize,
     last_file_update_count: usize,
     last_git_diff_update_count: usize,
-    excerpts: Vec<ExcerptId>,
+    excerpts: Vec<Locator>,
     _subscriptions: [gpui::Subscription; 2],
 }
 
@@ -100,6 +100,7 @@ struct BufferState {
 pub struct MultiBufferSnapshot {
     singleton: bool,
     excerpts: SumTree<Excerpt>,
+    excerpt_ids: SumTree<ExcerptIdMapping>,
     parse_count: usize,
     diagnostics_update_count: usize,
     trailing_excerpt_update_count: usize,
@@ -111,7 +112,6 @@ pub struct MultiBufferSnapshot {
 
 pub struct ExcerptBoundary {
     pub id: ExcerptId,
-    pub key: usize,
     pub row: u32,
     pub buffer: BufferSnapshot,
     pub range: ExcerptRange<text::Anchor>,
@@ -121,13 +121,19 @@ pub struct ExcerptBoundary {
 #[derive(Clone)]
 struct Excerpt {
     id: ExcerptId,
-    key: usize,
+    locator: Locator,
     buffer_id: usize,
     buffer: BufferSnapshot,
     range: ExcerptRange<text::Anchor>,
     max_buffer_row: u32,
     text_summary: TextSummary,
     has_trailing_newline: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ExcerptIdMapping {
+    id: ExcerptId,
+    locator: Locator,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,6 +145,7 @@ pub struct ExcerptRange<T> {
 #[derive(Clone, Debug, Default)]
 struct ExcerptSummary {
     excerpt_id: ExcerptId,
+    excerpt_locator: Locator,
     max_buffer_row: u32,
     text: TextSummary,
 }
@@ -178,8 +185,7 @@ impl MultiBuffer {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
-            used_excerpt_ids: Default::default(),
-            next_excerpt_key: Default::default(),
+            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: false,
             replica_id,
@@ -218,8 +224,7 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
-            used_excerpt_ids: self.used_excerpt_ids.clone(),
-            next_excerpt_key: self.next_excerpt_key,
+            next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: self.singleton,
             replica_id: self.replica_id,
@@ -610,11 +615,14 @@ impl MultiBuffer {
         let mut selections_by_buffer: HashMap<usize, Vec<Selection<text::Anchor>>> =
             Default::default();
         let snapshot = self.read(cx);
-        let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
+        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
         for selection in selections {
-            cursor.seek(&Some(&selection.start.excerpt_id), Bias::Left, &());
+            let start_locator = snapshot.excerpt_locator_for_id(selection.start.excerpt_id);
+            let end_locator = snapshot.excerpt_locator_for_id(selection.end.excerpt_id);
+
+            cursor.seek(&Some(start_locator), Bias::Left, &());
             while let Some(excerpt) = cursor.item() {
-                if excerpt.id > selection.end.excerpt_id {
+                if excerpt.locator > *end_locator {
                     break;
                 }
 
@@ -745,7 +753,7 @@ impl MultiBuffer {
     where
         O: text::ToOffset,
     {
-        self.insert_excerpts_after(&ExcerptId::max(), buffer, ranges, cx)
+        self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
     }
 
     pub fn push_excerpts_with_context_lines<O>(
@@ -818,7 +826,7 @@ impl MultiBuffer {
 
     pub fn insert_excerpts_after<O>(
         &mut self,
-        prev_excerpt_id: &ExcerptId,
+        prev_excerpt_id: ExcerptId,
         buffer: ModelHandle<Buffer>,
         ranges: impl IntoIterator<Item = ExcerptRange<O>>,
         cx: &mut ModelContext<Self>,
@@ -854,8 +862,12 @@ impl MultiBuffer {
         });
 
         let mut snapshot = self.snapshot.borrow_mut();
-        let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
-        let mut new_excerpts = cursor.slice(&Some(prev_excerpt_id), Bias::Right, &());
+
+        let mut prev_locator = snapshot.excerpt_locator_for_id(prev_excerpt_id).clone();
+        let mut new_excerpt_ids = mem::take(&mut snapshot.excerpt_ids);
+        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
+        let mut new_excerpts = cursor.slice(&prev_locator, Bias::Right, &());
+        prev_locator = cursor.start().unwrap_or(Locator::min_ref()).clone();
 
         let edit_start = new_excerpts.summary().text.len;
         new_excerpts.update_last(
@@ -865,25 +877,17 @@ impl MultiBuffer {
             &(),
         );
 
-        let mut used_cursor = self.used_excerpt_ids.cursor::<Locator>();
-        used_cursor.seek(prev_excerpt_id, Bias::Right, &());
-        let mut prev_id = if let Some(excerpt_id) = used_cursor.prev_item() {
-            excerpt_id.clone()
+        let next_locator = if let Some(excerpt) = cursor.item() {
+            excerpt.locator.clone()
         } else {
-            ExcerptId::min()
+            Locator::max()
         };
-        let next_id = if let Some(excerpt_id) = used_cursor.item() {
-            excerpt_id.clone()
-        } else {
-            ExcerptId::max()
-        };
-        drop(used_cursor);
 
         let mut ids = Vec::new();
         while let Some(range) = ranges.next() {
-            let id = ExcerptId::between(&prev_id, &next_id);
-            if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
-                buffer_state.excerpts.insert(ix, id.clone());
+            let locator = Locator::between(&prev_locator, &next_locator);
+            if let Err(ix) = buffer_state.excerpts.binary_search(&locator) {
+                buffer_state.excerpts.insert(ix, locator.clone());
             }
             let range = ExcerptRange {
                 context: buffer_snapshot.anchor_before(&range.context.start)
@@ -893,22 +897,20 @@ impl MultiBuffer {
                         ..buffer_snapshot.anchor_after(&primary.end)
                 }),
             };
+            let id = ExcerptId(post_inc(&mut self.next_excerpt_id));
             let excerpt = Excerpt::new(
-                id.clone(),
-                post_inc(&mut self.next_excerpt_key),
+                id,
+                locator.clone(),
                 buffer_id,
                 buffer_snapshot.clone(),
                 range,
                 ranges.peek().is_some() || cursor.item().is_some(),
             );
             new_excerpts.push(excerpt, &());
-            prev_id = id.clone();
+            prev_locator = locator.clone();
+            new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
             ids.push(id);
         }
-        self.used_excerpt_ids.edit(
-            ids.iter().cloned().map(sum_tree::Edit::Insert).collect(),
-            &(),
-        );
 
         let edit_end = new_excerpts.summary().text.len;
 
@@ -917,6 +919,7 @@ impl MultiBuffer {
         new_excerpts.push_tree(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
+        snapshot.excerpt_ids = new_excerpt_ids;
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
         }
@@ -956,16 +959,16 @@ impl MultiBuffer {
         let mut excerpts = Vec::new();
         let snapshot = self.read(cx);
         let buffers = self.buffers.borrow();
-        let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
-        for excerpt_id in buffers
+        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
+        for locator in buffers
             .get(&buffer.id())
             .map(|state| &state.excerpts)
             .into_iter()
             .flatten()
         {
-            cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
+            cursor.seek_forward(&Some(locator), Bias::Left, &());
             if let Some(excerpt) = cursor.item() {
-                if excerpt.id == *excerpt_id {
+                if excerpt.locator == *locator {
                     excerpts.push((excerpt.id.clone(), excerpt.range.clone()));
                 }
             }
@@ -975,10 +978,11 @@ impl MultiBuffer {
     }
 
     pub fn excerpt_ids(&self) -> Vec<ExcerptId> {
-        self.buffers
+        self.snapshot
             .borrow()
-            .values()
-            .flat_map(|state| state.excerpts.iter().cloned())
+            .excerpts
+            .iter()
+            .map(|entry| entry.id)
             .collect()
     }
 
@@ -1061,32 +1065,34 @@ impl MultiBuffer {
         result
     }
 
-    pub fn remove_excerpts<'a>(
+    pub fn remove_excerpts(
         &mut self,
-        excerpt_ids: impl IntoIterator<Item = &'a ExcerptId>,
+        excerpt_ids: impl IntoIterator<Item = ExcerptId>,
         cx: &mut ModelContext<Self>,
     ) {
         self.sync(cx);
         let mut buffers = self.buffers.borrow_mut();
         let mut snapshot = self.snapshot.borrow_mut();
         let mut new_excerpts = SumTree::new();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
         let mut edits = Vec::new();
         let mut excerpt_ids = excerpt_ids.into_iter().peekable();
 
-        while let Some(mut excerpt_id) = excerpt_ids.next() {
+        while let Some(excerpt_id) = excerpt_ids.next() {
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
-            new_excerpts.push_tree(cursor.slice(&Some(excerpt_id), Bias::Left, &()), &());
+            let locator = snapshot.excerpt_locator_for_id(excerpt_id);
+            new_excerpts.push_tree(cursor.slice(&Some(locator), Bias::Left, &()), &());
+
             if let Some(mut excerpt) = cursor.item() {
-                if excerpt.id != *excerpt_id {
+                if excerpt.id != excerpt_id {
                     continue;
                 }
                 let mut old_start = cursor.start().1;
 
                 // Skip over the removed excerpt.
-                loop {
+                'remove_excerpts: loop {
                     if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
-                        buffer_state.excerpts.retain(|id| id != excerpt_id);
+                        buffer_state.excerpts.retain(|l| l != &excerpt.locator);
                         if buffer_state.excerpts.is_empty() {
                             buffers.remove(&excerpt.buffer_id);
                         }
@@ -1094,14 +1100,16 @@ impl MultiBuffer {
                     cursor.next(&());
 
                     // Skip over any subsequent excerpts that are also removed.
-                    if let Some(&next_excerpt_id) = excerpt_ids.peek() {
+                    while let Some(&next_excerpt_id) = excerpt_ids.peek() {
+                        let next_locator = snapshot.excerpt_locator_for_id(next_excerpt_id);
                         if let Some(next_excerpt) = cursor.item() {
-                            if next_excerpt.id == *next_excerpt_id {
+                            if next_excerpt.locator == *next_locator {
+                                excerpt_ids.next();
                                 excerpt = next_excerpt;
-                                excerpt_id = excerpt_ids.next().unwrap();
-                                continue;
+                                continue 'remove_excerpts;
                             }
                         }
+                        break;
                     }
 
                     break;
@@ -1128,6 +1136,7 @@ impl MultiBuffer {
         new_excerpts.push_tree(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
+
         if changed_trailing_excerpt {
             snapshot.trailing_excerpt_update_count += 1;
         }
@@ -1307,7 +1316,7 @@ impl MultiBuffer {
                     buffer_state
                         .excerpts
                         .iter()
-                        .map(|excerpt_id| (excerpt_id, buffer_state.buffer.clone(), buffer_edited)),
+                        .map(|locator| (locator, buffer_state.buffer.clone(), buffer_edited)),
                 );
             }
 
@@ -1333,14 +1342,14 @@ impl MultiBuffer {
         snapshot.is_dirty = is_dirty;
         snapshot.has_conflict = has_conflict;
 
-        excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _, _)| *excerpt_id);
+        excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::new();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
 
-        for (id, buffer, buffer_edited) in excerpts_to_edit {
-            new_excerpts.push_tree(cursor.slice(&Some(id), Bias::Left, &()), &());
+        for (locator, buffer, buffer_edited) in excerpts_to_edit {
+            new_excerpts.push_tree(cursor.slice(&Some(locator), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
             let buffer_id = buffer.id();
             let buffer = buffer.read(cx);
@@ -1365,8 +1374,8 @@ impl MultiBuffer {
                 );
 
                 new_excerpt = Excerpt::new(
-                    id.clone(),
-                    old_excerpt.key,
+                    old_excerpt.id,
+                    locator.clone(),
                     buffer_id,
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
@@ -1467,13 +1476,7 @@ impl MultiBuffer {
                 continue;
             }
 
-            let excerpt_ids = self
-                .buffers
-                .borrow()
-                .values()
-                .flat_map(|b| &b.excerpts)
-                .cloned()
-                .collect::<Vec<_>>();
+            let excerpt_ids = self.excerpt_ids();
             if excerpt_ids.is_empty() || (rng.gen() && excerpt_ids.len() < max_excerpts) {
                 let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
@@ -1511,24 +1514,26 @@ impl MultiBuffer {
                 log::info!(
                     "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
                     buffer_handle.id(),
-                    ranges,
+                    ranges.iter().map(|r| &r.context).collect::<Vec<_>>(),
                     ranges
                         .iter()
-                        .map(|range| &buffer_text[range.context.clone()])
+                        .map(|r| &buffer_text[r.context.clone()])
                         .collect::<Vec<_>>()
                 );
 
                 let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
-                log::info!("Inserted with id: {:?}", excerpt_id);
+                log::info!("Inserted with ids: {:?}", excerpt_id);
             } else {
                 let remove_count = rng.gen_range(1..=excerpt_ids.len());
                 let mut excerpts_to_remove = excerpt_ids
                     .choose_multiple(rng, remove_count)
                     .cloned()
                     .collect::<Vec<_>>();
-                excerpts_to_remove.sort();
+                let snapshot = self.snapshot.borrow();
+                excerpts_to_remove.sort_unstable_by(|a, b| a.cmp(b, &*snapshot));
+                drop(snapshot);
                 log::info!("Removing excerpts {:?}", excerpts_to_remove);
-                self.remove_excerpts(&excerpts_to_remove, cx);
+                self.remove_excerpts(excerpts_to_remove, cx);
             }
         }
     }
@@ -1562,6 +1567,38 @@ impl MultiBuffer {
             }
         } else {
             self.randomly_edit_excerpts(rng, mutation_count, cx);
+        }
+
+        self.check_invariants(cx);
+    }
+
+    fn check_invariants(&self, cx: &mut ModelContext<Self>) {
+        let snapshot = self.read(cx);
+        let excerpts = snapshot.excerpts.items(&());
+        let excerpt_ids = snapshot.excerpt_ids.items(&());
+
+        for (ix, excerpt) in excerpts.iter().enumerate() {
+            if ix == 0 {
+                if excerpt.locator <= Locator::min() {
+                    panic!("invalid first excerpt locator {:?}", excerpt.locator);
+                }
+            } else {
+                if excerpt.locator <= excerpts[ix - 1].locator {
+                    panic!("excerpts are out-of-order: {:?}", excerpts);
+                }
+            }
+        }
+
+        for (ix, entry) in excerpt_ids.iter().enumerate() {
+            if ix == 0 {
+                if entry.id.cmp(&ExcerptId::min(), &*snapshot).is_le() {
+                    panic!("invalid first excerpt id {:?}", entry.id);
+                }
+            } else {
+                if entry.id <= excerpt_ids[ix - 1].id {
+                    panic!("excerpt ids are out-of-order: {:?}", excerpt_ids);
+                }
+            }
         }
     }
 }
@@ -2151,7 +2188,9 @@ impl MultiBufferSnapshot {
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
-        cursor.seek(&Some(&anchor.excerpt_id), Bias::Left, &());
+        let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
+
+        cursor.seek(locator, Bias::Left, &());
         if cursor.item().is_none() {
             cursor.next(&());
         }
@@ -2189,24 +2228,25 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
-            let excerpt_id = &anchor.excerpt_id;
+            let excerpt_id = anchor.excerpt_id;
             let excerpt_anchors = iter::from_fn(|| {
                 let anchor = anchors.peek()?;
-                if anchor.excerpt_id == *excerpt_id {
+                if anchor.excerpt_id == excerpt_id {
                     Some(&anchors.next().unwrap().text_anchor)
                 } else {
                     None
                 }
             });
 
-            cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
+            let locator = self.excerpt_locator_for_id(excerpt_id);
+            cursor.seek_forward(locator, Bias::Left, &());
             if cursor.item().is_none() {
                 cursor.next(&());
             }
 
             let position = D::from_text_summary(&cursor.start().text);
             if let Some(excerpt) = cursor.item() {
-                if excerpt.id == *excerpt_id {
+                if excerpt.id == excerpt_id {
                     let excerpt_buffer_start =
                         excerpt.range.context.start.summary::<D>(&excerpt.buffer);
                     let excerpt_buffer_end =
@@ -2240,13 +2280,18 @@ impl MultiBufferSnapshot {
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
         let mut anchors = anchors.into_iter().enumerate().peekable();
-        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
+        let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
+        cursor.next(&());
+
         let mut result = Vec::new();
+
         while let Some((_, anchor)) = anchors.peek() {
-            let old_excerpt_id = &anchor.excerpt_id;
+            let old_excerpt_id = anchor.excerpt_id;
 
             // Find the location where this anchor's excerpt should be.
-            cursor.seek_forward(&Some(old_excerpt_id), Bias::Left, &());
+            let old_locator = self.excerpt_locator_for_id(old_excerpt_id);
+            cursor.seek_forward(&Some(old_locator), Bias::Left, &());
+
             if cursor.item().is_none() {
                 cursor.next(&());
             }
@@ -2256,27 +2301,22 @@ impl MultiBufferSnapshot {
 
             // Process all of the anchors for this excerpt.
             while let Some((_, anchor)) = anchors.peek() {
-                if anchor.excerpt_id != *old_excerpt_id {
+                if anchor.excerpt_id != old_excerpt_id {
                     break;
                 }
-                let mut kept_position = false;
                 let (anchor_ix, anchor) = anchors.next().unwrap();
-                let mut anchor = anchor.clone();
-
-                let id_invalid =
-                    *old_excerpt_id == ExcerptId::max() || *old_excerpt_id == ExcerptId::min();
-                let still_exists = next_excerpt.map_or(false, |excerpt| {
-                    excerpt.id == *old_excerpt_id && excerpt.contains(&anchor)
-                });
+                let mut anchor = *anchor;
 
                 // Leave min and max anchors unchanged if invalid or
                 // if the old excerpt still exists at this location
-                if id_invalid || still_exists {
-                    kept_position = true;
-                }
+                let mut kept_position = next_excerpt
+                    .map_or(false, |e| e.id == old_excerpt_id && e.contains(&anchor))
+                    || old_excerpt_id == ExcerptId::max()
+                    || old_excerpt_id == ExcerptId::min();
+
                 // If the old excerpt no longer exists at this location, then attempt to
                 // find an equivalent position for this anchor in an adjacent excerpt.
-                else {
+                if !kept_position {
                     for excerpt in [next_excerpt, prev_excerpt].iter().filter_map(|e| *e) {
                         if excerpt.contains(&anchor) {
                             anchor.excerpt_id = excerpt.id.clone();
@@ -2285,6 +2325,7 @@ impl MultiBufferSnapshot {
                         }
                     }
                 }
+
                 // If there's no adjacent excerpt that contains the anchor's position,
                 // then report that the anchor has lost its position.
                 if !kept_position {
@@ -2354,7 +2395,7 @@ impl MultiBufferSnapshot {
             };
         }
 
-        let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
+        let mut cursor = self.excerpts.cursor::<(usize, Option<ExcerptId>)>();
         cursor.seek(&offset, Bias::Right, &());
         if cursor.item().is_none() && offset == cursor.start().0 && bias == Bias::Left {
             cursor.prev(&());
@@ -2382,8 +2423,9 @@ impl MultiBufferSnapshot {
     }
 
     pub fn anchor_in_excerpt(&self, excerpt_id: ExcerptId, text_anchor: text::Anchor) -> Anchor {
-        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
-        cursor.seek(&Some(&excerpt_id), Bias::Left, &());
+        let locator = self.excerpt_locator_for_id(excerpt_id);
+        let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
+        cursor.seek(locator, Bias::Left, &());
         if let Some(excerpt) = cursor.item() {
             if excerpt.id == excerpt_id {
                 let text_anchor = excerpt.clip_anchor(text_anchor);
@@ -2401,7 +2443,7 @@ impl MultiBufferSnapshot {
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         if anchor.excerpt_id == ExcerptId::min() || anchor.excerpt_id == ExcerptId::max() {
             true
-        } else if let Some(excerpt) = self.excerpt(&anchor.excerpt_id) {
+        } else if let Some(excerpt) = self.excerpt(anchor.excerpt_id) {
             excerpt.buffer.can_resolve(&anchor.text_anchor)
         } else {
             false
@@ -2456,7 +2498,6 @@ impl MultiBufferSnapshot {
                 let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
                 let boundary = ExcerptBoundary {
                     id: excerpt.id.clone(),
-                    key: excerpt.key,
                     row: cursor.start().1.row,
                     buffer: excerpt.buffer.clone(),
                     range: excerpt.range.clone(),
@@ -2678,8 +2719,8 @@ impl MultiBufferSnapshot {
                 .flatten()
                 .map(|item| OutlineItem {
                     depth: item.depth,
-                    range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
-                        ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
+                    range: self.anchor_in_excerpt(excerpt_id, item.range.start)
+                        ..self.anchor_in_excerpt(excerpt_id, item.range.end),
                     text: item.text,
                     highlight_ranges: item.highlight_ranges,
                     name_ranges: item.name_ranges,
@@ -2688,11 +2729,29 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    fn excerpt<'a>(&'a self, excerpt_id: &'a ExcerptId) -> Option<&'a Excerpt> {
-        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
-        cursor.seek(&Some(excerpt_id), Bias::Left, &());
+    fn excerpt_locator_for_id<'a>(&'a self, id: ExcerptId) -> &'a Locator {
+        if id == ExcerptId::min() {
+            Locator::min_ref()
+        } else if id == ExcerptId::max() {
+            Locator::max_ref()
+        } else {
+            let mut cursor = self.excerpt_ids.cursor::<ExcerptId>();
+            cursor.seek(&id, Bias::Left, &());
+            if let Some(entry) = cursor.item() {
+                if entry.id == id {
+                    return &entry.locator;
+                }
+            }
+            panic!("invalid excerpt id {:?}", id)
+        }
+    }
+
+    fn excerpt<'a>(&'a self, excerpt_id: ExcerptId) -> Option<&'a Excerpt> {
+        let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
+        let locator = self.excerpt_locator_for_id(excerpt_id);
+        cursor.seek(&Some(locator), Bias::Left, &());
         if let Some(excerpt) = cursor.item() {
-            if excerpt.id == *excerpt_id {
+            if excerpt.id == excerpt_id {
                 return Some(excerpt);
             }
         }
@@ -2703,10 +2762,12 @@ impl MultiBufferSnapshot {
         &'a self,
         range: &'a Range<Anchor>,
     ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
-        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
-        cursor.seek(&Some(&range.start.excerpt_id), Bias::Left, &());
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
+        let start_locator = self.excerpt_locator_for_id(range.start.excerpt_id);
+        let end_locator = self.excerpt_locator_for_id(range.end.excerpt_id);
+        cursor.seek(start_locator, Bias::Left, &());
         cursor
-            .take_while(move |excerpt| excerpt.id <= range.end.excerpt_id)
+            .take_while(move |excerpt| excerpt.locator <= *end_locator)
             .flat_map(move |excerpt| {
                 let mut query_range = excerpt.range.context.start..excerpt.range.context.end;
                 if excerpt.id == range.start.excerpt_id {
@@ -2916,7 +2977,7 @@ impl History {
 impl Excerpt {
     fn new(
         id: ExcerptId,
-        key: usize,
+        locator: Locator,
         buffer_id: usize,
         buffer: BufferSnapshot,
         range: ExcerptRange<text::Anchor>,
@@ -2924,7 +2985,7 @@ impl Excerpt {
     ) -> Self {
         Excerpt {
             id,
-            key,
+            locator,
             max_buffer_row: range.context.end.to_point(&buffer).row,
             text_summary: buffer
                 .text_summary_for_range::<TextSummary, _>(range.context.to_offset(&buffer)),
@@ -3010,10 +3071,33 @@ impl Excerpt {
     }
 }
 
+impl ExcerptId {
+    pub fn min() -> Self {
+        Self(0)
+    }
+
+    pub fn max() -> Self {
+        Self(usize::MAX)
+    }
+
+    pub fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> cmp::Ordering {
+        let a = snapshot.excerpt_locator_for_id(*self);
+        let b = snapshot.excerpt_locator_for_id(*other);
+        a.cmp(&b).then_with(|| self.0.cmp(&other.0))
+    }
+}
+
+impl Into<usize> for ExcerptId {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
 impl fmt::Debug for Excerpt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Excerpt")
             .field("id", &self.id)
+            .field("locator", &self.locator)
             .field("buffer_id", &self.buffer_id)
             .field("range", &self.range)
             .field("text_summary", &self.text_summary)
@@ -3031,10 +3115,35 @@ impl sum_tree::Item for Excerpt {
             text += TextSummary::from("\n");
         }
         ExcerptSummary {
-            excerpt_id: self.id.clone(),
+            excerpt_id: self.id,
+            excerpt_locator: self.locator.clone(),
             max_buffer_row: self.max_buffer_row,
             text,
         }
+    }
+}
+
+impl sum_tree::Item for ExcerptIdMapping {
+    type Summary = ExcerptId;
+
+    fn summary(&self) -> Self::Summary {
+        self.id
+    }
+}
+
+impl sum_tree::KeyedItem for ExcerptIdMapping {
+    type Key = ExcerptId;
+
+    fn key(&self) -> Self::Key {
+        self.id
+    }
+}
+
+impl sum_tree::Summary for ExcerptId {
+    type Context = ();
+
+    fn add_summary(&mut self, other: &Self, _: &()) {
+        *self = *other;
     }
 }
 
@@ -3042,8 +3151,8 @@ impl sum_tree::Summary for ExcerptSummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
-        debug_assert!(summary.excerpt_id > self.excerpt_id);
-        self.excerpt_id = summary.excerpt_id.clone();
+        debug_assert!(summary.excerpt_locator > self.excerpt_locator);
+        self.excerpt_locator = summary.excerpt_locator.clone();
         self.text.add_summary(&summary.text, &());
         self.max_buffer_row = cmp::max(self.max_buffer_row, summary.max_buffer_row);
     }
@@ -3067,9 +3176,15 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Option<&'a ExcerptId> {
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<&'a Locator>> for Locator {
+    fn cmp(&self, cursor_location: &Option<&'a Locator>, _: &()) -> cmp::Ordering {
+        Ord::cmp(&Some(self), cursor_location)
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Locator {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
-        Ord::cmp(self, &Some(&cursor_location.excerpt_id))
+        Ord::cmp(self, &cursor_location.excerpt_locator)
     }
 }
 
@@ -3091,9 +3206,15 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for PointUtf16 {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a ExcerptId> {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a Locator> {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self = Some(&summary.excerpt_id);
+        *self = Some(&summary.excerpt_locator);
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptId> {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
+        *self = Some(summary.excerpt_id);
     }
 }
 
@@ -3591,7 +3712,7 @@ mod tests {
         let snapshot = multibuffer.update(cx, |multibuffer, cx| {
             let (buffer_2_excerpt_id, _) =
                 multibuffer.excerpts_for_buffer(&buffer_2, cx)[0].clone();
-            multibuffer.remove_excerpts(&[buffer_2_excerpt_id], cx);
+            multibuffer.remove_excerpts([buffer_2_excerpt_id], cx);
             multibuffer.snapshot(cx)
         });
 
@@ -3780,7 +3901,7 @@ mod tests {
 
         // Replace the buffer 1 excerpt with new excerpts from buffer 2.
         let (excerpt_id_2, excerpt_id_3) = multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.remove_excerpts([&excerpt_id_1], cx);
+            multibuffer.remove_excerpts([excerpt_id_1], cx);
             let mut ids = multibuffer
                 .push_excerpts(
                     buffer_2.clone(),
@@ -3810,9 +3931,8 @@ mod tests {
         assert_ne!(excerpt_id_2, excerpt_id_1);
 
         // Resolve some anchors from the previous snapshot in the new snapshot.
-        // Although there is still an excerpt with the same id, it is for
-        // a different buffer, so we don't attempt to resolve the old text
-        // anchor in the new buffer.
+        // The current excerpts are from a different buffer, so we don't attempt to
+        // resolve the old text anchor in the new buffer.
         assert_eq!(
             snapshot_2.summary_for_anchor::<usize>(&snapshot_1.anchor_before(2)),
             0
@@ -3824,6 +3944,9 @@ mod tests {
             ]),
             vec![0, 0]
         );
+
+        // Refresh anchors from the old snapshot. The return value indicates that both
+        // anchors lost their original excerpt.
         let refresh =
             snapshot_2.refresh_anchors(&[snapshot_1.anchor_before(2), snapshot_1.anchor_after(3)]);
         assert_eq!(
@@ -3837,10 +3960,10 @@ mod tests {
         // Replace the middle excerpt with a smaller excerpt in buffer 2,
         // that intersects the old excerpt.
         let excerpt_id_5 = multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.remove_excerpts([&excerpt_id_3], cx);
+            multibuffer.remove_excerpts([excerpt_id_3], cx);
             multibuffer
                 .insert_excerpts_after(
-                    &excerpt_id_3,
+                    excerpt_id_2,
                     buffer_2.clone(),
                     [ExcerptRange {
                         context: 5..8,
@@ -3857,8 +3980,8 @@ mod tests {
         assert_ne!(excerpt_id_5, excerpt_id_3);
 
         // Resolve some anchors from the previous snapshot in the new snapshot.
-        // The anchor in the middle excerpt snaps to the beginning of the
-        // excerpt, since it is not
+        // The third anchor can't be resolved, since its excerpt has been removed,
+        // so it resolves to the same position as its predecessor.
         let anchors = [
             snapshot_2.anchor_before(0),
             snapshot_2.anchor_after(2),
@@ -3867,7 +3990,7 @@ mod tests {
         ];
         assert_eq!(
             snapshot_3.summaries_for_anchors::<usize, _>(&anchors),
-            &[0, 2, 5, 13]
+            &[0, 2, 9, 13]
         );
 
         let new_anchors = snapshot_3.refresh_anchors(&anchors);
@@ -3889,7 +4012,7 @@ mod tests {
 
         let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
-        let mut excerpt_ids = Vec::new();
+        let mut excerpt_ids = Vec::<ExcerptId>::new();
         let mut expected_excerpts = Vec::<(ModelHandle<Buffer>, Range<text::Anchor>)>::new();
         let mut anchors = Vec::new();
         let mut old_versions = Vec::new();
@@ -3919,9 +4042,11 @@ mod tests {
                                 .collect::<String>(),
                         );
                     }
-                    ids_to_remove.sort_unstable();
+                    let snapshot = multibuffer.read(cx).read(cx);
+                    ids_to_remove.sort_unstable_by(|a, b| a.cmp(&b, &snapshot));
+                    drop(snapshot);
                     multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.remove_excerpts(&ids_to_remove, cx)
+                        multibuffer.remove_excerpts(ids_to_remove, cx)
                     });
                 }
                 30..=39 if !expected_excerpts.is_empty() => {
@@ -3945,7 +4070,6 @@ mod tests {
                     // Ensure the newly-refreshed anchors point to a valid excerpt and don't
                     // overshoot its boundaries.
                     assert_eq!(anchors.len(), prev_len);
-                    let mut cursor = multibuffer.excerpts.cursor::<Option<&ExcerptId>>();
                     for anchor in &anchors {
                         if anchor.excerpt_id == ExcerptId::min()
                             || anchor.excerpt_id == ExcerptId::max()
@@ -3953,8 +4077,7 @@ mod tests {
                             continue;
                         }
 
-                        cursor.seek_forward(&Some(&anchor.excerpt_id), Bias::Left, &());
-                        let excerpt = cursor.item().unwrap();
+                        let excerpt = multibuffer.excerpt(anchor.excerpt_id).unwrap();
                         assert_eq!(excerpt.id, anchor.excerpt_id);
                         assert!(excerpt.contains(anchor));
                     }
@@ -3994,7 +4117,7 @@ mod tests {
                     let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
                         multibuffer
                             .insert_excerpts_after(
-                                &prev_excerpt_id,
+                                prev_excerpt_id,
                                 buffer_handle.clone(),
                                 [ExcerptRange {
                                     context: start_ix..end_ix,

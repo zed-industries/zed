@@ -542,7 +542,7 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         // Set scroll position to check later
         editor.set_scroll_position(Vector2F::new(5.5, 5.5), cx);
         let original_scroll_position = editor.scroll_position;
-        let original_scroll_top_anchor = editor.scroll_top_anchor.clone();
+        let original_scroll_top_anchor = editor.scroll_top_anchor;
 
         // Jump to the end of the document and adjust scroll
         editor.move_to_end(&MoveToEnd, cx);
@@ -556,12 +556,12 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         assert_eq!(editor.scroll_top_anchor, original_scroll_top_anchor);
 
         // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-        let mut invalid_anchor = editor.scroll_top_anchor.clone();
+        let mut invalid_anchor = editor.scroll_top_anchor;
         invalid_anchor.text_anchor.buffer_id = Some(999);
         let invalid_point = Point::new(9999, 0);
         editor.navigate(
             Box::new(NavigationData {
-                cursor_anchor: invalid_anchor.clone(),
+                cursor_anchor: invalid_anchor,
                 cursor_position: invalid_point,
                 scroll_top_anchor: invalid_anchor,
                 scroll_top_row: invalid_point.row,
@@ -4718,9 +4718,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
 
     // Refreshing selections is a no-op when excerpts haven't changed.
     editor.update(cx, |editor, cx| {
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -4731,7 +4729,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     editor.update(cx, |editor, cx| {
         // Removing an excerpt causes the first selection to become degenerate.
@@ -4745,9 +4743,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
 
         // Refreshing selections will relocate the first selection to the original buffer
         // location.
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -4801,7 +4797,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppC
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     editor.update(cx, |editor, cx| {
         assert_eq!(
@@ -4810,9 +4806,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppC
         );
 
         // Ensure we don't panic when selections are refreshed and that the pending selection is finalized.
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [Point::new(0, 3)..Point::new(0, 3)]
