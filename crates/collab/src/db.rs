@@ -2520,7 +2520,7 @@ where
                                 .as_database_error()
                                 .and_then(|error| error.code())
                                 .as_deref()
-                                == Some("hey") =>
+                                == Some("40001") =>
                         {
                             // Retry (don't break the loop)
                         }
