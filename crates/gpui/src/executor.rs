@@ -75,6 +75,7 @@ struct DeterministicState {
     waiting_backtrace: Option<backtrace::Backtrace>,
     next_runnable_id: usize,
     poll_history: Vec<usize>,
+    enable_runnable_backtraces: bool,
     runnable_backtraces: collections::HashMap<usize, backtrace::Backtrace>,
 }
 
@@ -129,6 +130,7 @@ impl Deterministic {
                 waiting_backtrace: None,
                 next_runnable_id: 0,
                 poll_history: Default::default(),
+                enable_runnable_backtraces: false,
                 runnable_backtraces: Default::default(),
             })),
             parker: Default::default(),
@@ -137,6 +139,10 @@ impl Deterministic {
 
     pub fn runnable_history(&self) -> Vec<usize> {
         self.state.lock().poll_history.clone()
+    }
+
+    pub fn enable_runnable_backtrace(&self) {
+        self.state.lock().enable_runnable_backtraces = true;
     }
 
     pub fn runnable_backtrace(&self, runnable_id: usize) -> backtrace::Backtrace {
@@ -169,9 +175,11 @@ impl Deterministic {
         {
             let mut state = state.lock();
             id = util::post_inc(&mut state.next_runnable_id);
-            state
-                .runnable_backtraces
-                .insert(id, backtrace::Backtrace::new_unresolved());
+            if state.enable_runnable_backtraces {
+                state
+                    .runnable_backtraces
+                    .insert(id, backtrace::Backtrace::new_unresolved());
+            }
         }
 
         let unparker = self.parker.lock().unparker();
@@ -194,9 +202,11 @@ impl Deterministic {
         {
             let mut state = state.lock();
             id = util::post_inc(&mut state.next_runnable_id);
-            state
-                .runnable_backtraces
-                .insert(id, backtrace::Backtrace::new_unresolved());
+            if state.enable_runnable_backtraces {
+                state
+                    .runnable_backtraces
+                    .insert(id, backtrace::Backtrace::new_unresolved());
+            }
         }
 
         let unparker = self.parker.lock().unparker();
@@ -225,9 +235,11 @@ impl Deterministic {
         {
             let mut state = state.lock();
             id = util::post_inc(&mut state.next_runnable_id);
-            state
-                .runnable_backtraces
-                .insert(id, backtrace::Backtrace::new());
+            if state.enable_runnable_backtraces {
+                state
+                    .runnable_backtraces
+                    .insert(id, backtrace::Backtrace::new_unresolved());
+            }
         }
 
         let unparker = self.parker.lock().unparker();

@@ -72,6 +72,10 @@ pub fn run_test(
                 }
 
                 let deterministic = executor::Deterministic::new(seed);
+                if detect_nondeterminism {
+                    deterministic.enable_runnable_backtrace();
+                }
+
                 let leak_detector = Arc::new(Mutex::new(LeakDetector::default()));
                 let mut cx = TestAppContext::new(
                     foreground_platform.clone(),
