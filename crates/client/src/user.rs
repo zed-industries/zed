@@ -150,7 +150,6 @@ impl UserStore {
                                     client.telemetry.set_authenticated_user_info(None, false);
                                 }
 
-                                client.telemetry.report_event("sign in", Default::default());
                                 current_user_tx.send(user).await.ok();
                             }
                         }
