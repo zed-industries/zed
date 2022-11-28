@@ -398,7 +398,11 @@ impl Client {
                 let this = self.clone();
                 let reconnect_interval = state.reconnect_interval;
                 state._reconnect_task = Some(cx.spawn(|cx| async move {
+                    #[cfg(any(test, feature = "test-support"))]
+                    let mut rng = StdRng::seed_from_u64(0);
+                    #[cfg(not(any(test, feature = "test-support")))]
                     let mut rng = StdRng::from_entropy();
+
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     while let Err(error) = this.authenticate_and_connect(true, &cx).await {
                         log::error!("failed to connect {}", error);
