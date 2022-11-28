@@ -4109,9 +4109,13 @@ impl Project {
             let message = request.to_proto(project_id, buffer);
             return cx.spawn(|this, cx| async move {
                 let response = rpc.request(message).await?;
-                request
-                    .response_from_proto(response, this, buffer_handle, cx)
-                    .await
+                if this.read_with(&cx, |this, _| this.is_read_only()) {
+                    Err(anyhow!("disconnected before completing request"))
+                } else {
+                    request
+                        .response_from_proto(response, this, buffer_handle, cx)
+                        .await
+                }
             });
         }
         Task::ready(Ok(Default::default()))
