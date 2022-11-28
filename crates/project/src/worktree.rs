@@ -81,6 +81,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     visible: bool,
+    disconnected: bool,
 }
 
 #[derive(Clone)]
@@ -248,6 +249,7 @@ impl Worktree {
                 client: client.clone(),
                 diagnostic_summaries: Default::default(),
                 visible,
+                disconnected: false,
             })
         });
 
@@ -1069,6 +1071,7 @@ impl RemoteWorktree {
     pub fn disconnected_from_host(&mut self) {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();
+        self.disconnected = true;
     }
 
     pub fn update_from_remote(&mut self, update: proto::UpdateWorktree) {
@@ -1083,10 +1086,12 @@ impl RemoteWorktree {
         self.scan_id > scan_id || (self.scan_id == scan_id && self.is_complete)
     }
 
-    fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = ()> {
+    fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
         let (tx, rx) = oneshot::channel();
         if self.observed_snapshot(scan_id) {
             let _ = tx.send(());
+        } else if self.disconnected {
+            drop(tx);
         } else {
             match self
                 .snapshot_subscriptions
@@ -1097,7 +1102,8 @@ impl RemoteWorktree {
         }
 
         async move {
-            let _ = rx.await;
+            rx.await?;
+            Ok(())
         }
     }
 
@@ -1126,7 +1132,7 @@ impl RemoteWorktree {
     ) -> Task<Result<Entry>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
         cx.spawn(|this, mut cx| async move {
-            wait_for_snapshot.await;
+            wait_for_snapshot.await?;
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 let mut snapshot = worktree.background_snapshot.lock();
@@ -1145,7 +1151,7 @@ impl RemoteWorktree {
     ) -> Task<Result<()>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
         cx.spawn(|this, mut cx| async move {
-            wait_for_snapshot.await;
+            wait_for_snapshot.await?;
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 let mut snapshot = worktree.background_snapshot.lock();
