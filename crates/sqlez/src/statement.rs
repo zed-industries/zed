@@ -489,3 +489,76 @@ mod test {
         );
     }
 }
+
+mod syntax_check {
+    use std::{
+        ffi::{CStr, CString},
+        ptr,
+    };
+
+    use libsqlite3_sys::{
+        sqlite3_close, sqlite3_errmsg, sqlite3_error_offset, sqlite3_extended_errcode,
+        sqlite3_extended_result_codes, sqlite3_finalize, sqlite3_open_v2, sqlite3_prepare_v2,
+        sqlite3_stmt, SQLITE_OPEN_CREATE, SQLITE_OPEN_NOMUTEX, SQLITE_OPEN_READWRITE,
+    };
+
+    fn syntax_errors(sql: &str) -> Option<(String, i32)> {
+        let mut sqlite3 = 0 as *mut _;
+        let mut raw_statement = 0 as *mut sqlite3_stmt;
+
+        let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_READWRITE;
+        unsafe {
+            let memory_str = CString::new(":memory:").unwrap();
+            sqlite3_open_v2(memory_str.as_ptr(), &mut sqlite3, flags, 0 as *const _);
+
+            let sql = CString::new(sql).unwrap();
+
+            // Turn on extended error codes
+            sqlite3_extended_result_codes(sqlite3, 1);
+
+            sqlite3_prepare_v2(
+                sqlite3,
+                sql.as_c_str().as_ptr(),
+                -1,
+                &mut raw_statement,
+                &mut ptr::null(),
+            );
+
+            let res = sqlite3_extended_errcode(sqlite3);
+            let offset = sqlite3_error_offset(sqlite3);
+
+            if res == 1 && offset != -1 {
+                let message = sqlite3_errmsg(sqlite3);
+                let err_msg =
+                    String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
+                        .into_owned();
+
+                sqlite3_finalize(*&mut raw_statement);
+                sqlite3_close(sqlite3);
+
+                return Some((err_msg, offset));
+            } else {
+                sqlite3_finalize(*&mut raw_statement);
+                sqlite3_close(sqlite3);
+
+                None
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::syntax_errors;
+
+        #[test]
+        fn test_check_syntax() {
+            assert!(syntax_errors("SELECT FROM").is_some());
+
+            assert!(syntax_errors("SELECT col FROM table_t;").is_none());
+
+            assert!(syntax_errors("CREATE TABLE t(col TEXT,) STRICT;").is_some());
+
+            assert!(syntax_errors("CREATE TABLE t(col TEXT) STRICT;").is_none());
+        }
+    }
+}
