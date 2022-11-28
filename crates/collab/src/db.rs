@@ -2598,13 +2598,7 @@ where
                 background.simulate_random_delay().await;
             }
 
-            let result = self.runtime.as_ref().unwrap().block_on(body);
-
-            // if let Some(background) = self.background.as_ref() {
-            //     background.simulate_random_delay().await;
-            // }
-
-            result
+            self.runtime.as_ref().unwrap().block_on(body)
         }
 
         #[cfg(not(test))]
