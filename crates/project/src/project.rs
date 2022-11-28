@@ -3408,19 +3408,29 @@ impl Project {
                 position: Some(language::proto::serialize_anchor(&anchor)),
                 version: serialize_version(&source_buffer.version()),
             };
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn_weak(|this, mut cx| async move {
                 let response = rpc.request(message).await?;
 
-                source_buffer_handle
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(response.version))
-                    })
-                    .await;
+                if this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("project was dropped"))?
+                    .read_with(&cx, |this, _| this.is_read_only())
+                {
+                    return Err(anyhow!(
+                        "failed to get completions: project was disconnected"
+                    ));
+                } else {
+                    source_buffer_handle
+                        .update(&mut cx, |buffer, _| {
+                            buffer.wait_for_version(deserialize_version(response.version))
+                        })
+                        .await;
 
-                let completions = response.completions.into_iter().map(|completion| {
-                    language::proto::deserialize_completion(completion, language.clone())
-                });
-                futures::future::try_join_all(completions).await
+                    let completions = response.completions.into_iter().map(|completion| {
+                        language::proto::deserialize_completion(completion, language.clone())
+                    });
+                    futures::future::try_join_all(completions).await
+                }
             })
         } else {
             Task::ready(Ok(Default::default()))
