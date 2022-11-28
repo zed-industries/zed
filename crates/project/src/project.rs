@@ -3579,7 +3579,7 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
             let version = buffer.version();
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn_weak(|this, mut cx| async move {
                 let response = rpc
                     .request(proto::GetCodeActions {
                         project_id,
@@ -3590,17 +3590,27 @@ impl Project {
                     })
                     .await?;
 
-                buffer_handle
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(response.version))
-                    })
-                    .await;
+                if this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("project was dropped"))?
+                    .read_with(&cx, |this, _| this.is_read_only())
+                {
+                    return Err(anyhow!(
+                        "failed to get code actions: project was disconnected"
+                    ));
+                } else {
+                    buffer_handle
+                        .update(&mut cx, |buffer, _| {
+                            buffer.wait_for_version(deserialize_version(response.version))
+                        })
+                        .await;
 
-                response
-                    .actions
-                    .into_iter()
-                    .map(language::proto::deserialize_code_action)
-                    .collect()
+                    response
+                        .actions
+                        .into_iter()
+                        .map(language::proto::deserialize_code_action)
+                        .collect()
+                }
             })
         } else {
             Task::ready(Ok(Default::default()))
