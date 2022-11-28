@@ -42,6 +42,7 @@ use std::{
     fmt,
     future::Future,
     marker::PhantomData,
+    mem,
     net::SocketAddr,
     ops::{Deref, DerefMut},
     rc::Rc,
@@ -702,20 +703,15 @@ async fn create_room(
     response: Response<proto::CreateRoom>,
     session: Session,
 ) -> Result<()> {
-    let room = session
-        .db()
-        .await
-        .create_room(session.user_id, session.connection_id)
-        .await?;
-
+    let live_kit_room = nanoid::nanoid!(30);
     let live_kit_connection_info = if let Some(live_kit) = session.live_kit_client.as_ref() {
         if let Some(_) = live_kit
-            .create_room(room.live_kit_room.clone())
+            .create_room(live_kit_room.clone())
             .await
             .trace_err()
         {
             if let Some(token) = live_kit
-                .room_token(&room.live_kit_room, &session.connection_id.to_string())
+                .room_token(&live_kit_room, &session.connection_id.to_string())
                 .trace_err()
             {
                 Some(proto::LiveKitConnectionInfo {
@@ -732,10 +728,19 @@ async fn create_room(
         None
     };
 
-    response.send(proto::CreateRoomResponse {
-        room: Some(room),
-        live_kit_connection_info,
-    })?;
+    {
+        let room = session
+            .db()
+            .await
+            .create_room(session.user_id, session.connection_id, &live_kit_room)
+            .await?;
+
+        response.send(proto::CreateRoomResponse {
+            room: Some(room.clone()),
+            live_kit_connection_info,
+        })?;
+    }
+
     update_user_contacts(session.user_id, &session).await?;
     Ok(())
 }
@@ -745,15 +750,20 @@ async fn join_room(
     response: Response<proto::JoinRoom>,
     session: Session,
 ) -> Result<()> {
-    let room = session
-        .db()
-        .await
-        .join_room(
-            RoomId::from_proto(request.id),
-            session.user_id,
-            session.connection_id,
-        )
-        .await?;
+    let room = {
+        let room = session
+            .db()
+            .await
+            .join_room(
+                RoomId::from_proto(request.id),
+                session.user_id,
+                session.connection_id,
+            )
+            .await?;
+        room_updated(&room, &session);
+        room.clone()
+    };
+
     for connection_id in session
         .connection_pool()
         .await
@@ -781,7 +791,6 @@ async fn join_room(
         None
     };
 
-    room_updated(&room, &session);
     response.send(proto::JoinRoomResponse {
         room: Some(room),
         live_kit_connection_info,
@@ -814,18 +823,21 @@ async fn call(
         return Err(anyhow!("cannot call a user who isn't a contact"))?;
     }
 
-    let (room, incoming_call) = session
-        .db()
-        .await
-        .call(
-            room_id,
-            calling_user_id,
-            calling_connection_id,
-            called_user_id,
-            initial_project_id,
-        )
-        .await?;
-    room_updated(&room, &session);
+    let incoming_call = {
+        let (room, incoming_call) = &mut *session
+            .db()
+            .await
+            .call(
+                room_id,
+                calling_user_id,
+                calling_connection_id,
+                called_user_id,
+                initial_project_id,
+            )
+            .await?;
+        room_updated(&room, &session);
+        mem::take(incoming_call)
+    };
     update_user_contacts(called_user_id, &session).await?;
 
     let mut calls = session
@@ -847,12 +859,14 @@ async fn call(
         }
     }
 
-    let room = session
-        .db()
-        .await
-        .call_failed(room_id, called_user_id)
-        .await?;
-    room_updated(&room, &session);
+    {
+        let room = session
+            .db()
+            .await
+            .call_failed(room_id, called_user_id)
+            .await?;
+        room_updated(&room, &session);
+    }
     update_user_contacts(called_user_id, &session).await?;
 
     Err(anyhow!("failed to ring user"))?
@@ -865,11 +879,15 @@ async fn cancel_call(
 ) -> Result<()> {
     let called_user_id = UserId::from_proto(request.called_user_id);
     let room_id = RoomId::from_proto(request.room_id);
-    let room = session
-        .db()
-        .await
-        .cancel_call(Some(room_id), session.connection_id, called_user_id)
-        .await?;
+    {
+        let room = session
+            .db()
+            .await
+            .cancel_call(Some(room_id), session.connection_id, called_user_id)
+            .await?;
+        room_updated(&room, &session);
+    }
+
     for connection_id in session
         .connection_pool()
         .await
@@ -880,7 +898,6 @@ async fn cancel_call(
             .send(connection_id, proto::CallCanceled {})
             .trace_err();
     }
-    room_updated(&room, &session);
     response.send(proto::Ack {})?;
 
     update_user_contacts(called_user_id, &session).await?;
@@ -889,11 +906,15 @@ async fn cancel_call(
 
 async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<()> {
     let room_id = RoomId::from_proto(message.room_id);
-    let room = session
-        .db()
-        .await
-        .decline_call(Some(room_id), session.user_id)
-        .await?;
+    {
+        let room = session
+            .db()
+            .await
+            .decline_call(Some(room_id), session.user_id)
+            .await?;
+        room_updated(&room, &session);
+    }
+
     for connection_id in session
         .connection_pool()
         .await
@@ -904,7 +925,6 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
             .send(connection_id, proto::CallCanceled {})
             .trace_err();
     }
-    room_updated(&room, &session);
     update_user_contacts(session.user_id, &session).await?;
     Ok(())
 }
@@ -933,7 +953,7 @@ async fn share_project(
     response: Response<proto::ShareProject>,
     session: Session,
 ) -> Result<()> {
-    let (project_id, room) = session
+    let (project_id, room) = &*session
         .db()
         .await
         .share_project(
@@ -953,15 +973,17 @@ async fn share_project(
 async fn unshare_project(message: proto::UnshareProject, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(message.project_id);
 
-    let (room, guest_connection_ids) = session
+    let (room, guest_connection_ids) = &*session
         .db()
         .await
         .unshare_project(project_id, session.connection_id)
         .await?;
 
-    broadcast(session.connection_id, guest_connection_ids, |conn_id| {
-        session.peer.send(conn_id, message.clone())
-    });
+    broadcast(
+        session.connection_id,
+        guest_connection_ids.iter().copied(),
+        |conn_id| session.peer.send(conn_id, message.clone()),
+    );
     room_updated(&room, &session);
 
     Ok(())
@@ -977,7 +999,7 @@ async fn join_project(
 
     tracing::info!(%project_id, "join project");
 
-    let (project, replica_id) = session
+    let (project, replica_id) = &mut *session
         .db()
         .await
         .join_project(project_id, session.connection_id)
@@ -1029,7 +1051,7 @@ async fn join_project(
         language_servers: project.language_servers.clone(),
     })?;
 
-    for (worktree_id, worktree) in project.worktrees {
+    for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
         #[cfg(any(test, feature = "test-support"))]
         const MAX_CHUNK_SIZE: usize = 2;
         #[cfg(not(any(test, feature = "test-support")))]
@@ -1084,21 +1106,23 @@ async fn join_project(
 async fn leave_project(request: proto::LeaveProject, session: Session) -> Result<()> {
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
-    let project;
-    {
-        project = session
-            .db()
-            .await
-            .leave_project(project_id, sender_id)
-            .await?;
-        tracing::info!(
-            %project_id,
-            host_user_id = %project.host_user_id,
-            host_connection_id = %project.host_connection_id,
-            "leave project"
-        );
 
-        broadcast(sender_id, project.connection_ids, |conn_id| {
+    let project = session
+        .db()
+        .await
+        .leave_project(project_id, sender_id)
+        .await?;
+    tracing::info!(
+        %project_id,
+        host_user_id = %project.host_user_id,
+        host_connection_id = %project.host_connection_id,
+        "leave project"
+    );
+
+    broadcast(
+        sender_id,
+        project.connection_ids.iter().copied(),
+        |conn_id| {
             session.peer.send(
                 conn_id,
                 proto::RemoveProjectCollaborator {
@@ -1106,8 +1130,8 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
                     peer_id: sender_id.0,
                 },
             )
-        });
-    }
+        },
+    );
 
     Ok(())
 }
@@ -1118,14 +1142,14 @@ async fn update_project(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let (room, guest_connection_ids) = session
+    let (room, guest_connection_ids) = &*session
         .db()
         .await
         .update_project(project_id, session.connection_id, &request.worktrees)
         .await?;
     broadcast(
         session.connection_id,
-        guest_connection_ids,
+        guest_connection_ids.iter().copied(),
         |connection_id| {
             session
                 .peer
@@ -1151,7 +1175,7 @@ async fn update_worktree(
 
     broadcast(
         session.connection_id,
-        guest_connection_ids,
+        guest_connection_ids.iter().copied(),
         |connection_id| {
             session
                 .peer
@@ -1175,7 +1199,7 @@ async fn update_diagnostic_summary(
 
     broadcast(
         session.connection_id,
-        guest_connection_ids,
+        guest_connection_ids.iter().copied(),
         |connection_id| {
             session
                 .peer
@@ -1199,7 +1223,7 @@ async fn start_language_server(
 
     broadcast(
         session.connection_id,
-        guest_connection_ids,
+        guest_connection_ids.iter().copied(),
         |connection_id| {
             session
                 .peer
@@ -1826,52 +1850,61 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
 async fn leave_room_for_session(session: &Session) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
-    let Some(left_room) = session.db().await.leave_room(session.connection_id).await? else {
-        return Err(anyhow!("no room to leave"))?;
-    };
-    contacts_to_update.insert(session.user_id);
+    let canceled_calls_to_user_ids;
+    let live_kit_room;
+    let delete_live_kit_room;
+    {
+        let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? else {
+            return Err(anyhow!("no room to leave"))?;
+        };
+        contacts_to_update.insert(session.user_id);
 
-    for project in left_room.left_projects.into_values() {
-        for connection_id in project.connection_ids {
-            if project.host_user_id == session.user_id {
-                session
-                    .peer
-                    .send(
-                        connection_id,
-                        proto::UnshareProject {
-                            project_id: project.id.to_proto(),
-                        },
-                    )
-                    .trace_err();
-            } else {
-                session
-                    .peer
-                    .send(
-                        connection_id,
-                        proto::RemoveProjectCollaborator {
-                            project_id: project.id.to_proto(),
-                            peer_id: session.connection_id.0,
-                        },
-                    )
-                    .trace_err();
+        for project in left_room.left_projects.values() {
+            for connection_id in &project.connection_ids {
+                if project.host_user_id == session.user_id {
+                    session
+                        .peer
+                        .send(
+                            *connection_id,
+                            proto::UnshareProject {
+                                project_id: project.id.to_proto(),
+                            },
+                        )
+                        .trace_err();
+                } else {
+                    session
+                        .peer
+                        .send(
+                            *connection_id,
+                            proto::RemoveProjectCollaborator {
+                                project_id: project.id.to_proto(),
+                                peer_id: session.connection_id.0,
+                            },
+                        )
+                        .trace_err();
+                }
             }
+
+            session
+                .peer
+                .send(
+                    session.connection_id,
+                    proto::UnshareProject {
+                        project_id: project.id.to_proto(),
+                    },
+                )
+                .trace_err();
         }
 
-        session
-            .peer
-            .send(
-                session.connection_id,
-                proto::UnshareProject {
-                    project_id: project.id.to_proto(),
-                },
-            )
-            .trace_err();
+        room_updated(&left_room.room, &session);
+        canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
+        live_kit_room = mem::take(&mut left_room.room.live_kit_room);
+        delete_live_kit_room = left_room.room.participants.is_empty();
     }
 
-    room_updated(&left_room.room, &session);
     {
         let pool = session.connection_pool().await;
-        for canceled_user_id in left_room.canceled_calls_to_user_ids {
+        for canceled_user_id in canceled_calls_to_user_ids {
             for connection_id in pool.user_connection_ids(canceled_user_id) {
                 session
                     .peer
@@ -1888,18 +1921,12 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
 
     if let Some(live_kit) = session.live_kit_client.as_ref() {
         live_kit
-            .remove_participant(
-                left_room.room.live_kit_room.clone(),
-                session.connection_id.to_string(),
-            )
+            .remove_participant(live_kit_room.clone(), session.connection_id.to_string())
             .await
             .trace_err();
 
-        if left_room.room.participants.is_empty() {
-            live_kit
-                .delete_room(left_room.room.live_kit_room)
-                .await
-                .trace_err();
+        if delete_live_kit_room {
+            live_kit.delete_room(live_kit_room).await.trace_err();
         }
     }
 

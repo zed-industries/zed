@@ -24,6 +24,7 @@ axum = { version = "0.5", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.3", features = ["erased-json"] }
 base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
+dashmap = "5.4"
 envy = "0.4.2"
 futures = "0.3"
 hyper = "0.14"
