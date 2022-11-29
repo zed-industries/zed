@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod db;
+mod db2;
 mod env;
 mod rpc;
 

@@ -5,6 +5,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Error {
     Http(StatusCode, String),
     Database(sqlx::Error),
+    Database2(sea_orm::error::DbErr),
     Internal(anyhow::Error),
 }
 
@@ -17,6 +18,12 @@ impl From<anyhow::Error> for Error {
 impl From<sqlx::Error> for Error {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error)
+    }
+}
+
+impl From<sea_orm::error::DbErr> for Error {
+    fn from(error: sea_orm::error::DbErr) -> Self {
+        Self::Database2(error)
     }
 }
 
@@ -45,6 +52,9 @@ impl IntoResponse for Error {
             Error::Database(error) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
+            Error::Database2(error) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+            }
             Error::Internal(error) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
@@ -57,6 +67,7 @@ impl std::fmt::Debug for Error {
         match self {
             Error::Http(code, message) => (code, message).fmt(f),
             Error::Database(error) => error.fmt(f),
+            Error::Database2(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
         }
     }
@@ -67,6 +78,7 @@ impl std::fmt::Display for Error {
         match self {
             Error::Http(code, message) => write!(f, "{code}: {message}"),
             Error::Database(error) => error.fmt(f),
+            Error::Database2(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
         }
     }
