@@ -126,7 +126,7 @@ impl<M: Migrator> ThreadSafeConnection<M> {
                 "Initialize query failed to execute: {}",
                 initialize_query
             ))()
-            .unwrap();
+            .unwrap()
         }
 
         M::migrate(&connection).expect("Migrations failed");
@@ -163,11 +163,50 @@ impl<M: Migrator> Deref for ThreadSafeConnection<M> {
 
 #[cfg(test)]
 mod test {
-    use std::ops::Deref;
+    use std::{fs, ops::Deref, thread};
 
     use crate::domain::Domain;
 
     use super::ThreadSafeConnection;
+
+    #[test]
+    fn many_initialize_and_migrate_queries_at_once() {
+        let mut handles = vec![];
+
+        enum TestDomain {}
+        impl Domain for TestDomain {
+            fn name() -> &'static str {
+                "test"
+            }
+            fn migrations() -> &'static [&'static str] {
+                &["CREATE TABLE test(col1 TEXT, col2 TEXT) STRICT;"]
+            }
+        }
+
+        for _ in 0..100 {
+            handles.push(thread::spawn(|| {
+                let _ = ThreadSafeConnection::<TestDomain>::new("annoying-test.db", false)
+                    .with_initialize_query(
+                        "
+                        PRAGMA journal_mode=WAL;
+                        PRAGMA synchronous=NORMAL;
+                        PRAGMA busy_timeout=1;
+                        PRAGMA foreign_keys=TRUE;
+                        PRAGMA case_sensitive_like=TRUE;
+                    ",
+                    )
+                    .deref();
+            }));
+        }
+
+        for handle in handles {
+            let _ = handle.join();
+        }
+
+        // fs::remove_file("annoying-test.db").unwrap();
+        // fs::remove_file("annoying-test.db-shm").unwrap();
+        // fs::remove_file("annoying-test.db-wal").unwrap();
+    }
 
     #[test]
     #[should_panic]

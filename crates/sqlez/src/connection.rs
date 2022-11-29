@@ -108,9 +108,11 @@ impl Connection {
 
                 let res = sqlite3_errcode(self.sqlite3);
                 let offset = sqlite3_error_offset(self.sqlite3);
+                let message = sqlite3_errmsg(self.sqlite3);
+
+                sqlite3_finalize(raw_statement);
 
                 if res == 1 && offset >= 0 {
-                    let message = sqlite3_errmsg(self.sqlite3);
                     let err_msg =
                         String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
                             .into_owned();
@@ -319,11 +321,6 @@ mod test {
             .sql_has_syntax_error(&format!("{}\n{}", first_stmt, second_stmt))
             .map(|(_, offset)| offset);
 
-        assert_eq!(
-            res,
-            Some(first_stmt.len() + second_offset + 1) // TODO: This value is wrong!
-        );
-
-        panic!("{:?}", res)
+        assert_eq!(res, Some(first_stmt.len() + second_offset + 1));
     }
 }
