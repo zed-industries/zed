@@ -1,0 +1,33 @@
+#!/bin/bash
+
+set -e
+
+if [[ -z "$GITHUB_TOKEN" ]]; then
+  cat <<-MESSAGE
+Missing \`GITHUB_TOKEN\` environment variable. This token is needed
+for fetching your GitHub identity from the command-line.
+
+Create an access token here: https://github.com/settings/tokens
+Then edit your \`~/.zshrc\` (or other shell initialization script),
+adding a line like this:
+
+    export GITHUB_TOKEN="(the token)"
+
+MESSAGE
+  exit 1
+fi
+
+github_login=$(curl -sH "Authorization: bearer $GITHUB_TOKEN" https://api.github.com/user | jq -r .login)
+
+other_github_login=nathansobo
+if [[ $github_login == $other_github_login ]]; then
+  other_github_login=as-cii
+fi
+
+export ZED_ADMIN_API_TOKEN=secret
+export ZED_SERVER_URL=http://localhost:8080
+
+trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
+ZED_IMPERSONATE=${github_login} cargo run --quiet $@ &
+ZED_IMPERSONATE=${other_github_login} cargo run --quiet &
+wait
