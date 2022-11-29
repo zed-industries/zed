@@ -6391,7 +6391,7 @@ impl TestClient {
                         buffers.extend(search.await?.into_keys());
                     }
                 }
-                60..=69 => {
+                60..=79 => {
                     let worktree = project
                         .read_with(cx, |project, cx| {
                             project
