@@ -1,4 +1,4 @@
-use super::db::*;
+use super::*;
 use gpui::executor::{Background, Deterministic};
 use std::sync::Arc;
 

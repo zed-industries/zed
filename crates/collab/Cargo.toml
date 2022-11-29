@@ -36,9 +36,12 @@ prometheus = "0.13"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"
+sea-query = { version = "0.27", features = ["derive"] }
+sea-query-binder = { version = "0.2", features = ["sqlx-postgres"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 sha-1 = "0.9"
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid"] }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
@@ -48,11 +51,6 @@ toml = "0.5.8"
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
-
-[dependencies.sqlx]
-git = "https://github.com/launchbadge/sqlx"
-rev = "4b7053807c705df312bcb9b6281e184bf7534eb3"
-features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid"]
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
@@ -76,13 +74,10 @@ env_logger = "0.9"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 util = { path = "../util" }
 lazy_static = "1.4"
+sea-query-binder = { version = "0.2", features = ["sqlx-sqlite"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
+sqlx = { version = "0.6", features = ["sqlite"] }
 unindent = "0.1"
-
-[dev-dependencies.sqlx]
-git = "https://github.com/launchbadge/sqlx"
-rev = "4b7053807c705df312bcb9b6281e184bf7534eb3"
-features = ["sqlite"]
 
 [features]
 seed-support = ["clap", "lipsum", "reqwest"]

@@ -1,3 +1,7 @@
+mod schema;
+#[cfg(test)]
+mod tests;
+
 use crate::{Error, Result};
 use anyhow::anyhow;
 use axum::http::StatusCode;
@@ -5,6 +9,8 @@ use collections::{BTreeMap, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use rpc::{proto, ConnectionId};
+use sea_query::{Expr, Query};
+use sea_query_binder::SqlxBinder;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::{Migrate as _, Migration, MigrationSource},
@@ -86,6 +92,23 @@ impl BeginTransaction for Db<sqlx::Sqlite> {
 
     fn begin_transaction(&self) -> BoxFuture<Result<sqlx::Transaction<'static, sqlx::Sqlite>>> {
         async move { Ok(self.pool.begin().await?) }.boxed()
+    }
+}
+
+pub trait BuildQuery {
+    fn build_query<T: SqlxBinder>(&self, query: &T) -> (String, sea_query_binder::SqlxValues);
+}
+
+impl BuildQuery for Db<sqlx::Postgres> {
+    fn build_query<T: SqlxBinder>(&self, query: &T) -> (String, sea_query_binder::SqlxValues) {
+        query.build_sqlx(sea_query::PostgresQueryBuilder)
+    }
+}
+
+#[cfg(test)]
+impl BuildQuery for Db<sqlx::Sqlite> {
+    fn build_query<T: SqlxBinder>(&self, query: &T) -> (String, sea_query_binder::SqlxValues) {
+        query.build_sqlx(sea_query::SqliteQueryBuilder)
     }
 }
 
@@ -595,10 +618,11 @@ impl Db<sqlx::Postgres> {
 
 impl<D> Db<D>
 where
-    Self: BeginTransaction<Database = D>,
+    Self: BeginTransaction<Database = D> + BuildQuery,
     D: sqlx::Database + sqlx::migrate::MigrateDatabase,
     D::Connection: sqlx::migrate::Migrate,
     for<'a> <D as sqlx::database::HasArguments<'a>>::Arguments: sqlx::IntoArguments<'a, D>,
+    for<'a> sea_query_binder::SqlxValues: sqlx::IntoArguments<'a, D>,
     for<'a> &'a mut D::Connection: sqlx::Executor<'a, Database = D>,
     for<'a, 'b> &'b mut sqlx::Transaction<'a, D>: sqlx::Executor<'b, Database = D>,
     D::QueryResult: RowsAffected,
@@ -1537,63 +1561,66 @@ where
         worktrees: &[proto::WorktreeMetadata],
     ) -> Result<RoomGuard<(ProjectId, proto::Room)>> {
         self.transact(|mut tx| async move {
-            let (room_id, user_id) = sqlx::query_as::<_, (RoomId, UserId)>(
-                "
-                SELECT room_id, user_id
-                FROM room_participants
-                WHERE answering_connection_id = $1
-                ",
-            )
-            .bind(connection_id.0 as i32)
-            .fetch_one(&mut tx)
-            .await?;
+            let (sql, values) = self.build_query(
+                Query::select()
+                    .columns([
+                        schema::room_participant::Definition::RoomId,
+                        schema::room_participant::Definition::UserId,
+                    ])
+                    .from(schema::room_participant::Definition::Table)
+                    .and_where(
+                        Expr::col(schema::room_participant::Definition::AnsweringConnectionId)
+                            .eq(connection_id.0),
+                    ),
+            );
+            let (room_id, user_id) = sqlx::query_as_with::<_, (RoomId, UserId), _>(&sql, values)
+                .fetch_one(&mut tx)
+                .await?;
             if room_id != expected_room_id {
                 return Err(anyhow!("shared project on unexpected room"))?;
             }
 
-            let project_id: ProjectId = sqlx::query_scalar(
-                "
-                INSERT INTO projects (room_id, host_user_id, host_connection_id)
-                VALUES ($1, $2, $3)
-                RETURNING id
-                ",
-            )
-            .bind(room_id)
-            .bind(user_id)
-            .bind(connection_id.0 as i32)
-            .fetch_one(&mut tx)
-            .await?;
+            let (sql, values) = self.build_query(
+                Query::insert()
+                    .into_table(schema::project::Definition::Table)
+                    .columns([
+                        schema::project::Definition::RoomId,
+                        schema::project::Definition::HostUserId,
+                        schema::project::Definition::HostConnectionId,
+                    ])
+                    .values_panic([room_id.into(), user_id.into(), connection_id.0.into()])
+                    .returning_col(schema::project::Definition::Id),
+            );
+            let project_id: ProjectId = sqlx::query_scalar_with(&sql, values)
+                .fetch_one(&mut tx)
+                .await?;
 
             if !worktrees.is_empty() {
-                let mut params = "(?, ?, ?, ?, ?, ?, ?),".repeat(worktrees.len());
-                params.pop();
-                let query = format!(
-                    "
-                    INSERT INTO worktrees (
-                        project_id,
-                        id,
-                        root_name,
-                        abs_path,
-                        visible,
-                        scan_id,
-                        is_complete
-                    )
-                    VALUES {params}
-                    "
-                );
-
-                let mut query = sqlx::query(&query);
+                let mut query = Query::insert()
+                    .into_table(schema::worktree::Definition::Table)
+                    .columns([
+                        schema::worktree::Definition::ProjectId,
+                        schema::worktree::Definition::Id,
+                        schema::worktree::Definition::RootName,
+                        schema::worktree::Definition::AbsPath,
+                        schema::worktree::Definition::Visible,
+                        schema::worktree::Definition::ScanId,
+                        schema::worktree::Definition::IsComplete,
+                    ])
+                    .to_owned();
                 for worktree in worktrees {
-                    query = query
-                        .bind(project_id)
-                        .bind(worktree.id as i32)
-                        .bind(&worktree.root_name)
-                        .bind(&worktree.abs_path)
-                        .bind(worktree.visible)
-                        .bind(0)
-                        .bind(false);
+                    query.values_panic([
+                        project_id.into(),
+                        worktree.id.into(),
+                        worktree.root_name.clone().into(),
+                        worktree.abs_path.clone().into(),
+                        worktree.visible.into(),
+                        0.into(),
+                        false.into(),
+                    ]);
                 }
-                query.execute(&mut tx).await?;
+                let (sql, values) = self.build_query(&query);
+                sqlx::query_with(&sql, values).execute(&mut tx).await?;
             }
 
             sqlx::query(
@@ -2648,6 +2675,12 @@ macro_rules! id_type {
                 self.0.fmt(f)
             }
         }
+
+        impl From<$name> for sea_query::Value {
+            fn from(value: $name) -> Self {
+                sea_query::Value::Int(Some(value.0))
+            }
+        }
     };
 }
 
@@ -2692,6 +2725,7 @@ id_type!(WorktreeId);
 #[derive(Clone, Debug, Default, FromRow, PartialEq)]
 struct WorktreeRow {
     pub id: WorktreeId,
+    pub project_id: ProjectId,
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
