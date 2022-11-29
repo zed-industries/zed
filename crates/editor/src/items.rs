@@ -65,34 +65,26 @@ impl FollowableItem for Editor {
                     })
                 });
             editor.update(&mut cx, |editor, cx| {
-                let excerpt_id;
-                let buffer_id;
-                {
-                    let buffer = editor.buffer.read(cx).read(cx);
-                    let singleton = buffer.as_singleton().unwrap();
-                    excerpt_id = singleton.0.clone();
-                    buffer_id = singleton.1;
-                }
+                let buffer = editor.buffer.read(cx).read(cx);
                 let selections = state
                     .selections
                     .into_iter()
                     .map(|selection| {
-                        deserialize_selection(&excerpt_id, buffer_id, selection)
+                        deserialize_selection(&buffer, selection)
                             .ok_or_else(|| anyhow!("invalid selection"))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let scroll_top_anchor = state
+                    .scroll_top_anchor
+                    .and_then(|anchor| deserialize_anchor(&buffer, anchor));
+                drop(buffer);
+
                 if !selections.is_empty() {
                     editor.set_selections_from_remote(selections, cx);
                 }
-
-                if let Some(anchor) = state.scroll_top_anchor {
+                if let Some(scroll_top_anchor) = scroll_top_anchor {
                     editor.set_scroll_top_anchor(
-                        Anchor {
-                            buffer_id: Some(state.buffer_id as usize),
-                            excerpt_id,
-                            text_anchor: language::proto::deserialize_anchor(anchor)
-                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                        },
+                        scroll_top_anchor,
                         vec2f(state.scroll_x, state.scroll_y),
                         cx,
                     );
@@ -133,9 +125,7 @@ impl FollowableItem for Editor {
         let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
         Some(proto::view::Variant::Editor(proto::view::Editor {
             buffer_id,
-            scroll_top_anchor: Some(language::proto::serialize_anchor(
-                &self.scroll_top_anchor.text_anchor,
-            )),
+            scroll_top_anchor: Some(serialize_anchor(&self.scroll_top_anchor)),
             scroll_x: self.scroll_position.x(),
             scroll_y: self.scroll_position.y(),
             selections: self
@@ -159,9 +149,7 @@ impl FollowableItem for Editor {
         match update {
             proto::update_view::Variant::Editor(update) => match event {
                 Event::ScrollPositionChanged { .. } => {
-                    update.scroll_top_anchor = Some(language::proto::serialize_anchor(
-                        &self.scroll_top_anchor.text_anchor,
-                    ));
+                    update.scroll_top_anchor = Some(serialize_anchor(&self.scroll_top_anchor));
                     update.scroll_x = self.scroll_position.x();
                     update.scroll_y = self.scroll_position.y();
                     true
@@ -190,29 +178,22 @@ impl FollowableItem for Editor {
             update_view::Variant::Editor(message) => {
                 let buffer = self.buffer.read(cx);
                 let buffer = buffer.read(cx);
-                let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
-                let excerpt_id = excerpt_id.clone();
-                drop(buffer);
-
                 let selections = message
                     .selections
                     .into_iter()
-                    .filter_map(|selection| {
-                        deserialize_selection(&excerpt_id, buffer_id, selection)
-                    })
+                    .filter_map(|selection| deserialize_selection(&buffer, selection))
                     .collect::<Vec<_>>();
+                let scroll_top_anchor = message
+                    .scroll_top_anchor
+                    .and_then(|anchor| deserialize_anchor(&buffer, anchor));
+                drop(buffer);
 
                 if !selections.is_empty() {
                     self.set_selections_from_remote(selections, cx);
                     self.request_autoscroll_remotely(Autoscroll::newest(), cx);
-                } else if let Some(anchor) = message.scroll_top_anchor {
+                } else if let Some(anchor) = scroll_top_anchor {
                     self.set_scroll_top_anchor(
-                        Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: language::proto::deserialize_anchor(anchor)
-                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                        },
+                        anchor,
                         vec2f(message.scroll_x, message.scroll_y),
                         cx,
                     );
@@ -235,35 +216,38 @@ impl FollowableItem for Editor {
 fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
-        start: Some(language::proto::serialize_anchor(
-            &selection.start.text_anchor,
-        )),
-        end: Some(language::proto::serialize_anchor(
-            &selection.end.text_anchor,
-        )),
+        start: Some(serialize_anchor(&selection.start)),
+        end: Some(serialize_anchor(&selection.end)),
         reversed: selection.reversed,
     }
 }
 
+fn serialize_anchor(anchor: &Anchor) -> proto::EditorAnchor {
+    proto::EditorAnchor {
+        excerpt_id: anchor.excerpt_id.to_proto(),
+        anchor: Some(language::proto::serialize_anchor(&anchor.text_anchor)),
+    }
+}
+
 fn deserialize_selection(
-    excerpt_id: &ExcerptId,
-    buffer_id: usize,
+    buffer: &MultiBufferSnapshot,
     selection: proto::Selection,
 ) -> Option<Selection<Anchor>> {
     Some(Selection {
         id: selection.id as usize,
-        start: Anchor {
-            buffer_id: Some(buffer_id),
-            excerpt_id: excerpt_id.clone(),
-            text_anchor: language::proto::deserialize_anchor(selection.start?)?,
-        },
-        end: Anchor {
-            buffer_id: Some(buffer_id),
-            excerpt_id: excerpt_id.clone(),
-            text_anchor: language::proto::deserialize_anchor(selection.end?)?,
-        },
+        start: deserialize_anchor(buffer, selection.start?)?,
+        end: deserialize_anchor(buffer, selection.end?)?,
         reversed: selection.reversed,
         goal: SelectionGoal::None,
+    })
+}
+
+fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
+    let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
+    Some(Anchor {
+        excerpt_id,
+        text_anchor: language::proto::deserialize_anchor(anchor.anchor?)?,
+        buffer_id: Some(buffer.buffer_id_for_excerpt(excerpt_id)?),
     })
 }
 

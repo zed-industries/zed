@@ -2813,6 +2813,10 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn buffer_id_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<usize> {
+        Some(self.excerpt(excerpt_id)?.buffer_id)
+    }
+
     fn excerpt<'a>(&'a self, excerpt_id: ExcerptId) -> Option<&'a Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
         let locator = self.excerpt_locator_for_id(excerpt_id);
@@ -3145,6 +3149,14 @@ impl ExcerptId {
 
     pub fn max() -> Self {
         Self(usize::MAX)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as _
+    }
+
+    pub fn from_proto(proto: u64) -> Self {
+        Self(proto as _)
     }
 
     pub fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> cmp::Ordering {
