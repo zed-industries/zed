@@ -6587,8 +6587,16 @@ fn compute_scroll_position(
     scroll_position
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    ExcerptsAdded {
+        buffer: ModelHandle<Buffer>,
+        predecessor: ExcerptId,
+        excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
+    },
+    ExcerptsRemoved {
+        ids: Vec<ExcerptId>,
+    },
     BufferEdited,
     Edited,
     Reparsed,
@@ -6596,8 +6604,12 @@ pub enum Event {
     DirtyChanged,
     Saved,
     TitleChanged,
-    SelectionsChanged { local: bool },
-    ScrollPositionChanged { local: bool },
+    SelectionsChanged {
+        local: bool,
+    },
+    ScrollPositionChanged {
+        local: bool,
+    },
     Closed,
     IgnoredInput,
 }

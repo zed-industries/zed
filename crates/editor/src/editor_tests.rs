@@ -38,7 +38,7 @@ fn test_edit_events(cx: &mut MutableAppContext) {
                     event,
                     Event::Edited | Event::BufferEdited | Event::DirtyChanged
                 ) {
-                    events.borrow_mut().push(("editor1", *event));
+                    events.borrow_mut().push(("editor1", event.clone()));
                 }
             })
             .detach();
@@ -53,7 +53,7 @@ fn test_edit_events(cx: &mut MutableAppContext) {
                     event,
                     Event::Edited | Event::BufferEdited | Event::DirtyChanged
                 ) {
-                    events.borrow_mut().push(("editor2", *event));
+                    events.borrow_mut().push(("editor2", event.clone()));
                 }
             })
             .detach();

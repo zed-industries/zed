@@ -50,6 +50,26 @@ pub struct MultiBuffer {
     title: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Event {
+    ExcerptsAdded {
+        buffer: ModelHandle<Buffer>,
+        predecessor: ExcerptId,
+        excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
+    },
+    ExcerptsRemoved {
+        ids: Vec<ExcerptId>,
+    },
+    Edited,
+    Reloaded,
+    Reparsed,
+    Saved,
+    FileHandleChanged,
+    Closed,
+    DirtyChanged,
+    DiagnosticsUpdated,
+}
+
 #[derive(Clone)]
 struct History {
     next_transaction_id: TransactionId,
@@ -1650,26 +1670,6 @@ impl MultiBuffer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Event {
-    ExcerptsAdded {
-        buffer: ModelHandle<Buffer>,
-        predecessor: ExcerptId,
-        excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
-    },
-    ExcerptsRemoved {
-        ids: Vec<ExcerptId>,
-    },
-    Edited,
-    Reloaded,
-    Reparsed,
-    Saved,
-    FileHandleChanged,
-    Closed,
-    DirtyChanged,
-    DiagnosticsUpdated,
-}
-
 impl Entity for MultiBuffer {
     type Event = Event;
 }
@@ -2515,6 +2515,14 @@ impl MultiBufferSnapshot {
         } else {
             false
         }
+    }
+
+    pub fn excerpts(
+        &self,
+    ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, ExcerptRange<text::Anchor>)> {
+        self.excerpts
+            .iter()
+            .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
     pub fn excerpt_boundaries_in_range<R, T>(
