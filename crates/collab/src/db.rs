@@ -773,6 +773,8 @@ where
                 WHERE
                     NOT email_confirmation_sent AND
                     (platform_mac OR platform_unknown)
+                ORDER BY
+                    created_at
                 LIMIT $1
                 ",
             )
