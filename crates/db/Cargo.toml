@@ -14,6 +14,7 @@ test-support = []
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 sqlez = { path = "../sqlez" }
+sqlez_macros = { path = "../sqlez_macros" }
 util = { path = "../util" }
 anyhow = "1.0.57"
 indoc = "1.0.4"

@@ -9,6 +9,12 @@ pub trait Migrator {
     fn migrate(connection: &Connection) -> anyhow::Result<()>;
 }
 
+impl Migrator for () {
+    fn migrate(_connection: &Connection) -> anyhow::Result<()> {
+        Ok(()) // Do nothing
+    }
+}
+
 impl<D: Domain> Migrator for D {
     fn migrate(connection: &Connection) -> anyhow::Result<()> {
         connection.migrate(Self::name(), Self::migrations())

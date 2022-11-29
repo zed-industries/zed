@@ -1570,6 +1570,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "serde",
  "sqlez",
+ "sqlez_macros",
  "tempdir",
  "util",
 ]
@@ -5596,6 +5597,17 @@ dependencies = [
  "libsqlite3-sys",
  "parking_lot 0.11.2",
  "thread_local",
+]
+
+[[package]]
+name = "sqlez_macros"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "proc-macro2",
+ "quote",
+ "sqlez",
+ "syn",
 ]
 
 [[package]]

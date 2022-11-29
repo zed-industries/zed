@@ -45,6 +45,8 @@ members = [
     "crates/search",
     "crates/settings",
     "crates/snippet",
+    "crates/sqlez",
+    "crates/sqlez_macros",
     "crates/sum_tree",
     "crates/terminal",
     "crates/text",

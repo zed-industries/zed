@@ -17,7 +17,7 @@ lazy_static! {
         Default::default();
 }
 
-pub struct ThreadSafeConnection<M: Migrator> {
+pub struct ThreadSafeConnection<M: Migrator = ()> {
     uri: Arc<str>,
     persistent: bool,
     initialize_query: Option<&'static str>,

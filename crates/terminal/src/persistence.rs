@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use db::{connection, indoc, query, sqlez::domain::Domain};
+use db::{connection, query, sqlez::domain::Domain, sqlez_macros::sql};
 
 use workspace::{ItemId, Workspace, WorkspaceId};
 
@@ -14,7 +14,7 @@ impl Domain for Terminal {
     }
 
     fn migrations() -> &'static [&'static str] {
-        &[indoc! {"
+        &[sql!(
             CREATE TABLE terminals (
                 workspace_id INTEGER,
                 item_id INTEGER UNIQUE,
@@ -23,7 +23,7 @@ impl Domain for Terminal {
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
             ) STRICT;
-        "}]
+        )]
     }
 }
 
@@ -34,11 +34,9 @@ impl TerminalDb {
             old_id: WorkspaceId,
             item_id: ItemId
         ) -> Result<()> {
-            indoc!{"
-                UPDATE terminals
-                SET workspace_id = ?
-                WHERE workspace_id = ? AND item_id = ?
-            "}
+            UPDATE terminals
+            SET workspace_id = ?
+            WHERE workspace_id = ? AND item_id = ?
         }
     }
 
@@ -48,20 +46,16 @@ impl TerminalDb {
             workspace_id: WorkspaceId,
             working_directory: PathBuf
         ) -> Result<()> {
-            indoc!{"
-                INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
-                VALUES (?1, ?2, ?3)
-            "}
+            INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
+            VALUES (?, ?, ?)
         }
     }
 
     query! {
         pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
-            indoc!{"
-                SELECT working_directory
-                FROM terminals
-                WHERE item_id = ? AND workspace_id = ?
-            "}
+            SELECT working_directory
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
         }
     }
 }

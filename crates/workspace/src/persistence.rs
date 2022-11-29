@@ -5,7 +5,7 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use db::{connection, query, sqlez::connection::Connection};
+use db::{connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::Axis;
 use indoc::indoc;
 
@@ -30,49 +30,49 @@ impl Domain for Workspace {
     }
 
     fn migrations() -> &'static [&'static str] {
-        &[indoc! {"
+        &[sql!(
             CREATE TABLE workspaces(
                 workspace_id INTEGER PRIMARY KEY,
                 workspace_location BLOB UNIQUE,
-                dock_visible INTEGER, -- Boolean
-                dock_anchor TEXT, -- Enum: 'Bottom' / 'Right' / 'Expanded'
-                dock_pane INTEGER, -- NULL indicates that we don't have a dock pane yet
+                dock_visible INTEGER, // Boolean
+                dock_anchor TEXT, // Enum: 'Bottom' / 'Right' / 'Expanded'
+                dock_pane INTEGER, // NULL indicates that we don't have a dock pane yet
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
                 FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
             ) STRICT;
-            
+
             CREATE TABLE pane_groups(
                 group_id INTEGER PRIMARY KEY,
                 workspace_id INTEGER NOT NULL,
-                parent_group_id INTEGER, -- NULL indicates that this is a root node
-                position INTEGER, -- NULL indicates that this is a root node
-                axis TEXT NOT NULL, -- Enum:  'Vertical' / 'Horizontal'
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
-                    ON DELETE CASCADE 
+                parent_group_id INTEGER, // NULL indicates that this is a root node
+                position INTEGER, // NULL indicates that this is a root node
+                axis TEXT NOT NULL, // Enum: 'Vertical' / 'Horizontal'
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
                     ON UPDATE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
-            
+
             CREATE TABLE panes(
                 pane_id INTEGER PRIMARY KEY,
                 workspace_id INTEGER NOT NULL,
-                active INTEGER NOT NULL, -- Boolean
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) 
-                    ON DELETE CASCADE 
+                active INTEGER NOT NULL, // Boolean
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
                     ON UPDATE CASCADE
             ) STRICT;
-            
+
             CREATE TABLE center_panes(
                 pane_id INTEGER PRIMARY KEY,
-                parent_group_id INTEGER, -- NULL means that this is a root pane
-                position INTEGER, -- NULL means that this is a root pane
-                FOREIGN KEY(pane_id) REFERENCES panes(pane_id) 
+                parent_group_id INTEGER, // NULL means that this is a root pane
+                position INTEGER, // NULL means that this is a root pane
+                FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
                     ON DELETE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
-                            
+
             CREATE TABLE items(
-                item_id INTEGER NOT NULL, -- This is the item's view id, so this is not unique
+                item_id INTEGER NOT NULL, // This is the item's view id, so this is not unique
                 workspace_id INTEGER NOT NULL,
                 pane_id INTEGER NOT NULL,
                 kind TEXT NOT NULL,
@@ -84,7 +84,7 @@ impl Domain for Workspace {
                     ON DELETE CASCADE,
                 PRIMARY KEY(item_id, workspace_id)
             ) STRICT;
-        "}]
+        )]
     }
 }
 
@@ -158,26 +158,22 @@ impl WorkspaceDb {
                 .context("clearing out old locations")?;
 
                 // Upsert
-                conn.exec_bound(indoc! {"
+                conn.exec_bound(sql!(
                         INSERT INTO workspaces(
-                            workspace_id, 
-                            workspace_location, 
-                            dock_visible, 
-                            dock_anchor, 
+                            workspace_id,
+                            workspace_location,
+                            dock_visible,
+                            dock_anchor,
                             timestamp
-                        ) 
+                        )
                         VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
                         ON CONFLICT DO
-                            UPDATE SET 
+                            UPDATE SET
                             workspace_location = ?2,
                             dock_visible = ?3,
                             dock_anchor = ?4,
                             timestamp = CURRENT_TIMESTAMP
-                    "})?((
-                    workspace.id,
-                    &workspace.location,
-                    workspace.dock_position,
-                ))
+                ))?((workspace.id, &workspace.location, workspace.dock_position))
                 .context("Updating workspace")?;
 
                 // Save center pane group and dock pane
@@ -203,7 +199,7 @@ impl WorkspaceDb {
 
     query! {
         pub async fn next_id() -> Result<WorkspaceId> {
-            "INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id"
+            INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id
         }
     }
 

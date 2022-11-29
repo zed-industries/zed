@@ -1,6 +1,5 @@
-use indoc::indoc;
-
 use sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
+use sqlez_macros::sql;
 
 use crate::{open_file_db, open_memory_db, query};
 
@@ -28,31 +27,31 @@ impl Domain for KeyValueStore {
     }
 
     fn migrations() -> &'static [&'static str] {
-        &[indoc! {"
-           CREATE TABLE kv_store(
-               key TEXT PRIMARY KEY,
-               value TEXT NOT NULL
-           ) STRICT;
-       "}]
+        &[sql!(
+            CREATE TABLE kv_store(
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            ) STRICT;
+        )]
     }
 }
 
 impl KeyValueStore {
     query! {
         pub fn read_kvp(key: &str) -> Result<Option<String>> {
-            "SELECT value FROM kv_store WHERE key = (?)"
+            SELECT value FROM kv_store WHERE key = (?)
         }
     }
 
     query! {
         pub async fn write_kvp(key: String, value: String) -> Result<()> {
-            "INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))"
+            INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))
         }
     }
 
     query! {
         pub async fn delete_kvp(key: String) -> Result<()> {
-            "DELETE FROM kv_store WHERE key = (?)"
+            DELETE FROM kv_store WHERE key = (?)
         }
     }
 }

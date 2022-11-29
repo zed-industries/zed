@@ -1,10 +1,10 @@
 [package]
-name = "gpui_macros"
+name = "sqlez_macros"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/gpui_macros.rs"
+path = "src/sqlez_macros.rs"
 proc-macro = true
 doctest = false
 
@@ -12,4 +12,5 @@ doctest = false
 syn = "1.0"
 quote = "1.0"
 proc-macro2 = "1.0"
-
+lazy_static = "1.4"
+sqlez = { path = "../sqlez" }
