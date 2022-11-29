@@ -42,7 +42,7 @@ sea-query-binder = { version = "0.2", features = ["sqlx-postgres"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 sha-1 = "0.9"
-sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid"] }
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"

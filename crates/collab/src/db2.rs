@@ -2,6 +2,9 @@ mod project;
 mod project_collaborator;
 mod room;
 mod room_participant;
+#[cfg(test)]
+mod tests;
+mod user;
 mod worktree;
 
 use crate::{Error, Result};
@@ -16,11 +19,18 @@ use sea_orm::{
     TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::migrate::{Migrate, Migration, MigrationSource};
+use sqlx::Connection;
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
+use std::time::Duration;
 use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
+pub use user::Model as User;
+
 pub struct Database {
+    url: String,
     pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
     #[cfg(test)]
@@ -32,8 +42,9 @@ pub struct Database {
 impl Database {
     pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let mut options = ConnectOptions::new(url.into());
-        options.max_connections(max_connections);
+        options.min_connections(1).max_connections(max_connections);
         Ok(Self {
+            url: url.into(),
             pool: sea_orm::Database::connect(options).await?,
             rooms: DashMap::with_capacity(16384),
             #[cfg(test)]
@@ -41,6 +52,59 @@ impl Database {
             #[cfg(test)]
             runtime: None,
         })
+    }
+
+    pub async fn migrate(
+        &self,
+        migrations_path: &Path,
+        ignore_checksum_mismatch: bool,
+    ) -> anyhow::Result<Vec<(Migration, Duration)>> {
+        let migrations = MigrationSource::resolve(migrations_path)
+            .await
+            .map_err(|err| anyhow!("failed to load migrations: {err:?}"))?;
+
+        let mut connection = sqlx::AnyConnection::connect(&self.url).await?;
+
+        connection.ensure_migrations_table().await?;
+        let applied_migrations: HashMap<_, _> = connection
+            .list_applied_migrations()
+            .await?
+            .into_iter()
+            .map(|m| (m.version, m))
+            .collect();
+
+        let mut new_migrations = Vec::new();
+        for migration in migrations {
+            match applied_migrations.get(&migration.version) {
+                Some(applied_migration) => {
+                    if migration.checksum != applied_migration.checksum && !ignore_checksum_mismatch
+                    {
+                        Err(anyhow!(
+                            "checksum mismatch for applied migration {}",
+                            migration.description
+                        ))?;
+                    }
+                }
+                None => {
+                    let elapsed = connection.apply(&migration).await?;
+                    new_migrations.push((migration, elapsed));
+                }
+            }
+        }
+
+        Ok(new_migrations)
+    }
+
+    pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<user::Model>> {
+        let ids = ids.iter().map(|id| id.0).collect::<Vec<_>>();
+        self.transact(|tx| async {
+            let tx = tx;
+            Ok(user::Entity::find()
+                .filter(user::Column::Id.is_in(ids.iter().copied()))
+                .all(&tx)
+                .await?)
+        })
+        .await
     }
 
     pub async fn share_project(
@@ -266,6 +330,29 @@ impl<T> DerefMut for RoomGuard<T> {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NewUserParams {
+    pub github_login: String,
+    pub github_user_id: i32,
+    pub invite_count: i32,
+}
+
+#[derive(Debug)]
+pub struct NewUserResult {
+    pub user_id: UserId,
+    pub metrics_id: String,
+    pub inviting_user_id: Option<UserId>,
+    pub signup_device_id: Option<String>,
+}
+
+fn random_invite_code() -> String {
+    nanoid::nanoid!(16)
+}
+
+fn random_email_confirmation_code() -> String {
+    nanoid::nanoid!(64)
+}
+
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(
@@ -314,3 +401,94 @@ id_type!(RoomId);
 id_type!(RoomParticipantId);
 id_type!(ProjectId);
 id_type!(WorktreeId);
+
+#[cfg(test)]
+pub use test::*;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use gpui::executor::Background;
+    use lazy_static::lazy_static;
+    use parking_lot::Mutex;
+    use rand::prelude::*;
+    use sqlx::migrate::MigrateDatabase;
+    use std::sync::Arc;
+
+    pub struct TestDb {
+        pub db: Option<Arc<Database>>,
+    }
+
+    impl TestDb {
+        pub fn sqlite(background: Arc<Background>) -> Self {
+            let mut rng = StdRng::from_entropy();
+            let url = format!("sqlite://file:zed-test-{}?mode=memory", rng.gen::<u128>());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
+
+            let mut db = runtime.block_on(async {
+                let db = Database::new(&url, 5).await.unwrap();
+                let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations.sqlite");
+                db.migrate(migrations_path.as_ref(), false).await.unwrap();
+                db
+            });
+
+            db.background = Some(background);
+            db.runtime = Some(runtime);
+
+            Self {
+                db: Some(Arc::new(db)),
+            }
+        }
+
+        pub fn postgres(background: Arc<Background>) -> Self {
+            lazy_static! {
+                static ref LOCK: Mutex<()> = Mutex::new(());
+            }
+
+            let _guard = LOCK.lock();
+            let mut rng = StdRng::from_entropy();
+            let url = format!(
+                "postgres://postgres@localhost/zed-test-{}",
+                rng.gen::<u128>()
+            );
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
+
+            let mut db = runtime.block_on(async {
+                sqlx::Postgres::create_database(&url)
+                    .await
+                    .expect("failed to create test db");
+                let db = Database::new(&url, 5).await.unwrap();
+                let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
+                db.migrate(Path::new(migrations_path), false).await.unwrap();
+                db
+            });
+
+            db.background = Some(background);
+            db.runtime = Some(runtime);
+
+            Self {
+                db: Some(Arc::new(db)),
+            }
+        }
+
+        pub fn db(&self) -> &Arc<Database> {
+            self.db.as_ref().unwrap()
+        }
+    }
+
+    // TODO: Implement drop
+    // impl Drop for PostgresTestDb {
+    //     fn drop(&mut self) {
+    //         let db = self.db.take().unwrap();
+    //         db.teardown(&self.url);
+    //     }
+    // }
+}
