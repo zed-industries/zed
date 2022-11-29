@@ -12,7 +12,7 @@ smallvec = { version = "1.6", features = ["union"] }
 sum_tree = { path = "../sum_tree" }
 arrayvec = "0.7.1"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
-
+verify = { path = "../verify" }
 
 [dev-dependencies]
 rand = "0.8.3"

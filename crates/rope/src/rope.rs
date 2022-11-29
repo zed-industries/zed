@@ -12,6 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
+use verify::{verify, verify_not};
 
 pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
@@ -680,10 +681,11 @@ impl Chunk {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
         for ch in self.0.chars() {
-            if point >= target {
-                if point > target {
-                    panic!("point {:?} is inside of character {:?}", target, ch);
-                }
+            verify_not!(point > target, ("point {:?} is inside of character {:?}", target, ch), else {
+                point = target;
+            });
+
+            if point == target {
                 break;
             }
 
