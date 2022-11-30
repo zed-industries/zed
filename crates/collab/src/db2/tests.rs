@@ -192,174 +192,174 @@ test_both_dbs!(
     }
 );
 
-// test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
-//     let mut user_ids = Vec::new();
-//     for i in 0..3 {
-//         user_ids.push(
-//             db.create_user(
-//                 &format!("user{i}@example.com"),
-//                 false,
-//                 NewUserParams {
-//                     github_login: format!("user{i}"),
-//                     github_user_id: i,
-//                     invite_count: 0,
-//                 },
-//             )
-//             .await
-//             .unwrap()
-//             .user_id,
-//         );
-//     }
+test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
+    let mut user_ids = Vec::new();
+    for i in 0..3 {
+        user_ids.push(
+            db.create_user(
+                &format!("user{i}@example.com"),
+                false,
+                NewUserParams {
+                    github_login: format!("user{i}"),
+                    github_user_id: i,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id,
+        );
+    }
 
-//     let user_1 = user_ids[0];
-//     let user_2 = user_ids[1];
-//     let user_3 = user_ids[2];
+    let user_1 = user_ids[0];
+    let user_2 = user_ids[1];
+    let user_3 = user_ids[2];
 
-//     // User starts with no contacts
-//     assert_eq!(db.get_contacts(user_1).await.unwrap(), &[]);
+    // User starts with no contacts
+    assert_eq!(db.get_contacts(user_1).await.unwrap(), &[]);
 
-//     // User requests a contact. Both users see the pending request.
-//     db.send_contact_request(user_1, user_2).await.unwrap();
-//     assert!(!db.has_contact(user_1, user_2).await.unwrap());
-//     assert!(!db.has_contact(user_2, user_1).await.unwrap());
-//     assert_eq!(
-//         db.get_contacts(user_1).await.unwrap(),
-//         &[Contact::Outgoing { user_id: user_2 }],
-//     );
-//     assert_eq!(
-//         db.get_contacts(user_2).await.unwrap(),
-//         &[Contact::Incoming {
-//             user_id: user_1,
-//             should_notify: true
-//         }]
-//     );
+    // User requests a contact. Both users see the pending request.
+    db.send_contact_request(user_1, user_2).await.unwrap();
+    assert!(!db.has_contact(user_1, user_2).await.unwrap());
+    assert!(!db.has_contact(user_2, user_1).await.unwrap());
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Outgoing { user_id: user_2 }],
+    );
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Incoming {
+            user_id: user_1,
+            should_notify: true
+        }]
+    );
 
-//     // User 2 dismisses the contact request notification without accepting or rejecting.
-//     // We shouldn't notify them again.
-//     db.dismiss_contact_notification(user_1, user_2)
-//         .await
-//         .unwrap_err();
-//     db.dismiss_contact_notification(user_2, user_1)
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         db.get_contacts(user_2).await.unwrap(),
-//         &[Contact::Incoming {
-//             user_id: user_1,
-//             should_notify: false
-//         }]
-//     );
+    // User 2 dismisses the contact request notification without accepting or rejecting.
+    // We shouldn't notify them again.
+    db.dismiss_contact_notification(user_1, user_2)
+        .await
+        .unwrap_err();
+    db.dismiss_contact_notification(user_2, user_1)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Incoming {
+            user_id: user_1,
+            should_notify: false
+        }]
+    );
 
-//     // User can't accept their own contact request
-//     db.respond_to_contact_request(user_1, user_2, true)
-//         .await
-//         .unwrap_err();
+    // User can't accept their own contact request
+    db.respond_to_contact_request(user_1, user_2, true)
+        .await
+        .unwrap_err();
 
-//     // User accepts a contact request. Both users see the contact.
-//     db.respond_to_contact_request(user_2, user_1, true)
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         db.get_contacts(user_1).await.unwrap(),
-//         &[Contact::Accepted {
-//             user_id: user_2,
-//             should_notify: true,
-//             busy: false,
-//         }],
-//     );
-//     assert!(db.has_contact(user_1, user_2).await.unwrap());
-//     assert!(db.has_contact(user_2, user_1).await.unwrap());
-//     assert_eq!(
-//         db.get_contacts(user_2).await.unwrap(),
-//         &[Contact::Accepted {
-//             user_id: user_1,
-//             should_notify: false,
-//             busy: false,
-//         }]
-//     );
+    // User accepts a contact request. Both users see the contact.
+    db.respond_to_contact_request(user_2, user_1, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_2,
+            should_notify: true,
+            busy: false,
+        }],
+    );
+    assert!(db.has_contact(user_1, user_2).await.unwrap());
+    assert!(db.has_contact(user_2, user_1).await.unwrap());
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false,
+            busy: false,
+        }]
+    );
 
-//     // Users cannot re-request existing contacts.
-//     db.send_contact_request(user_1, user_2).await.unwrap_err();
-//     db.send_contact_request(user_2, user_1).await.unwrap_err();
+    // Users cannot re-request existing contacts.
+    db.send_contact_request(user_1, user_2).await.unwrap_err();
+    db.send_contact_request(user_2, user_1).await.unwrap_err();
 
-//     // Users can't dismiss notifications of them accepting other users' requests.
-//     db.dismiss_contact_notification(user_2, user_1)
-//         .await
-//         .unwrap_err();
-//     assert_eq!(
-//         db.get_contacts(user_1).await.unwrap(),
-//         &[Contact::Accepted {
-//             user_id: user_2,
-//             should_notify: true,
-//             busy: false,
-//         }]
-//     );
+    // Users can't dismiss notifications of them accepting other users' requests.
+    db.dismiss_contact_notification(user_2, user_1)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_2,
+            should_notify: true,
+            busy: false,
+        }]
+    );
 
-//     // Users can dismiss notifications of other users accepting their requests.
-//     db.dismiss_contact_notification(user_1, user_2)
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         db.get_contacts(user_1).await.unwrap(),
-//         &[Contact::Accepted {
-//             user_id: user_2,
-//             should_notify: false,
-//             busy: false,
-//         }]
-//     );
+    // Users can dismiss notifications of other users accepting their requests.
+    db.dismiss_contact_notification(user_1, user_2)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_2,
+            should_notify: false,
+            busy: false,
+        }]
+    );
 
-//     // Users send each other concurrent contact requests and
-//     // see that they are immediately accepted.
-//     db.send_contact_request(user_1, user_3).await.unwrap();
-//     db.send_contact_request(user_3, user_1).await.unwrap();
-//     assert_eq!(
-//         db.get_contacts(user_1).await.unwrap(),
-//         &[
-//             Contact::Accepted {
-//                 user_id: user_2,
-//                 should_notify: false,
-//                 busy: false,
-//             },
-//             Contact::Accepted {
-//                 user_id: user_3,
-//                 should_notify: false,
-//                 busy: false,
-//             }
-//         ]
-//     );
-//     assert_eq!(
-//         db.get_contacts(user_3).await.unwrap(),
-//         &[Contact::Accepted {
-//             user_id: user_1,
-//             should_notify: false,
-//             busy: false,
-//         }],
-//     );
+    // Users send each other concurrent contact requests and
+    // see that they are immediately accepted.
+    db.send_contact_request(user_1, user_3).await.unwrap();
+    db.send_contact_request(user_3, user_1).await.unwrap();
+    assert_eq!(
+        db.get_contacts(user_1).await.unwrap(),
+        &[
+            Contact::Accepted {
+                user_id: user_2,
+                should_notify: false,
+                busy: false,
+            },
+            Contact::Accepted {
+                user_id: user_3,
+                should_notify: false,
+                busy: false,
+            }
+        ]
+    );
+    assert_eq!(
+        db.get_contacts(user_3).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false,
+            busy: false,
+        }],
+    );
 
-//     // User declines a contact request. Both users see that it is gone.
-//     db.send_contact_request(user_2, user_3).await.unwrap();
-//     db.respond_to_contact_request(user_3, user_2, false)
-//         .await
-//         .unwrap();
-//     assert!(!db.has_contact(user_2, user_3).await.unwrap());
-//     assert!(!db.has_contact(user_3, user_2).await.unwrap());
-//     assert_eq!(
-//         db.get_contacts(user_2).await.unwrap(),
-//         &[Contact::Accepted {
-//             user_id: user_1,
-//             should_notify: false,
-//             busy: false,
-//         }]
-//     );
-//     assert_eq!(
-//         db.get_contacts(user_3).await.unwrap(),
-//         &[Contact::Accepted {
-//             user_id: user_1,
-//             should_notify: false,
-//             busy: false,
-//         }],
-//     );
-// });
+    // User declines a contact request. Both users see that it is gone.
+    db.send_contact_request(user_2, user_3).await.unwrap();
+    db.respond_to_contact_request(user_3, user_2, false)
+        .await
+        .unwrap();
+    assert!(!db.has_contact(user_2, user_3).await.unwrap());
+    assert!(!db.has_contact(user_3, user_2).await.unwrap());
+    assert_eq!(
+        db.get_contacts(user_2).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false,
+            busy: false,
+        }]
+    );
+    assert_eq!(
+        db.get_contacts(user_3).await.unwrap(),
+        &[Contact::Accepted {
+            user_id: user_1,
+            should_notify: false,
+            busy: false,
+        }],
+    );
+});
 
 test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
     let NewUserResult {
