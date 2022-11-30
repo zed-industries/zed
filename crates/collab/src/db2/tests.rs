@@ -361,46 +361,46 @@ test_both_dbs!(
 //     );
 // });
 
-// test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
-//     let NewUserResult {
-//         user_id: user1,
-//         metrics_id: metrics_id1,
-//         ..
-//     } = db
-//         .create_user(
-//             "person1@example.com",
-//             false,
-//             NewUserParams {
-//                 github_login: "person1".into(),
-//                 github_user_id: 101,
-//                 invite_count: 5,
-//             },
-//         )
-//         .await
-//         .unwrap();
-//     let NewUserResult {
-//         user_id: user2,
-//         metrics_id: metrics_id2,
-//         ..
-//     } = db
-//         .create_user(
-//             "person2@example.com",
-//             false,
-//             NewUserParams {
-//                 github_login: "person2".into(),
-//                 github_user_id: 102,
-//                 invite_count: 5,
-//             },
-//         )
-//         .await
-//         .unwrap();
+test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
+    let NewUserResult {
+        user_id: user1,
+        metrics_id: metrics_id1,
+        ..
+    } = db
+        .create_user(
+            "person1@example.com",
+            false,
+            NewUserParams {
+                github_login: "person1".into(),
+                github_user_id: 101,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap();
+    let NewUserResult {
+        user_id: user2,
+        metrics_id: metrics_id2,
+        ..
+    } = db
+        .create_user(
+            "person2@example.com",
+            false,
+            NewUserParams {
+                github_login: "person2".into(),
+                github_user_id: 102,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap();
 
-//     assert_eq!(db.get_user_metrics_id(user1).await.unwrap(), metrics_id1);
-//     assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id2);
-//     assert_eq!(metrics_id1.len(), 36);
-//     assert_eq!(metrics_id2.len(), 36);
-//     assert_ne!(metrics_id1, metrics_id2);
-// });
+    assert_eq!(db.get_user_metrics_id(user1).await.unwrap(), metrics_id1);
+    assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id2);
+    assert_eq!(metrics_id1.len(), 36);
+    assert_eq!(metrics_id2.len(), 36);
+    assert_ne!(metrics_id1, metrics_id2);
+});
 
 // #[test]
 // fn test_fuzzy_like_string() {

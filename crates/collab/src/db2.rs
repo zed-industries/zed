@@ -178,6 +178,25 @@ impl Database {
         .await
     }
 
+    pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryAs {
+            MetricsId,
+        }
+
+        self.transact(|tx| async move {
+            let metrics_id: Uuid = user::Entity::find_by_id(id)
+                .select_only()
+                .column(user::Column::MetricsId)
+                .into_values::<_, QueryAs>()
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("could not find user"))?;
+            Ok(metrics_id.to_string())
+        })
+        .await
+    }
+
     pub async fn share_project(
         &self,
         room_id: RoomId,
