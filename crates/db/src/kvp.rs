@@ -15,9 +15,9 @@ impl std::ops::Deref for KeyValueStore {
 
 lazy_static::lazy_static! {
     pub static ref KEY_VALUE_STORE: KeyValueStore = KeyValueStore(if cfg!(any(test, feature = "test-support")) {
-        open_memory_db(stringify!($id))
+        smol::block_on(open_memory_db("KEY_VALUE_STORE"))
     } else {
-        open_file_db()
+        smol::block_on(open_file_db())
     });
 }
 
@@ -62,7 +62,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_kvp() {
-        let db = KeyValueStore(crate::open_memory_db("test_kvp"));
+        let db = KeyValueStore(crate::open_memory_db("test_kvp").await);
 
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
 

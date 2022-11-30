@@ -4,31 +4,36 @@ pub mod kvp;
 pub use anyhow;
 pub use indoc::indoc;
 pub use lazy_static;
+pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
 
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
+use sqlez_macros::sql;
 use std::fs::{create_dir_all, remove_dir_all};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use util::channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::paths::DB_DIR;
 
-const INITIALIZE_QUERY: &'static str = indoc! {"
-    PRAGMA journal_mode=WAL;
+const CONNECTION_INITIALIZE_QUERY: &'static str = sql!(
     PRAGMA synchronous=NORMAL;
     PRAGMA busy_timeout=1;
     PRAGMA foreign_keys=TRUE;
     PRAGMA case_sensitive_like=TRUE;
-"};
+);
+
+const DB_INITIALIZE_QUERY: &'static str = sql!(
+    PRAGMA journal_mode=WAL;
+);
 
 lazy_static::lazy_static! {
     static ref DB_WIPED: AtomicBool = AtomicBool::new(false);
 }
 
 /// Open or create a database at the given directory path.
-pub fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
+pub async fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
     // Use 0 for now. Will implement incrementing and clearing of old db files soon TM
     let current_db_dir = (*DB_DIR).join(Path::new(&format!("0-{}", *RELEASE_CHANNEL_NAME)));
 
@@ -43,12 +48,19 @@ pub fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
     create_dir_all(&current_db_dir).expect("Should be able to create the database directory");
     let db_path = current_db_dir.join(Path::new("db.sqlite"));
 
-    ThreadSafeConnection::new(db_path.to_string_lossy().as_ref(), true)
-        .with_initialize_query(INITIALIZE_QUERY)
+    ThreadSafeConnection::<M>::builder(db_path.to_string_lossy().as_ref(), true)
+        .with_db_initialization_query(DB_INITIALIZE_QUERY)
+        .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
+        .build()
+        .await
 }
 
-pub fn open_memory_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M> {
-    ThreadSafeConnection::new(db_name, false).with_initialize_query(INITIALIZE_QUERY)
+pub async fn open_memory_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M> {
+    ThreadSafeConnection::<M>::builder(db_name, false)
+        .with_db_initialization_query(DB_INITIALIZE_QUERY)
+        .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
+        .build()
+        .await
 }
 
 /// Implements a basic DB wrapper for a given domain
@@ -67,9 +79,9 @@ macro_rules! connection {
 
         ::db::lazy_static::lazy_static! {
             pub static ref $id: $t = $t(if cfg!(any(test, feature = "test-support")) {
-                ::db::open_memory_db(stringify!($id))
+                $crate::smol::block_on(::db::open_memory_db(stringify!($id)))
             } else {
-                ::db::open_file_db()
+                $crate::smol::block_on(::db::open_file_db())
             });
         }
     };

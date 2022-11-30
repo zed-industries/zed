@@ -626,7 +626,7 @@ mod tests {
     use theme::ThemeRegistry;
     use workspace::{
         item::{Item, ItemHandle},
-        open_paths, pane, NewFile, Pane, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, Pane, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -762,8 +762,7 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.dispatch_global_action(workspace::NewFile);
-        cx.foreground().run_until_parked();
+        cx.update(|cx| open_new(&app_state, cx)).await;
 
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();

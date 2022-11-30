@@ -15,9 +15,9 @@ impl Connection {
             // Setup the migrations table unconditionally
             self.exec(indoc! {"
                 CREATE TABLE IF NOT EXISTS migrations (
-                domain TEXT,
-                step INTEGER,
-                migration TEXT
+                    domain TEXT,
+                    step INTEGER,
+                    migration TEXT
                 )"})?()?;
 
             let completed_migrations =

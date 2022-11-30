@@ -3,7 +3,7 @@ use sqlez::thread_safe_connection::ThreadSafeConnection;
 use syn::Error;
 
 lazy_static::lazy_static! {
-    static ref SQLITE: ThreadSafeConnection = ThreadSafeConnection::new(":memory:", false);
+    static ref SQLITE: ThreadSafeConnection = ThreadSafeConnection::new(":memory:", false, None);
 }
 
 #[proc_macro]

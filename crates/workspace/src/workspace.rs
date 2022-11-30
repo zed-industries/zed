@@ -162,11 +162,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewFile, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                let task = open_new(&app_state, cx);
-                cx.spawn(|_| async {
-                    task.await;
-                })
-                .detach();
+                open_new(&app_state, cx).detach();
             }
         }
     });
@@ -174,11 +170,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                let task = open_new(&app_state, cx);
-                cx.spawn(|_| async {
-                    task.await;
-                })
-                .detach();
+                open_new(&app_state, cx).detach();
             }
         }
     });
@@ -2641,13 +2633,16 @@ pub fn open_paths(
     })
 }
 
-fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
+pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
     let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
     cx.spawn(|mut cx| async move {
+        eprintln!("Open new task spawned");
         let (workspace, opened_paths) = task.await;
+        eprintln!("workspace and path items created");
 
         workspace.update(&mut cx, |_, cx| {
             if opened_paths.is_empty() {
+                eprintln!("new file redispatched");
                 cx.dispatch_action(NewFile);
             }
         })

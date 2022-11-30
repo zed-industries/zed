@@ -395,7 +395,7 @@ mod tests {
     async fn test_next_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_next_id_stability"));
+        let db = WorkspaceDb(open_memory_db("test_next_id_stability").await);
 
         db.write(|conn| {
             conn.migrate(
@@ -442,7 +442,7 @@ mod tests {
     async fn test_workspace_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_workspace_id_stability"));
+        let db = WorkspaceDb(open_memory_db("test_workspace_id_stability").await);
 
         db.write(|conn| {
             conn.migrate(
@@ -523,7 +523,7 @@ mod tests {
     async fn test_full_workspace_serialization() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_full_workspace_serialization"));
+        let db = WorkspaceDb(open_memory_db("test_full_workspace_serialization").await);
 
         let dock_pane = crate::persistence::model::SerializedPane {
             children: vec![
@@ -597,7 +597,7 @@ mod tests {
     async fn test_workspace_assignment() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_basic_functionality"));
+        let db = WorkspaceDb(open_memory_db("test_basic_functionality").await);
 
         let workspace_1 = SerializedWorkspace {
             id: 1,
@@ -689,7 +689,7 @@ mod tests {
     async fn test_basic_dock_pane() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("basic_dock_pane"));
+        let db = WorkspaceDb(open_memory_db("basic_dock_pane").await);
 
         let dock_pane = crate::persistence::model::SerializedPane::new(
             vec![
@@ -714,7 +714,7 @@ mod tests {
     async fn test_simple_split() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("simple_split"));
+        let db = WorkspaceDb(open_memory_db("simple_split").await);
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -766,7 +766,7 @@ mod tests {
     async fn test_cleanup_panes() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_cleanup_panes"));
+        let db = WorkspaceDb(open_memory_db("test_cleanup_panes").await);
 
         let center_pane = SerializedPaneGroup::Group {
             axis: gpui::Axis::Horizontal,
