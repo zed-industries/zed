@@ -1,12 +1,14 @@
 use sea_orm::entity::prelude::*;
 
+use super::ProjectId;
+
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "worktrees")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     #[sea_orm(primary_key)]
-    pub project_id: i32,
+    pub project_id: ProjectId,
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,

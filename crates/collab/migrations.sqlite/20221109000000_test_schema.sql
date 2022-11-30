@@ -8,7 +8,7 @@ CREATE TABLE "users" (
     "inviter_id" INTEGER REFERENCES users (id),
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT now,
-    "metrics_id" VARCHAR(255),
+    "metrics_id" TEXT,
     "github_user_id" INTEGER
 );
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");

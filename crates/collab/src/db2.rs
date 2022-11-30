@@ -18,6 +18,7 @@ use sea_orm::{
     entity::prelude::*, ConnectOptions, DatabaseConnection, DatabaseTransaction, DbErr,
     TransactionTrait,
 };
+use sea_query::OnConflict;
 use serde::{Deserialize, Serialize};
 use sqlx::migrate::{Migrate, Migration, MigrationSource};
 use sqlx::Connection;
@@ -42,7 +43,7 @@ pub struct Database {
 impl Database {
     pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let mut options = ConnectOptions::new(url.into());
-        options.min_connections(1).max_connections(max_connections);
+        options.max_connections(max_connections);
         Ok(Self {
             url: url.into(),
             pool: sea_orm::Database::connect(options).await?,
@@ -58,7 +59,7 @@ impl Database {
         &self,
         migrations_path: &Path,
         ignore_checksum_mismatch: bool,
-    ) -> anyhow::Result<Vec<(Migration, Duration)>> {
+    ) -> anyhow::Result<(sqlx::AnyConnection, Vec<(Migration, Duration)>)> {
         let migrations = MigrationSource::resolve(migrations_path)
             .await
             .map_err(|err| anyhow!("failed to load migrations: {err:?}"))?;
@@ -92,11 +93,45 @@ impl Database {
             }
         }
 
-        Ok(new_migrations)
+        Ok((connection, new_migrations))
+    }
+
+    pub async fn create_user(
+        &self,
+        email_address: &str,
+        admin: bool,
+        params: NewUserParams,
+    ) -> Result<NewUserResult> {
+        self.transact(|tx| async {
+            let user = user::Entity::insert(user::ActiveModel {
+                email_address: ActiveValue::set(Some(email_address.into())),
+                github_login: ActiveValue::set(params.github_login.clone()),
+                github_user_id: ActiveValue::set(Some(params.github_user_id)),
+                admin: ActiveValue::set(admin),
+                metrics_id: ActiveValue::set(Uuid::new_v4()),
+                ..Default::default()
+            })
+            .on_conflict(
+                OnConflict::column(user::Column::GithubLogin)
+                    .update_column(user::Column::GithubLogin)
+                    .to_owned(),
+            )
+            .exec_with_returning(&tx)
+            .await?;
+
+            tx.commit().await?;
+
+            Ok(NewUserResult {
+                user_id: user.id,
+                metrics_id: user.metrics_id.to_string(),
+                signup_device_id: None,
+                inviting_user_id: None,
+            })
+        })
+        .await
     }
 
     pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<user::Model>> {
-        let ids = ids.iter().map(|id| id.0).collect::<Vec<_>>();
         self.transact(|tx| async {
             let tx = tx;
             Ok(user::Entity::find()
@@ -119,7 +154,7 @@ impl Database {
                 .one(&tx)
                 .await?
                 .ok_or_else(|| anyhow!("could not find participant"))?;
-            if participant.room_id != room_id.0 {
+            if participant.room_id != room_id {
                 return Err(anyhow!("shared project on unexpected room"))?;
             }
 
@@ -156,14 +191,14 @@ impl Database {
             .await?;
 
             let room = self.get_room(room_id, &tx).await?;
-            self.commit_room_transaction(room_id, tx, (ProjectId(project.id), room))
+            self.commit_room_transaction(room_id, tx, (project.id, room))
                 .await
         })
         .await
     }
 
     async fn get_room(&self, room_id: RoomId, tx: &DatabaseTransaction) -> Result<proto::Room> {
-        let db_room = room::Entity::find_by_id(room_id.0)
+        let db_room = room::Entity::find_by_id(room_id)
             .one(tx)
             .await?
             .ok_or_else(|| anyhow!("could not find room"))?;
@@ -184,7 +219,7 @@ impl Database {
                     (Some(0), Some(project_id)) => {
                         Some(proto::participant_location::Variant::SharedProject(
                             proto::participant_location::SharedProject {
-                                id: project_id as u64,
+                                id: project_id.to_proto(),
                             },
                         ))
                     }
@@ -198,7 +233,7 @@ impl Database {
                 participants.insert(
                     answering_connection_id,
                     proto::Participant {
-                        user_id: db_participant.user_id as u64,
+                        user_id: db_participant.user_id.to_proto(),
                         peer_id: answering_connection_id as u32,
                         projects: Default::default(),
                         location: Some(proto::ParticipantLocation { variant: location }),
@@ -206,9 +241,9 @@ impl Database {
                 );
             } else {
                 pending_participants.push(proto::PendingParticipant {
-                    user_id: db_participant.user_id as u64,
-                    calling_user_id: db_participant.calling_user_id as u64,
-                    initial_project_id: db_participant.initial_project_id.map(|id| id as u64),
+                    user_id: db_participant.user_id.to_proto(),
+                    calling_user_id: db_participant.calling_user_id.to_proto(),
+                    initial_project_id: db_participant.initial_project_id.map(|id| id.to_proto()),
                 });
             }
         }
@@ -225,12 +260,12 @@ impl Database {
                 let project = if let Some(project) = participant
                     .projects
                     .iter_mut()
-                    .find(|project| project.id as i32 == db_project.id)
+                    .find(|project| project.id == db_project.id.to_proto())
                 {
                     project
                 } else {
                     participant.projects.push(proto::ParticipantProject {
-                        id: db_project.id as u64,
+                        id: db_project.id.to_proto(),
                         worktree_root_names: Default::default(),
                     });
                     participant.projects.last_mut().unwrap()
@@ -243,7 +278,7 @@ impl Database {
         }
 
         Ok(proto::Room {
-            id: db_room.id as u64,
+            id: db_room.id.to_proto(),
             live_kit_room: db_room.live_kit_room,
             participants: participants.into_values().collect(),
             pending_participants,
@@ -393,6 +428,84 @@ macro_rules! id_type {
                 self.0.fmt(f)
             }
         }
+
+        impl From<$name> for sea_query::Value {
+            fn from(value: $name) -> Self {
+                sea_query::Value::Int(Some(value.0))
+            }
+        }
+
+        impl sea_orm::TryGetable for $name {
+            fn try_get(
+                res: &sea_orm::QueryResult,
+                pre: &str,
+                col: &str,
+            ) -> Result<Self, sea_orm::TryGetError> {
+                Ok(Self(i32::try_get(res, pre, col)?))
+            }
+        }
+
+        impl sea_query::ValueType for $name {
+            fn try_from(v: Value) -> Result<Self, sea_query::ValueTypeErr> {
+                match v {
+                    Value::TinyInt(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    Value::SmallInt(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    Value::Int(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    Value::BigInt(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    Value::TinyUnsigned(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    Value::SmallUnsigned(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    Value::Unsigned(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    Value::BigUnsigned(Some(int)) => {
+                        Ok(Self(int.try_into().map_err(|_| sea_query::ValueTypeErr)?))
+                    }
+                    _ => Err(sea_query::ValueTypeErr),
+                }
+            }
+
+            fn type_name() -> String {
+                stringify!($name).into()
+            }
+
+            fn array_type() -> sea_query::ArrayType {
+                sea_query::ArrayType::Int
+            }
+
+            fn column_type() -> sea_query::ColumnType {
+                sea_query::ColumnType::Integer(None)
+            }
+        }
+
+        impl sea_orm::TryFromU64 for $name {
+            fn try_from_u64(n: u64) -> Result<Self, DbErr> {
+                Ok(Self(n.try_into().map_err(|_| {
+                    DbErr::ConvertFromU64(concat!(
+                        "error converting ",
+                        stringify!($name),
+                        " to u64"
+                    ))
+                })?))
+            }
+        }
+
+        impl sea_query::Nullable for $name {
+            fn null() -> Value {
+                Value::Int(None)
+            }
+        }
     };
 }
 
@@ -400,6 +513,7 @@ id_type!(UserId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);
 id_type!(ProjectId);
+id_type!(ProjectCollaboratorId);
 id_type!(WorktreeId);
 
 #[cfg(test)]
@@ -412,17 +526,18 @@ mod test {
     use lazy_static::lazy_static;
     use parking_lot::Mutex;
     use rand::prelude::*;
+    use sea_orm::ConnectionTrait;
     use sqlx::migrate::MigrateDatabase;
     use std::sync::Arc;
 
     pub struct TestDb {
         pub db: Option<Arc<Database>>,
+        pub connection: Option<sqlx::AnyConnection>,
     }
 
     impl TestDb {
         pub fn sqlite(background: Arc<Background>) -> Self {
-            let mut rng = StdRng::from_entropy();
-            let url = format!("sqlite://file:zed-test-{}?mode=memory", rng.gen::<u128>());
+            let url = format!("sqlite::memory:");
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_io()
                 .enable_time()
@@ -431,8 +546,17 @@ mod test {
 
             let mut db = runtime.block_on(async {
                 let db = Database::new(&url, 5).await.unwrap();
-                let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations.sqlite");
-                db.migrate(migrations_path.as_ref(), false).await.unwrap();
+                let sql = include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/migrations.sqlite/20221109000000_test_schema.sql"
+                ));
+                db.pool
+                    .execute(sea_orm::Statement::from_string(
+                        db.pool.get_database_backend(),
+                        sql.into(),
+                    ))
+                    .await
+                    .unwrap();
                 db
             });
 
@@ -441,6 +565,7 @@ mod test {
 
             Self {
                 db: Some(Arc::new(db)),
+                connection: None,
             }
         }
 
@@ -476,6 +601,7 @@ mod test {
 
             Self {
                 db: Some(Arc::new(db)),
+                connection: None,
             }
         }
 

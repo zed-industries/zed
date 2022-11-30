@@ -1,12 +1,13 @@
+use super::{ProjectId, RoomId, UserId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "projects")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: i32,
-    pub room_id: i32,
-    pub host_user_id: i32,
+    pub id: ProjectId,
+    pub room_id: RoomId,
+    pub host_user_id: UserId,
     pub host_connection_id: i32,
 }
 
