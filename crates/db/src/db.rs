@@ -4,6 +4,7 @@ pub mod kvp;
 pub use anyhow;
 pub use indoc::indoc;
 pub use lazy_static;
+use parking_lot::Mutex;
 pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
@@ -59,6 +60,14 @@ pub async fn open_memory_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<
     ThreadSafeConnection::<M>::builder(db_name, false)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
+        // Serialize queued writes via a mutex and run them synchronously
+        .with_write_queue_constructor(Box::new(|connection| {
+            let connection = Mutex::new(connection);
+            Box::new(move |queued_write| {
+                let connection = connection.lock();
+                queued_write(&connection)
+            })
+        }))
         .build()
         .await
 }
