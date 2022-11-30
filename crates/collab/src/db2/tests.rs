@@ -88,63 +88,63 @@ test_both_dbs!(
     }
 );
 
-// test_both_dbs!(
-//     test_get_user_by_github_account_postgres,
-//     test_get_user_by_github_account_sqlite,
-//     db,
-//     {
-//         let user_id1 = db
-//             .create_user(
-//                 "user1@example.com",
-//                 false,
-//                 NewUserParams {
-//                     github_login: "login1".into(),
-//                     github_user_id: 101,
-//                     invite_count: 0,
-//                 },
-//             )
-//             .await
-//             .unwrap()
-//             .user_id;
-//         let user_id2 = db
-//             .create_user(
-//                 "user2@example.com",
-//                 false,
-//                 NewUserParams {
-//                     github_login: "login2".into(),
-//                     github_user_id: 102,
-//                     invite_count: 0,
-//                 },
-//             )
-//             .await
-//             .unwrap()
-//             .user_id;
+test_both_dbs!(
+    test_get_user_by_github_account_postgres,
+    test_get_user_by_github_account_sqlite,
+    db,
+    {
+        let user_id1 = db
+            .create_user(
+                "user1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "login1".into(),
+                    github_user_id: 101,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
+        let user_id2 = db
+            .create_user(
+                "user2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "login2".into(),
+                    github_user_id: 102,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
 
-//         let user = db
-//             .get_user_by_github_account("login1", None)
-//             .await
-//             .unwrap()
-//             .unwrap();
-//         assert_eq!(user.id, user_id1);
-//         assert_eq!(&user.github_login, "login1");
-//         assert_eq!(user.github_user_id, Some(101));
+        let user = db
+            .get_user_by_github_account("login1", None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id, user_id1);
+        assert_eq!(&user.github_login, "login1");
+        assert_eq!(user.github_user_id, Some(101));
 
-//         assert!(db
-//             .get_user_by_github_account("non-existent-login", None)
-//             .await
-//             .unwrap()
-//             .is_none());
+        assert!(db
+            .get_user_by_github_account("non-existent-login", None)
+            .await
+            .unwrap()
+            .is_none());
 
-//         let user = db
-//             .get_user_by_github_account("the-new-login2", Some(102))
-//             .await
-//             .unwrap()
-//             .unwrap();
-//         assert_eq!(user.id, user_id2);
-//         assert_eq!(&user.github_login, "the-new-login2");
-//         assert_eq!(user.github_user_id, Some(102));
-//     }
-// );
+        let user = db
+            .get_user_by_github_account("the-new-login2", Some(102))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id, user_id2);
+        assert_eq!(&user.github_login, "the-new-login2");
+        assert_eq!(user.github_user_id, Some(102));
+    }
+);
 
 // test_both_dbs!(
 //     test_create_access_tokens_postgres,
