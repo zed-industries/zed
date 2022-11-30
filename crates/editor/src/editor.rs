@@ -6377,6 +6377,18 @@ impl Editor {
                 self.refresh_code_actions(cx);
                 cx.emit(Event::BufferEdited);
             }
+            multi_buffer::Event::ExcerptsAdded {
+                buffer,
+                predecessor,
+                excerpts,
+            } => cx.emit(Event::ExcerptsAdded {
+                buffer: buffer.clone(),
+                predecessor: *predecessor,
+                excerpts: excerpts.clone(),
+            }),
+            multi_buffer::Event::ExcerptsRemoved { ids } => {
+                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
+            }
             multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
             multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(Event::Saved),
@@ -6386,7 +6398,6 @@ impl Editor {
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
-            _ => {}
         }
     }
 

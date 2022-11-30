@@ -463,6 +463,7 @@ pub trait FollowableItem: Item {
     ) -> bool;
     fn apply_update_proto(
         &mut self,
+        project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Result<()>;
@@ -482,6 +483,7 @@ pub trait FollowableItemHandle: ItemHandle {
     ) -> bool;
     fn apply_update_proto(
         &self,
+        project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
     ) -> Result<()>;
@@ -514,10 +516,11 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 
     fn apply_update_proto(
         &self,
+        project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
     ) -> Result<()> {
-        self.update(cx, |this, cx| this.apply_update_proto(message, cx))
+        self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
     }
 
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
@@ -2477,6 +2480,7 @@ impl Workspace {
                     let variant = update_view
                         .variant
                         .ok_or_else(|| anyhow!("missing update view variant"))?;
+                    let project = this.project.clone();
                     this.update_leader_state(leader_id, cx, |state, cx| {
                         let variant = variant.clone();
                         match state
@@ -2485,7 +2489,7 @@ impl Workspace {
                             .or_insert(FollowerItem::Loading(Vec::new()))
                         {
                             FollowerItem::Loaded(item) => {
-                                item.apply_update_proto(variant, cx).log_err();
+                                item.apply_update_proto(&project, variant, cx).log_err();
                             }
                             FollowerItem::Loading(updates) => updates.push(variant),
                         }
@@ -2576,7 +2580,7 @@ impl Workspace {
                             let e = e.into_mut();
                             if let FollowerItem::Loading(updates) = e {
                                 for update in updates.drain(..) {
-                                    item.apply_update_proto(update, cx)
+                                    item.apply_update_proto(&this.project, update, cx)
                                         .context("failed to apply view update")
                                         .log_err();
                                 }

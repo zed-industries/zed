@@ -4967,19 +4967,27 @@ fn test_highlighted_ranges(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_following(cx: &mut gpui::MutableAppContext) {
-    let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
+async fn test_following(cx: &mut gpui::TestAppContext) {
+    Settings::test_async(cx);
+    let fs = FakeFs::new(cx.background());
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
-    cx.set_global(Settings::test(cx));
-
-    let (_, leader) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
-    let (_, follower) = cx.add_window(
-        WindowOptions {
-            bounds: WindowBounds::Fixed(RectF::from_points(vec2f(0., 0.), vec2f(10., 80.))),
-            ..Default::default()
-        },
-        |cx| build_editor(buffer.clone(), cx),
-    );
+    let buffer = project.update(cx, |project, cx| {
+        let buffer = project
+            .create_buffer(&sample_text(16, 8, 'a'), None, cx)
+            .unwrap();
+        cx.add_model(|cx| MultiBuffer::singleton(buffer, cx))
+    });
+    let (_, leader) = cx.add_window(|cx| build_editor(buffer.clone(), cx));
+    let (_, follower) = cx.update(|cx| {
+        cx.add_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(RectF::from_points(vec2f(0., 0.), vec2f(10., 80.))),
+                ..Default::default()
+            },
+            |cx| build_editor(buffer.clone(), cx),
+        )
+    });
 
     let pending_update = Rc::new(RefCell::new(None));
     follower.update(cx, {
@@ -5000,10 +5008,12 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
     });
     follower.update(cx, |follower, cx| {
         follower
-            .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
             .unwrap();
     });
-    assert_eq!(follower.read(cx).selections.ranges(cx), vec![1..1]);
+    follower.read_with(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![1..1]);
+    });
 
     // Update the scroll position only
     leader.update(cx, |leader, cx| {
@@ -5011,7 +5021,7 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
     });
     follower.update(cx, |follower, cx| {
         follower
-            .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
             .unwrap();
     });
     assert_eq!(
@@ -5028,12 +5038,14 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
     follower.update(cx, |follower, cx| {
         let initial_scroll_position = follower.scroll_position(cx);
         follower
-            .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
             .unwrap();
         assert_eq!(follower.scroll_position(cx), initial_scroll_position);
         assert!(follower.autoscroll_request.is_some());
     });
-    assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..0]);
+    follower.read_with(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![0..0]);
+    });
 
     // Creating a pending selection that precedes another selection
     leader.update(cx, |leader, cx| {
@@ -5042,10 +5054,12 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
     });
     follower.update(cx, |follower, cx| {
         follower
-            .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
             .unwrap();
     });
-    assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..0, 1..1]);
+    follower.read_with(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
+    });
 
     // Extend the pending selection so that it surrounds another selection
     leader.update(cx, |leader, cx| {
@@ -5053,10 +5067,143 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
     });
     follower.update(cx, |follower, cx| {
         follower
-            .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
             .unwrap();
     });
-    assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..2]);
+    follower.read_with(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![0..2]);
+    });
+}
+
+#[gpui::test]
+async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
+    Settings::test_async(cx);
+    let fs = FakeFs::new(cx.background());
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let (_, pane) = cx.add_window(|cx| Pane::new(None, cx));
+
+    let leader = pane.update(cx, |_, cx| {
+        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        cx.add_view(|cx| build_editor(multibuffer.clone(), cx))
+    });
+
+    // Start following the editor when it has no excerpts.
+    let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
+    let follower_1 = cx
+        .update(|cx| {
+            Editor::from_state_proto(pane.clone(), project.clone(), &mut state_message, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+    let follower_1_update = Rc::new(RefCell::new(None));
+    follower_1.update(cx, {
+        let update = follower_1_update.clone();
+        |_, cx| {
+            cx.subscribe(&leader, move |_, leader, event, cx| {
+                leader
+                    .read(cx)
+                    .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+            })
+            .detach();
+        }
+    });
+
+    let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
+        (
+            project
+                .create_buffer("abc\ndef\nghi\njkl\n", None, cx)
+                .unwrap(),
+            project
+                .create_buffer("mno\npqr\nstu\nvwx\n", None, cx)
+                .unwrap(),
+        )
+    });
+
+    // Insert some excerpts.
+    leader.update(cx, |leader, cx| {
+        leader.buffer.update(cx, |multibuffer, cx| {
+            let excerpt_ids = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    ExcerptRange {
+                        context: 1..6,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 12..15,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 0..3,
+                        primary: None,
+                    },
+                ],
+                cx,
+            );
+            multibuffer.insert_excerpts_after(
+                excerpt_ids[0],
+                buffer_2.clone(),
+                [
+                    ExcerptRange {
+                        context: 8..12,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 0..6,
+                        primary: None,
+                    },
+                ],
+                cx,
+            );
+        });
+    });
+
+    // Start following separately after it already has excerpts.
+    let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
+    let follower_2 = cx
+        .update(|cx| {
+            Editor::from_state_proto(pane.clone(), project.clone(), &mut state_message, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        follower_2.read_with(cx, Editor::text),
+        leader.read_with(cx, Editor::text)
+    );
+
+    // Apply the update of adding the excerpts.
+    follower_1.update(cx, |follower, cx| {
+        follower
+            .apply_update_proto(&project, follower_1_update.borrow_mut().take().unwrap(), cx)
+            .unwrap()
+    });
+    assert_eq!(
+        follower_1.read_with(cx, Editor::text),
+        leader.read_with(cx, Editor::text)
+    );
+
+    // Remove some excerpts.
+    leader.update(cx, |leader, cx| {
+        leader.buffer.update(cx, |multibuffer, cx| {
+            let excerpt_ids = multibuffer.excerpt_ids();
+            multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
+            multibuffer.remove_excerpts([excerpt_ids[0]], cx);
+        });
+    });
+
+    // Apply the update of removing the excerpts.
+    follower_1.update(cx, |follower, cx| {
+        follower
+            .apply_update_proto(&project, follower_1_update.borrow_mut().take().unwrap(), cx)
+            .unwrap()
+    });
+    assert_eq!(
+        follower_1.read_with(cx, Editor::text),
+        leader.read_with(cx, Editor::text)
+    );
 }
 
 #[test]

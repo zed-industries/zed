@@ -72,10 +72,6 @@ impl FollowableItem for Editor {
                     editors.find(|editor| {
                         editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffers[0])
                     })
-                } else if let Some(title) = &state.title {
-                    editors.find(|editor| {
-                        editor.read(cx).buffer().read(cx).title(cx).as_ref() == title
-                    })
                 } else {
                     None
                 }
@@ -231,16 +227,17 @@ impl FollowableItem for Editor {
                     predecessor,
                     excerpts,
                 } => {
+                    let buffer_id = buffer.read(cx).remote_id();
                     let mut excerpts = excerpts.iter();
                     if let Some((id, range)) = excerpts.next() {
                         update.inserted_excerpts.push(proto::ExcerptInsertion {
                             previous_excerpt_id: Some(predecessor.to_proto()),
-                            excerpt: serialize_excerpt(buffer, id, range, cx),
+                            excerpt: serialize_excerpt(buffer_id, id, range),
                         });
                         update.inserted_excerpts.extend(excerpts.map(|(id, range)| {
                             proto::ExcerptInsertion {
                                 previous_excerpt_id: None,
-                                excerpt: serialize_excerpt(buffer, id, range, cx),
+                                excerpt: serialize_excerpt(buffer_id, id, range),
                             }
                         }))
                     }
@@ -275,22 +272,69 @@ impl FollowableItem for Editor {
 
     fn apply_update_proto(
         &mut self,
+        project: &ModelHandle<Project>,
         message: update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
         match message {
             update_view::Variant::Editor(message) => {
-                let buffer = self.buffer.read(cx);
-                let buffer = buffer.read(cx);
+                let multibuffer = self.buffer.read(cx);
+                let multibuffer = multibuffer.read(cx);
+                let mut removals = message
+                    .deleted_excerpts
+                    .into_iter()
+                    .map(ExcerptId::from_proto)
+                    .collect::<Vec<_>>();
+                removals.sort_by(|a, b| a.cmp(&b, &multibuffer));
+
                 let selections = message
                     .selections
                     .into_iter()
-                    .filter_map(|selection| deserialize_selection(&buffer, selection))
+                    .filter_map(|selection| deserialize_selection(&multibuffer, selection))
                     .collect::<Vec<_>>();
                 let scroll_top_anchor = message
                     .scroll_top_anchor
-                    .and_then(|anchor| deserialize_anchor(&buffer, anchor));
-                drop(buffer);
+                    .and_then(|anchor| deserialize_anchor(&multibuffer, anchor));
+                drop(multibuffer);
+
+                self.buffer.update(cx, |multibuffer, cx| {
+                    let mut insertions = message.inserted_excerpts.into_iter().peekable();
+                    while let Some(insertion) = insertions.next() {
+                        let Some(excerpt) = insertion.excerpt else { continue };
+                        let Some(previous_excerpt_id) = insertion.previous_excerpt_id else { continue };
+                        let buffer_id = excerpt.buffer_id;
+                        let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else { continue };
+    
+                        let adjacent_excerpts = iter::from_fn(|| {
+                            let insertion = insertions.peek()?;
+                            if insertion.previous_excerpt_id.is_none()
+                                && insertion.excerpt.as_ref()?.buffer_id == buffer_id
+                            {
+                                insertions.next()?.excerpt
+                            } else {
+                                None
+                            }
+                        });
+    
+                        multibuffer.insert_excerpts_with_ids_after(
+                            ExcerptId::from_proto(previous_excerpt_id),
+                            buffer,
+                            [excerpt]
+                                .into_iter()
+                                .chain(adjacent_excerpts)
+                                .filter_map(|excerpt| {
+                                    Some((
+                                        ExcerptId::from_proto(excerpt.id),
+                                        deserialize_excerpt_range(excerpt)?,
+                                    ))
+                                }),
+                            cx,
+                        );
+                    }
+                    
+                    multibuffer.remove_excerpts(removals, cx);
+                });
+
 
                 if !selections.is_empty() {
                     self.set_selections_from_remote(selections, cx);
@@ -318,14 +362,13 @@ impl FollowableItem for Editor {
 }
 
 fn serialize_excerpt(
-    buffer: &ModelHandle<Buffer>,
+    buffer_id: u64,
     id: &ExcerptId,
     range: &ExcerptRange<language::Anchor>,
-    cx: &AppContext,
 ) -> Option<proto::Excerpt> {
     Some(proto::Excerpt {
         id: id.to_proto(),
-        buffer_id: buffer.read(cx).remote_id(),
+        buffer_id,
         context_start: Some(serialize_text_anchor(&range.context.start)),
         context_end: Some(serialize_text_anchor(&range.context.end)),
         primary_start: range
@@ -390,7 +433,7 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
     Some(Anchor {
         excerpt_id,
         text_anchor: language::proto::deserialize_anchor(anchor.anchor?)?,
-        buffer_id: Some(buffer.buffer_id_for_excerpt(excerpt_id)?),
+        buffer_id: buffer.buffer_id_for_excerpt(excerpt_id),
     })
 }
 
