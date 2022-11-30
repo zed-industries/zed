@@ -17,7 +17,10 @@ use lazy_static::lazy_static;
 
 use gpui::{
     actions,
-    geometry::vector::vec2f,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
     AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
@@ -71,6 +74,14 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 lazy_static! {
+    static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_position_env_var);
+    static ref ZED_WINDOW_POSITION: Option<Vector2F> = env::var("ZED_WINDOW_POSITION")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_position_env_var);
     pub static ref RELEASE_CHANNEL_NAME: String =
         env::var("ZED_RELEASE_CHANNEL").unwrap_or(include_str!("../RELEASE_CHANNEL").to_string());
     pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
@@ -346,8 +357,13 @@ pub fn initialize_workspace(
 }
 
 pub fn build_window_options() -> WindowOptions<'static> {
+    let bounds = if let Some((position, size)) = ZED_WINDOW_POSITION.zip(*ZED_WINDOW_SIZE) {
+        WindowBounds::Fixed(RectF::new(position, size))
+    } else {
+        WindowBounds::Maximized
+    };
     WindowOptions {
-        bounds: WindowBounds::Maximized,
+        bounds,
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
@@ -610,6 +626,13 @@ fn open_bundled_config_file(
 fn schema_file_match(path: &Path) -> &Path {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
         .unwrap()
+}
+
+fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
+    let mut parts = value.split(',');
+    let width: usize = parts.next()?.parse().ok()?;
+    let height: usize = parts.next()?.parse().ok()?;
+    Some(vec2f(width as f32, height as f32))
 }
 
 #[cfg(test)]

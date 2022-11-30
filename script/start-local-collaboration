@@ -26,8 +26,14 @@ fi
 
 export ZED_ADMIN_API_TOKEN=secret
 export ZED_SERVER_URL=http://localhost:8080
+export ZED_WINDOW_SIZE=800,600
+
+cargo build
+sleep 0.1
 
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
-ZED_IMPERSONATE=${github_login} cargo run --quiet $@ &
-ZED_IMPERSONATE=${other_github_login} cargo run --quiet &
+ZED_WINDOW_POSITION=0,0   ZED_IMPERSONATE=${github_login}       target/debug/Zed $@ &
+sleep 0.1
+ZED_WINDOW_POSITION=800,0 ZED_IMPERSONATE=${other_github_login} target/debug/Zed &
+sleep 0.1
 wait
