@@ -11,6 +11,7 @@ test-support = ["serde_json", "tempdir", "git2"]
 
 [dependencies]
 anyhow = "1.0.38"
+backtrace = "0.3"
 futures = "0.3"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 lazy_static = "1.4.0"

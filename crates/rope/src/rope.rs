@@ -12,7 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
-use verify::{verify, verify_not};
+use util::debug_panic;
 
 pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
@@ -681,9 +681,10 @@ impl Chunk {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
         for ch in self.0.chars() {
-            verify_not!(point > target, ("point {target:?} is inside of character {ch:?}"), else {
+            if point > target {
+                debug_panic!("point {target:?} is inside of character {ch:?}");
                 return offset;
-            });
+            }
 
             if point == target {
                 break;
@@ -693,13 +694,13 @@ impl Chunk {
                 point.row += 1;
                 point.column = 0;
 
-                verify_not!(
-                    point.row > target.row,
-                    ("point {target:?} is beyond the end of a line with length {}", point.column),
-                    else {
-                        return offset;
-                    }
-                );
+                if point.row > target.row {
+                    debug_panic!(
+                        "point {target:?} is beyond the end of a line with length {}",
+                        point.column
+                    );
+                    return offset;
+                }
             } else {
                 point.column += ch.len_utf8() as u32;
             }
@@ -743,35 +744,26 @@ impl Chunk {
                 point.row += 1;
                 point.column = 0;
 
-                if clip {
-                    if point.row > target.row {
-                        // Return the offset of the newline
-                        return offset;
+                if point.row > target.row {
+                    if !clip {
+                        debug_panic!(
+                            "point {target:?} is beyond the end of a line with length {}",
+                            point.column
+                        );
                     }
-                } else {
-                    verify_not!(
-                        point.row > target.row,
-                        ("point {target:?} is beyond the end of a line with length {}", point.column),
-                        else {
-                            // Return the offset of the newline
-                            return offset;
-                        }
-                    )
+                    // Return the offset of the newline
+                    return offset;
                 }
             } else {
                 point.column += ch.len_utf16() as u32;
             }
 
-            if clip {
-                if point > target {
-                    // Return the offset of the codepoint which we have landed within, bias left
-                    return offset;
+            if point > target {
+                if !clip {
+                    debug_panic!("point {target:?} is inside of codepoint {ch:?}");
                 }
-            } else {
-                verify_not!(point > target, ("point {target:?} is inside of codepoint {ch:?}"), else {
-                    // Return the offset of the codepoint which we have landed within, bias left
-                    return offset;
-                });
+                // Return the offset of the codepoint which we have landed within, bias left
+                return offset;
             }
 
             offset += ch.len_utf8();
