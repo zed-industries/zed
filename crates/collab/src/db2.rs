@@ -1,3 +1,4 @@
+mod access_token;
 mod project;
 mod project_collaborator;
 mod room;
@@ -17,8 +18,8 @@ use sea_orm::{
     entity::prelude::*, ConnectOptions, DatabaseConnection, DatabaseTransaction, DbErr,
     TransactionTrait,
 };
-use sea_orm::{ActiveValue, IntoActiveModel};
-use sea_query::OnConflict;
+use sea_orm::{ActiveValue, ConnectionTrait, IntoActiveModel, QueryOrder, QuerySelect};
+use sea_query::{OnConflict, Query};
 use serde::{Deserialize, Serialize};
 use sqlx::migrate::{Migrate, Migration, MigrationSource};
 use sqlx::Connection;
@@ -336,6 +337,63 @@ impl Database {
         })
     }
 
+    pub async fn create_access_token_hash(
+        &self,
+        user_id: UserId,
+        access_token_hash: &str,
+        max_access_token_count: usize,
+    ) -> Result<()> {
+        self.transact(|tx| async {
+            let tx = tx;
+
+            access_token::ActiveModel {
+                user_id: ActiveValue::set(user_id),
+                hash: ActiveValue::set(access_token_hash.into()),
+                ..Default::default()
+            }
+            .insert(&tx)
+            .await?;
+
+            access_token::Entity::delete_many()
+                .filter(
+                    access_token::Column::Id.in_subquery(
+                        Query::select()
+                            .column(access_token::Column::Id)
+                            .from(access_token::Entity)
+                            .and_where(access_token::Column::UserId.eq(user_id))
+                            .order_by(access_token::Column::Id, sea_orm::Order::Desc)
+                            .limit(10000)
+                            .offset(max_access_token_count as u64)
+                            .to_owned(),
+                    ),
+                )
+                .exec(&tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_access_token_hashes(&self, user_id: UserId) -> Result<Vec<String>> {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryAs {
+            Hash,
+        }
+
+        self.transact(|tx| async move {
+            Ok(access_token::Entity::find()
+                .select_only()
+                .column(access_token::Column::Hash)
+                .filter(access_token::Column::UserId.eq(user_id))
+                .order_by_desc(access_token::Column::Id)
+                .into_values::<_, QueryAs>()
+                .all(&tx)
+                .await?)
+        })
+        .await
+    }
+
     async fn transact<F, Fut, T>(&self, f: F) -> Result<T>
     where
         F: Send + Fn(DatabaseTransaction) -> Fut,
@@ -344,6 +402,16 @@ impl Database {
         let body = async {
             loop {
                 let tx = self.pool.begin().await?;
+
+                // In Postgres, serializable transactions are opt-in
+                if let sea_orm::DatabaseBackend::Postgres = self.pool.get_database_backend() {
+                    tx.execute(sea_orm::Statement::from_string(
+                        sea_orm::DatabaseBackend::Postgres,
+                        "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;".into(),
+                    ))
+                    .await?;
+                }
+
                 match f(tx).await {
                     Ok(result) => return Ok(result),
                     Err(error) => match error {
@@ -544,6 +612,7 @@ macro_rules! id_type {
     };
 }
 
+id_type!(AccessTokenId);
 id_type!(UserId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);

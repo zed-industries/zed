@@ -146,51 +146,51 @@ test_both_dbs!(
     }
 );
 
-// test_both_dbs!(
-//     test_create_access_tokens_postgres,
-//     test_create_access_tokens_sqlite,
-//     db,
-//     {
-//         let user = db
-//             .create_user(
-//                 "u1@example.com",
-//                 false,
-//                 NewUserParams {
-//                     github_login: "u1".into(),
-//                     github_user_id: 1,
-//                     invite_count: 0,
-//                 },
-//             )
-//             .await
-//             .unwrap()
-//             .user_id;
+test_both_dbs!(
+    test_create_access_tokens_postgres,
+    test_create_access_tokens_sqlite,
+    db,
+    {
+        let user = db
+            .create_user(
+                "u1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u1".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
 
-//         db.create_access_token_hash(user, "h1", 3).await.unwrap();
-//         db.create_access_token_hash(user, "h2", 3).await.unwrap();
-//         assert_eq!(
-//             db.get_access_token_hashes(user).await.unwrap(),
-//             &["h2".to_string(), "h1".to_string()]
-//         );
+        db.create_access_token_hash(user, "h1", 3).await.unwrap();
+        db.create_access_token_hash(user, "h2", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h2".to_string(), "h1".to_string()]
+        );
 
-//         db.create_access_token_hash(user, "h3", 3).await.unwrap();
-//         assert_eq!(
-//             db.get_access_token_hashes(user).await.unwrap(),
-//             &["h3".to_string(), "h2".to_string(), "h1".to_string(),]
-//         );
+        db.create_access_token_hash(user, "h3", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h3".to_string(), "h2".to_string(), "h1".to_string(),]
+        );
 
-//         db.create_access_token_hash(user, "h4", 3).await.unwrap();
-//         assert_eq!(
-//             db.get_access_token_hashes(user).await.unwrap(),
-//             &["h4".to_string(), "h3".to_string(), "h2".to_string(),]
-//         );
+        db.create_access_token_hash(user, "h4", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h4".to_string(), "h3".to_string(), "h2".to_string(),]
+        );
 
-//         db.create_access_token_hash(user, "h5", 3).await.unwrap();
-//         assert_eq!(
-//             db.get_access_token_hashes(user).await.unwrap(),
-//             &["h5".to_string(), "h4".to_string(), "h3".to_string()]
-//         );
-//     }
-// );
+        db.create_access_token_hash(user, "h5", 3).await.unwrap();
+        assert_eq!(
+            db.get_access_token_hashes(user).await.unwrap(),
+            &["h5".to_string(), "h4".to_string(), "h3".to_string()]
+        );
+    }
+);
 
 // test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
 //     let mut user_ids = Vec::new();
