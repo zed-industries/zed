@@ -680,13 +680,12 @@ impl Chunk {
     fn point_to_offset(&self, target: Point) -> usize {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
-        for ch in self.0.chars() {
-            if point > target {
-                debug_panic!("point {target:?} is inside of character {ch:?}");
-                return offset;
-            }
 
-            if point == target {
+        for ch in self.0.chars() {
+            if point >= target {
+                if point > target {
+                    debug_panic!("point {target:?} is inside of character {ch:?}");
+                }
                 break;
             }
 
@@ -699,7 +698,7 @@ impl Chunk {
                         "point {target:?} is beyond the end of a line with length {}",
                         point.column
                     );
-                    return offset;
+                    break;
                 }
             } else {
                 point.column += ch.len_utf8() as u32;
@@ -707,6 +706,7 @@ impl Chunk {
 
             offset += ch.len_utf8();
         }
+
         offset
     }
 
