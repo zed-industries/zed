@@ -366,29 +366,28 @@ impl Database {
     }
 
     pub async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
-        self.transact(|mut tx| async move {
-            // let (id_a, id_b) = if responder_id < requester_id {
-            //     (responder_id, requester_id)
-            // } else {
-            //     (requester_id, responder_id)
-            // };
-            // let query = "
-            //     DELETE FROM contacts
-            //     WHERE user_id_a = $1 AND user_id_b = $2;
-            // ";
-            // let result = sqlx::query(query)
-            //     .bind(id_a.0)
-            //     .bind(id_b.0)
-            //     .execute(&mut tx)
-            //     .await?;
+        self.transact(|tx| async move {
+            let (id_a, id_b) = if responder_id < requester_id {
+                (responder_id, requester_id)
+            } else {
+                (requester_id, responder_id)
+            };
 
-            // if result.rows_affected() == 1 {
-            //     tx.commit().await?;
-            //     Ok(())
-            // } else {
-            //     Err(anyhow!("no such contact"))?
-            // }
-            todo!()
+            let result = contact::Entity::delete_many()
+                .filter(
+                    contact::Column::UserIdA
+                        .eq(id_a)
+                        .and(contact::Column::UserIdB.eq(id_b)),
+                )
+                .exec(&tx)
+                .await?;
+
+            if result.rows_affected == 1 {
+                tx.commit().await?;
+                Ok(())
+            } else {
+                Err(anyhow!("no such contact"))?
+            }
         })
         .await
     }
@@ -486,6 +485,18 @@ impl Database {
             }
         })
         .await
+    }
+
+    pub fn fuzzy_like_string(string: &str) -> String {
+        let mut result = String::with_capacity(string.len() * 2 + 1);
+        for c in string.chars() {
+            if c.is_alphanumeric() {
+                result.push('%');
+                result.push(c);
+            }
+        }
+        result.push('%');
+        result
     }
 
     // projects

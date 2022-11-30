@@ -402,12 +402,12 @@ test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
     assert_ne!(metrics_id1, metrics_id2);
 });
 
-// #[test]
-// fn test_fuzzy_like_string() {
-//     assert_eq!(DefaultDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
-//     assert_eq!(DefaultDb::fuzzy_like_string("x y"), "%x%y%");
-//     assert_eq!(DefaultDb::fuzzy_like_string(" z  "), "%z%");
-// }
+#[test]
+fn test_fuzzy_like_string() {
+    assert_eq!(Database::fuzzy_like_string("abcd"), "%a%b%c%d%");
+    assert_eq!(Database::fuzzy_like_string("x y"), "%x%y%");
+    assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
+}
 
 // #[gpui::test]
 // async fn test_fuzzy_search_users() {
