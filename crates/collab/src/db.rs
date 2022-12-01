@@ -246,7 +246,10 @@ impl Database {
         self.transact(|tx| async move {
             user::Entity::update_many()
                 .filter(user::Column::Id.eq(id))
-                .col_expr(user::Column::Admin, is_admin.into())
+                .set(user::ActiveModel {
+                    admin: ActiveValue::set(is_admin),
+                    ..Default::default()
+                })
                 .exec(&tx)
                 .await?;
             tx.commit().await?;
@@ -259,7 +262,10 @@ impl Database {
         self.transact(|tx| async move {
             user::Entity::update_many()
                 .filter(user::Column::Id.eq(id))
-                .col_expr(user::Column::ConnectedOnce, connected_once.into())
+                .set(user::ActiveModel {
+                    connected_once: ActiveValue::set(connected_once),
+                    ..Default::default()
+                })
                 .exec(&tx)
                 .await?;
             tx.commit().await?;
@@ -674,7 +680,10 @@ impl Database {
         self.transact(|tx| async {
             signup::Entity::update_many()
                 .filter(signup::Column::EmailAddress.is_in(emails.iter().copied()))
-                .col_expr(signup::Column::EmailConfirmationSent, true.into())
+                .set(signup::ActiveModel {
+                    email_confirmation_sent: ActiveValue::set(true),
+                    ..Default::default()
+                })
                 .exec(&tx)
                 .await?;
             tx.commit().await?;
@@ -876,14 +885,20 @@ impl Database {
                             .eq(id)
                             .and(user::Column::InviteCode.is_null()),
                     )
-                    .col_expr(user::Column::InviteCode, random_invite_code().into())
+                    .set(user::ActiveModel {
+                        invite_code: ActiveValue::set(Some(random_invite_code())),
+                        ..Default::default()
+                    })
                     .exec(&tx)
                     .await?;
             }
 
             user::Entity::update_many()
                 .filter(user::Column::Id.eq(id))
-                .col_expr(user::Column::InviteCount, count.into())
+                .set(user::ActiveModel {
+                    invite_count: ActiveValue::set(count as i32),
+                    ..Default::default()
+                })
                 .exec(&tx)
                 .await?;
             tx.commit().await?;
@@ -1107,10 +1122,10 @@ impl Database {
                         .and(room_participant::Column::UserId.eq(user_id))
                         .and(room_participant::Column::AnsweringConnectionId.is_null()),
                 )
-                .col_expr(
-                    room_participant::Column::AnsweringConnectionId,
-                    connection_id.0.into(),
-                )
+                .set(room_participant::ActiveModel {
+                    answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
+                    ..Default::default()
+                })
                 .exec(&tx)
                 .await?;
             if result.rows_affected == 0 {
