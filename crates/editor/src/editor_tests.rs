@@ -5006,11 +5006,12 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     leader.update(cx, |leader, cx| {
         leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
     });
-    follower.update(cx, |follower, cx| {
-        follower
-            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-            .unwrap();
-    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .await
+        .unwrap();
     follower.read_with(cx, |follower, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![1..1]);
     });
@@ -5019,31 +5020,32 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     leader.update(cx, |leader, cx| {
         leader.set_scroll_position(vec2f(1.5, 3.5), cx);
     });
-    follower.update(cx, |follower, cx| {
-        follower
-            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-            .unwrap();
-    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .await
+        .unwrap();
     assert_eq!(
         follower.update(cx, |follower, cx| follower.scroll_position(cx)),
         vec2f(1.5, 3.5)
     );
 
-    // Update the selections and scroll position
+    // Update the selections and scroll position. The follower's scroll position is updated
+    // via autoscroll, not via the leader's exact scroll position.
     leader.update(cx, |leader, cx| {
         leader.change_selections(None, cx, |s| s.select_ranges([0..0]));
         leader.request_autoscroll(Autoscroll::newest(), cx);
         leader.set_scroll_position(vec2f(1.5, 3.5), cx);
     });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .await
+        .unwrap();
     follower.update(cx, |follower, cx| {
-        let initial_scroll_position = follower.scroll_position(cx);
-        follower
-            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-            .unwrap();
-        assert_eq!(follower.scroll_position(cx), initial_scroll_position);
-        assert!(follower.autoscroll_request.is_some());
-    });
-    follower.read_with(cx, |follower, cx| {
+        assert_eq!(follower.scroll_position(cx), vec2f(1.5, 0.0));
         assert_eq!(follower.selections.ranges(cx), vec![0..0]);
     });
 
@@ -5052,11 +5054,12 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
         leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
     });
-    follower.update(cx, |follower, cx| {
-        follower
-            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-            .unwrap();
-    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .await
+        .unwrap();
     follower.read_with(cx, |follower, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
     });
@@ -5065,11 +5068,12 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     leader.update(cx, |leader, cx| {
         leader.extend_selection(DisplayPoint::new(0, 2), 1, cx);
     });
-    follower.update(cx, |follower, cx| {
-        follower
-            .apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-            .unwrap();
-    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .await
+        .unwrap();
     follower.read_with(cx, |follower, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![0..2]);
     });
@@ -5175,11 +5179,16 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     );
 
     // Apply the update of adding the excerpts.
-    follower_1.update(cx, |follower, cx| {
-        follower
-            .apply_update_proto(&project, follower_1_update.borrow_mut().take().unwrap(), cx)
-            .unwrap()
-    });
+    follower_1
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(
+                &project,
+                follower_1_update.borrow_mut().take().unwrap(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
     assert_eq!(
         follower_1.read_with(cx, Editor::text),
         leader.read_with(cx, Editor::text)
@@ -5195,11 +5204,16 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     });
 
     // Apply the update of removing the excerpts.
-    follower_1.update(cx, |follower, cx| {
-        follower
-            .apply_update_proto(&project, follower_1_update.borrow_mut().take().unwrap(), cx)
-            .unwrap()
-    });
+    follower_1
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(
+                &project,
+                follower_1_update.borrow_mut().take().unwrap(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
     assert_eq!(
         follower_1.read_with(cx, Editor::text),
         leader.read_with(cx, Editor::text)

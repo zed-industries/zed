@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use collections::HashSet;
+use futures::future::try_join_all;
 use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
@@ -275,36 +276,53 @@ impl FollowableItem for Editor {
         project: &ModelHandle<Project>,
         message: update_view::Variant,
         cx: &mut ViewContext<Self>,
-    ) -> Result<()> {
-        match message {
-            update_view::Variant::Editor(message) => {
-                let multibuffer = self.buffer.read(cx);
-                let multibuffer = multibuffer.read(cx);
-                let mut removals = message
-                    .deleted_excerpts
-                    .into_iter()
-                    .map(ExcerptId::from_proto)
-                    .collect::<Vec<_>>();
-                removals.sort_by(|a, b| a.cmp(&b, &multibuffer));
+    ) -> Task<Result<()>> {
+        let update_view::Variant::Editor(message) = message;
+        let multibuffer = self.buffer.read(cx);
+        let multibuffer = multibuffer.read(cx);
 
-                let selections = message
-                    .selections
-                    .into_iter()
-                    .filter_map(|selection| deserialize_selection(&multibuffer, selection))
-                    .collect::<Vec<_>>();
-                let scroll_top_anchor = message
-                    .scroll_top_anchor
-                    .and_then(|anchor| deserialize_anchor(&multibuffer, anchor));
-                drop(multibuffer);
+        let buffer_ids = message
+            .inserted_excerpts
+            .iter()
+            .filter_map(|insertion| Some(insertion.excerpt.as_ref()?.buffer_id))
+            .collect::<HashSet<_>>();
 
-                self.buffer.update(cx, |multibuffer, cx| {
+        let mut removals = message
+            .deleted_excerpts
+            .into_iter()
+            .map(ExcerptId::from_proto)
+            .collect::<Vec<_>>();
+        removals.sort_by(|a, b| a.cmp(&b, &multibuffer));
+
+        let selections = message
+            .selections
+            .into_iter()
+            .filter_map(|selection| deserialize_selection(&multibuffer, selection))
+            .collect::<Vec<_>>();
+        let scroll_top_anchor = message
+            .scroll_top_anchor
+            .and_then(|anchor| deserialize_anchor(&multibuffer, anchor));
+        drop(multibuffer);
+
+        let buffers = project.update(cx, |project, cx| {
+            buffer_ids
+                .into_iter()
+                .map(|id| project.open_buffer_by_id(id, cx))
+                .collect::<Vec<_>>()
+        });
+
+        let project = project.clone();
+        cx.spawn(|this, mut cx| async move {
+            let _buffers = try_join_all(buffers).await?;
+            this.update(&mut cx, |this, cx| {
+                this.buffer.update(cx, |multibuffer, cx| {
                     let mut insertions = message.inserted_excerpts.into_iter().peekable();
                     while let Some(insertion) = insertions.next() {
                         let Some(excerpt) = insertion.excerpt else { continue };
                         let Some(previous_excerpt_id) = insertion.previous_excerpt_id else { continue };
                         let buffer_id = excerpt.buffer_id;
                         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else { continue };
-    
+
                         let adjacent_excerpts = iter::from_fn(|| {
                             let insertion = insertions.peek()?;
                             if insertion.previous_excerpt_id.is_none()
@@ -315,7 +333,7 @@ impl FollowableItem for Editor {
                                 None
                             }
                         });
-    
+
                         multibuffer.insert_excerpts_with_ids_after(
                             ExcerptId::from_proto(previous_excerpt_id),
                             buffer,
@@ -331,24 +349,19 @@ impl FollowableItem for Editor {
                             cx,
                         );
                     }
-                    
+
                     multibuffer.remove_excerpts(removals, cx);
                 });
 
-
                 if !selections.is_empty() {
-                    self.set_selections_from_remote(selections, cx);
-                    self.request_autoscroll_remotely(Autoscroll::newest(), cx);
+                    this.set_selections_from_remote(selections, cx);
+                    this.request_autoscroll_remotely(Autoscroll::newest(), cx);
                 } else if let Some(anchor) = scroll_top_anchor {
-                    self.set_scroll_top_anchor(
-                        anchor,
-                        vec2f(message.scroll_x, message.scroll_y),
-                        cx,
-                    );
+                    this.set_scroll_top_anchor(anchor, vec2f(message.scroll_x, message.scroll_y), cx);
                 }
-            }
-        }
-        Ok(())
+            });
+            Ok(())
+        })
     }
 
     fn should_unfollow_on_event(event: &Self::Event, _: &AppContext) -> bool {
