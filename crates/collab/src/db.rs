@@ -9,6 +9,7 @@ mod signup;
 mod tests;
 mod user;
 mod worktree;
+mod worktree_entry;
 
 use crate::{Error, Result};
 use anyhow::anyhow;
@@ -1599,44 +1600,28 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<Vec<ConnectionId>>> {
         self.transact(|tx| async move {
-            todo!()
-            // let project_id = ProjectId::from_proto(update.project_id);
-            // let worktree_id = WorktreeId::from_proto(update.worktree_id);
+            let project_id = ProjectId::from_proto(update.project_id);
+            let worktree_id = WorktreeId::from_proto(update.worktree_id);
 
-            // // Ensure the update comes from the host.
-            // let room_id: RoomId = sqlx::query_scalar(
-            //     "
-            //     SELECT room_id
-            //     FROM projects
-            //     WHERE id = $1 AND host_connection_id = $2
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(connection_id.0 as i32)
-            // .fetch_one(&mut tx)
-            // .await?;
+            // Ensure the update comes from the host.
+            let project = project::Entity::find_by_id(project_id)
+                .filter(project::Column::HostConnectionId.eq(connection_id.0))
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
 
-            // // Update metadata.
-            // sqlx::query(
-            //     "
-            //     UPDATE worktrees
-            //     SET
-            //     root_name = $1,
-            //     scan_id = $2,
-            //     is_complete = $3,
-            //     abs_path = $4
-            //     WHERE project_id = $5 AND id = $6
-            //     RETURNING 1
-            //     ",
-            // )
-            // .bind(&update.root_name)
-            // .bind(update.scan_id as i64)
-            // .bind(update.is_last_update)
-            // .bind(&update.abs_path)
-            // .bind(project_id)
-            // .bind(worktree_id)
-            // .fetch_one(&mut tx)
-            // .await?;
+            // Update metadata.
+            worktree::Entity::update(worktree::ActiveModel {
+                id: ActiveValue::set(worktree_id),
+                project_id: ActiveValue::set(project_id),
+                root_name: ActiveValue::set(update.root_name.clone()),
+                scan_id: ActiveValue::set(update.scan_id as u32),
+                is_complete: ActiveValue::set(update.is_last_update),
+                abs_path: ActiveValue::set(update.abs_path.clone()),
+                ..Default::default()
+            })
+            .exec(&tx)
+            .await?;
 
             // if !update.updated_entries.is_empty() {
             //     let mut params =
@@ -1706,6 +1691,8 @@ impl Database {
             // let connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
             // self.commit_room_transaction(room_id, tx, connection_ids)
             //     .await
+
+            todo!()
         })
         .await
     }
@@ -2456,6 +2443,7 @@ id_type!(ReplicaId);
 id_type!(SignupId);
 id_type!(UserId);
 id_type!(WorktreeId);
+id_type!(WorktreeEntryId);
 
 pub struct LeftRoom {
     pub room: proto::Room,
