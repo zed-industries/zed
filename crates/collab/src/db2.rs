@@ -20,8 +20,8 @@ use sea_orm::{
     TransactionTrait,
 };
 use sea_orm::{
-    ActiveValue, ConnectionTrait, FromQueryResult, IntoActiveModel, JoinType, QueryOrder,
-    QuerySelect,
+    ActiveValue, ConnectionTrait, DatabaseBackend, FromQueryResult, IntoActiveModel, JoinType,
+    QueryOrder, QuerySelect, Statement,
 };
 use sea_query::{Alias, Expr, OnConflict, Query};
 use serde::{Deserialize, Serialize};
@@ -499,6 +499,30 @@ impl Database {
         result
     }
 
+    pub async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
+        self.transact(|tx| async {
+            let tx = tx;
+            let like_string = Self::fuzzy_like_string(name_query);
+            let query = "
+                SELECT users.*
+                FROM users
+                WHERE github_login ILIKE $1
+                ORDER BY github_login <-> $2
+                LIMIT $3
+            ";
+
+            Ok(user::Entity::find()
+                .from_raw_sql(Statement::from_sql_and_values(
+                    self.pool.get_database_backend(),
+                    query.into(),
+                    vec![like_string.into(), name_query.into(), limit.into()],
+                ))
+                .all(&tx)
+                .await?)
+        })
+        .await
+    }
+
     // projects
 
     pub async fn share_project(
@@ -727,9 +751,9 @@ impl Database {
                 let tx = self.pool.begin().await?;
 
                 // In Postgres, serializable transactions are opt-in
-                if let sea_orm::DatabaseBackend::Postgres = self.pool.get_database_backend() {
-                    tx.execute(sea_orm::Statement::from_string(
-                        sea_orm::DatabaseBackend::Postgres,
+                if let DatabaseBackend::Postgres = self.pool.get_database_backend() {
+                    tx.execute(Statement::from_string(
+                        DatabaseBackend::Postgres,
                         "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;".into(),
                     ))
                     .await?;
@@ -1047,7 +1071,7 @@ mod test {
     impl Drop for TestDb {
         fn drop(&mut self) {
             let db = self.db.take().unwrap();
-            if let sea_orm::DatabaseBackend::Postgres = db.pool.get_database_backend() {
+            if let DatabaseBackend::Postgres = db.pool.get_database_backend() {
                 db.runtime.as_ref().unwrap().block_on(async {
                     use util::ResultExt;
                     let query = "

@@ -409,53 +409,53 @@ fn test_fuzzy_like_string() {
     assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
 }
 
-// #[gpui::test]
-// async fn test_fuzzy_search_users() {
-//     let test_db = PostgresTestDb::new(build_background_executor());
-//     let db = test_db.db();
-//     for (i, github_login) in [
-//         "California",
-//         "colorado",
-//         "oregon",
-//         "washington",
-//         "florida",
-//         "delaware",
-//         "rhode-island",
-//     ]
-//     .into_iter()
-//     .enumerate()
-//     {
-//         db.create_user(
-//             &format!("{github_login}@example.com"),
-//             false,
-//             NewUserParams {
-//                 github_login: github_login.into(),
-//                 github_user_id: i as i32,
-//                 invite_count: 0,
-//             },
-//         )
-//         .await
-//         .unwrap();
-//     }
+#[gpui::test]
+async fn test_fuzzy_search_users() {
+    let test_db = TestDb::postgres(build_background_executor());
+    let db = test_db.db();
+    for (i, github_login) in [
+        "California",
+        "colorado",
+        "oregon",
+        "washington",
+        "florida",
+        "delaware",
+        "rhode-island",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        db.create_user(
+            &format!("{github_login}@example.com"),
+            false,
+            NewUserParams {
+                github_login: github_login.into(),
+                github_user_id: i as i32,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
+    }
 
-//     assert_eq!(
-//         fuzzy_search_user_names(db, "clr").await,
-//         &["colorado", "California"]
-//     );
-//     assert_eq!(
-//         fuzzy_search_user_names(db, "ro").await,
-//         &["rhode-island", "colorado", "oregon"],
-//     );
+    assert_eq!(
+        fuzzy_search_user_names(db, "clr").await,
+        &["colorado", "California"]
+    );
+    assert_eq!(
+        fuzzy_search_user_names(db, "ro").await,
+        &["rhode-island", "colorado", "oregon"],
+    );
 
-//     async fn fuzzy_search_user_names(db: &Db<sqlx::Postgres>, query: &str) -> Vec<String> {
-//         db.fuzzy_search_users(query, 10)
-//             .await
-//             .unwrap()
-//             .into_iter()
-//             .map(|user| user.github_login)
-//             .collect::<Vec<_>>()
-//     }
-// }
+    async fn fuzzy_search_user_names(db: &Database, query: &str) -> Vec<String> {
+        db.fuzzy_search_users(query, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|user| user.github_login)
+            .collect::<Vec<_>>()
+    }
+}
 
 // #[gpui::test]
 // async fn test_invite_codes() {
