@@ -953,35 +953,27 @@ impl Database {
         live_kit_room: &str,
     ) -> Result<RoomGuard<proto::Room>> {
         self.transact(|tx| async move {
-            todo!()
-            // let room_id = sqlx::query_scalar(
-            //     "
-            //     INSERT INTO rooms (live_kit_room)
-            //     VALUES ($1)
-            //     RETURNING id
-            //     ",
-            // )
-            // .bind(&live_kit_room)
-            // .fetch_one(&mut tx)
-            // .await
-            // .map(RoomId)?;
+            let room = room::ActiveModel {
+                live_kit_room: ActiveValue::set(live_kit_room.into()),
+                ..Default::default()
+            }
+            .insert(&tx)
+            .await?;
+            let room_id = room.id;
 
-            // sqlx::query(
-            //     "
-            //     INSERT INTO room_participants (room_id, user_id, answering_connection_id, calling_user_id, calling_connection_id)
-            //     VALUES ($1, $2, $3, $4, $5)
-            //     ",
-            // )
-            // .bind(room_id)
-            // .bind(user_id)
-            // .bind(connection_id.0 as i32)
-            // .bind(user_id)
-            // .bind(connection_id.0 as i32)
-            // .execute(&mut tx)
-            // .await?;
+            room_participant::ActiveModel {
+                room_id: ActiveValue::set(room_id),
+                user_id: ActiveValue::set(user_id),
+                answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
+                calling_user_id: ActiveValue::set(user_id),
+                calling_connection_id: ActiveValue::set(connection_id.0 as i32),
+                ..Default::default()
+            }
+            .insert(&tx)
+            .await?;
 
-            // let room = self.get_room(room_id, &mut tx).await?;
-            // self.commit_room_transaction(room_id, tx, room).await
+            let room = self.get_room(room_id, &tx).await?;
+            self.commit_room_transaction(room_id, tx, room).await
         })
         .await
     }
@@ -1411,6 +1403,7 @@ impl Database {
                 });
             }
         }
+        drop(db_participants);
 
         let mut db_projects = db_room
             .find_related(project::Entity)
