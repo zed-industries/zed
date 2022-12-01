@@ -5383,7 +5383,7 @@ async fn test_random_collaboration(
                 false,
                 NewUserParams {
                     github_login: username.clone(),
-                    github_user_id: (ix + 1) as i32,
+                    github_user_id: (ix + 1) as u32,
                     invite_count: 0,
                 },
             )

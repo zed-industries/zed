@@ -156,7 +156,7 @@ impl Database {
     pub async fn get_user_by_github_account(
         &self,
         github_login: &str,
-        github_user_id: Option<i32>,
+        github_user_id: Option<u32>,
     ) -> Result<Option<User>> {
         self.transact(|tx| async {
             let tx = tx;
@@ -896,7 +896,7 @@ impl Database {
             user::Entity::update_many()
                 .filter(user::Column::Id.eq(id))
                 .set(user::ActiveModel {
-                    invite_count: ActiveValue::set(count as i32),
+                    invite_count: ActiveValue::set(count),
                     ..Default::default()
                 })
                 .exec(&tx)
@@ -979,9 +979,9 @@ impl Database {
             room_participant::ActiveModel {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(user_id),
-                answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
+                answering_connection_id: ActiveValue::set(Some(connection_id.0)),
                 calling_user_id: ActiveValue::set(user_id),
-                calling_connection_id: ActiveValue::set(connection_id.0 as i32),
+                calling_connection_id: ActiveValue::set(connection_id.0),
                 ..Default::default()
             }
             .insert(&tx)
@@ -1006,7 +1006,7 @@ impl Database {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
                 calling_user_id: ActiveValue::set(calling_user_id),
-                calling_connection_id: ActiveValue::set(calling_connection_id.0 as i32),
+                calling_connection_id: ActiveValue::set(calling_connection_id.0),
                 initial_project_id: ActiveValue::set(initial_project_id),
                 ..Default::default()
             }
@@ -1123,7 +1123,7 @@ impl Database {
                         .and(room_participant::Column::AnsweringConnectionId.is_null()),
                 )
                 .set(room_participant::ActiveModel {
-                    answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
+                    answering_connection_id: ActiveValue::set(Some(connection_id.0)),
                     ..Default::default()
                 })
                 .exec(&tx)
@@ -1485,14 +1485,14 @@ impl Database {
             let project = project::ActiveModel {
                 room_id: ActiveValue::set(participant.room_id),
                 host_user_id: ActiveValue::set(participant.user_id),
-                host_connection_id: ActiveValue::set(connection_id.0 as i32),
+                host_connection_id: ActiveValue::set(connection_id.0),
                 ..Default::default()
             }
             .insert(&tx)
             .await?;
 
             worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
-                id: ActiveValue::set(worktree.id as i32),
+                id: ActiveValue::set(WorktreeId(worktree.id as u32)),
                 project_id: ActiveValue::set(project.id),
                 abs_path: ActiveValue::set(worktree.abs_path.clone()),
                 root_name: ActiveValue::set(worktree.root_name.clone()),
@@ -1505,7 +1505,7 @@ impl Database {
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
-                connection_id: ActiveValue::set(connection_id.0 as i32),
+                connection_id: ActiveValue::set(connection_id.0),
                 user_id: ActiveValue::set(participant.user_id),
                 replica_id: ActiveValue::set(ReplicaId(0)),
                 is_host: ActiveValue::set(true),
@@ -1533,7 +1533,7 @@ impl Database {
                 .one(&tx)
                 .await?
                 .ok_or_else(|| anyhow!("project not found"))?;
-            if project.host_connection_id == connection_id.0 as i32 {
+            if project.host_connection_id == connection_id.0 {
                 let room_id = project.room_id;
                 project::Entity::delete(project.into_active_model())
                     .exec(&tx)
@@ -1562,7 +1562,7 @@ impl Database {
                 .ok_or_else(|| anyhow!("no such project"))?;
 
             worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
-                id: ActiveValue::set(worktree.id as i32),
+                id: ActiveValue::set(WorktreeId(worktree.id as u32)),
                 project_id: ActiveValue::set(project.id),
                 abs_path: ActiveValue::set(worktree.abs_path.clone()),
                 root_name: ActiveValue::set(worktree.root_name.clone()),
@@ -1578,7 +1578,7 @@ impl Database {
                         worktree::Column::Id.is_not_in(
                             worktrees
                                 .iter()
-                                .map(|worktree| WorktreeId(worktree.id as i32)),
+                                .map(|worktree| WorktreeId(worktree.id as u32)),
                         ),
                     ),
                 )
@@ -2093,7 +2093,7 @@ impl Database {
 
             if collaborators
                 .iter()
-                .any(|collaborator| collaborator.connection_id == connection_id.0 as i32)
+                .any(|collaborator| collaborator.connection_id == connection_id.0)
             {
                 Ok(collaborators)
             } else {
@@ -2307,8 +2307,8 @@ impl<T> DerefMut for RoomGuard<T> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewUserParams {
     pub github_login: String,
-    pub github_user_id: i32,
-    pub invite_count: i32,
+    pub github_user_id: u32,
+    pub invite_count: u32,
 }
 
 #[derive(Debug)]
@@ -2339,21 +2339,19 @@ macro_rules! id_type {
             PartialOrd,
             Ord,
             Hash,
-            sqlx::Type,
             Serialize,
             Deserialize,
         )]
-        #[sqlx(transparent)]
         #[serde(transparent)]
-        pub struct $name(pub i32);
+        pub struct $name(pub u32);
 
         impl $name {
             #[allow(unused)]
-            pub const MAX: Self = Self(i32::MAX);
+            pub const MAX: Self = Self(u32::MAX);
 
             #[allow(unused)]
             pub fn from_proto(value: u64) -> Self {
-                Self(value as i32)
+                Self(value as u32)
             }
 
             #[allow(unused)]
@@ -2370,7 +2368,7 @@ macro_rules! id_type {
 
         impl From<$name> for sea_query::Value {
             fn from(value: $name) -> Self {
-                sea_query::Value::Int(Some(value.0))
+                sea_query::Value::Unsigned(Some(value.0))
             }
         }
 
@@ -2380,7 +2378,7 @@ macro_rules! id_type {
                 pre: &str,
                 col: &str,
             ) -> Result<Self, sea_orm::TryGetError> {
-                Ok(Self(i32::try_get(res, pre, col)?))
+                Ok(Self(u32::try_get(res, pre, col)?))
             }
         }
 
@@ -2420,11 +2418,11 @@ macro_rules! id_type {
             }
 
             fn array_type() -> sea_query::ArrayType {
-                sea_query::ArrayType::Int
+                sea_query::ArrayType::Unsigned
             }
 
             fn column_type() -> sea_query::ColumnType {
-                sea_query::ColumnType::Integer(None)
+                sea_query::ColumnType::Unsigned(None)
             }
         }
 

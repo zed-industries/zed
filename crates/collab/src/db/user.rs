@@ -8,11 +8,11 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: UserId,
     pub github_login: String,
-    pub github_user_id: Option<i32>,
+    pub github_user_id: Option<u32>,
     pub email_address: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
-    pub invite_count: i32,
+    pub invite_count: u32,
     pub inviter_id: Option<UserId>,
     pub connected_once: bool,
     pub metrics_id: Uuid,

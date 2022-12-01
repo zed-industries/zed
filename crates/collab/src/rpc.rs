@@ -1008,7 +1008,7 @@ async fn join_project(
     let collaborators = project
         .collaborators
         .iter()
-        .filter(|collaborator| collaborator.connection_id != session.connection_id.0 as i32)
+        .filter(|collaborator| collaborator.connection_id != session.connection_id.0)
         .map(|collaborator| proto::Collaborator {
             peer_id: collaborator.connection_id as u32,
             replica_id: collaborator.replica_id.0 as u32,
@@ -1313,8 +1313,7 @@ async fn save_buffer(
         .await
         .project_collaborators(project_id, session.connection_id)
         .await?;
-    collaborators
-        .retain(|collaborator| collaborator.connection_id != session.connection_id.0 as i32);
+    collaborators.retain(|collaborator| collaborator.connection_id != session.connection_id.0);
     let project_connection_ids = collaborators
         .into_iter()
         .map(|collaborator| ConnectionId(collaborator.connection_id as u32));
