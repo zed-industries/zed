@@ -1527,22 +1527,23 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<(proto::Room, Vec<ConnectionId>)>> {
         self.transact(|tx| async move {
-            todo!()
-            // let guest_connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
-            // let room_id: RoomId = sqlx::query_scalar(
-            //     "
-            //     DELETE FROM projects
-            //     WHERE id = $1 AND host_connection_id = $2
-            //     RETURNING room_id
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(connection_id.0 as i32)
-            // .fetch_one(&mut tx)
-            // .await?;
-            // let room = self.get_room(room_id, &mut tx).await?;
-            // self.commit_room_transaction(room_id, tx, (room, guest_connection_ids))
-            //     .await
+            let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+
+            let project = project::Entity::find_by_id(project_id)
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("project not found"))?;
+            if project.host_connection_id == connection_id.0 as i32 {
+                let room_id = project.room_id;
+                project::Entity::delete(project.into_active_model())
+                    .exec(&tx)
+                    .await?;
+                let room = self.get_room(room_id, &tx).await?;
+                self.commit_room_transaction(room_id, tx, (room, guest_connection_ids))
+                    .await
+            } else {
+                Err(anyhow!("cannot unshare a project hosted by another user"))?
+            }
         })
         .await
     }
