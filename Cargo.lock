@@ -1159,7 +1159,6 @@ dependencies = [
  "scrypt",
  "sea-orm",
  "sea-query",
- "sea-query-binder",
  "serde",
  "serde_json",
  "settings",

@@ -1,7 +1,8 @@
 use super::UserId;
 use sea_orm::entity::prelude::*;
+use serde::Serialize;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "users")]
 pub struct Model {
     #[sea_orm(primary_key)]
@@ -12,6 +13,7 @@ pub struct Model {
     pub admin: bool,
     pub invite_code: Option<String>,
     pub invite_count: i32,
+    pub inviter_id: Option<UserId>,
     pub connected_once: bool,
     pub metrics_id: Uuid,
 }

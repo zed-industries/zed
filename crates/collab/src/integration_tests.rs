@@ -1,5 +1,5 @@
 use crate::{
-    db::{self, NewUserParams, SqliteTestDb as TestDb, UserId},
+    db::{self, NewUserParams, TestDb, UserId},
     rpc::{Executor, Server},
     AppState,
 };
@@ -5665,7 +5665,7 @@ impl TestServer {
     async fn start(background: Arc<executor::Background>) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
-        let test_db = TestDb::new(background.clone());
+        let test_db = TestDb::sqlite(background.clone());
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),

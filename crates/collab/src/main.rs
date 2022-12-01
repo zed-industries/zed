@@ -1,7 +1,6 @@
 mod api;
 mod auth;
 mod db;
-mod db2;
 mod env;
 mod rpc;
 
@@ -11,7 +10,7 @@ mod integration_tests;
 use anyhow::anyhow;
 use axum::{routing::get, Router};
 use collab::{Error, Result};
-use db::DefaultDb as Db;
+use db::Database;
 use serde::Deserialize;
 use std::{
     env::args,
@@ -45,14 +44,16 @@ pub struct MigrateConfig {
 }
 
 pub struct AppState {
-    db: Arc<Db>,
+    db: Arc<Database>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     config: Config,
 }
 
 impl AppState {
     async fn new(config: Config) -> Result<Arc<Self>> {
-        let db = Db::new(&config.database_url, 5).await?;
+        let mut db_options = db::ConnectOptions::new(config.database_url.clone());
+        db_options.max_connections(5);
+        let db = Database::new(db_options).await?;
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server
             .as_ref()
@@ -92,7 +93,9 @@ async fn main() -> Result<()> {
         }
         Some("migrate") => {
             let config = envy::from_env::<MigrateConfig>().expect("error loading config");
-            let db = Db::new(&config.database_url, 5).await?;
+            let mut db_options = db::ConnectOptions::new(config.database_url.clone());
+            db_options.max_connections(5);
+            let db = Database::new(db_options).await?;
 
             let migrations_path = config
                 .migrations_path

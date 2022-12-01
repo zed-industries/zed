@@ -6,14 +6,14 @@ macro_rules! test_both_dbs {
     ($postgres_test_name:ident, $sqlite_test_name:ident, $db:ident, $body:block) => {
         #[gpui::test]
         async fn $postgres_test_name() {
-            let test_db = PostgresTestDb::new(Deterministic::new(0).build_background());
+            let test_db = TestDb::postgres(Deterministic::new(0).build_background());
             let $db = test_db.db();
             $body
         }
 
         #[gpui::test]
         async fn $sqlite_test_name() {
-            let test_db = SqliteTestDb::new(Deterministic::new(0).build_background());
+            let test_db = TestDb::sqlite(Deterministic::new(0).build_background());
             let $db = test_db.db();
             $body
         }
@@ -26,9 +26,10 @@ test_both_dbs!(
     db,
     {
         let mut user_ids = Vec::new();
+        let mut user_metric_ids = Vec::new();
         for i in 1..=4 {
-            user_ids.push(
-                db.create_user(
+            let user = db
+                .create_user(
                     &format!("user{i}@example.com"),
                     false,
                     NewUserParams {
@@ -38,9 +39,9 @@ test_both_dbs!(
                     },
                 )
                 .await
-                .unwrap()
-                .user_id,
-            );
+                .unwrap();
+            user_ids.push(user.user_id);
+            user_metric_ids.push(user.metrics_id);
         }
 
         assert_eq!(
@@ -52,6 +53,7 @@ test_both_dbs!(
                     github_user_id: Some(1),
                     email_address: Some("user1@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[0].parse().unwrap(),
                     ..Default::default()
                 },
                 User {
@@ -60,6 +62,7 @@ test_both_dbs!(
                     github_user_id: Some(2),
                     email_address: Some("user2@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[1].parse().unwrap(),
                     ..Default::default()
                 },
                 User {
@@ -68,6 +71,7 @@ test_both_dbs!(
                     github_user_id: Some(3),
                     email_address: Some("user3@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[2].parse().unwrap(),
                     ..Default::default()
                 },
                 User {
@@ -76,6 +80,7 @@ test_both_dbs!(
                     github_user_id: Some(4),
                     email_address: Some("user4@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[3].parse().unwrap(),
                     ..Default::default()
                 }
             ]
@@ -399,14 +404,14 @@ test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
 
 #[test]
 fn test_fuzzy_like_string() {
-    assert_eq!(DefaultDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
-    assert_eq!(DefaultDb::fuzzy_like_string("x y"), "%x%y%");
-    assert_eq!(DefaultDb::fuzzy_like_string(" z  "), "%z%");
+    assert_eq!(Database::fuzzy_like_string("abcd"), "%a%b%c%d%");
+    assert_eq!(Database::fuzzy_like_string("x y"), "%x%y%");
+    assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
 }
 
 #[gpui::test]
 async fn test_fuzzy_search_users() {
-    let test_db = PostgresTestDb::new(build_background_executor());
+    let test_db = TestDb::postgres(build_background_executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -442,7 +447,7 @@ async fn test_fuzzy_search_users() {
         &["rhode-island", "colorado", "oregon"],
     );
 
-    async fn fuzzy_search_user_names(db: &Db<sqlx::Postgres>, query: &str) -> Vec<String> {
+    async fn fuzzy_search_user_names(db: &Database, query: &str) -> Vec<String> {
         db.fuzzy_search_users(query, 10)
             .await
             .unwrap()
@@ -454,7 +459,7 @@ async fn test_fuzzy_search_users() {
 
 #[gpui::test]
 async fn test_invite_codes() {
-    let test_db = PostgresTestDb::new(build_background_executor());
+    let test_db = TestDb::postgres(build_background_executor());
     let db = test_db.db();
 
     let NewUserResult { user_id: user1, .. } = db
@@ -659,12 +664,12 @@ async fn test_invite_codes() {
 
 #[gpui::test]
 async fn test_signups() {
-    let test_db = PostgresTestDb::new(build_background_executor());
+    let test_db = TestDb::postgres(build_background_executor());
     let db = test_db.db();
 
     // people sign up on the waitlist
     for i in 0..8 {
-        db.create_signup(Signup {
+        db.create_signup(NewSignup {
             email_address: format!("person-{i}@example.com"),
             platform_mac: true,
             platform_linux: i % 2 == 0,

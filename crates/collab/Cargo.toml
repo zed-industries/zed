@@ -37,8 +37,7 @@ rand = "0.8"
 reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"
 sea-orm = { version = "0.10", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls"] }
-sea-query = { version = "0.27", features = ["derive"] }
-sea-query-binder = { version = "0.2", features = ["sqlx-postgres"] }
+sea-query = "0.27"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 sha-1 = "0.9"
@@ -76,7 +75,6 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 util = { path = "../util" }
 lazy_static = "1.4"
 sea-orm = { version = "0.10", features = ["sqlx-sqlite"] }
-sea-query-binder = { version = "0.2", features = ["sqlx-sqlite"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sqlx = { version = "0.6", features = ["sqlite"] }
 unindent = "0.1"

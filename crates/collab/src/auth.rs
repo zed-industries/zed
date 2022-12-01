@@ -75,7 +75,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
 
 const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;
 
-pub async fn create_access_token(db: &db::DefaultDb, user_id: UserId) -> Result<String> {
+pub async fn create_access_token(db: &db::Database, user_id: UserId) -> Result<String> {
     let access_token = rpc::auth::random_token();
     let access_token_hash =
         hash_access_token(&access_token).context("failed to hash access token")?;

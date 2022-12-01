@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, DefaultDb, ProjectId, RoomId, User, UserId},
+    db::{self, Database, ProjectId, RoomId, User, UserId},
     AppState, Result,
 };
 use anyhow::anyhow;
@@ -128,10 +128,10 @@ impl fmt::Debug for Session {
     }
 }
 
-struct DbHandle(Arc<DefaultDb>);
+struct DbHandle(Arc<Database>);
 
 impl Deref for DbHandle {
-    type Target = DefaultDb;
+    type Target = Database;
 
     fn deref(&self) -> &Self::Target {
         self.0.as_ref()
