@@ -2,6 +2,7 @@ pub mod kvp;
 
 // Re-export
 pub use anyhow;
+use anyhow::Context;
 pub use indoc::indoc;
 pub use lazy_static;
 pub use smol;
@@ -14,8 +15,12 @@ use sqlez_macros::sql;
 use std::fs::{create_dir_all, remove_dir_all};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+use util::{async_iife, ResultExt};
 use util::channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::paths::DB_DIR;
+
+// TODO: Add a savepoint to the thread safe connection initialization and migrations
 
 const CONNECTION_INITIALIZE_QUERY: &'static str = sql!(
     PRAGMA synchronous=NORMAL;
@@ -28,31 +33,90 @@ const DB_INITIALIZE_QUERY: &'static str = sql!(
     PRAGMA journal_mode=WAL;
 );
 
+const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
+
 lazy_static::lazy_static! {
     static ref DB_WIPED: AtomicBool = AtomicBool::new(false);
 }
 
 /// Open or create a database at the given directory path.
 pub async fn open_db<M: Migrator>() -> ThreadSafeConnection<M> {
-    // Use 0 for now. Will implement incrementing and clearing of old db files soon TM
-    let current_db_dir = (*DB_DIR).join(Path::new(&format!("0-{}", *RELEASE_CHANNEL_NAME)));
+    let db_dir = (*DB_DIR).join(Path::new(&format!("0-{}", *RELEASE_CHANNEL_NAME)));
 
+    // If WIPE_DB, delete 0-{channel}
     if *RELEASE_CHANNEL == ReleaseChannel::Dev
         && std::env::var("WIPE_DB").is_ok()
         && !DB_WIPED.load(Ordering::Acquire)
     {
-        remove_dir_all(&current_db_dir).ok();
-        DB_WIPED.store(true, Ordering::Relaxed);
+        remove_dir_all(&db_dir).ok();
+        DB_WIPED.store(true, Ordering::Release);
     }
 
-    create_dir_all(&current_db_dir).expect("Should be able to create the database directory");
-    let db_path = current_db_dir.join(Path::new("db.sqlite"));
+    let connection = async_iife!({
+        // If no db folder, create one at 0-{channel}
+        create_dir_all(&db_dir).context("Could not create db directory")?;
+        let db_path = db_dir.join(Path::new("db.sqlite"));
 
-    ThreadSafeConnection::<M>::builder(db_path.to_string_lossy().as_ref(), true)
+        // Try building a connection
+        if let Some(connection) = ThreadSafeConnection::<M>::builder(db_path.to_string_lossy().as_ref(), true)
+                .with_db_initialization_query(DB_INITIALIZE_QUERY)
+                .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
+                .build()
+                .await
+                .log_err() {
+            return Ok(connection)
+        }
+        
+        let backup_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect(
+                "System clock is set before the unix timestamp, Zed does not support this region of spacetime"
+            )
+            .as_millis();
+        
+        // If failed, move 0-{channel} to {current unix timestamp}-{channel}
+        let backup_db_dir = (*DB_DIR).join(Path::new(&format!(
+            "{}{}",
+            backup_timestamp,
+            *RELEASE_CHANNEL_NAME
+        )));
+
+        std::fs::rename(&db_dir, backup_db_dir)
+            .context("Failed clean up corrupted database, panicking.")?;
+
+        // TODO: Set a constant with the failed timestamp and error so we can notify the user
+
+        // Create a new 0-{channel}
+        create_dir_all(&db_dir).context("Should be able to create the database directory")?;
+        let db_path = db_dir.join(Path::new("db.sqlite"));
+
+        // Try again
+        ThreadSafeConnection::<M>::builder(db_path.to_string_lossy().as_ref(), true)
+            .with_db_initialization_query(DB_INITIALIZE_QUERY)
+            .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
+            .build()
+            .await
+    }).await.log_err();
+
+    if let Some(connection) = connection  {
+        return connection;
+    }
+   
+    // TODO: Set another constant so that we can escalate the notification
+    
+    // If still failed, create an in memory db with a known name
+    open_fallback_db().await
+}
+
+async fn open_fallback_db<M: Migrator>() -> ThreadSafeConnection<M> {
+    ThreadSafeConnection::<M>::builder(FALLBACK_DB_NAME, false)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
         .build()
         .await
+        .expect(
+            "Fallback in memory database failed. Likely initialization queries or migrations have fundamental errors",
+        )
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -66,6 +130,7 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M>
         .with_write_queue_constructor(locking_queue())
         .build()
         .await
+        .unwrap()
 }
 
 /// Implements a basic DB wrapper for a given domain

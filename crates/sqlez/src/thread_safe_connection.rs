@@ -1,3 +1,4 @@
+use anyhow::Context;
 use futures::{channel::oneshot, Future, FutureExt};
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -72,7 +73,7 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
         self
     }
 
-    pub async fn build(self) -> ThreadSafeConnection<M> {
+    pub async fn build(self) -> anyhow::Result<ThreadSafeConnection<M>> {
         self.connection
             .initialize_queues(self.write_queue_constructor);
 
@@ -81,26 +82,33 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
         self.connection
             .write(move |connection| {
                 if let Some(db_initialize_query) = db_initialize_query {
-                    connection.exec(db_initialize_query).expect(&format!(
-                        "Db initialize query failed to execute: {}",
-                        db_initialize_query
-                    ))()
-                    .unwrap();
+                    connection.exec(db_initialize_query).with_context(|| {
+                        format!(
+                            "Db initialize query failed to execute: {}",
+                            db_initialize_query
+                        )
+                    })?()?;
                 }
 
-                let mut failure_result = None;
+                // Retry failed migrations in case they were run in parallel from different
+                // processes. This gives a best attempt at migrating before bailing
+                let mut migration_result =
+                    anyhow::Result::<()>::Err(anyhow::anyhow!("Migration never run"));
+
                 for _ in 0..MIGRATION_RETRIES {
-                    failure_result = Some(M::migrate(connection));
-                    if failure_result.as_ref().unwrap().is_ok() {
+                    migration_result = connection
+                        .with_savepoint("thread_safe_multi_migration", || M::migrate(connection));
+
+                    if migration_result.is_ok() {
                         break;
                     }
                 }
 
-                failure_result.unwrap().expect("Migration failed");
+                migration_result
             })
-            .await;
+            .await?;
 
-        self.connection
+        Ok(self.connection)
     }
 }
 
@@ -240,10 +248,6 @@ impl<D: Domain> Clone for ThreadSafeConnection<D> {
     }
 }
 
-// TODO:
-//  1. When migration or initialization fails, move the corrupted db to a holding place and create a new one
-//  2. If the new db also fails, downgrade to a shared in memory db
-//  3. In either case notify the user about what went wrong
 impl<M: Migrator> Deref for ThreadSafeConnection<M> {
     type Target = Connection;
 
@@ -265,7 +269,7 @@ pub fn locking_queue() -> WriteQueueConstructor {
 #[cfg(test)]
 mod test {
     use indoc::indoc;
-    use lazy_static::__Deref;
+    use std::ops::Deref;
     use std::thread;
 
     use crate::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
@@ -295,7 +299,8 @@ mod test {
                                 PRAGMA foreign_keys=TRUE;
                                 PRAGMA case_sensitive_like=TRUE;
                             "});
-                let _ = smol::block_on(builder.build()).deref();
+
+                let _ = smol::block_on(builder.build()).unwrap().deref();
             }));
         }
 
@@ -341,6 +346,6 @@ mod test {
             ThreadSafeConnection::<TestWorkspace>::builder("wild_zed_lost_failure", false)
                 .with_connection_initialize_query("PRAGMA FOREIGN_KEYS=true");
 
-        smol::block_on(builder.build());
+        smol::block_on(builder.build()).unwrap();
     }
 }

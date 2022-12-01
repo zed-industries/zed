@@ -223,6 +223,13 @@ macro_rules! iife {
     };
 }
 
+#[macro_export]
+macro_rules! async_iife {
+    ($block:block) => {
+        (|| async move { $block })()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
