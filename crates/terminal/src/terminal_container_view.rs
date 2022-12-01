@@ -137,7 +137,6 @@ impl TerminalContainer {
                 TerminalContainerContent::Error(view)
             }
         };
-        // cx.focus(content.handle());
 
         TerminalContainer {
             content,

@@ -76,6 +76,7 @@ impl Domain for Workspace {
                 pane_id INTEGER NOT NULL,
                 kind TEXT NOT NULL,
                 position INTEGER NOT NULL,
+                active INTEGER NOT NULL,
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                     ON UPDATE CASCADE,
@@ -352,7 +353,7 @@ impl WorkspaceDb {
 
     fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
         Ok(self.select_bound(sql!(
-            SELECT kind, item_id FROM items
+            SELECT kind, item_id, active FROM items
             WHERE pane_id = ?
             ORDER BY position
         ))?(pane_id)?)
@@ -365,10 +366,9 @@ impl WorkspaceDb {
         items: &[SerializedItem],
     ) -> Result<()> {
         let mut insert = conn.exec_bound(sql!(
-            INSERT INTO items(workspace_id, pane_id, position, kind, item_id) VALUES (?, ?, ?, ?, ?)
+            INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active) VALUES (?, ?, ?, ?, ?, ?)
         )).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
-            dbg!(item);
             insert((workspace_id, pane_id, position, item))?;
         }
 
@@ -497,6 +497,7 @@ mod tests {
         workspace_2.dock_pane.children.push(SerializedItem {
             kind: Arc::from("Test"),
             item_id: 10,
+            active: true,
         });
         db.save_workspace(workspace_2).await;
 
@@ -523,10 +524,10 @@ mod tests {
 
         let dock_pane = crate::persistence::model::SerializedPane {
             children: vec![
-                SerializedItem::new("Terminal", 1),
-                SerializedItem::new("Terminal", 2),
-                SerializedItem::new("Terminal", 3),
-                SerializedItem::new("Terminal", 4),
+                SerializedItem::new("Terminal", 1, false),
+                SerializedItem::new("Terminal", 2, false),
+                SerializedItem::new("Terminal", 3, true),
+                SerializedItem::new("Terminal", 4, false),
             ],
             active: false,
         };
@@ -544,15 +545,15 @@ mod tests {
                     children: vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 5),
-                                SerializedItem::new("Terminal", 6),
+                                SerializedItem::new("Terminal", 5, false),
+                                SerializedItem::new("Terminal", 6, true),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 7),
-                                SerializedItem::new("Terminal", 8),
+                                SerializedItem::new("Terminal", 7, true),
+                                SerializedItem::new("Terminal", 8, false),
                             ],
                             false,
                         )),
@@ -560,8 +561,8 @@ mod tests {
                 },
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 9),
-                        SerializedItem::new("Terminal", 10),
+                        SerializedItem::new("Terminal", 9, false),
+                        SerializedItem::new("Terminal", 10, true),
                     ],
                     false,
                 )),
@@ -689,10 +690,10 @@ mod tests {
 
         let dock_pane = crate::persistence::model::SerializedPane::new(
             vec![
-                SerializedItem::new("Terminal", 1),
-                SerializedItem::new("Terminal", 4),
-                SerializedItem::new("Terminal", 2),
-                SerializedItem::new("Terminal", 3),
+                SerializedItem::new("Terminal", 1, false),
+                SerializedItem::new("Terminal", 4, false),
+                SerializedItem::new("Terminal", 2, false),
+                SerializedItem::new("Terminal", 3, true),
             ],
             false,
         );
@@ -725,15 +726,15 @@ mod tests {
                     children: vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1),
-                                SerializedItem::new("Terminal", 2),
+                                SerializedItem::new("Terminal", 1, false),
+                                SerializedItem::new("Terminal", 2, true),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4),
-                                SerializedItem::new("Terminal", 3),
+                                SerializedItem::new("Terminal", 4, false),
+                                SerializedItem::new("Terminal", 3, true),
                             ],
                             true,
                         )),
@@ -741,8 +742,8 @@ mod tests {
                 },
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5),
-                        SerializedItem::new("Terminal", 6),
+                        SerializedItem::new("Terminal", 5, true),
+                        SerializedItem::new("Terminal", 6, false),
                     ],
                     false,
                 )),
@@ -772,15 +773,15 @@ mod tests {
                     children: vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1),
-                                SerializedItem::new("Terminal", 2),
+                                SerializedItem::new("Terminal", 1, false),
+                                SerializedItem::new("Terminal", 2, true),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4),
-                                SerializedItem::new("Terminal", 3),
+                                SerializedItem::new("Terminal", 4, false),
+                                SerializedItem::new("Terminal", 3, true),
                             ],
                             true,
                         )),
@@ -788,8 +789,8 @@ mod tests {
                 },
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5),
-                        SerializedItem::new("Terminal", 6),
+                        SerializedItem::new("Terminal", 5, false),
+                        SerializedItem::new("Terminal", 6, true),
                     ],
                     false,
                 )),
@@ -807,15 +808,15 @@ mod tests {
             children: vec![
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 1),
-                        SerializedItem::new("Terminal", 2),
+                        SerializedItem::new("Terminal", 1, false),
+                        SerializedItem::new("Terminal", 2, true),
                     ],
                     false,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 4),
-                        SerializedItem::new("Terminal", 3),
+                        SerializedItem::new("Terminal", 4, true),
+                        SerializedItem::new("Terminal", 3, false),
                     ],
                     true,
                 )),

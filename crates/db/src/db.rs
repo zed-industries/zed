@@ -113,7 +113,6 @@ macro_rules! query {
         $vis async fn $id(&self) -> $crate::anyhow::Result<()> {
             use $crate::anyhow::Context;
 
-
             self.write(|connection| {
                 let sql_stmt = $crate::sqlez_macros::sql!($($sql)+);
 
@@ -142,7 +141,6 @@ macro_rules! query {
     ($vis:vis async fn $id:ident($arg:ident: $arg_type:ty) -> Result<()> { $($sql:tt)+ }) => {
         $vis async fn $id(&self, $arg: $arg_type) -> $crate::anyhow::Result<()> {
             use $crate::anyhow::Context;
-
 
             self.write(move |connection| {
                 let sql_stmt = $crate::sqlez_macros::sql!($($sql)+);
@@ -186,7 +184,7 @@ macro_rules! query {
                  ))
          }
     };
-    ($vis:vis async fn $id:ident() ->  Result<Vec<$return_type:ty>> { $($sql:tt)+ }) => {
+    ($vis:vis async fn $id:ident() -> Result<Vec<$return_type:ty>> { $($sql:tt)+ }) => {
         pub async fn $id(&self) -> $crate::anyhow::Result<Vec<$return_type>> {
             use $crate::anyhow::Context;
 

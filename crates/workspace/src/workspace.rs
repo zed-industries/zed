@@ -2292,12 +2292,14 @@ impl Workspace {
         ) -> SerializedPane {
             let (items, active) = {
                 let pane = pane_handle.read(cx);
+                let active_item_id = pane.active_item().map(|item| item.id());
                 (
                     pane.items()
                         .filter_map(|item_handle| {
                             Some(SerializedItem {
                                 kind: Arc::from(item_handle.serialized_item_kind()?),
                                 item_id: item_handle.id(),
+                                active: Some(item_handle.id()) == active_item_id,
                             })
                         })
                         .collect::<Vec<_>>(),
@@ -2307,8 +2309,6 @@ impl Workspace {
 
             SerializedPane::new(items, active)
         }
-
-        let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
 
         fn build_serialized_pane_group(
             pane_group: &Member,
@@ -2327,19 +2327,25 @@ impl Workspace {
                 }
             }
         }
-        let center_group = build_serialized_pane_group(&self.center.root, cx);
 
-        let serialized_workspace = SerializedWorkspace {
-            id: self.database_id,
-            location: self.location(cx),
-            dock_position: self.dock.position(),
-            dock_pane,
-            center_group,
-        };
+        let location = self.location(cx);
 
-        cx.background()
-            .spawn(persistence::DB.save_workspace(serialized_workspace))
-            .detach();
+        if !location.paths().is_empty() {
+            let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
+            let center_group = build_serialized_pane_group(&self.center.root, cx);
+
+            let serialized_workspace = SerializedWorkspace {
+                id: self.database_id,
+                location: self.location(cx),
+                dock_position: self.dock.position(),
+                dock_pane,
+                center_group,
+            };
+
+            cx.background()
+                .spawn(persistence::DB.save_workspace(serialized_workspace))
+                .detach();
+        }
     }
 
     fn load_from_serialized_workspace(
@@ -2380,11 +2386,9 @@ impl Workspace {
                     Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
 
                     if let Some(active_pane) = active_pane {
+                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
+                        cx.focus_self();
                         cx.focus(active_pane);
-                    }
-
-                    if workspace.items(cx).next().is_none() {
-                        cx.dispatch_action(NewFile);
                     }
 
                     cx.notify();

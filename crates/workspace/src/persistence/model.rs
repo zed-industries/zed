@@ -147,7 +147,8 @@ impl SerializedPane {
         workspace: &ViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
     ) {
-        for item in self.children.iter() {
+        let mut active_item_index = None;
+        for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
             let item_handle = pane_handle
                 .update(cx, |_, cx| {
@@ -174,6 +175,16 @@ impl SerializedPane {
                     Pane::add_item(workspace, &pane_handle, item_handle, false, false, None, cx);
                 })
             }
+
+            if item.active {
+                active_item_index = Some(index);
+            }
+        }
+
+        if let Some(active_item_index) = active_item_index {
+            pane_handle.update(cx, |pane, cx| {
+                pane.activate_item(active_item_index, false, false, cx);
+            })
         }
     }
 }
@@ -186,13 +197,15 @@ pub type ItemId = usize;
 pub struct SerializedItem {
     pub kind: Arc<str>,
     pub item_id: ItemId,
+    pub active: bool,
 }
 
 impl SerializedItem {
-    pub fn new(kind: impl AsRef<str>, item_id: ItemId) -> Self {
+    pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool) -> Self {
         Self {
             kind: Arc::from(kind.as_ref()),
             item_id,
+            active,
         }
     }
 }
@@ -203,6 +216,7 @@ impl Default for SerializedItem {
         SerializedItem {
             kind: Arc::from("Terminal"),
             item_id: 100000,
+            active: false,
         }
     }
 }
@@ -210,7 +224,8 @@ impl Default for SerializedItem {
 impl Bind for &SerializedItem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(self.kind.clone(), start_index)?;
-        statement.bind(self.item_id, next_index)
+        let next_index = statement.bind(self.item_id, next_index)?;
+        statement.bind(self.active, next_index)
     }
 }
 
@@ -218,7 +233,15 @@ impl Column for SerializedItem {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (kind, next_index) = Arc::<str>::column(statement, start_index)?;
         let (item_id, next_index) = ItemId::column(statement, next_index)?;
-        Ok((SerializedItem { kind, item_id }, next_index))
+        let (active, next_index) = bool::column(statement, next_index)?;
+        Ok((
+            SerializedItem {
+                kind,
+                item_id,
+                active,
+            },
+            next_index,
+        ))
     }
 }
 
