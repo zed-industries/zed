@@ -7,7 +7,6 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use db::{connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::Axis;
-use indoc::indoc;
 
 use db::sqlez::domain::Domain;
 use util::{iife, unzip_option, ResultExt};
@@ -106,15 +105,15 @@ impl WorkspaceDb {
             DockPosition,
         ) = iife!({
             if worktree_roots.len() == 0 {
-                self.select_row(indoc! {"
+                self.select_row(sql!(
                     SELECT workspace_id, workspace_location, dock_visible, dock_anchor
-                    FROM workspaces 
-                    ORDER BY timestamp DESC LIMIT 1"})?()?
+                    FROM workspaces
+                    ORDER BY timestamp DESC LIMIT 1))?()?
             } else {
-                self.select_row_bound(indoc! {"
+                self.select_row_bound(sql!(
                     SELECT workspace_id, workspace_location, dock_visible, dock_anchor
                     FROM workspaces 
-                    WHERE workspace_location = ?"})?(&workspace_location)?
+                    WHERE workspace_location = ?))?(&workspace_location)?
             }
             .context("No workspaces found")
         })
@@ -142,19 +141,15 @@ impl WorkspaceDb {
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
-                conn.exec_bound(indoc! {"
+                conn.exec_bound(sql!(
                     UPDATE workspaces SET dock_pane = NULL WHERE workspace_id = ?1;
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
-                    DELETE FROM panes WHERE workspace_id = ?1;"})?(workspace.id)
+                    DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
 
-                conn.exec_bound(indoc! {"
-                DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?"})?(
-                    (
-                    &workspace.location,
-                    workspace.id.clone(),
-                )
-                )
+                conn.exec_bound(sql!(
+                    DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
+                ))?((&workspace.location, workspace.id.clone()))
                 .context("clearing out old locations")?;
 
                 // Upsert
@@ -184,10 +179,11 @@ impl WorkspaceDb {
                     .context("save pane in save workspace")?;
 
                 // Complete workspace initialization
-                conn.exec_bound(indoc! {"
+                conn.exec_bound(sql!(
                     UPDATE workspaces
                     SET dock_pane = ?
-                    WHERE workspace_id = ?"})?((dock_id, workspace.id))
+                    WHERE workspace_id = ?
+                ))?((dock_id, workspace.id))
                 .context("Finishing initialization with dock pane")?;
 
                 Ok(())
@@ -203,20 +199,13 @@ impl WorkspaceDb {
         }
     }
 
-    /// Returns the previous workspace ids sorted by last modified along with their opened worktree roots
-    pub fn recent_workspaces(&self, limit: usize) -> Vec<(WorkspaceId, WorkspaceLocation)> {
-        iife!({
-            // TODO, upgrade anyhow: https://docs.rs/anyhow/1.0.66/anyhow/fn.Ok.html
-            Ok::<_, anyhow::Error>(
-                self.select_bound::<usize, (WorkspaceId, WorkspaceLocation)>(
-                    "SELECT workspace_id, workspace_location FROM workspaces ORDER BY timestamp DESC LIMIT ?",
-                )?(limit)?
-                .into_iter()
-                .collect::<Vec<(WorkspaceId, WorkspaceLocation)>>(),
-            )
-        })
-        .log_err()
-        .unwrap_or_default()
+    query! {
+        pub fn recent_workspaces(limit: usize) -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
+            SELECT workspace_id, workspace_location 
+            FROM workspaces 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        }
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
@@ -233,7 +222,7 @@ impl WorkspaceDb {
     ) -> Result<Vec<SerializedPaneGroup>> {
         type GroupKey = (Option<GroupId>, WorkspaceId);
         type GroupOrPane = (Option<GroupId>, Option<Axis>, Option<PaneId>, Option<bool>);
-        self.select_bound::<GroupKey, GroupOrPane>(indoc! {"
+        self.select_bound::<GroupKey, GroupOrPane>(sql!(
             SELECT group_id, axis, pane_id, active
                 FROM (SELECT 
                         group_id,
@@ -243,7 +232,7 @@ impl WorkspaceDb {
                         position,
                         parent_group_id,
                         workspace_id
-                      FROM pane_groups
+                      FROM pane_groups 
                      UNION
                       SELECT 
                         NULL,
@@ -257,7 +246,7 @@ impl WorkspaceDb {
                       JOIN panes ON center_panes.pane_id = panes.pane_id) 
             WHERE parent_group_id IS ? AND workspace_id = ?
             ORDER BY position
-            "})?((group_id, workspace_id))?
+        ))?((group_id, workspace_id))?
         .into_iter()
         .map(|(group_id, axis, pane_id, active)| {
             if let Some((group_id, axis)) = group_id.zip(axis) {
@@ -293,10 +282,11 @@ impl WorkspaceDb {
             SerializedPaneGroup::Group { axis, children } => {
                 let (parent_id, position) = unzip_option(parent);
 
-                let group_id = conn.select_row_bound::<_, i64>(indoc! {"
+                let group_id = conn.select_row_bound::<_, i64>(sql!(
                         INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) 
                         VALUES (?, ?, ?, ?) 
-                        RETURNING group_id"})?((
+                        RETURNING group_id
+                ))?((
                     workspace_id,
                     parent_id,
                     position,
@@ -318,10 +308,11 @@ impl WorkspaceDb {
     }
 
     fn get_dock_pane(&self, workspace_id: WorkspaceId) -> Result<SerializedPane> {
-        let (pane_id, active) = self.select_row_bound(indoc! {"
+        let (pane_id, active) = self.select_row_bound(sql!(
             SELECT pane_id, active
             FROM panes
-            WHERE pane_id = (SELECT dock_pane FROM workspaces WHERE workspace_id = ?)"})?(
+            WHERE pane_id = (SELECT dock_pane FROM workspaces WHERE workspace_id = ?)
+        ))?(
             workspace_id,
         )?
         .context("No dock pane for workspace")?;
@@ -339,17 +330,19 @@ impl WorkspaceDb {
         parent: Option<(GroupId, usize)>, // None indicates BOTH dock pane AND center_pane
         dock: bool,
     ) -> Result<PaneId> {
-        let pane_id = conn.select_row_bound::<_, i64>(indoc! {"
+        let pane_id = conn.select_row_bound::<_, i64>(sql!(
             INSERT INTO panes(workspace_id, active) 
             VALUES (?, ?) 
-            RETURNING pane_id"})?((workspace_id, pane.active))?
+            RETURNING pane_id
+        ))?((workspace_id, pane.active))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
 
         if !dock {
             let (parent_id, order) = unzip_option(parent);
-            conn.exec_bound(indoc! {"
+            conn.exec_bound(sql!(
                 INSERT INTO center_panes(pane_id, parent_group_id, position)
-                VALUES (?, ?, ?)"})?((pane_id, parent_id, order))?;
+                VALUES (?, ?, ?)
+            ))?((pane_id, parent_id, order))?;
         }
 
         Self::save_items(conn, workspace_id, pane_id, &pane.children).context("Saving items")?;
@@ -358,10 +351,11 @@ impl WorkspaceDb {
     }
 
     fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
-        Ok(self.select_bound(indoc! {"
+        Ok(self.select_bound(sql!(
             SELECT kind, item_id FROM items
             WHERE pane_id = ?
-            ORDER BY position"})?(pane_id)?)
+            ORDER BY position
+        ))?(pane_id)?)
     }
 
     fn save_items(
@@ -370,10 +364,11 @@ impl WorkspaceDb {
         pane_id: PaneId,
         items: &[SerializedItem],
     ) -> Result<()> {
-        let mut insert = conn.exec_bound(
-            "INSERT INTO items(workspace_id, pane_id, position, kind, item_id) VALUES (?, ?, ?, ?, ?)",
-        ).context("Preparing insertion")?;
+        let mut insert = conn.exec_bound(sql!(
+            INSERT INTO items(workspace_id, pane_id, position, kind, item_id) VALUES (?, ?, ?, ?, ?)
+        )).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
+            dbg!(item);
             insert((workspace_id, pane_id, position, item))?;
         }
 
@@ -386,7 +381,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use db::open_memory_db;
+    use db::open_test_db;
     use settings::DockAnchor;
 
     use super::*;
@@ -395,18 +390,19 @@ mod tests {
     async fn test_next_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_next_id_stability").await);
+        let db = WorkspaceDb(open_test_db("test_next_id_stability").await);
 
         db.write(|conn| {
             conn.migrate(
                 "test_table",
-                &[indoc! {"
+                &[sql!(
                     CREATE TABLE test_table(
                         text TEXT,
                         workspace_id INTEGER,
                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                             ON DELETE CASCADE
-                    ) STRICT;"}],
+                    ) STRICT;
+                )],
             )
             .unwrap();
         })
@@ -416,22 +412,22 @@ mod tests {
         // Assert the empty row got inserted
         assert_eq!(
             Some(id),
-            db.select_row_bound::<WorkspaceId, WorkspaceId>(
-                "SELECT workspace_id FROM workspaces WHERE workspace_id = ?"
-            )
+            db.select_row_bound::<WorkspaceId, WorkspaceId>(sql!(
+                SELECT workspace_id FROM workspaces WHERE workspace_id = ?
+            ))
             .unwrap()(id)
             .unwrap()
         );
 
         db.write(move |conn| {
-            conn.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+            conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
                 .unwrap()(("test-text-1", id))
             .unwrap()
         })
         .await;
 
         let test_text_1 = db
-            .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
             .unwrap()(1)
         .unwrap()
         .unwrap();
@@ -442,19 +438,19 @@ mod tests {
     async fn test_workspace_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_workspace_id_stability").await);
+        let db = WorkspaceDb(open_test_db("test_workspace_id_stability").await);
 
         db.write(|conn| {
             conn.migrate(
                 "test_table",
-                &[indoc! {"
+                &[sql!(
                     CREATE TABLE test_table(
                         text TEXT,
                         workspace_id INTEGER,
                         FOREIGN KEY(workspace_id) 
                             REFERENCES workspaces(workspace_id)
                             ON DELETE CASCADE
-                    ) STRICT;"}],
+                    ) STRICT;)],
             )
         })
         .await
@@ -479,7 +475,7 @@ mod tests {
         db.save_workspace(workspace_1.clone()).await;
 
         db.write(|conn| {
-            conn.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+            conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
                 .unwrap()(("test-text-1", 1))
             .unwrap();
         })
@@ -488,7 +484,7 @@ mod tests {
         db.save_workspace(workspace_2.clone()).await;
 
         db.write(|conn| {
-            conn.exec_bound("INSERT INTO test_table(text, workspace_id) VALUES (?, ?)")
+            conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
                 .unwrap()(("test-text-2", 2))
             .unwrap();
         })
@@ -505,14 +501,14 @@ mod tests {
         db.save_workspace(workspace_2).await;
 
         let test_text_2 = db
-            .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
             .unwrap()(2)
         .unwrap()
         .unwrap();
         assert_eq!(test_text_2, "test-text-2");
 
         let test_text_1 = db
-            .select_row_bound::<_, String>("SELECT text FROM test_table WHERE workspace_id = ?")
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
             .unwrap()(1)
         .unwrap()
         .unwrap();
@@ -523,7 +519,7 @@ mod tests {
     async fn test_full_workspace_serialization() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_full_workspace_serialization").await);
+        let db = WorkspaceDb(open_test_db("test_full_workspace_serialization").await);
 
         let dock_pane = crate::persistence::model::SerializedPane {
             children: vec![
@@ -597,7 +593,7 @@ mod tests {
     async fn test_workspace_assignment() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_basic_functionality").await);
+        let db = WorkspaceDb(open_test_db("test_basic_functionality").await);
 
         let workspace_1 = SerializedWorkspace {
             id: 1,
@@ -689,7 +685,7 @@ mod tests {
     async fn test_basic_dock_pane() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("basic_dock_pane").await);
+        let db = WorkspaceDb(open_test_db("basic_dock_pane").await);
 
         let dock_pane = crate::persistence::model::SerializedPane::new(
             vec![
@@ -714,7 +710,7 @@ mod tests {
     async fn test_simple_split() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("simple_split").await);
+        let db = WorkspaceDb(open_test_db("simple_split").await);
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -766,7 +762,7 @@ mod tests {
     async fn test_cleanup_panes() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_memory_db("test_cleanup_panes").await);
+        let db = WorkspaceDb(open_test_db("test_cleanup_panes").await);
 
         let center_pane = SerializedPaneGroup::Group {
             axis: gpui::Axis::Horizontal,

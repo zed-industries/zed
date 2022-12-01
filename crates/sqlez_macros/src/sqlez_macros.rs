@@ -1,9 +1,11 @@
 use proc_macro::{Delimiter, Span, TokenStream, TokenTree};
-use sqlez::thread_safe_connection::ThreadSafeConnection;
+use sqlez::thread_safe_connection::{locking_queue, ThreadSafeConnection};
 use syn::Error;
 
 lazy_static::lazy_static! {
-    static ref SQLITE: ThreadSafeConnection = ThreadSafeConnection::new(":memory:", false, None);
+    static ref SQLITE: ThreadSafeConnection =  {
+        ThreadSafeConnection::new(":memory:", false, None, Some(locking_queue()))
+    };
 }
 
 #[proc_macro]
@@ -20,6 +22,7 @@ pub fn sql(tokens: TokenStream) -> TokenStream {
     }
 
     let error = SQLITE.sql_has_syntax_error(sql.trim());
+    let formatted_sql = sqlformat::format(&sql, &sqlformat::QueryParams::None, Default::default());
 
     if let Some((error, error_offset)) = error {
         let error_span = spans
@@ -29,10 +32,10 @@ pub fn sql(tokens: TokenStream) -> TokenStream {
             .next()
             .unwrap_or(Span::call_site());
 
-        let error_text = format!("Sql Error: {}\nFor Query: {}", error, sql);
+        let error_text = format!("Sql Error: {}\nFor Query: {}", error, formatted_sql);
         TokenStream::from(Error::new(error_span.into(), error_text).into_compile_error())
     } else {
-        format!("r#\"{}\"#", &sql).parse().unwrap()
+        format!("r#\"{}\"#", &formatted_sql).parse().unwrap()
     }
 }
 
@@ -61,18 +64,18 @@ fn flatten_stream(tokens: TokenStream, result: &mut Vec<(String, Span)>) {
 
 fn open_delimiter(delimiter: Delimiter) -> String {
     match delimiter {
-        Delimiter::Parenthesis => "(".to_string(),
-        Delimiter::Brace => "[".to_string(),
-        Delimiter::Bracket => "{".to_string(),
+        Delimiter::Parenthesis => "( ".to_string(),
+        Delimiter::Brace => "[ ".to_string(),
+        Delimiter::Bracket => "{ ".to_string(),
         Delimiter::None => "".to_string(),
     }
 }
 
 fn close_delimiter(delimiter: Delimiter) -> String {
     match delimiter {
-        Delimiter::Parenthesis => ")".to_string(),
-        Delimiter::Brace => "]".to_string(),
-        Delimiter::Bracket => "}".to_string(),
+        Delimiter::Parenthesis => " ) ".to_string(),
+        Delimiter::Brace => " ] ".to_string(),
+        Delimiter::Bracket => " } ".to_string(),
         Delimiter::None => "".to_string(),
     }
 }

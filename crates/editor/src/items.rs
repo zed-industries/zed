@@ -602,31 +602,37 @@ impl Item for Editor {
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<ViewHandle<Self>>> {
-        if let Some(project_item) = project.update(cx, |project, cx| {
+        let project_item: Result<_> = project.update(cx, |project, cx| {
             // Look up the path with this key associated, create a self with that path
-            let path = DB.get_path(item_id, workspace_id).ok()?;
+            let path = DB
+                .get_path(item_id, workspace_id)?
+                .context("No path stored for this editor")?;
 
-            let (worktree, path) = project.find_local_worktree(&path, cx)?;
+            let (worktree, path) = project
+                .find_local_worktree(&path, cx)
+                .with_context(|| format!("No worktree for path: {path:?}"))?;
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
                 path: path.into(),
             };
 
-            Some(project.open_path(project_path, cx))
-        }) {
-            cx.spawn(|pane, mut cx| async move {
-                let (_, project_item) = project_item.await?;
-                let buffer = project_item
-                    .downcast::<Buffer>()
-                    .context("Project item at stored path was not a buffer")?;
+            Ok(project.open_path(project_path, cx))
+        });
 
-                Ok(cx.update(|cx| {
-                    cx.add_view(pane, |cx| Editor::for_buffer(buffer, Some(project), cx))
-                }))
+        project_item
+            .map(|project_item| {
+                cx.spawn(|pane, mut cx| async move {
+                    let (_, project_item) = project_item.await?;
+                    let buffer = project_item
+                        .downcast::<Buffer>()
+                        .context("Project item at stored path was not a buffer")?;
+
+                    Ok(cx.update(|cx| {
+                        cx.add_view(pane, |cx| Editor::for_buffer(buffer, Some(project), cx))
+                    }))
+                })
             })
-        } else {
-            Task::ready(Err(anyhow!("Could not load file from stored path")))
-        }
+            .unwrap_or_else(|error| Task::ready(Err(error)))
     }
 }
 

@@ -5609,6 +5609,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "sqlez",
+ "sqlformat",
  "syn",
 ]
 

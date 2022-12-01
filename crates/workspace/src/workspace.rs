@@ -2365,7 +2365,6 @@ impl Workspace {
                     .await;
 
                 // Traverse the splits tree and add to things
-
                 let (root, active_pane) = serialized_workspace
                     .center_group
                     .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
@@ -2382,6 +2381,10 @@ impl Workspace {
 
                     if let Some(active_pane) = active_pane {
                         cx.focus(active_pane);
+                    }
+
+                    if workspace.items(cx).next().is_none() {
+                        cx.dispatch_action(NewFile);
                     }
 
                     cx.notify();
@@ -2636,13 +2639,10 @@ pub fn open_paths(
 pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
     let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
     cx.spawn(|mut cx| async move {
-        eprintln!("Open new task spawned");
         let (workspace, opened_paths) = task.await;
-        eprintln!("workspace and path items created");
 
         workspace.update(&mut cx, |_, cx| {
             if opened_paths.is_empty() {
-                eprintln!("new file redispatched");
                 cx.dispatch_action(NewFile);
             }
         })

@@ -1,25 +1,9 @@
-use sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
+use sqlez::domain::Domain;
 use sqlez_macros::sql;
 
-use crate::{open_file_db, open_memory_db, query};
+use crate::{connection, query};
 
-pub struct KeyValueStore(ThreadSafeConnection<KeyValueStore>);
-
-impl std::ops::Deref for KeyValueStore {
-    type Target = ThreadSafeConnection<KeyValueStore>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-lazy_static::lazy_static! {
-    pub static ref KEY_VALUE_STORE: KeyValueStore = KeyValueStore(if cfg!(any(test, feature = "test-support")) {
-        smol::block_on(open_memory_db("KEY_VALUE_STORE"))
-    } else {
-        smol::block_on(open_file_db())
-    });
-}
+connection!(KEY_VALUE_STORE: KeyValueStore<KeyValueStore>);
 
 impl Domain for KeyValueStore {
     fn name() -> &'static str {
@@ -27,8 +11,10 @@ impl Domain for KeyValueStore {
     }
 
     fn migrations() -> &'static [&'static str] {
+        // Legacy migrations using rusqlite may have already created kv_store during alpha,
+        // migrations must be infallible so this must have 'IF NOT EXISTS'
         &[sql!(
-            CREATE TABLE kv_store(
+            CREATE TABLE IF NOT EXISTS kv_store(
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             ) STRICT;
@@ -62,7 +48,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_kvp() {
-        let db = KeyValueStore(crate::open_memory_db("test_kvp").await);
+        let db = KeyValueStore(crate::open_test_db("test_kvp").await);
 
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
 

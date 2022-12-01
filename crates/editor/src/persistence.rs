@@ -23,7 +23,6 @@ impl Domain for Editor {
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                     ON UPDATE CASCADE
-
             ) STRICT;
         )]
     }
@@ -31,7 +30,7 @@ impl Domain for Editor {
 
 impl EditorDb {
     query! {
-        pub fn get_path(item_id: ItemId, workspace_id: WorkspaceId) -> Result<PathBuf> {
+        pub fn get_path(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT path FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }

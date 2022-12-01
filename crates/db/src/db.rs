@@ -4,7 +4,6 @@ pub mod kvp;
 pub use anyhow;
 pub use indoc::indoc;
 pub use lazy_static;
-use parking_lot::Mutex;
 pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
@@ -34,7 +33,7 @@ lazy_static::lazy_static! {
 }
 
 /// Open or create a database at the given directory path.
-pub async fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
+pub async fn open_db<M: Migrator>() -> ThreadSafeConnection<M> {
     // Use 0 for now. Will implement incrementing and clearing of old db files soon TM
     let current_db_dir = (*DB_DIR).join(Path::new(&format!("0-{}", *RELEASE_CHANNEL_NAME)));
 
@@ -56,18 +55,15 @@ pub async fn open_file_db<M: Migrator>() -> ThreadSafeConnection<M> {
         .await
 }
 
-pub async fn open_memory_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M> {
+#[cfg(any(test, feature = "test-support"))]
+pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M> {
+    use sqlez::thread_safe_connection::locking_queue;
+
     ThreadSafeConnection::<M>::builder(db_name, false)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
         // Serialize queued writes via a mutex and run them synchronously
-        .with_write_queue_constructor(Box::new(|connection| {
-            let connection = Mutex::new(connection);
-            Box::new(move |queued_write| {
-                let connection = connection.lock();
-                queued_write(&connection)
-            })
-        }))
+        .with_write_queue_constructor(locking_queue())
         .build()
         .await
 }
@@ -76,22 +72,24 @@ pub async fn open_memory_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<
 #[macro_export]
 macro_rules! connection {
     ($id:ident: $t:ident<$d:ty>) => {
-        pub struct $t(::db::sqlez::thread_safe_connection::ThreadSafeConnection<$d>);
+        pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<$d>);
 
         impl ::std::ops::Deref for $t {
-            type Target = ::db::sqlez::thread_safe_connection::ThreadSafeConnection<$d>;
+            type Target = $crate::sqlez::thread_safe_connection::ThreadSafeConnection<$d>;
 
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
         }
 
-        ::db::lazy_static::lazy_static! {
-            pub static ref $id: $t = $t(if cfg!(any(test, feature = "test-support")) {
-                $crate::smol::block_on(::db::open_memory_db(stringify!($id)))
-            } else {
-                $crate::smol::block_on(::db::open_file_db())
-            });
+        #[cfg(any(test, feature = "test-support"))]
+        $crate::lazy_static::lazy_static! {
+            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_test_db(stringify!($id))));
+        }
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        $crate::lazy_static::lazy_static! {
+            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db()));
         }
     };
 }
