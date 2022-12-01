@@ -2340,6 +2340,7 @@ impl Workspace {
                 dock_position: self.dock.position(),
                 dock_pane,
                 center_group,
+                project_panel_open: self.left_sidebar.read(cx).is_open(),
             };
 
             cx.background()
@@ -2382,6 +2383,12 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(root);
+
+                    // Note, if this is moved after 'set_dock_position'
+                    // it causes an infinite loop.
+                    if serialized_workspace.project_panel_open {
+                        workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx)
+                    }
 
                     Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
 

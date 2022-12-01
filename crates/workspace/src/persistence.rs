@@ -36,6 +36,7 @@ impl Domain for Workspace {
                 dock_visible INTEGER, // Boolean
                 dock_anchor TEXT, // Enum: 'Bottom' / 'Right' / 'Expanded'
                 dock_pane INTEGER, // NULL indicates that we don't have a dock pane yet
+                project_panel_open INTEGER, //Boolean
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
                 FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
             ) STRICT;
@@ -100,19 +101,20 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, dock_position): (
+        let (workspace_id, workspace_location, project_panel_open, dock_position): (
             WorkspaceId,
             WorkspaceLocation,
+            bool,
             DockPosition,
         ) = iife!({
             if worktree_roots.len() == 0 {
                 self.select_row(sql!(
-                    SELECT workspace_id, workspace_location, dock_visible, dock_anchor
+                    SELECT workspace_id, workspace_location, project_panel_open, dock_visible, dock_anchor
                     FROM workspaces
                     ORDER BY timestamp DESC LIMIT 1))?()?
             } else {
                 self.select_row_bound(sql!(
-                    SELECT workspace_id, workspace_location, dock_visible, dock_anchor
+                    SELECT workspace_id, workspace_location, project_panel_open, dock_visible, dock_anchor
                     FROM workspaces 
                     WHERE workspace_location = ?))?(&workspace_location)?
             }
@@ -133,6 +135,7 @@ impl WorkspaceDb {
                 .context("Getting center group")
                 .log_err()?,
             dock_position,
+            project_panel_open
         })
     }
 
@@ -158,18 +161,20 @@ impl WorkspaceDb {
                         INSERT INTO workspaces(
                             workspace_id,
                             workspace_location,
+                            project_panel_open,
                             dock_visible,
                             dock_anchor,
                             timestamp
                         )
-                        VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                        VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
                         ON CONFLICT DO
                             UPDATE SET
                             workspace_location = ?2,
-                            dock_visible = ?3,
-                            dock_anchor = ?4,
+                            project_panel_open = ?3,
+                            dock_visible = ?4,
+                            dock_anchor = ?5,
                             timestamp = CURRENT_TIMESTAMP
-                ))?((workspace.id, &workspace.location, workspace.dock_position))
+                ))?((workspace.id, &workspace.location, workspace.project_panel_open, workspace.dock_position))
                 .context("Updating workspace")?;
 
                 // Save center pane group and dock pane
@@ -273,6 +278,7 @@ impl WorkspaceDb {
         .collect::<Result<_>>()
     }
 
+   
     fn save_pane_group(
         conn: &Connection,
         workspace_id: WorkspaceId,
@@ -462,6 +468,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
             center_group: Default::default(),
             dock_pane: Default::default(),
+            project_panel_open: true
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -470,6 +477,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
             center_group: Default::default(),
             dock_pane: Default::default(),
+            project_panel_open: false
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -575,6 +583,7 @@ mod tests {
             dock_position: DockPosition::Shown(DockAnchor::Bottom),
             center_group,
             dock_pane,
+            project_panel_open: true
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -602,6 +611,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
             center_group: Default::default(),
             dock_pane: Default::default(),
+            project_panel_open: true,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -610,6 +620,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
             center_group: Default::default(),
             dock_pane: Default::default(),
+            project_panel_open: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -645,6 +656,7 @@ mod tests {
             dock_position: DockPosition::Shown(DockAnchor::Right),
             center_group: Default::default(),
             dock_pane: Default::default(),
+            project_panel_open: false
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -679,6 +691,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Right),
             center_group: center_group.clone(),
             dock_pane,
+            project_panel_open: true
         }
     }
 

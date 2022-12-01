@@ -65,6 +65,7 @@ pub struct SerializedWorkspace {
     pub dock_position: DockPosition,
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
+    pub project_panel_open: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
