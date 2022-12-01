@@ -1,4 +1,4 @@
-use super::{ProjectCollaboratorId, ProjectId, UserId};
+use super::{ProjectCollaboratorId, ProjectId, ReplicaId, UserId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -9,7 +9,7 @@ pub struct Model {
     pub project_id: ProjectId,
     pub connection_id: i32,
     pub user_id: UserId,
-    pub replica_id: i32,
+    pub replica_id: ReplicaId,
     pub is_host: bool,
 }
 

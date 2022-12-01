@@ -14,6 +14,12 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
+        belongs_to = "super::user::Entity",
+        from = "Column::HostUserId",
+        to = "super::user::Column::Id"
+    )]
+    HostUser,
+    #[sea_orm(
         belongs_to = "super::room::Entity",
         from = "Column::RoomId",
         to = "super::room::Column::Id"
@@ -21,6 +27,12 @@ pub enum Relation {
     Room,
     #[sea_orm(has_many = "super::worktree::Entity")]
     Worktree,
+}
+
+impl Related<super::user::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::HostUser.def()
+    }
 }
 
 impl Related<super::room::Entity> for Entity {
