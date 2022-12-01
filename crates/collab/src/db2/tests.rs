@@ -457,210 +457,210 @@ async fn test_fuzzy_search_users() {
     }
 }
 
-// #[gpui::test]
-// async fn test_invite_codes() {
-//     let test_db = PostgresTestDb::new(build_background_executor());
-//     let db = test_db.db();
+#[gpui::test]
+async fn test_invite_codes() {
+    let test_db = TestDb::postgres(build_background_executor());
+    let db = test_db.db();
 
-//     let NewUserResult { user_id: user1, .. } = db
-//         .create_user(
-//             "user1@example.com",
-//             false,
-//             NewUserParams {
-//                 github_login: "user1".into(),
-//                 github_user_id: 0,
-//                 invite_count: 0,
-//             },
-//         )
-//         .await
-//         .unwrap();
+    let NewUserResult { user_id: user1, .. } = db
+        .create_user(
+            "user1@example.com",
+            false,
+            NewUserParams {
+                github_login: "user1".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-//     // Initially, user 1 has no invite code
-//     assert_eq!(db.get_invite_code_for_user(user1).await.unwrap(), None);
+    // Initially, user 1 has no invite code
+    assert_eq!(db.get_invite_code_for_user(user1).await.unwrap(), None);
 
-//     // Setting invite count to 0 when no code is assigned does not assign a new code
-//     db.set_invite_count_for_user(user1, 0).await.unwrap();
-//     assert!(db.get_invite_code_for_user(user1).await.unwrap().is_none());
+    // Setting invite count to 0 when no code is assigned does not assign a new code
+    db.set_invite_count_for_user(user1, 0).await.unwrap();
+    assert!(db.get_invite_code_for_user(user1).await.unwrap().is_none());
 
-//     // User 1 creates an invite code that can be used twice.
-//     db.set_invite_count_for_user(user1, 2).await.unwrap();
-//     let (invite_code, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
-//     assert_eq!(invite_count, 2);
+    // User 1 creates an invite code that can be used twice.
+    db.set_invite_count_for_user(user1, 2).await.unwrap();
+    let (invite_code, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+    assert_eq!(invite_count, 2);
 
-//     // User 2 redeems the invite code and becomes a contact of user 1.
-//     let user2_invite = db
-//         .create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
-//         .await
-//         .unwrap();
-//     let NewUserResult {
-//         user_id: user2,
-//         inviting_user_id,
-//         signup_device_id,
-//         metrics_id,
-//     } = db
-//         .create_user_from_invite(
-//             &user2_invite,
-//             NewUserParams {
-//                 github_login: "user2".into(),
-//                 github_user_id: 2,
-//                 invite_count: 7,
-//             },
-//         )
-//         .await
-//         .unwrap()
-//         .unwrap();
-//     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
-//     assert_eq!(invite_count, 1);
-//     assert_eq!(inviting_user_id, Some(user1));
-//     assert_eq!(signup_device_id.unwrap(), "user-2-device-id");
-//     assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id);
-//     assert_eq!(
-//         db.get_contacts(user1).await.unwrap(),
-//         [Contact::Accepted {
-//             user_id: user2,
-//             should_notify: true,
-//             busy: false,
-//         }]
-//     );
-//     assert_eq!(
-//         db.get_contacts(user2).await.unwrap(),
-//         [Contact::Accepted {
-//             user_id: user1,
-//             should_notify: false,
-//             busy: false,
-//         }]
-//     );
-//     assert_eq!(
-//         db.get_invite_code_for_user(user2).await.unwrap().unwrap().1,
-//         7
-//     );
+    // User 2 redeems the invite code and becomes a contact of user 1.
+    let user2_invite = db
+        .create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
+        .await
+        .unwrap();
+    let NewUserResult {
+        user_id: user2,
+        inviting_user_id,
+        signup_device_id,
+        metrics_id,
+    } = db
+        .create_user_from_invite(
+            &user2_invite,
+            NewUserParams {
+                github_login: "user2".into(),
+                github_user_id: 2,
+                invite_count: 7,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+    assert_eq!(invite_count, 1);
+    assert_eq!(inviting_user_id, Some(user1));
+    assert_eq!(signup_device_id.unwrap(), "user-2-device-id");
+    assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id);
+    assert_eq!(
+        db.get_contacts(user1).await.unwrap(),
+        [Contact::Accepted {
+            user_id: user2,
+            should_notify: true,
+            busy: false,
+        }]
+    );
+    assert_eq!(
+        db.get_contacts(user2).await.unwrap(),
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: false,
+            busy: false,
+        }]
+    );
+    assert_eq!(
+        db.get_invite_code_for_user(user2).await.unwrap().unwrap().1,
+        7
+    );
 
-//     // User 3 redeems the invite code and becomes a contact of user 1.
-//     let user3_invite = db
-//         .create_invite_from_code(&invite_code, "user3@example.com", None)
-//         .await
-//         .unwrap();
-//     let NewUserResult {
-//         user_id: user3,
-//         inviting_user_id,
-//         signup_device_id,
-//         ..
-//     } = db
-//         .create_user_from_invite(
-//             &user3_invite,
-//             NewUserParams {
-//                 github_login: "user-3".into(),
-//                 github_user_id: 3,
-//                 invite_count: 3,
-//             },
-//         )
-//         .await
-//         .unwrap()
-//         .unwrap();
-//     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
-//     assert_eq!(invite_count, 0);
-//     assert_eq!(inviting_user_id, Some(user1));
-//     assert!(signup_device_id.is_none());
-//     assert_eq!(
-//         db.get_contacts(user1).await.unwrap(),
-//         [
-//             Contact::Accepted {
-//                 user_id: user2,
-//                 should_notify: true,
-//                 busy: false,
-//             },
-//             Contact::Accepted {
-//                 user_id: user3,
-//                 should_notify: true,
-//                 busy: false,
-//             }
-//         ]
-//     );
-//     assert_eq!(
-//         db.get_contacts(user3).await.unwrap(),
-//         [Contact::Accepted {
-//             user_id: user1,
-//             should_notify: false,
-//             busy: false,
-//         }]
-//     );
-//     assert_eq!(
-//         db.get_invite_code_for_user(user3).await.unwrap().unwrap().1,
-//         3
-//     );
+    // User 3 redeems the invite code and becomes a contact of user 1.
+    let user3_invite = db
+        .create_invite_from_code(&invite_code, "user3@example.com", None)
+        .await
+        .unwrap();
+    let NewUserResult {
+        user_id: user3,
+        inviting_user_id,
+        signup_device_id,
+        ..
+    } = db
+        .create_user_from_invite(
+            &user3_invite,
+            NewUserParams {
+                github_login: "user-3".into(),
+                github_user_id: 3,
+                invite_count: 3,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+    assert_eq!(invite_count, 0);
+    assert_eq!(inviting_user_id, Some(user1));
+    assert!(signup_device_id.is_none());
+    assert_eq!(
+        db.get_contacts(user1).await.unwrap(),
+        [
+            Contact::Accepted {
+                user_id: user2,
+                should_notify: true,
+                busy: false,
+            },
+            Contact::Accepted {
+                user_id: user3,
+                should_notify: true,
+                busy: false,
+            }
+        ]
+    );
+    assert_eq!(
+        db.get_contacts(user3).await.unwrap(),
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: false,
+            busy: false,
+        }]
+    );
+    assert_eq!(
+        db.get_invite_code_for_user(user3).await.unwrap().unwrap().1,
+        3
+    );
 
-//     // Trying to reedem the code for the third time results in an error.
-//     db.create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
-//         .await
-//         .unwrap_err();
+    // Trying to reedem the code for the third time results in an error.
+    db.create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
+        .await
+        .unwrap_err();
 
-//     // Invite count can be updated after the code has been created.
-//     db.set_invite_count_for_user(user1, 2).await.unwrap();
-//     let (latest_code, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
-//     assert_eq!(latest_code, invite_code); // Invite code doesn't change when we increment above 0
-//     assert_eq!(invite_count, 2);
+    // Invite count can be updated after the code has been created.
+    db.set_invite_count_for_user(user1, 2).await.unwrap();
+    let (latest_code, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+    assert_eq!(latest_code, invite_code); // Invite code doesn't change when we increment above 0
+    assert_eq!(invite_count, 2);
 
-//     // User 4 can now redeem the invite code and becomes a contact of user 1.
-//     let user4_invite = db
-//         .create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
-//         .await
-//         .unwrap();
-//     let user4 = db
-//         .create_user_from_invite(
-//             &user4_invite,
-//             NewUserParams {
-//                 github_login: "user-4".into(),
-//                 github_user_id: 4,
-//                 invite_count: 5,
-//             },
-//         )
-//         .await
-//         .unwrap()
-//         .unwrap()
-//         .user_id;
+    // User 4 can now redeem the invite code and becomes a contact of user 1.
+    let user4_invite = db
+        .create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
+        .await
+        .unwrap();
+    let user4 = db
+        .create_user_from_invite(
+            &user4_invite,
+            NewUserParams {
+                github_login: "user-4".into(),
+                github_user_id: 4,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .user_id;
 
-//     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
-//     assert_eq!(invite_count, 1);
-//     assert_eq!(
-//         db.get_contacts(user1).await.unwrap(),
-//         [
-//             Contact::Accepted {
-//                 user_id: user2,
-//                 should_notify: true,
-//                 busy: false,
-//             },
-//             Contact::Accepted {
-//                 user_id: user3,
-//                 should_notify: true,
-//                 busy: false,
-//             },
-//             Contact::Accepted {
-//                 user_id: user4,
-//                 should_notify: true,
-//                 busy: false,
-//             }
-//         ]
-//     );
-//     assert_eq!(
-//         db.get_contacts(user4).await.unwrap(),
-//         [Contact::Accepted {
-//             user_id: user1,
-//             should_notify: false,
-//             busy: false,
-//         }]
-//     );
-//     assert_eq!(
-//         db.get_invite_code_for_user(user4).await.unwrap().unwrap().1,
-//         5
-//     );
+    let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+    assert_eq!(invite_count, 1);
+    assert_eq!(
+        db.get_contacts(user1).await.unwrap(),
+        [
+            Contact::Accepted {
+                user_id: user2,
+                should_notify: true,
+                busy: false,
+            },
+            Contact::Accepted {
+                user_id: user3,
+                should_notify: true,
+                busy: false,
+            },
+            Contact::Accepted {
+                user_id: user4,
+                should_notify: true,
+                busy: false,
+            }
+        ]
+    );
+    assert_eq!(
+        db.get_contacts(user4).await.unwrap(),
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: false,
+            busy: false,
+        }]
+    );
+    assert_eq!(
+        db.get_invite_code_for_user(user4).await.unwrap().unwrap().1,
+        5
+    );
 
-//     // An existing user cannot redeem invite codes.
-//     db.create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
-//         .await
-//         .unwrap_err();
-//     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
-//     assert_eq!(invite_count, 1);
-// }
+    // An existing user cannot redeem invite codes.
+    db.create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
+        .await
+        .unwrap_err();
+    let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+    assert_eq!(invite_count, 1);
+}
 
 // #[gpui::test]
 // async fn test_signups() {
