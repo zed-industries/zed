@@ -36,7 +36,7 @@ use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 pub use contact::Contact;
-pub use signup::Invite;
+pub use signup::{Invite, NewSignup, WaitlistSummary};
 pub use user::Model as User;
 
 pub struct Database {
@@ -138,6 +138,11 @@ impl Database {
             })
         })
         .await
+    }
+
+    pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<user::Model>> {
+        self.transact(|tx| async move { Ok(user::Entity::find_by_id(id).one(&tx).await?) })
+            .await
     }
 
     pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<user::Model>> {
@@ -322,7 +327,7 @@ impl Database {
     }
 
     pub async fn send_contact_request(&self, sender_id: UserId, receiver_id: UserId) -> Result<()> {
-        self.transact(|mut tx| async move {
+        self.transact(|tx| async move {
             let (id_a, id_b, a_to_b) = if sender_id < receiver_id {
                 (sender_id, receiver_id, true)
             } else {
@@ -520,6 +525,99 @@ impl Database {
                     query.into(),
                     vec![like_string.into(), name_query.into(), limit.into()],
                 ))
+                .all(&tx)
+                .await?)
+        })
+        .await
+    }
+
+    // signups
+
+    pub async fn create_signup(&self, signup: NewSignup) -> Result<()> {
+        self.transact(|tx| async {
+            signup::ActiveModel {
+                email_address: ActiveValue::set(signup.email_address.clone()),
+                email_confirmation_code: ActiveValue::set(random_email_confirmation_code()),
+                email_confirmation_sent: ActiveValue::set(false),
+                platform_mac: ActiveValue::set(signup.platform_mac),
+                platform_windows: ActiveValue::set(signup.platform_windows),
+                platform_linux: ActiveValue::set(signup.platform_linux),
+                platform_unknown: ActiveValue::set(false),
+                editor_features: ActiveValue::set(Some(signup.editor_features.clone())),
+                programming_languages: ActiveValue::set(Some(signup.programming_languages.clone())),
+                device_id: ActiveValue::set(signup.device_id.clone()),
+                ..Default::default()
+            }
+            .insert(&tx)
+            .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_waitlist_summary(&self) -> Result<WaitlistSummary> {
+        self.transact(|tx| async move {
+            let query = "
+                SELECT
+                    COUNT(*) as count,
+                    COALESCE(SUM(CASE WHEN platform_linux THEN 1 ELSE 0 END), 0) as linux_count,
+                    COALESCE(SUM(CASE WHEN platform_mac THEN 1 ELSE 0 END), 0) as mac_count,
+                    COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count,
+                    COALESCE(SUM(CASE WHEN platform_unknown THEN 1 ELSE 0 END), 0) as unknown_count
+                FROM (
+                    SELECT *
+                    FROM signups
+                    WHERE
+                        NOT email_confirmation_sent
+                ) AS unsent
+            ";
+            Ok(
+                WaitlistSummary::find_by_statement(Statement::from_sql_and_values(
+                    self.pool.get_database_backend(),
+                    query.into(),
+                    vec![],
+                ))
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("invalid result"))?,
+            )
+        })
+        .await
+    }
+
+    pub async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()> {
+        let emails = invites
+            .iter()
+            .map(|s| s.email_address.as_str())
+            .collect::<Vec<_>>();
+        self.transact(|tx| async {
+            signup::Entity::update_many()
+                .filter(signup::Column::EmailAddress.is_in(emails.iter().copied()))
+                .col_expr(signup::Column::EmailConfirmationSent, true.into())
+                .exec(&tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>> {
+        self.transact(|tx| async move {
+            Ok(signup::Entity::find()
+                .select_only()
+                .column(signup::Column::EmailAddress)
+                .column(signup::Column::EmailConfirmationCode)
+                .filter(
+                    signup::Column::EmailConfirmationSent.eq(false).and(
+                        signup::Column::PlatformMac
+                            .eq(true)
+                            .or(signup::Column::PlatformUnknown.eq(true)),
+                    ),
+                )
+                .limit(count as u64)
+                .into_model()
                 .all(&tx)
                 .await?)
         })

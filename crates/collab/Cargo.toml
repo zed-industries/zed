@@ -36,7 +36,7 @@ prometheus = "0.13"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"
-sea-orm = { version = "0.10", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-orm = { version = "0.10", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls"] }
 sea-query = { version = "0.27", features = ["derive"] }
 sea-query-binder = { version = "0.2", features = ["sqlx-postgres"] }
 serde = { version = "1.0", features = ["derive", "rc"] }

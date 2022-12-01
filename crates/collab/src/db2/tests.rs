@@ -662,151 +662,151 @@ async fn test_invite_codes() {
     assert_eq!(invite_count, 1);
 }
 
-// #[gpui::test]
-// async fn test_signups() {
-//     let test_db = PostgresTestDb::new(build_background_executor());
-//     let db = test_db.db();
+#[gpui::test]
+async fn test_signups() {
+    let test_db = TestDb::postgres(build_background_executor());
+    let db = test_db.db();
 
-//     // people sign up on the waitlist
-//     for i in 0..8 {
-//         db.create_signup(Signup {
-//             email_address: format!("person-{i}@example.com"),
-//             platform_mac: true,
-//             platform_linux: i % 2 == 0,
-//             platform_windows: i % 4 == 0,
-//             editor_features: vec!["speed".into()],
-//             programming_languages: vec!["rust".into(), "c".into()],
-//             device_id: Some(format!("device_id_{i}")),
-//         })
-//         .await
-//         .unwrap();
-//     }
+    // people sign up on the waitlist
+    for i in 0..8 {
+        db.create_signup(NewSignup {
+            email_address: format!("person-{i}@example.com"),
+            platform_mac: true,
+            platform_linux: i % 2 == 0,
+            platform_windows: i % 4 == 0,
+            editor_features: vec!["speed".into()],
+            programming_languages: vec!["rust".into(), "c".into()],
+            device_id: Some(format!("device_id_{i}")),
+        })
+        .await
+        .unwrap();
+    }
 
-//     assert_eq!(
-//         db.get_waitlist_summary().await.unwrap(),
-//         WaitlistSummary {
-//             count: 8,
-//             mac_count: 8,
-//             linux_count: 4,
-//             windows_count: 2,
-//             unknown_count: 0,
-//         }
-//     );
+    assert_eq!(
+        db.get_waitlist_summary().await.unwrap(),
+        WaitlistSummary {
+            count: 8,
+            mac_count: 8,
+            linux_count: 4,
+            windows_count: 2,
+            unknown_count: 0,
+        }
+    );
 
-//     // retrieve the next batch of signup emails to send
-//     let signups_batch1 = db.get_unsent_invites(3).await.unwrap();
-//     let addresses = signups_batch1
-//         .iter()
-//         .map(|s| &s.email_address)
-//         .collect::<Vec<_>>();
-//     assert_eq!(
-//         addresses,
-//         &[
-//             "person-0@example.com",
-//             "person-1@example.com",
-//             "person-2@example.com"
-//         ]
-//     );
-//     assert_ne!(
-//         signups_batch1[0].email_confirmation_code,
-//         signups_batch1[1].email_confirmation_code
-//     );
+    // retrieve the next batch of signup emails to send
+    let signups_batch1 = db.get_unsent_invites(3).await.unwrap();
+    let addresses = signups_batch1
+        .iter()
+        .map(|s| &s.email_address)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        addresses,
+        &[
+            "person-0@example.com",
+            "person-1@example.com",
+            "person-2@example.com"
+        ]
+    );
+    assert_ne!(
+        signups_batch1[0].email_confirmation_code,
+        signups_batch1[1].email_confirmation_code
+    );
 
-//     // the waitlist isn't updated until we record that the emails
-//     // were successfully sent.
-//     let signups_batch = db.get_unsent_invites(3).await.unwrap();
-//     assert_eq!(signups_batch, signups_batch1);
+    // the waitlist isn't updated until we record that the emails
+    // were successfully sent.
+    let signups_batch = db.get_unsent_invites(3).await.unwrap();
+    assert_eq!(signups_batch, signups_batch1);
 
-//     // once the emails go out, we can retrieve the next batch
-//     // of signups.
-//     db.record_sent_invites(&signups_batch1).await.unwrap();
-//     let signups_batch2 = db.get_unsent_invites(3).await.unwrap();
-//     let addresses = signups_batch2
-//         .iter()
-//         .map(|s| &s.email_address)
-//         .collect::<Vec<_>>();
-//     assert_eq!(
-//         addresses,
-//         &[
-//             "person-3@example.com",
-//             "person-4@example.com",
-//             "person-5@example.com"
-//         ]
-//     );
+    // once the emails go out, we can retrieve the next batch
+    // of signups.
+    db.record_sent_invites(&signups_batch1).await.unwrap();
+    let signups_batch2 = db.get_unsent_invites(3).await.unwrap();
+    let addresses = signups_batch2
+        .iter()
+        .map(|s| &s.email_address)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        addresses,
+        &[
+            "person-3@example.com",
+            "person-4@example.com",
+            "person-5@example.com"
+        ]
+    );
 
-//     // the sent invites are excluded from the summary.
-//     assert_eq!(
-//         db.get_waitlist_summary().await.unwrap(),
-//         WaitlistSummary {
-//             count: 5,
-//             mac_count: 5,
-//             linux_count: 2,
-//             windows_count: 1,
-//             unknown_count: 0,
-//         }
-//     );
+    // the sent invites are excluded from the summary.
+    assert_eq!(
+        db.get_waitlist_summary().await.unwrap(),
+        WaitlistSummary {
+            count: 5,
+            mac_count: 5,
+            linux_count: 2,
+            windows_count: 1,
+            unknown_count: 0,
+        }
+    );
 
-//     // user completes the signup process by providing their
-//     // github account.
-//     let NewUserResult {
-//         user_id,
-//         inviting_user_id,
-//         signup_device_id,
-//         ..
-//     } = db
-//         .create_user_from_invite(
-//             &Invite {
-//                 email_address: signups_batch1[0].email_address.clone(),
-//                 email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
-//             },
-//             NewUserParams {
-//                 github_login: "person-0".into(),
-//                 github_user_id: 0,
-//                 invite_count: 5,
-//             },
-//         )
-//         .await
-//         .unwrap()
-//         .unwrap();
-//     let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
-//     assert!(inviting_user_id.is_none());
-//     assert_eq!(user.github_login, "person-0");
-//     assert_eq!(user.email_address.as_deref(), Some("person-0@example.com"));
-//     assert_eq!(user.invite_count, 5);
-//     assert_eq!(signup_device_id.unwrap(), "device_id_0");
+    // user completes the signup process by providing their
+    // github account.
+    let NewUserResult {
+        user_id,
+        inviting_user_id,
+        signup_device_id,
+        ..
+    } = db
+        .create_user_from_invite(
+            &Invite {
+                email_address: signups_batch1[0].email_address.clone(),
+                email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
+            },
+            NewUserParams {
+                github_login: "person-0".into(),
+                github_user_id: 0,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
+    assert!(inviting_user_id.is_none());
+    assert_eq!(user.github_login, "person-0");
+    assert_eq!(user.email_address.as_deref(), Some("person-0@example.com"));
+    assert_eq!(user.invite_count, 5);
+    assert_eq!(signup_device_id.unwrap(), "device_id_0");
 
-//     // cannot redeem the same signup again.
-//     assert!(db
-//         .create_user_from_invite(
-//             &Invite {
-//                 email_address: signups_batch1[0].email_address.clone(),
-//                 email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
-//             },
-//             NewUserParams {
-//                 github_login: "some-other-github_account".into(),
-//                 github_user_id: 1,
-//                 invite_count: 5,
-//             },
-//         )
-//         .await
-//         .unwrap()
-//         .is_none());
+    // cannot redeem the same signup again.
+    assert!(db
+        .create_user_from_invite(
+            &Invite {
+                email_address: signups_batch1[0].email_address.clone(),
+                email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
+            },
+            NewUserParams {
+                github_login: "some-other-github_account".into(),
+                github_user_id: 1,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap()
+        .is_none());
 
-//     // cannot redeem a signup with the wrong confirmation code.
-//     db.create_user_from_invite(
-//         &Invite {
-//             email_address: signups_batch1[1].email_address.clone(),
-//             email_confirmation_code: "the-wrong-code".to_string(),
-//         },
-//         NewUserParams {
-//             github_login: "person-1".into(),
-//             github_user_id: 2,
-//             invite_count: 5,
-//         },
-//     )
-//     .await
-//     .unwrap_err();
-// }
+    // cannot redeem a signup with the wrong confirmation code.
+    db.create_user_from_invite(
+        &Invite {
+            email_address: signups_batch1[1].email_address.clone(),
+            email_confirmation_code: "the-wrong-code".to_string(),
+        },
+        NewUserParams {
+            github_login: "person-1".into(),
+            github_user_id: 2,
+            invite_count: 5,
+        },
+    )
+    .await
+    .unwrap_err();
+}
 
 fn build_background_executor() -> Arc<Background> {
     Deterministic::new(0).build_background()
