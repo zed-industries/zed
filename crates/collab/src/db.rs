@@ -1311,28 +1311,6 @@ impl Database {
         .await
     }
 
-    async fn get_guest_connection_ids(
-        &self,
-        project_id: ProjectId,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<ConnectionId>> {
-        todo!()
-        // let mut guest_connection_ids = Vec::new();
-        // let mut db_guest_connection_ids = sqlx::query_scalar::<_, i32>(
-        //     "
-        //     SELECT connection_id
-        //     FROM project_collaborators
-        //     WHERE project_id = $1 AND is_host = FALSE
-        //     ",
-        // )
-        // .bind(project_id)
-        // .fetch(tx);
-        // while let Some(connection_id) = db_guest_connection_ids.next().await {
-        //     guest_connection_ids.push(ConnectionId(connection_id? as u32));
-        // }
-        // Ok(guest_connection_ids)
-    }
-
     fn build_incoming_call(
         room: &proto::Room,
         called_user_id: UserId,
@@ -2192,6 +2170,38 @@ impl Database {
             // }
         })
         .await
+    }
+
+    async fn project_guest_connection_ids(
+        &self,
+        project_id: ProjectId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<ConnectionId>> {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryAs {
+            ConnectionId,
+        }
+
+        let mut db_guest_connection_ids = project_collaborator::Entity::find()
+            .select_only()
+            .column_as(
+                project_collaborator::Column::ConnectionId,
+                QueryAs::ConnectionId,
+            )
+            .filter(
+                project_collaborator::Column::ProjectId
+                    .eq(project_id)
+                    .and(project_collaborator::Column::IsHost.eq(false)),
+            )
+            .into_values::<i32, QueryAs>()
+            .stream(tx)
+            .await?;
+
+        let mut guest_connection_ids = Vec::new();
+        while let Some(connection_id) = db_guest_connection_ids.next().await {
+            guest_connection_ids.push(ConnectionId(connection_id? as u32));
+        }
+        Ok(guest_connection_ids)
     }
 
     // access tokens
