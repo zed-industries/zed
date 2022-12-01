@@ -1555,73 +1555,40 @@ impl Database {
         worktrees: &[proto::WorktreeMetadata],
     ) -> Result<RoomGuard<(proto::Room, Vec<ConnectionId>)>> {
         self.transact(|tx| async move {
-            todo!()
-            // let room_id: RoomId = sqlx::query_scalar(
-            //     "
-            //     SELECT room_id
-            //     FROM projects
-            //     WHERE id = $1 AND host_connection_id = $2
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(connection_id.0 as i32)
-            // .fetch_one(&mut tx)
-            // .await?;
+            let project = project::Entity::find_by_id(project_id)
+                .filter(project::Column::HostConnectionId.eq(connection_id.0))
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
 
-            // if !worktrees.is_empty() {
-            //     let mut params = "(?, ?, ?, ?, ?, ?, ?),".repeat(worktrees.len());
-            //     params.pop();
-            //     let query = format!(
-            //         "
-            //         INSERT INTO worktrees (
-            //         project_id,
-            //         id,
-            //         root_name,
-            //         abs_path,
-            //         visible,
-            //         scan_id,
-            //         is_complete
-            //         )
-            //         VALUES {params}
-            //         ON CONFLICT (project_id, id) DO UPDATE SET root_name = excluded.root_name
-            //         "
-            //     );
+            worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
+                id: ActiveValue::set(worktree.id as i32),
+                project_id: ActiveValue::set(project.id),
+                abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                root_name: ActiveValue::set(worktree.root_name.clone()),
+                visible: ActiveValue::set(worktree.visible),
+                scan_id: ActiveValue::set(0),
+                is_complete: ActiveValue::set(false),
+            }))
+            .exec(&tx)
+            .await?;
+            worktree::Entity::delete_many()
+                .filter(
+                    worktree::Column::ProjectId.eq(project.id).and(
+                        worktree::Column::Id.is_not_in(
+                            worktrees
+                                .iter()
+                                .map(|worktree| WorktreeId(worktree.id as i32)),
+                        ),
+                    ),
+                )
+                .exec(&tx)
+                .await?;
 
-            //     let mut query = sqlx::query(&query);
-            //     for worktree in worktrees {
-            //         query = query
-            //             .bind(project_id)
-            //             .bind(worktree.id as i32)
-            //             .bind(&worktree.root_name)
-            //             .bind(&worktree.abs_path)
-            //             .bind(worktree.visible)
-            //             .bind(0)
-            //             .bind(false)
-            //     }
-            //     query.execute(&mut tx).await?;
-            // }
-
-            // let mut params = "?,".repeat(worktrees.len());
-            // if !worktrees.is_empty() {
-            //     params.pop();
-            // }
-            // let query = format!(
-            //     "
-            //     DELETE FROM worktrees
-            //     WHERE project_id = ? AND id NOT IN ({params})
-            //     ",
-            // );
-
-            // let mut query = sqlx::query(&query).bind(project_id);
-            // for worktree in worktrees {
-            //     query = query.bind(WorktreeId(worktree.id as i32));
-            // }
-            // query.execute(&mut tx).await?;
-
-            // let guest_connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
-            // let room = self.get_room(room_id, &mut tx).await?;
-            // self.commit_room_transaction(room_id, tx, (room, guest_connection_ids))
-            //     .await
+            let guest_connection_ids = self.project_guest_connection_ids(project.id, &tx).await?;
+            let room = self.get_room(project.room_id, &tx).await?;
+            self.commit_room_transaction(project.room_id, tx, (room, guest_connection_ids))
+                .await
         })
         .await
     }
@@ -2119,26 +2086,19 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<Vec<project_collaborator::Model>> {
         self.transact(|tx| async move {
-            todo!()
-            // let collaborators = sqlx::query_as::<_, ProjectCollaborator>(
-            //     "
-            //     SELECT *
-            //     FROM project_collaborators
-            //     WHERE project_id = $1
-            //     ",
-            // )
-            // .bind(project_id)
-            // .fetch_all(&mut tx)
-            // .await?;
+            let collaborators = project_collaborator::Entity::find()
+                .filter(project_collaborator::Column::ProjectId.eq(project_id))
+                .all(&tx)
+                .await?;
 
-            // if collaborators
-            //     .iter()
-            //     .any(|collaborator| collaborator.connection_id == connection_id.0 as i32)
-            // {
-            //     Ok(collaborators)
-            // } else {
-            //     Err(anyhow!("no such project"))?
-            // }
+            if collaborators
+                .iter()
+                .any(|collaborator| collaborator.connection_id == connection_id.0 as i32)
+            {
+                Ok(collaborators)
+            } else {
+                Err(anyhow!("no such project"))?
+            }
         })
         .await
     }
@@ -2149,26 +2109,32 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<HashSet<ConnectionId>> {
         self.transact(|tx| async move {
-            todo!()
-            // let connection_ids = sqlx::query_scalar::<_, i32>(
-            //     "
-            //     SELECT connection_id
-            //     FROM project_collaborators
-            //     WHERE project_id = $1
-            //     ",
-            // )
-            // .bind(project_id)
-            // .fetch_all(&mut tx)
-            // .await?;
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryAs {
+                ConnectionId,
+            }
 
-            // if connection_ids.contains(&(connection_id.0 as i32)) {
-            //     Ok(connection_ids
-            //         .into_iter()
-            //         .map(|connection_id| ConnectionId(connection_id as u32))
-            //         .collect())
-            // } else {
-            //     Err(anyhow!("no such project"))?
-            // }
+            let mut db_connection_ids = project_collaborator::Entity::find()
+                .select_only()
+                .column_as(
+                    project_collaborator::Column::ConnectionId,
+                    QueryAs::ConnectionId,
+                )
+                .filter(project_collaborator::Column::ProjectId.eq(project_id))
+                .into_values::<i32, QueryAs>()
+                .stream(&tx)
+                .await?;
+
+            let mut connection_ids = HashSet::default();
+            while let Some(connection_id) = db_connection_ids.next().await {
+                connection_ids.insert(ConnectionId(connection_id? as u32));
+            }
+
+            if connection_ids.contains(&connection_id) {
+                Ok(connection_ids)
+            } else {
+                Err(anyhow!("no such project"))?
+            }
         })
         .await
     }
