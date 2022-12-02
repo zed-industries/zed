@@ -1,4 +1,4 @@
-use collab::{db, Error, Result};
+use collab::db;
 use db::{ConnectOptions, Database, UserId};
 use serde::{de::DeserializeOwned, Deserialize};
 use std::fmt::Write;

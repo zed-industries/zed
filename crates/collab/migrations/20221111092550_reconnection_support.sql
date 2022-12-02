@@ -6,7 +6,9 @@ CREATE TABLE IF NOT EXISTS "rooms" (
 ALTER TABLE "projects"
     ADD "room_id" INTEGER REFERENCES rooms (id),
     ADD "host_connection_id" INTEGER,
+    ADD "host_connection_epoch" UUID,
     DROP COLUMN "unregistered";
+CREATE INDEX "index_projects_on_host_connection_epoch" ON "projects" ("host_connection_epoch");
 
 CREATE TABLE "worktrees" (
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -62,22 +64,28 @@ CREATE TABLE "project_collaborators" (
     "id" SERIAL PRIMARY KEY,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "connection_id" INTEGER NOT NULL,
+    "connection_epoch" UUID NOT NULL,
     "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
     "is_host" BOOLEAN NOT NULL
 );
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
 CREATE UNIQUE INDEX "index_project_collaborators_on_project_id_and_replica_id" ON "project_collaborators" ("project_id", "replica_id");
+CREATE INDEX "index_project_collaborators_on_connection_epoch" ON "project_collaborators" ("connection_epoch");
 
 CREATE TABLE "room_participants" (
     "id" SERIAL PRIMARY KEY,
     "room_id" INTEGER NOT NULL REFERENCES rooms (id),
     "user_id" INTEGER NOT NULL REFERENCES users (id),
     "answering_connection_id" INTEGER,
+    "answering_connection_epoch" UUID,
     "location_kind" INTEGER,
     "location_project_id" INTEGER REFERENCES projects (id),
     "initial_project_id" INTEGER REFERENCES projects (id),
     "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
-    "calling_connection_id" INTEGER NOT NULL
+    "calling_connection_id" INTEGER NOT NULL,
+    "calling_connection_epoch" UUID NOT NULL
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
+CREATE INDEX "index_room_participants_on_answering_connection_epoch" ON "room_participants" ("answering_connection_epoch");
+CREATE INDEX "index_room_participants_on_calling_connection_epoch" ON "room_participants" ("calling_connection_epoch");

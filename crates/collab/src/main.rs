@@ -52,6 +52,8 @@ async fn main() -> Result<()> {
             init_tracing(&config);
 
             let state = AppState::new(config).await?;
+            state.db.clear_stale_data().await?;
+
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
