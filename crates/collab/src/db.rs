@@ -2203,7 +2203,7 @@ impl Database {
                 match f(tx).await {
                     Ok(result) => return Ok(result),
                     Err(error) => match error {
-                        Error::Database2(
+                        Error::Database(
                             DbErr::Exec(sea_orm::RuntimeErr::SqlxError(error))
                             | DbErr::Query(sea_orm::RuntimeErr::SqlxError(error)),
                         ) if error
