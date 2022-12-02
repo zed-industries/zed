@@ -49,7 +49,7 @@ jobs:
         run: cargo build -p collab
 
       - name: Build other binaries
-        run: cargo build --bins --all-features 
+        run: cargo build --workspace --bins --all-features
 
   bundle:
     name: Bundle app

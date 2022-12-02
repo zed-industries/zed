@@ -322,7 +322,7 @@ impl ProjectDiagnosticsEditor {
                             );
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(
-                                    &prev_excerpt_id,
+                                    prev_excerpt_id,
                                     buffer.clone(),
                                     [ExcerptRange {
                                         context: excerpt_start..excerpt_end,
@@ -384,7 +384,7 @@ impl ProjectDiagnosticsEditor {
 
                     groups_to_add.push(group_state);
                 } else if let Some((group_ix, group_state)) = to_remove {
-                    excerpts.remove_excerpts(group_state.excerpts.iter(), excerpts_cx);
+                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), excerpts_cx);
                     group_ixs_to_remove.push(group_ix);
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group)) = to_keep {
@@ -457,10 +457,15 @@ impl ProjectDiagnosticsEditor {
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.
+            let snapshot = editor.snapshot(cx);
             for selection in &mut selections {
                 if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
                     let group_ix = match groups.binary_search_by(|probe| {
-                        probe.excerpts.last().unwrap().cmp(new_excerpt_id)
+                        probe
+                            .excerpts
+                            .last()
+                            .unwrap()
+                            .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
                     }) {
                         Ok(ix) | Err(ix) => ix,
                     };
@@ -738,7 +743,7 @@ mod tests {
         DisplayPoint,
     };
     use gpui::TestAppContext;
-    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
+    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use serde_json::json;
     use unindent::Unindent as _;
     use workspace::AppState;
@@ -788,7 +793,7 @@ mod tests {
                     None,
                     vec![
                         DiagnosticEntry {
-                            range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
+                            range: Unclipped(PointUtf16::new(1, 8))..Unclipped(PointUtf16::new(1, 9)),
                             diagnostic: Diagnostic {
                                 message:
                                     "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait"
@@ -801,7 +806,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(2, 8)..PointUtf16::new(2, 9),
+                            range: Unclipped(PointUtf16::new(2, 8))..Unclipped(PointUtf16::new(2, 9)),
                             diagnostic: Diagnostic {
                                 message:
                                     "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait"
@@ -814,7 +819,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(3, 6)..PointUtf16::new(3, 7),
+                            range: Unclipped(PointUtf16::new(3, 6))..Unclipped(PointUtf16::new(3, 7)),
                             diagnostic: Diagnostic {
                                 message: "value moved here".to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
@@ -825,7 +830,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(4, 6)..PointUtf16::new(4, 7),
+                            range: Unclipped(PointUtf16::new(4, 6))..Unclipped(PointUtf16::new(4, 7)),
                             diagnostic: Diagnostic {
                                 message: "value moved here".to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
@@ -836,7 +841,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(7, 6)..PointUtf16::new(7, 7),
+                            range: Unclipped(PointUtf16::new(7, 6))..Unclipped(PointUtf16::new(7, 7)),
                             diagnostic: Diagnostic {
                                 message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
@@ -847,7 +852,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(8, 6)..PointUtf16::new(8, 7),
+                            range: Unclipped(PointUtf16::new(8, 6))..Unclipped(PointUtf16::new(8, 7)),
                             diagnostic: Diagnostic {
                                 message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
@@ -939,7 +944,7 @@ mod tests {
                     PathBuf::from("/test/consts.rs"),
                     None,
                     vec![DiagnosticEntry {
-                        range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
+                        range: Unclipped(PointUtf16::new(0, 15))..Unclipped(PointUtf16::new(0, 15)),
                         diagnostic: Diagnostic {
                             message: "mismatched types\nexpected `usize`, found `char`".to_string(),
                             severity: DiagnosticSeverity::ERROR,
@@ -1040,7 +1045,8 @@ mod tests {
                     None,
                     vec![
                         DiagnosticEntry {
-                            range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
+                            range: Unclipped(PointUtf16::new(0, 15))
+                                ..Unclipped(PointUtf16::new(0, 15)),
                             diagnostic: Diagnostic {
                                 message: "mismatched types\nexpected `usize`, found `char`"
                                     .to_string(),
@@ -1052,7 +1058,8 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(1, 15)..PointUtf16::new(1, 15),
+                            range: Unclipped(PointUtf16::new(1, 15))
+                                ..Unclipped(PointUtf16::new(1, 15)),
                             diagnostic: Diagnostic {
                                 message: "unresolved name `c`".to_string(),
                                 severity: DiagnosticSeverity::ERROR,

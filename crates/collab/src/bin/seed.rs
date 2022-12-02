@@ -57,16 +57,14 @@ async fn main() {
         }
     }
 
-    let mut zed_user_ids = Vec::<UserId>::new();
     for (github_user, admin) in zed_users {
-        if let Some(user) = db
+        if db
             .get_user_by_github_account(&github_user.login, Some(github_user.id))
             .await
             .expect("failed to fetch user")
+            .is_none()
         {
-            zed_user_ids.push(user.id);
-        } else if let Some(email) = &github_user.email {
-            zed_user_ids.push(
+            if let Some(email) = &github_user.email {
                 db.create_user(
                     email,
                     admin,
@@ -77,11 +75,8 @@ async fn main() {
                     },
                 )
                 .await
-                .expect("failed to insert user")
-                .user_id,
-            );
-        } else if admin {
-            zed_user_ids.push(
+                .expect("failed to insert user");
+            } else if admin {
                 db.create_user(
                     &format!("{}@zed.dev", github_user.login),
                     admin,
@@ -92,9 +87,8 @@ async fn main() {
                     },
                 )
                 .await
-                .expect("failed to insert user")
-                .user_id,
-            );
+                .expect("failed to insert user");
+            }
         }
     }
 }

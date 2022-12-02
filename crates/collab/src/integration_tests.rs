@@ -5567,6 +5567,13 @@ async fn test_random_collaboration(
                                 id
                             );
                             assert_eq!(
+                                guest_snapshot.abs_path(),
+                                host_snapshot.abs_path(),
+                                "{} has different abs path than the host for worktree {}",
+                                guest_client.username,
+                                id
+                            );
+                            assert_eq!(
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
                                 "{} has different snapshot than the host for worktree {}",

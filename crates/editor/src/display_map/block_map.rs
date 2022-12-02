@@ -2,7 +2,7 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     TextHighlights,
 };
-use crate::{Anchor, ExcerptRange, ToPoint as _};
+use crate::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{ElementBox, RenderContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
@@ -107,7 +107,7 @@ struct Transform {
 pub enum TransformBlock {
     Custom(Arc<Block>),
     ExcerptHeader {
-        key: usize,
+        id: ExcerptId,
         buffer: BufferSnapshot,
         range: ExcerptRange<text::Anchor>,
         height: u8,
@@ -371,7 +371,7 @@ impl BlockMap {
                                 .make_wrap_point(Point::new(excerpt_boundary.row, 0), Bias::Left)
                                 .row(),
                             TransformBlock::ExcerptHeader {
-                                key: excerpt_boundary.key,
+                                id: excerpt_boundary.id,
                                 buffer: excerpt_boundary.buffer,
                                 range: excerpt_boundary.range,
                                 height: if excerpt_boundary.starts_new_buffer {

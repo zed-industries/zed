@@ -3,8 +3,8 @@ use smallvec::{smallvec, SmallVec};
 use std::iter;
 
 lazy_static! {
-    pub static ref MIN: Locator = Locator::min();
-    pub static ref MAX: Locator = Locator::max();
+    static ref MIN: Locator = Locator::min();
+    static ref MAX: Locator = Locator::max();
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -17,6 +17,14 @@ impl Locator {
 
     pub fn max() -> Self {
         Self(smallvec![u64::MAX])
+    }
+
+    pub fn min_ref() -> &'static Self {
+        &*MIN
+    }
+
+    pub fn max_ref() -> &'static Self {
+        &*MAX
     }
 
     pub fn assign(&mut self, other: &Self) {

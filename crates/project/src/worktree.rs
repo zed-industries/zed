@@ -20,6 +20,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
+use language::Unclipped;
 use language::{
     proto::{deserialize_version, serialize_line_ending, serialize_version},
     Buffer, DiagnosticEntry, PointUtf16, Rope,
@@ -64,7 +65,7 @@ pub struct LocalWorktree {
     _background_scanner_task: Option<Task<()>>,
     poll_task: Option<Task<()>>,
     share: Option<ShareState>,
-    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
+    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
@@ -502,7 +503,10 @@ impl LocalWorktree {
         })
     }
 
-    pub fn diagnostics_for_path(&self, path: &Path) -> Option<Vec<DiagnosticEntry<PointUtf16>>> {
+    pub fn diagnostics_for_path(
+        &self,
+        path: &Path,
+    ) -> Option<Vec<DiagnosticEntry<Unclipped<PointUtf16>>>> {
         self.diagnostics.get(path).cloned()
     }
 
@@ -510,7 +514,7 @@ impl LocalWorktree {
         &mut self,
         language_server_id: usize,
         worktree_path: Arc<Path>,
-        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         _: &mut ModelContext<Worktree>,
     ) -> Result<bool> {
         self.diagnostics.remove(&worktree_path);
@@ -1168,6 +1172,10 @@ impl Snapshot {
         self.id
     }
 
+    pub fn abs_path(&self) -> &Arc<Path> {
+        &self.abs_path
+    }
+
     pub fn contains_entry(&self, entry_id: ProjectEntryId) -> bool {
         self.entries_by_id.get(&entry_id, &()).is_some()
     }
@@ -1359,10 +1367,6 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub fn abs_path(&self) -> &Arc<Path> {
-        &self.abs_path
-    }
-
     pub fn extension_counts(&self) -> &HashMap<OsString, usize> {
         &self.extension_counts
     }

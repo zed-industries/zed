@@ -403,8 +403,10 @@ message Symbol {
     string name = 4;
     int32 kind = 5;
     string path = 6;
-    Point start = 7;
-    Point end = 8;
+    // Cannot use generate anchors for unopend files,
+    // so we are forced to use point coords instead
+    PointUtf16 start = 7;
+    PointUtf16 end = 8;
     bytes signature = 9;
 }
 
@@ -1033,7 +1035,7 @@ message Range {
     uint64 end = 2;
 }
 
-message Point {
+message PointUtf16 {
     uint32 row = 1;
     uint32 column = 2;
 }

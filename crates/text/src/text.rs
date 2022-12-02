@@ -1594,8 +1594,12 @@ impl BufferSnapshot {
         self.visible_text.point_utf16_to_offset(point)
     }
 
-    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
-        self.visible_text.point_utf16_to_point(point)
+    pub fn unclipped_point_utf16_to_offset(&self, point: Unclipped<PointUtf16>) -> usize {
+        self.visible_text.unclipped_point_utf16_to_offset(point)
+    }
+
+    pub fn unclipped_point_utf16_to_point(&self, point: Unclipped<PointUtf16>) -> Point {
+        self.visible_text.unclipped_point_utf16_to_point(point)
     }
 
     pub fn offset_utf16_to_offset(&self, offset: OffsetUtf16) -> usize {
@@ -1766,9 +1770,9 @@ impl BufferSnapshot {
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
         if *anchor == Anchor::MIN {
-            &locator::MIN
+            Locator::min_ref()
         } else if *anchor == Anchor::MAX {
-            &locator::MAX
+            Locator::max_ref()
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
@@ -1803,7 +1807,10 @@ impl BufferSnapshot {
     }
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        let offset = position.to_offset(self);
+        self.anchor_at_offset(position.to_offset(self), bias)
+    }
+
+    fn anchor_at_offset(&self, offset: usize, bias: Bias) -> Anchor {
         if bias == Bias::Left && offset == 0 {
             Anchor::MIN
         } else if bias == Bias::Right && offset == self.len() {
@@ -1840,7 +1847,7 @@ impl BufferSnapshot {
         self.visible_text.clip_offset_utf16(offset, bias)
     }
 
-    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+    pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         self.visible_text.clip_point_utf16(point, bias)
     }
 
@@ -2354,32 +2361,20 @@ pub trait ToOffset {
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
     }
 }
 
-impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
-        snapshot.point_utf16_to_offset(*self)
-    }
-}
-
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         assert!(*self <= snapshot.len(), "offset {self} is out of range");
         *self
     }
 }
 
-impl ToOffset for OffsetUtf16 {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
-        snapshot.offset_utf16_to_offset(*self)
-    }
-}
-
 impl ToOffset for Anchor {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.summary_for_anchor(self)
     }
 }
@@ -2390,31 +2385,43 @@ impl<'a, T: ToOffset> ToOffset for &'a T {
     }
 }
 
+impl ToOffset for PointUtf16 {
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.point_utf16_to_offset(*self)
+    }
+}
+
+impl ToOffset for Unclipped<PointUtf16> {
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.unclipped_point_utf16_to_offset(*self)
+    }
+}
+
 pub trait ToPoint {
     fn to_point(&self, snapshot: &BufferSnapshot) -> Point;
 }
 
 impl ToPoint for Anchor {
-    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPoint for usize {
-    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point {
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
 }
 
-impl ToPoint for PointUtf16 {
-    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point {
-        snapshot.point_utf16_to_point(*self)
+impl ToPoint for Point {
+    fn to_point(&self, _: &BufferSnapshot) -> Point {
+        *self
     }
 }
 
-impl ToPoint for Point {
-    fn to_point<'a>(&self, _: &BufferSnapshot) -> Point {
-        *self
+impl ToPoint for Unclipped<PointUtf16> {
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
+        snapshot.unclipped_point_utf16_to_point(*self)
     }
 }
 
@@ -2423,25 +2430,25 @@ pub trait ToPointUtf16 {
 }
 
 impl ToPointUtf16 for Anchor {
-    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPointUtf16 for usize {
-    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.offset_to_point_utf16(*self)
     }
 }
 
 impl ToPointUtf16 for PointUtf16 {
-    fn to_point_utf16<'a>(&self, _: &BufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, _: &BufferSnapshot) -> PointUtf16 {
         *self
     }
 }
 
 impl ToPointUtf16 for Point {
-    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
 }
@@ -2451,42 +2458,20 @@ pub trait ToOffsetUtf16 {
 }
 
 impl ToOffsetUtf16 for Anchor {
-    fn to_offset_utf16<'a>(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
+    fn to_offset_utf16(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
         snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToOffsetUtf16 for usize {
-    fn to_offset_utf16<'a>(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
+    fn to_offset_utf16(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
         snapshot.offset_to_offset_utf16(*self)
     }
 }
 
 impl ToOffsetUtf16 for OffsetUtf16 {
-    fn to_offset_utf16<'a>(&self, _snapshot: &BufferSnapshot) -> OffsetUtf16 {
+    fn to_offset_utf16(&self, _snapshot: &BufferSnapshot) -> OffsetUtf16 {
         *self
-    }
-}
-
-pub trait Clip {
-    fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self;
-}
-
-impl Clip for usize {
-    fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self {
-        snapshot.clip_offset(*self, bias)
-    }
-}
-
-impl Clip for Point {
-    fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self {
-        snapshot.clip_point(*self, bias)
-    }
-}
-
-impl Clip for PointUtf16 {
-    fn clip(&self, bias: Bias, snapshot: &BufferSnapshot) -> Self {
-        snapshot.clip_point_utf16(*self, bias)
     }
 }
 

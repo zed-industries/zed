@@ -1,4 +1,5 @@
 use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
+use collections::HashMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::{
@@ -105,22 +106,42 @@ struct SyntaxLayerSummary {
     max_depth: usize,
     range: Range<Anchor>,
     last_layer_range: Range<Anchor>,
+    last_layer_language: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
-struct DepthAndRange(usize, Range<Anchor>);
+struct SyntaxLayerPosition {
+    depth: usize,
+    range: Range<Anchor>,
+    language: Option<usize>,
+}
 
 #[derive(Clone, Debug)]
-struct DepthAndMaxPosition(usize, Anchor);
+struct ChangeStartPosition {
+    depth: usize,
+    position: Anchor,
+}
 
 #[derive(Clone, Debug)]
-struct DepthAndRangeOrMaxPosition(DepthAndRange, DepthAndMaxPosition);
+struct SyntaxLayerPositionBeforeChange {
+    position: SyntaxLayerPosition,
+    change: ChangeStartPosition,
+}
 
-struct ReparseStep {
+struct ParseStep {
     depth: usize,
     language: Arc<Language>,
-    ranges: Vec<tree_sitter::Range>,
     range: Range<Anchor>,
+    included_ranges: Vec<tree_sitter::Range>,
+    mode: ParseMode,
+}
+
+enum ParseMode {
+    Single,
+    Combined {
+        parent_layer_range: Range<usize>,
+        parent_layer_changed_ranges: Vec<Range<usize>>,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -215,7 +236,10 @@ impl SyntaxSnapshot {
 
             // Preserve any layers at this depth that precede the first edit.
             if let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) {
-                let target = DepthAndMaxPosition(depth, edit_range.start);
+                let target = ChangeStartPosition {
+                    depth,
+                    position: edit_range.start,
+                };
                 if target.cmp(&cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&target, Bias::Left, text);
                     layers.push_tree(slice, text);
@@ -225,7 +249,11 @@ impl SyntaxSnapshot {
             // subsequent layers at this same depth.
             else if cursor.item().is_some() {
                 let slice = cursor.slice(
-                    &DepthAndRange(depth + 1, Anchor::MIN..Anchor::MAX),
+                    &SyntaxLayerPosition {
+                        depth: depth + 1,
+                        range: Anchor::MIN..Anchor::MAX,
+                        language: None,
+                    },
                     Bias::Left,
                     text,
                 );
@@ -233,24 +261,17 @@ impl SyntaxSnapshot {
                 continue;
             };
 
-            let layer = if let Some(layer) = cursor.item() {
-                layer
-            } else {
-                break;
-            };
+            let Some(layer) = cursor.item() else { break };
             let (start_byte, start_point) = layer.range.start.summary::<(usize, Point)>(text);
 
             // Ignore edits that end before the start of this layer, and don't consider them
             // for any subsequent layers at this same depth.
             loop {
-                if let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) {
-                    if edit_range.end.cmp(&layer.range.start, text).is_le() {
-                        first_edit_ix_for_depth += 1;
-                    } else {
-                        break;
-                    }
+                let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) else { continue 'outer };
+                if edit_range.end.cmp(&layer.range.start, text).is_le() {
+                    first_edit_ix_for_depth += 1;
                 } else {
-                    continue 'outer;
+                    break;
                 }
             }
 
@@ -310,7 +331,7 @@ impl SyntaxSnapshot {
         from_version: &clock::Global,
         text: &BufferSnapshot,
         registry: Option<Arc<LanguageRegistry>>,
-        language: Arc<Language>,
+        root_language: Arc<Language>,
     ) {
         let edits = text.edits_since::<usize>(from_version).collect::<Vec<_>>();
         let max_depth = self.layers.summary().max_depth;
@@ -320,30 +341,46 @@ impl SyntaxSnapshot {
 
         let mut changed_regions = ChangeRegionSet::default();
         let mut queue = BinaryHeap::new();
-        queue.push(ReparseStep {
+        let mut combined_injection_ranges = HashMap::default();
+        queue.push(ParseStep {
             depth: 0,
-            language: language.clone(),
-            ranges: Vec::new(),
+            language: root_language.clone(),
+            included_ranges: vec![tree_sitter::Range {
+                start_byte: 0,
+                end_byte: text.len(),
+                start_point: Point::zero().to_ts_point(),
+                end_point: text.max_point().to_ts_point(),
+            }],
             range: Anchor::MIN..Anchor::MAX,
+            mode: ParseMode::Single,
         });
 
         loop {
             let step = queue.pop();
-            let (depth, range) = if let Some(step) = &step {
-                (step.depth, step.range.clone())
+            let position = if let Some(step) = &step {
+                SyntaxLayerPosition {
+                    depth: step.depth,
+                    range: step.range.clone(),
+                    language: step.language.id(),
+                }
             } else {
-                (max_depth + 1, Anchor::MAX..Anchor::MAX)
+                SyntaxLayerPosition {
+                    depth: max_depth + 1,
+                    range: Anchor::MAX..Anchor::MAX,
+                    language: None,
+                }
             };
 
-            let target = DepthAndRange(depth, range.clone());
             let mut done = cursor.item().is_none();
-            while !done && target.cmp(&cursor.end(text), &text).is_gt() {
+            while !done && position.cmp(&cursor.end(text), &text).is_gt() {
                 done = true;
 
-                let bounded_target =
-                    DepthAndRangeOrMaxPosition(target.clone(), changed_regions.start_position());
-                if bounded_target.cmp(&cursor.start(), &text).is_gt() {
-                    let slice = cursor.slice(&bounded_target, Bias::Left, text);
+                let bounded_position = SyntaxLayerPositionBeforeChange {
+                    position: position.clone(),
+                    change: changed_regions.start_position(),
+                };
+                if bounded_position.cmp(&cursor.start(), &text).is_gt() {
+                    let slice = cursor.slice(&bounded_position, Bias::Left, text);
                     if !slice.is_empty() {
                         layers.push_tree(slice, &text);
                         if changed_regions.prune(cursor.end(text), text) {
@@ -352,12 +389,8 @@ impl SyntaxSnapshot {
                     }
                 }
 
-                while target.cmp(&cursor.end(text), text).is_gt() {
-                    let layer = if let Some(layer) = cursor.item() {
-                        layer
-                    } else {
-                        break;
-                    };
+                while position.cmp(&cursor.end(text), text).is_gt() {
+                    let Some(layer) = cursor.item() else { break };
 
                     if changed_regions.intersects(&layer, text) {
                         changed_regions.insert(
@@ -378,70 +411,74 @@ impl SyntaxSnapshot {
                 }
             }
 
-            let (ranges, language) = if let Some(step) = step {
-                (step.ranges, step.language)
-            } else {
-                break;
-            };
-
-            let start_point;
-            let start_byte;
-            let end_byte;
-            if let Some((first, last)) = ranges.first().zip(ranges.last()) {
-                start_point = first.start_point;
-                start_byte = first.start_byte;
-                end_byte = last.end_byte;
-            } else {
-                start_point = Point::zero().to_ts_point();
-                start_byte = 0;
-                end_byte = text.len();
-            };
+            let Some(step) = step else { break };
+            let (step_start_byte, step_start_point) =
+                step.range.start.summary::<(usize, Point)>(text);
+            let step_end_byte = step.range.end.to_offset(text);
+            let Some(grammar) = step.language.grammar.as_deref() else { continue };
 
             let mut old_layer = cursor.item();
             if let Some(layer) = old_layer {
-                if layer.range.to_offset(text) == (start_byte..end_byte) {
+                if layer.range.to_offset(text) == (step_start_byte..step_end_byte)
+                    && layer.language.id() == step.language.id()
+                {
                     cursor.next(&text);
                 } else {
                     old_layer = None;
                 }
             }
 
-            let grammar = if let Some(grammar) = language.grammar.as_deref() {
-                grammar
-            } else {
-                continue;
-            };
-
             let tree;
             let changed_ranges;
+            let mut included_ranges = step.included_ranges;
             if let Some(old_layer) = old_layer {
+                if let ParseMode::Combined {
+                    parent_layer_changed_ranges,
+                    ..
+                } = step.mode
+                {
+                    included_ranges = splice_included_ranges(
+                        old_layer.tree.included_ranges(),
+                        &parent_layer_changed_ranges,
+                        &included_ranges,
+                    );
+                }
+
                 tree = parse_text(
                     grammar,
                     text.as_rope(),
+                    step_start_byte,
+                    step_start_point,
+                    included_ranges,
                     Some(old_layer.tree.clone()),
-                    ranges,
                 );
                 changed_ranges = join_ranges(
-                    edits
-                        .iter()
-                        .map(|e| e.new.clone())
-                        .filter(|range| range.start < end_byte && range.end > start_byte),
+                    edits.iter().map(|e| e.new.clone()).filter(|range| {
+                        range.start <= step_end_byte && range.end >= step_start_byte
+                    }),
                     old_layer
                         .tree
                         .changed_ranges(&tree)
-                        .map(|r| start_byte + r.start_byte..start_byte + r.end_byte),
+                        .map(|r| step_start_byte + r.start_byte..step_start_byte + r.end_byte),
                 );
             } else {
-                tree = parse_text(grammar, text.as_rope(), None, ranges);
-                changed_ranges = vec![start_byte..end_byte];
+                tree = parse_text(
+                    grammar,
+                    text.as_rope(),
+                    step_start_byte,
+                    step_start_point,
+                    included_ranges,
+                    None,
+                );
+                changed_ranges = vec![step_start_byte..step_end_byte];
             }
 
             layers.push(
                 SyntaxLayer {
-                    depth,
-                    range,
+                    depth: step.depth,
+                    range: step.range,
                     tree: tree.clone(),
-                    language: language.clone(),
+                    language: step.language.clone(),
                 },
                 &text,
             );
@@ -450,11 +487,10 @@ impl SyntaxSnapshot {
                 grammar.injection_config.as_ref().zip(registry.as_ref()),
                 changed_ranges.is_empty(),
             ) {
-                let depth = depth + 1;
                 for range in &changed_ranges {
                     changed_regions.insert(
                         ChangedRegion {
-                            depth,
+                            depth: step.depth + 1,
                             range: text.anchor_before(range.start)..text.anchor_after(range.end),
                         },
                         text,
@@ -463,10 +499,11 @@ impl SyntaxSnapshot {
                 get_injections(
                     config,
                     text,
-                    tree.root_node_with_offset(start_byte, start_point),
+                    tree.root_node_with_offset(step_start_byte, step_start_point.to_ts_point()),
                     registry,
-                    depth,
+                    step.depth + 1,
                     &changed_ranges,
+                    &mut combined_injection_ranges,
                     &mut queue,
                 );
             }
@@ -547,7 +584,6 @@ impl SyntaxSnapshot {
             }
         });
 
-        // let mut result = Vec::new();
         cursor.next(buffer);
         std::iter::from_fn(move || {
             if let Some(layer) = cursor.item() {
@@ -565,8 +601,6 @@ impl SyntaxSnapshot {
                 None
             }
         })
-
-        // result
     }
 }
 
@@ -892,14 +926,11 @@ fn join_ranges(
 fn parse_text(
     grammar: &Grammar,
     text: &Rope,
-    old_tree: Option<Tree>,
+    start_byte: usize,
+    start_point: Point,
     mut ranges: Vec<tree_sitter::Range>,
+    old_tree: Option<Tree>,
 ) -> Tree {
-    let (start_byte, start_point) = ranges
-        .first()
-        .map(|range| (range.start_byte, Point::from_ts_point(range.start_point)))
-        .unwrap_or_default();
-
     for range in &mut ranges {
         range.start_byte -= start_byte;
         range.end_byte -= start_byte;
@@ -934,14 +965,25 @@ fn get_injections(
     node: Node,
     language_registry: &LanguageRegistry,
     depth: usize,
-    query_ranges: &[Range<usize>],
-    queue: &mut BinaryHeap<ReparseStep>,
+    changed_ranges: &[Range<usize>],
+    combined_injection_ranges: &mut HashMap<Arc<Language>, Vec<tree_sitter::Range>>,
+    queue: &mut BinaryHeap<ParseStep>,
 ) -> bool {
     let mut result = false;
     let mut query_cursor = QueryCursorHandle::new();
     let mut prev_match = None;
-    for query_range in query_ranges {
-        query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end);
+
+    combined_injection_ranges.clear();
+    for pattern in &config.patterns {
+        if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
+            if let Some(language) = language_registry.get_language(language_name) {
+                combined_injection_ranges.insert(language, Vec::new());
+            }
+        }
+    }
+
+    for query_range in changed_ranges {
+        query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end + 1);
         for mat in query_cursor.matches(&config.query, node, TextProvider(text.as_rope())) {
             let content_ranges = mat
                 .nodes_for_capture_index(config.content_capture_ix)
@@ -961,7 +1003,9 @@ fn get_injections(
             }
             prev_match = Some((mat.pattern_index, content_range.clone()));
 
-            let language_name = config.languages_by_pattern_ix[mat.pattern_index]
+            let combined = config.patterns[mat.pattern_index].combined;
+            let language_name = config.patterns[mat.pattern_index]
+                .language
                 .as_ref()
                 .map(|s| Cow::Borrowed(s.as_ref()))
                 .or_else(|| {
@@ -975,17 +1019,112 @@ fn get_injections(
                     result = true;
                     let range = text.anchor_before(content_range.start)
                         ..text.anchor_after(content_range.end);
-                    queue.push(ReparseStep {
-                        depth,
-                        language,
-                        ranges: content_ranges,
-                        range,
-                    })
+                    if combined {
+                        combined_injection_ranges
+                            .get_mut(&language.clone())
+                            .unwrap()
+                            .extend(content_ranges);
+                    } else {
+                        queue.push(ParseStep {
+                            depth,
+                            language,
+                            included_ranges: content_ranges,
+                            range,
+                            mode: ParseMode::Single,
+                        });
+                    }
                 }
             }
         }
     }
+
+    for (language, mut included_ranges) in combined_injection_ranges.drain() {
+        included_ranges.sort_unstable();
+        let range = text.anchor_before(node.start_byte())..text.anchor_after(node.end_byte());
+        queue.push(ParseStep {
+            depth,
+            language,
+            range,
+            included_ranges,
+            mode: ParseMode::Combined {
+                parent_layer_range: node.start_byte()..node.end_byte(),
+                parent_layer_changed_ranges: changed_ranges.to_vec(),
+            },
+        })
+    }
+
     result
+}
+
+fn splice_included_ranges(
+    mut ranges: Vec<tree_sitter::Range>,
+    changed_ranges: &[Range<usize>],
+    new_ranges: &[tree_sitter::Range],
+) -> Vec<tree_sitter::Range> {
+    let mut changed_ranges = changed_ranges.into_iter().peekable();
+    let mut new_ranges = new_ranges.into_iter().peekable();
+    let mut ranges_ix = 0;
+    loop {
+        let new_range = new_ranges.peek();
+        let mut changed_range = changed_ranges.peek();
+
+        // Remove ranges that have changed before inserting any new ranges
+        // into those ranges.
+        if let Some((changed, new)) = changed_range.zip(new_range) {
+            if new.end_byte < changed.start {
+                changed_range = None;
+            }
+        }
+
+        if let Some(changed) = changed_range {
+            let mut start_ix = ranges_ix
+                + match ranges[ranges_ix..].binary_search_by_key(&changed.start, |r| r.end_byte) {
+                    Ok(ix) | Err(ix) => ix,
+                };
+            let mut end_ix = ranges_ix
+                + match ranges[ranges_ix..].binary_search_by_key(&changed.end, |r| r.start_byte) {
+                    Ok(ix) => ix + 1,
+                    Err(ix) => ix,
+                };
+
+            // If there are empty ranges, then there may be multiple ranges with the same
+            // start or end. Expand the splice to include any adjacent ranges that touch
+            // the changed range.
+            while start_ix > 0 {
+                if ranges[start_ix - 1].end_byte == changed.start {
+                    start_ix -= 1;
+                } else {
+                    break;
+                }
+            }
+            while let Some(range) = ranges.get(end_ix) {
+                if range.start_byte == changed.end {
+                    end_ix += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if end_ix > start_ix {
+                ranges.splice(start_ix..end_ix, []);
+            }
+            changed_ranges.next();
+            ranges_ix = start_ix;
+        } else if let Some(new_range) = new_range {
+            let ix = ranges_ix
+                + match ranges[ranges_ix..]
+                    .binary_search_by_key(&new_range.start_byte, |r| r.start_byte)
+                {
+                    Ok(ix) | Err(ix) => ix,
+                };
+            ranges.insert(ix, **new_range);
+            new_ranges.next();
+            ranges_ix = ix + 1;
+        } else {
+            break;
+        }
+    }
+    ranges
 }
 
 impl std::ops::Deref for SyntaxMap {
@@ -996,35 +1135,43 @@ impl std::ops::Deref for SyntaxMap {
     }
 }
 
-impl PartialEq for ReparseStep {
+impl PartialEq for ParseStep {
     fn eq(&self, _: &Self) -> bool {
         false
     }
 }
 
-impl Eq for ReparseStep {}
+impl Eq for ParseStep {}
 
-impl PartialOrd for ReparseStep {
+impl PartialOrd for ParseStep {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(&other))
     }
 }
 
-impl Ord for ReparseStep {
+impl Ord for ParseStep {
     fn cmp(&self, other: &Self) -> Ordering {
         let range_a = self.range();
         let range_b = other.range();
         Ord::cmp(&other.depth, &self.depth)
             .then_with(|| Ord::cmp(&range_b.start, &range_a.start))
             .then_with(|| Ord::cmp(&range_a.end, &range_b.end))
+            .then_with(|| self.language.id().cmp(&other.language.id()))
     }
 }
 
-impl ReparseStep {
+impl ParseStep {
     fn range(&self) -> Range<usize> {
-        let start = self.ranges.first().map_or(0, |r| r.start_byte);
-        let end = self.ranges.last().map_or(0, |r| r.end_byte);
-        start..end
+        if let ParseMode::Combined {
+            parent_layer_range, ..
+        } = &self.mode
+        {
+            parent_layer_range.clone()
+        } else {
+            let start = self.included_ranges.first().map_or(0, |r| r.start_byte);
+            let end = self.included_ranges.last().map_or(0, |r| r.end_byte);
+            start..end
+        }
     }
 }
 
@@ -1039,12 +1186,17 @@ impl ChangedRegion {
 }
 
 impl ChangeRegionSet {
-    fn start_position(&self) -> DepthAndMaxPosition {
-        self.0
-            .first()
-            .map_or(DepthAndMaxPosition(usize::MAX, Anchor::MAX), |region| {
-                DepthAndMaxPosition(region.depth, region.range.start)
-            })
+    fn start_position(&self) -> ChangeStartPosition {
+        self.0.first().map_or(
+            ChangeStartPosition {
+                depth: usize::MAX,
+                position: Anchor::MAX,
+            },
+            |region| ChangeStartPosition {
+                depth: region.depth,
+                position: region.range.start,
+            },
+        )
     }
 
     fn intersects(&self, layer: &SyntaxLayer, text: &BufferSnapshot) -> bool {
@@ -1094,6 +1246,7 @@ impl Default for SyntaxLayerSummary {
             min_depth: 0,
             range: Anchor::MAX..Anchor::MIN,
             last_layer_range: Anchor::MIN..Anchor::MAX,
+            last_layer_language: None,
         }
     }
 }
@@ -1114,14 +1267,15 @@ impl sum_tree::Summary for SyntaxLayerSummary {
             }
         }
         self.last_layer_range = other.last_layer_range.clone();
+        self.last_layer_language = other.last_layer_language;
     }
 }
 
-impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for DepthAndRange {
+impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for SyntaxLayerPosition {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
-        Ord::cmp(&self.0, &cursor_location.max_depth)
+        Ord::cmp(&self.depth, &cursor_location.max_depth)
             .then_with(|| {
-                self.1
+                self.range
                     .start
                     .cmp(&cursor_location.last_layer_range.start, buffer)
             })
@@ -1129,24 +1283,27 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for DepthAndRang
                 cursor_location
                     .last_layer_range
                     .end
-                    .cmp(&self.1.end, buffer)
+                    .cmp(&self.range.end, buffer)
             })
+            .then_with(|| self.language.cmp(&cursor_location.last_layer_language))
     }
 }
 
-impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for DepthAndMaxPosition {
+impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for ChangeStartPosition {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, text: &BufferSnapshot) -> Ordering {
-        Ord::cmp(&self.0, &cursor_location.max_depth)
-            .then_with(|| self.1.cmp(&cursor_location.range.end, text))
+        Ord::cmp(&self.depth, &cursor_location.max_depth)
+            .then_with(|| self.position.cmp(&cursor_location.range.end, text))
     }
 }
 
-impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for DepthAndRangeOrMaxPosition {
+impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
+    for SyntaxLayerPositionBeforeChange
+{
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
-        if self.1.cmp(cursor_location, buffer).is_le() {
+        if self.change.cmp(cursor_location, buffer).is_le() {
             return Ordering::Less;
         } else {
-            self.0.cmp(cursor_location, buffer)
+            self.position.cmp(cursor_location, buffer)
         }
     }
 }
@@ -1160,6 +1317,7 @@ impl sum_tree::Item for SyntaxLayer {
             max_depth: self.depth,
             range: self.range.clone(),
             last_layer_range: self.range.clone(),
+            last_layer_language: self.language.id(),
         }
     }
 }
@@ -1245,6 +1403,63 @@ mod tests {
     use text::Buffer;
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
+
+    #[test]
+    fn test_splice_included_ranges() {
+        let ranges = vec![ts_range(20..30), ts_range(50..60), ts_range(80..90)];
+
+        let new_ranges = splice_included_ranges(
+            ranges.clone(),
+            &[54..56, 58..68],
+            &[ts_range(50..54), ts_range(59..67)],
+        );
+        assert_eq!(
+            new_ranges,
+            &[
+                ts_range(20..30),
+                ts_range(50..54),
+                ts_range(59..67),
+                ts_range(80..90),
+            ]
+        );
+
+        let new_ranges = splice_included_ranges(ranges.clone(), &[70..71, 91..100], &[]);
+        assert_eq!(
+            new_ranges,
+            &[ts_range(20..30), ts_range(50..60), ts_range(80..90)]
+        );
+
+        let new_ranges =
+            splice_included_ranges(ranges.clone(), &[], &[ts_range(0..2), ts_range(70..75)]);
+        assert_eq!(
+            new_ranges,
+            &[
+                ts_range(0..2),
+                ts_range(20..30),
+                ts_range(50..60),
+                ts_range(70..75),
+                ts_range(80..90)
+            ]
+        );
+
+        let new_ranges = splice_included_ranges(ranges.clone(), &[30..50], &[ts_range(25..55)]);
+        assert_eq!(new_ranges, &[ts_range(25..55), ts_range(80..90)]);
+
+        fn ts_range(range: Range<usize>) -> tree_sitter::Range {
+            tree_sitter::Range {
+                start_byte: range.start,
+                start_point: tree_sitter::Point {
+                    row: 0,
+                    column: range.start,
+                },
+                end_byte: range.end,
+                end_point: tree_sitter::Point {
+                    row: 0,
+                    column: range.end,
+                },
+            }
+        }
+    }
 
     #[gpui::test]
     fn test_syntax_map_layers_for_range() {
@@ -1345,21 +1560,24 @@ mod tests {
 
     #[gpui::test]
     fn test_typing_multiple_new_injections() {
-        let (buffer, syntax_map) = test_edit_sequence(&[
-            "fn a() { dbg }",
-            "fn a() { dbg«!» }",
-            "fn a() { dbg!«()» }",
-            "fn a() { dbg!(«b») }",
-            "fn a() { dbg!(b«.») }",
-            "fn a() { dbg!(b.«c») }",
-            "fn a() { dbg!(b.c«()») }",
-            "fn a() { dbg!(b.c(«vec»)) }",
-            "fn a() { dbg!(b.c(vec«!»)) }",
-            "fn a() { dbg!(b.c(vec!«[]»)) }",
-            "fn a() { dbg!(b.c(vec![«d»])) }",
-            "fn a() { dbg!(b.c(vec![d«.»])) }",
-            "fn a() { dbg!(b.c(vec![d.«e»])) }",
-        ]);
+        let (buffer, syntax_map) = test_edit_sequence(
+            "Rust",
+            &[
+                "fn a() { dbg }",
+                "fn a() { dbg«!» }",
+                "fn a() { dbg!«()» }",
+                "fn a() { dbg!(«b») }",
+                "fn a() { dbg!(b«.») }",
+                "fn a() { dbg!(b.«c») }",
+                "fn a() { dbg!(b.c«()») }",
+                "fn a() { dbg!(b.c(«vec»)) }",
+                "fn a() { dbg!(b.c(vec«!»)) }",
+                "fn a() { dbg!(b.c(vec!«[]»)) }",
+                "fn a() { dbg!(b.c(vec![«d»])) }",
+                "fn a() { dbg!(b.c(vec![d«.»])) }",
+                "fn a() { dbg!(b.c(vec![d.«e»])) }",
+            ],
+        );
 
         assert_capture_ranges(
             &syntax_map,
@@ -1371,29 +1589,32 @@ mod tests {
 
     #[gpui::test]
     fn test_pasting_new_injection_line_between_others() {
-        let (buffer, syntax_map) = test_edit_sequence(&[
-            "
-                fn a() {
-                    b!(B {});
-                    c!(C {});
-                    d!(D {});
-                    e!(E {});
-                    f!(F {});
-                    g!(G {});
-                }
-            ",
-            "
-                fn a() {
-                    b!(B {});
-                    c!(C {});
-                    d!(D {});
-                «    h!(H {});
-                »    e!(E {});
-                    f!(F {});
-                    g!(G {});
-                }
-            ",
-        ]);
+        let (buffer, syntax_map) = test_edit_sequence(
+            "Rust",
+            &[
+                "
+                    fn a() {
+                        b!(B {});
+                        c!(C {});
+                        d!(D {});
+                        e!(E {});
+                        f!(F {});
+                        g!(G {});
+                    }
+                ",
+                "
+                    fn a() {
+                        b!(B {});
+                        c!(C {});
+                        d!(D {});
+                    «    h!(H {});
+                    »    e!(E {});
+                        f!(F {});
+                        g!(G {});
+                    }
+                ",
+            ],
+        );
 
         assert_capture_ranges(
             &syntax_map,
@@ -1415,28 +1636,31 @@ mod tests {
 
     #[gpui::test]
     fn test_joining_injections_with_child_injections() {
-        let (buffer, syntax_map) = test_edit_sequence(&[
-            "
-                fn a() {
-                    b!(
-                        c![one.two.three],
-                        d![four.five.six],
-                    );
-                    e!(
-                        f![seven.eight],
-                    );
-                }
-            ",
-            "
-                fn a() {
-                    b!(
-                        c![one.two.three],
-                        d![four.five.six],
-                    ˇ    f![seven.eight],
-                    );
-                }
-            ",
-        ]);
+        let (buffer, syntax_map) = test_edit_sequence(
+            "Rust",
+            &[
+                "
+                    fn a() {
+                        b!(
+                            c![one.two.three],
+                            d![four.five.six],
+                        );
+                        e!(
+                            f![seven.eight],
+                        );
+                    }
+                ",
+                "
+                    fn a() {
+                        b!(
+                            c![one.two.three],
+                            d![four.five.six],
+                        ˇ    f![seven.eight],
+                        );
+                    }
+                ",
+            ],
+        );
 
         assert_capture_ranges(
             &syntax_map,
@@ -1456,131 +1680,270 @@ mod tests {
 
     #[gpui::test]
     fn test_editing_edges_of_injection() {
-        test_edit_sequence(&[
-            "
-                fn a() {
-                    b!(c!())
-                }
+        test_edit_sequence(
+            "Rust",
+            &[
+                "
+                    fn a() {
+                        b!(c!())
+                    }
+                ",
+                "
+                    fn a() {
+                        «d»!(c!())
+                    }
+                ",
+                "
+                    fn a() {
+                        «e»d!(c!())
+                    }
+                ",
+                "
+                    fn a() {
+                        ed!«[»c!()«]»
+                    }
             ",
-            "
-                fn a() {
-                    «d»!(c!())
-                }
-            ",
-            "
-                fn a() {
-                    «e»d!(c!())
-                }
-            ",
-            "
-                fn a() {
-                    ed!«[»c!()«]»
-                }
-            ",
-        ]);
+            ],
+        );
     }
 
     #[gpui::test]
     fn test_edits_preceding_and_intersecting_injection() {
-        test_edit_sequence(&[
-            //
-            "const aaaaaaaaaaaa: B = c!(d(e.f));",
-            "const aˇa: B = c!(d(eˇ));",
-        ]);
+        test_edit_sequence(
+            "Rust",
+            &[
+                //
+                "const aaaaaaaaaaaa: B = c!(d(e.f));",
+                "const aˇa: B = c!(d(eˇ));",
+            ],
+        );
     }
 
     #[gpui::test]
     fn test_non_local_changes_create_injections() {
-        test_edit_sequence(&[
-            "
-                // a! {
-                    static B: C = d;
-                // }
-            ",
-            "
-                ˇa! {
-                    static B: C = d;
-                ˇ}
-            ",
-        ]);
+        test_edit_sequence(
+            "Rust",
+            &[
+                "
+                    // a! {
+                        static B: C = d;
+                    // }
+                ",
+                "
+                    ˇa! {
+                        static B: C = d;
+                    ˇ}
+                ",
+            ],
+        );
     }
 
     #[gpui::test]
     fn test_creating_many_injections_in_one_edit() {
-        test_edit_sequence(&[
-            "
-                fn a() {
-                    one(Two::three(3));
-                    four(Five::six(6));
-                    seven(Eight::nine(9));
-                }
-            ",
-            "
-                fn a() {
-                    one«!»(Two::three(3));
-                    four«!»(Five::six(6));
-                    seven«!»(Eight::nine(9));
-                }
-            ",
-            "
-                fn a() {
-                    one!(Two::three«!»(3));
-                    four!(Five::six«!»(6));
-                    seven!(Eight::nine«!»(9));
-                }
-            ",
-        ]);
+        test_edit_sequence(
+            "Rust",
+            &[
+                "
+                    fn a() {
+                        one(Two::three(3));
+                        four(Five::six(6));
+                        seven(Eight::nine(9));
+                    }
+                ",
+                "
+                    fn a() {
+                        one«!»(Two::three(3));
+                        four«!»(Five::six(6));
+                        seven«!»(Eight::nine(9));
+                    }
+                ",
+                "
+                    fn a() {
+                        one!(Two::three«!»(3));
+                        four!(Five::six«!»(6));
+                        seven!(Eight::nine«!»(9));
+                    }
+                ",
+            ],
+        );
     }
 
     #[gpui::test]
     fn test_editing_across_injection_boundary() {
-        test_edit_sequence(&[
-            "
-                fn one() {
-                    two();
-                    three!(
-                        three.four,
-                        five.six,
-                    );
-                }
-            ",
-            "
-                fn one() {
-                    two();
-                    th«irty_five![»
-                        three.four,
-                        five.six,
-                    «   seven.eight,
-                    ];»
-                }
-            ",
-        ]);
+        test_edit_sequence(
+            "Rust",
+            &[
+                "
+                    fn one() {
+                        two();
+                        three!(
+                            three.four,
+                            five.six,
+                        );
+                    }
+                ",
+                "
+                    fn one() {
+                        two();
+                        th«irty_five![»
+                            three.four,
+                            five.six,
+                        «   seven.eight,
+                        ];»
+                    }
+                ",
+            ],
+        );
     }
 
     #[gpui::test]
     fn test_removing_injection_by_replacing_across_boundary() {
-        test_edit_sequence(&[
-            "
-                fn one() {
-                    two!(
-                        three.four,
-                    );
-                }
-            ",
-            "
-                fn one() {
-                    t«en
-                        .eleven(
-                        twelve,
-                    »
-                        three.four,
-                    );
-                }
-            ",
-        ]);
+        test_edit_sequence(
+            "Rust",
+            &[
+                "
+                    fn one() {
+                        two!(
+                            three.four,
+                        );
+                    }
+                ",
+                "
+                    fn one() {
+                        t«en
+                            .eleven(
+                            twelve,
+                        »
+                            three.four,
+                        );
+                    }
+                ",
+            ],
+        );
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test]
+    fn test_combined_injections() {
+        let (buffer, syntax_map) = test_edit_sequence(
+            "ERB",
+            &[
+                "
+                    <body>
+                        <% if @one %>
+                            <div class=one>
+                        <% else %>
+                            <div class=two>
+                        <% end %>
+                        </div>
+                    </body>
+                ",
+                "
+                    <body>
+                        <% if @one %>
+                            <div class=one>
+                        ˇ else ˇ
+                            <div class=two>
+                        <% end %>
+                        </div>
+                    </body>
+                ",
+                "
+                    <body>
+                        <% if @one «;» end %>
+                        </div>
+                    </body>
+                ",
+            ],
+        );
+
+        assert_capture_ranges(
+            &syntax_map,
+            &buffer,
+            &["tag", "ivar"],
+            "
+                <«body»>
+                    <% if «@one» ; end %>
+                    </«div»>
+                </«body»>
+            ",
+        );
+    }
+
+    #[gpui::test]
+    fn test_combined_injections_empty_ranges() {
+        test_edit_sequence(
+            "ERB",
+            &[
+                "
+                    <% if @one %>
+                    <% else %>
+                    <% end %>
+                ",
+                "
+                    <% if @one %>
+                    ˇ<% end %>
+                ",
+            ],
+        );
+    }
+
+    #[gpui::test]
+    fn test_combined_injections_edit_edges_of_ranges() {
+        let (buffer, syntax_map) = test_edit_sequence(
+            "ERB",
+            &[
+                "
+                    <%= one @two %>
+                    <%= three @four %>
+                ",
+                "
+                    <%= one @two %ˇ
+                    <%= three @four %>
+                ",
+                "
+                    <%= one @two %«>»
+                    <%= three @four %>
+                ",
+            ],
+        );
+
+        assert_capture_ranges(
+            &syntax_map,
+            &buffer,
+            &["tag", "ivar"],
+            "
+                <%= one «@two» %>
+                <%= three «@four» %>
+            ",
+        );
+    }
+
+    #[gpui::test]
+    fn test_combined_injections_splitting_some_injections() {
+        let (_buffer, _syntax_map) = test_edit_sequence(
+            "ERB",
+            &[
+                r#"
+                      <%A if b(:c) %>
+                        d
+                      <% end %>
+                      eee
+                      <% f %>
+                "#,
+                r#"
+                      <%« AAAAAAA %>
+                        hhhhhhh
+                      <%=» if b(:c) %>
+                        d
+                      <% end %>
+                      eee
+                      <% f %>
+                "#,
+            ],
+        );
+    }
+
+    #[gpui::test(iterations = 50)]
     fn test_random_syntax_map_edits(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1606,6 +1969,89 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
         let language = Arc::new(rust_lang());
         registry.add(language.clone());
+        let mut buffer = Buffer::new(0, 0, text);
+
+        let mut syntax_map = SyntaxMap::new();
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(language.clone(), &buffer);
+
+        let mut reference_syntax_map = SyntaxMap::new();
+        reference_syntax_map.set_language_registry(registry.clone());
+
+        log::info!("initial text:\n{}", buffer.text());
+
+        for _ in 0..operations {
+            let prev_buffer = buffer.snapshot();
+            let prev_syntax_map = syntax_map.snapshot();
+
+            buffer.randomly_edit(&mut rng, 3);
+            log::info!("text:\n{}", buffer.text());
+
+            syntax_map.interpolate(&buffer);
+            check_interpolation(&prev_syntax_map, &syntax_map, &prev_buffer, &buffer);
+
+            syntax_map.reparse(language.clone(), &buffer);
+
+            reference_syntax_map.clear();
+            reference_syntax_map.reparse(language.clone(), &buffer);
+        }
+
+        for i in 0..operations {
+            let i = operations - i - 1;
+            buffer.undo();
+            log::info!("undoing operation {}", i);
+            log::info!("text:\n{}", buffer.text());
+
+            syntax_map.interpolate(&buffer);
+            syntax_map.reparse(language.clone(), &buffer);
+
+            reference_syntax_map.clear();
+            reference_syntax_map.reparse(language.clone(), &buffer);
+            assert_eq!(
+                syntax_map.layers(&buffer).len(),
+                reference_syntax_map.layers(&buffer).len(),
+                "wrong number of layers after undoing edit {i}"
+            );
+        }
+
+        let layers = syntax_map.layers(&buffer);
+        let reference_layers = reference_syntax_map.layers(&buffer);
+        for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter())
+        {
+            assert_eq!(edited_layer.node.to_sexp(), reference_layer.node.to_sexp());
+            assert_eq!(edited_layer.node.range(), reference_layer.node.range());
+        }
+    }
+
+    #[gpui::test(iterations = 50)]
+    fn test_random_syntax_map_edits_with_combined_injections(mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let text = r#"
+          <div id="main">
+            <% if one?(:two) %>
+              <p class="three" four>
+                <%= yield :five %>
+              </p>
+            <% elsif Six.seven(8) %>
+              <p id="three" four>
+                <%= yield :five %>
+              </p>
+            <% else %>
+              <span>Ok</span>
+            <% end %>
+          </div>
+        "#
+        .unindent()
+        .repeat(8);
+
+        let registry = Arc::new(LanguageRegistry::test());
+        let language = Arc::new(erb_lang());
+        registry.add(language.clone());
+        registry.add(Arc::new(ruby_lang()));
+        registry.add(Arc::new(html_lang()));
         let mut buffer = Buffer::new(0, 0, text);
 
         let mut syntax_map = SyntaxMap::new();
@@ -1767,10 +2213,13 @@ mod tests {
         }
     }
 
-    fn test_edit_sequence(steps: &[&str]) -> (Buffer, SyntaxMap) {
+    fn test_edit_sequence(language_name: &str, steps: &[&str]) -> (Buffer, SyntaxMap) {
         let registry = Arc::new(LanguageRegistry::test());
-        let language = Arc::new(rust_lang());
-        registry.add(language.clone());
+        registry.add(Arc::new(rust_lang()));
+        registry.add(Arc::new(ruby_lang()));
+        registry.add(Arc::new(html_lang()));
+        registry.add(Arc::new(erb_lang()));
+        let language = registry.get_language(language_name).unwrap();
         let mut buffer = Buffer::new(0, 0, Default::default());
 
         let mut mutated_syntax_map = SyntaxMap::new();
@@ -1814,6 +2263,72 @@ mod tests {
         }
 
         (buffer, mutated_syntax_map)
+    }
+
+    fn html_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                path_suffixes: vec!["html".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_html::language()),
+        )
+        .with_highlights_query(
+            r#"
+                (tag_name) @tag
+                (erroneous_end_tag_name) @tag
+                (attribute_name) @property
+            "#,
+        )
+        .unwrap()
+    }
+
+    fn ruby_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Ruby".into(),
+                path_suffixes: vec!["rb".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_ruby::language()),
+        )
+        .with_highlights_query(
+            r#"
+                ["if" "do" "else" "end"] @keyword
+                (instance_variable) @ivar
+            "#,
+        )
+        .unwrap()
+    }
+
+    fn erb_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "ERB".into(),
+                path_suffixes: vec!["erb".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_embedded_template::language()),
+        )
+        .with_highlights_query(
+            r#"
+                ["<%" "%>"] @keyword
+            "#,
+        )
+        .unwrap()
+        .with_injection_query(
+            r#"
+                ((code) @content
+                 (#set! "language" "ruby")
+                 (#set! "combined"))
+
+                 ((content) @content
+                 (#set! "language" "html")
+                 (#set! "combined"))
+            "#,
+        )
+        .unwrap()
     }
 
     fn rust_lang() -> Language {

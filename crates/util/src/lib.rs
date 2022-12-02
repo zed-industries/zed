@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub use backtrace::Backtrace;
 use futures::Future;
 use rand::{seq::SliceRandom, Rng};
 use std::{
@@ -9,6 +10,18 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+#[macro_export]
+macro_rules! debug_panic {
+    ( $($fmt_arg:tt)* ) => {
+        if cfg!(debug_assertions) {
+            panic!( $($fmt_arg)* );
+        } else {
+            let backtrace = $crate::Backtrace::new();
+            log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
+        }
+    };
+}
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {

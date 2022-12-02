@@ -43,6 +43,7 @@ pub struct ProjectPanel {
     filename_editor: ViewHandle<Editor>,
     clipboard_entry: Option<ClipboardEntry>,
     context_menu: ViewHandle<ContextMenu>,
+    dragged_entry_destination: Option<Arc<Path>>,
 }
 
 #[derive(Copy, Clone)]
@@ -96,6 +97,13 @@ pub struct Open {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct MoveProjectEntry {
+    pub entry_to_move: ProjectEntryId,
+    pub destination: ProjectEntryId,
+    pub destination_is_file: bool,
+}
+
+#[derive(Clone, PartialEq)]
 pub struct DeployContextMenu {
     pub position: Vector2F,
     pub entry_id: ProjectEntryId,
@@ -117,7 +125,10 @@ actions!(
         ToggleFocus
     ]
 );
-impl_internal_actions!(project_panel, [Open, ToggleExpanded, DeployContextMenu]);
+impl_internal_actions!(
+    project_panel,
+    [Open, ToggleExpanded, DeployContextMenu, MoveProjectEntry]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::deploy_context_menu);
@@ -141,6 +152,7 @@ pub fn init(cx: &mut MutableAppContext) {
             this.paste(action, cx);
         },
     );
+    cx.add_action(ProjectPanel::move_entry);
 }
 
 pub enum Event {
@@ -219,6 +231,7 @@ impl ProjectPanel {
                 filename_editor,
                 clipboard_entry: None,
                 context_menu: cx.add_view(ContextMenu::new),
+                dragged_entry_destination: None,
             };
             this.update_visible_entries(None, cx);
             this
@@ -774,6 +787,39 @@ impl ProjectPanel {
         }
     }
 
+    fn move_entry(
+        &mut self,
+        &MoveProjectEntry {
+            entry_to_move,
+            destination,
+            destination_is_file,
+        }: &MoveProjectEntry,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let destination_worktree = self.project.update(cx, |project, cx| {
+            let entry_path = project.path_for_entry(entry_to_move, cx)?;
+            let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
+
+            let mut destination_path = destination_entry_path.as_ref();
+            if destination_is_file {
+                destination_path = destination_path.parent()?;
+            }
+
+            let mut new_path = destination_path.to_path_buf();
+            new_path.push(entry_path.path.file_name()?);
+            if new_path != entry_path.path.as_ref() {
+                let task = project.rename_entry(entry_to_move, new_path, cx)?;
+                cx.foreground().spawn(task).detach_and_log_err(cx);
+            }
+
+            Some(project.worktree_id_for_entry(destination, cx)?)
+        });
+
+        if let Some(destination_worktree) = destination_worktree {
+            self.expand_entry(destination_worktree, destination, cx);
+        }
+    }
+
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
         let mut entry_index = 0;
         let mut visible_entries_index = 0;
@@ -1079,10 +1125,13 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         details: EntryDetails,
         editor: &ViewHandle<Editor>,
+        dragged_entry_destination: &mut Option<Arc<Path>>,
         theme: &theme::ProjectPanel,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let this = cx.handle();
         let kind = details.kind;
+        let path = details.path.clone();
         let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
 
         let entry_style = if details.is_cut {
@@ -1096,7 +1145,20 @@ impl ProjectPanel {
         let show_editor = details.is_editing && !details.is_processing;
 
         MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, cx| {
-            let style = entry_style.style_for(state, details.is_selected).clone();
+            let mut style = entry_style.style_for(state, details.is_selected).clone();
+
+            if cx
+                .global::<DragAndDrop<Workspace>>()
+                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .is_some()
+                && dragged_entry_destination
+                    .as_ref()
+                    .filter(|destination| details.path.starts_with(destination))
+                    .is_some()
+            {
+                style = entry_style.active.clone().unwrap();
+            }
+
             let row_container_style = if show_editor {
                 theme.filename_editor.container
             } else {
@@ -1128,6 +1190,35 @@ impl ProjectPanel {
                 position: e.position,
             })
         })
+        .on_up(MouseButton::Left, move |_, cx| {
+            if let Some((_, dragged_entry)) = cx
+                .global::<DragAndDrop<Workspace>>()
+                .currently_dragged::<ProjectEntryId>(cx.window_id())
+            {
+                cx.dispatch_action(MoveProjectEntry {
+                    entry_to_move: *dragged_entry,
+                    destination: entry_id,
+                    destination_is_file: matches!(details.kind, EntryKind::File(_)),
+                });
+            }
+        })
+        .on_move(move |_, cx| {
+            if cx
+                .global::<DragAndDrop<Workspace>>()
+                .currently_dragged::<ProjectEntryId>(cx.window_id())
+                .is_some()
+            {
+                if let Some(this) = this.upgrade(cx.app) {
+                    this.update(cx.app, |this, _| {
+                        this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
+                            path.parent().map(|parent| Arc::from(parent))
+                        } else {
+                            Some(path.clone())
+                        };
+                    })
+                }
+            }
+        })
         .as_draggable(entry_id, {
             let row_container_style = theme.dragged_entry.container;
 
@@ -1154,14 +1245,15 @@ impl View for ProjectPanel {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        enum Tag {}
+        enum ProjectPanel {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
         let last_worktree_root_id = self.last_worktree_root_id;
+
         Stack::new()
             .with_child(
-                MouseEventHandler::<Tag>::new(0, cx, |_, cx| {
+                MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
                     UniformList::new(
                         self.list.clone(),
                         self.visible_entries
@@ -1171,15 +1263,19 @@ impl View for ProjectPanel {
                         cx,
                         move |this, range, items, cx| {
                             let theme = cx.global::<Settings>().theme.clone();
+                            let mut dragged_entry_destination =
+                                this.dragged_entry_destination.clone();
                             this.for_each_visible_entry(range, cx, |id, details, cx| {
                                 items.push(Self::render_entry(
                                     id,
                                     details,
                                     &this.filename_editor,
+                                    &mut dragged_entry_destination,
                                     &theme.project_panel,
                                     cx,
                                 ));
                             });
+                            this.dragged_entry_destination = dragged_entry_destination;
                         },
                     )
                     .with_padding_top(padding.top)

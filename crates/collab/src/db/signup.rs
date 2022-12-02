@@ -20,6 +20,7 @@ pub struct Model {
     pub platform_unknown: bool,
     pub editor_features: Option<Vec<String>>,
     pub programming_languages: Option<Vec<String>>,
+    pub added_to_mailing_list: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -27,7 +28,7 @@ pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}
 
-#[derive(Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,
     pub email_confirmation_code: String,
@@ -42,6 +43,7 @@ pub struct NewSignup {
     pub editor_features: Vec<String>,
     pub programming_languages: Vec<String>,
     pub device_id: Option<String>,
+    pub added_to_mailing_list: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromQueryResult)]

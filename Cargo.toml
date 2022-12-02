@@ -65,7 +65,7 @@ serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 rand = { version = "0.8" }
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "366210ae925d7ea0891bc7a0c738f60c77c04d7b" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "36b5b6c89e55ad1a502f8b3234bb3e12ec83a5da" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 sqlx = { git = "https://github.com/launchbadge/sqlx", rev = "4b7053807c705df312bcb9b6281e184bf7534eb3" }
 

@@ -660,9 +660,9 @@ impl Database {
 
     // signups
 
-    pub async fn create_signup(&self, signup: NewSignup) -> Result<()> {
+    pub async fn create_signup(&self, signup: &NewSignup) -> Result<()> {
         self.transact(|tx| async {
-            signup::ActiveModel {
+            signup::Entity::insert(signup::ActiveModel {
                 email_address: ActiveValue::set(signup.email_address.clone()),
                 email_confirmation_code: ActiveValue::set(random_email_confirmation_code()),
                 email_confirmation_sent: ActiveValue::set(false),
@@ -673,9 +673,15 @@ impl Database {
                 editor_features: ActiveValue::set(Some(signup.editor_features.clone())),
                 programming_languages: ActiveValue::set(Some(signup.programming_languages.clone())),
                 device_id: ActiveValue::set(signup.device_id.clone()),
+                added_to_mailing_list: ActiveValue::set(signup.added_to_mailing_list),
                 ..Default::default()
-            }
-            .insert(&tx)
+            })
+            .on_conflict(
+                OnConflict::column(signup::Column::EmailAddress)
+                    .update_column(signup::Column::EmailAddress)
+                    .to_owned(),
+            )
+            .exec(&tx)
             .await?;
             tx.commit().await?;
             Ok(())
@@ -746,6 +752,7 @@ impl Database {
                             .or(signup::Column::PlatformUnknown.eq(true)),
                     ),
                 )
+                .order_by_asc(signup::Column::CreatedAt)
                 .limit(count as u64)
                 .into_model()
                 .all(&tx)
@@ -772,32 +779,41 @@ impl Database {
                 Err(anyhow!("email address is already in use"))?;
             }
 
-            let inviter = match user::Entity::find()
-                .filter(user::Column::InviteCode.eq(code))
+            let inviting_user_with_invites = match user::Entity::find()
+                .filter(
+                    user::Column::InviteCode
+                        .eq(code)
+                        .and(user::Column::InviteCount.gt(0)),
+                )
                 .one(&tx)
                 .await?
             {
-                Some(inviter) => inviter,
+                Some(inviting_user) => inviting_user,
                 None => {
                     return Err(Error::Http(
-                        StatusCode::NOT_FOUND,
-                        "invite code not found".to_string(),
+                        StatusCode::UNAUTHORIZED,
+                        "unable to find an invite code with invites remaining".to_string(),
                     ))?
                 }
             };
-
-            if inviter.invite_count == 0 {
-                Err(Error::Http(
-                    StatusCode::UNAUTHORIZED,
-                    "no invites remaining".to_string(),
-                ))?;
-            }
+            user::Entity::update_many()
+                .filter(
+                    user::Column::Id
+                        .eq(inviting_user_with_invites.id)
+                        .and(user::Column::InviteCount.gt(0)),
+                )
+                .col_expr(
+                    user::Column::InviteCount,
+                    Expr::col(user::Column::InviteCount).sub(1),
+                )
+                .exec(&tx)
+                .await?;
 
             let signup = signup::Entity::insert(signup::ActiveModel {
                 email_address: ActiveValue::set(email_address.into()),
                 email_confirmation_code: ActiveValue::set(random_email_confirmation_code()),
                 email_confirmation_sent: ActiveValue::set(false),
-                inviting_user_id: ActiveValue::set(Some(inviter.id)),
+                inviting_user_id: ActiveValue::set(Some(inviting_user_with_invites.id)),
                 platform_linux: ActiveValue::set(false),
                 platform_mac: ActiveValue::set(false),
                 platform_windows: ActiveValue::set(false),
@@ -873,26 +889,6 @@ impl Database {
             let signup = signup.update(&tx).await?;
 
             if let Some(inviting_user_id) = signup.inviting_user_id {
-                let result = user::Entity::update_many()
-                    .filter(
-                        user::Column::Id
-                            .eq(inviting_user_id)
-                            .and(user::Column::InviteCount.gt(0)),
-                    )
-                    .col_expr(
-                        user::Column::InviteCount,
-                        Expr::col(user::Column::InviteCount).sub(1),
-                    )
-                    .exec(&tx)
-                    .await?;
-
-                if result.rows_affected == 0 {
-                    Err(Error::Http(
-                        StatusCode::UNAUTHORIZED,
-                        "no invites remaining".to_string(),
-                    ))?;
-                }
-
                 contact::Entity::insert(contact::ActiveModel {
                     user_id_a: ActiveValue::set(inviting_user_id),
                     user_id_b: ActiveValue::set(user.id),

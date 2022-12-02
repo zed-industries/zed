@@ -257,17 +257,19 @@ impl Element for Flex {
                         let axis = self.axis;
                         move |e, cx| {
                             if remaining_space < 0. {
+                                let scroll_delta = e.delta.raw();
+
                                 let mut delta = match axis {
                                     Axis::Horizontal => {
-                                        if e.delta.x().abs() >= e.delta.y().abs() {
-                                            e.delta.x()
+                                        if scroll_delta.x().abs() >= scroll_delta.y().abs() {
+                                            scroll_delta.x()
                                         } else {
-                                            e.delta.y()
+                                            scroll_delta.y()
                                         }
                                     }
-                                    Axis::Vertical => e.delta.y(),
+                                    Axis::Vertical => scroll_delta.y(),
                                 };
-                                if !e.precise {
+                                if !e.delta.precise() {
                                     delta *= 20.;
                                 }
 

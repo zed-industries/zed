@@ -338,7 +338,7 @@ async fn create_signup(
     Json(params): Json<NewSignup>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
-    app.db.create_signup(params).await?;
+    app.db.create_signup(&params).await?;
     Ok(())
 }
 

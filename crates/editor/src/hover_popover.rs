@@ -221,7 +221,7 @@ fn show_hover(
 
                     start..end
                 } else {
-                    anchor.clone()..anchor.clone()
+                    anchor..anchor
                 };
 
                 Some(InfoPopover {

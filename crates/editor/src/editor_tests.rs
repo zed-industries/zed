@@ -542,7 +542,7 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         // Set scroll position to check later
         editor.set_scroll_position(Vector2F::new(5.5, 5.5), cx);
         let original_scroll_position = editor.scroll_position;
-        let original_scroll_top_anchor = editor.scroll_top_anchor.clone();
+        let original_scroll_top_anchor = editor.scroll_top_anchor;
 
         // Jump to the end of the document and adjust scroll
         editor.move_to_end(&MoveToEnd, cx);
@@ -556,12 +556,12 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         assert_eq!(editor.scroll_top_anchor, original_scroll_top_anchor);
 
         // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-        let mut invalid_anchor = editor.scroll_top_anchor.clone();
+        let mut invalid_anchor = editor.scroll_top_anchor;
         invalid_anchor.text_anchor.buffer_id = Some(999);
         let invalid_point = Point::new(9999, 0);
         editor.navigate(
             Box::new(NavigationData {
-                cursor_anchor: invalid_anchor.clone(),
+                cursor_anchor: invalid_anchor,
                 cursor_position: invalid_point,
                 scroll_top_anchor: invalid_anchor,
                 scroll_top_row: invalid_point.row,
@@ -4146,14 +4146,26 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
 
     handle_resolve_completion_request(
         &mut cx,
-        Some((
-            indoc! {"
-                one.second_completion
-                two
-                threeˇ
-            "},
-            "\nadditional edit",
-        )),
+        Some(vec![
+            (
+                //This overlaps with the primary completion edit which is
+                //misbehavior from the LSP spec, test that we filter it out
+                indoc! {"
+                    one.second_ˇcompletion
+                    two
+                    threeˇ
+                "},
+                "overlapping aditional edit",
+            ),
+            (
+                indoc! {"
+                    one.second_completion
+                    two
+                    threeˇ
+                "},
+                "\nadditional edit",
+            ),
+        ]),
     )
     .await;
     apply_additional_edits.await.unwrap();
@@ -4303,19 +4315,24 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
 
     async fn handle_resolve_completion_request<'a>(
         cx: &mut EditorLspTestContext<'a>,
-        edit: Option<(&'static str, &'static str)>,
+        edits: Option<Vec<(&'static str, &'static str)>>,
     ) {
-        let edit = edit.map(|(marked_string, new_text)| {
-            let (_, marked_ranges) = marked_text_ranges(marked_string, false);
-            let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
-            vec![lsp::TextEdit::new(replace_range, new_text.to_string())]
+        let edits = edits.map(|edits| {
+            edits
+                .iter()
+                .map(|(marked_string, new_text)| {
+                    let (_, marked_ranges) = marked_text_ranges(marked_string, false);
+                    let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
+                    lsp::TextEdit::new(replace_range, new_text.to_string())
+                })
+                .collect::<Vec<_>>()
         });
 
         cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
-            let edit = edit.clone();
+            let edits = edits.clone();
             async move {
                 Ok(lsp::CompletionItem {
-                    additional_text_edits: edit,
+                    additional_text_edits: edits,
                     ..Default::default()
                 })
             }
@@ -4701,9 +4718,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
 
     // Refreshing selections is a no-op when excerpts haven't changed.
     editor.update(cx, |editor, cx| {
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -4714,7 +4729,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     editor.update(cx, |editor, cx| {
         // Removing an excerpt causes the first selection to become degenerate.
@@ -4728,9 +4743,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
 
         // Refreshing selections will relocate the first selection to the original buffer
         // location.
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -4784,7 +4797,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppC
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     editor.update(cx, |editor, cx| {
         assert_eq!(
@@ -4793,9 +4806,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppC
         );
 
         // Ensure we don't panic when selections are refreshed and that the pending selection is finalized.
-        editor.change_selections(None, cx, |s| {
-            s.refresh();
-        });
+        editor.change_selections(None, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [Point::new(0, 3)..Point::new(0, 3)]

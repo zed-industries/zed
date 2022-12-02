@@ -12,6 +12,7 @@ mod installation;
 mod json;
 mod language_plugin;
 mod python;
+mod ruby;
 mod rust;
 mod typescript;
 
@@ -116,7 +117,16 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             tree_sitter_html::language(),
             Some(CachedLspAdapter::new(html::HtmlLspAdapter).await),
         ),
-        ("ruby", tree_sitter_ruby::language(), None),
+        (
+            "ruby",
+            tree_sitter_ruby::language(),
+            Some(CachedLspAdapter::new(ruby::RubyLanguageServer).await),
+        ),
+        (
+            "erb",
+            tree_sitter_embedded_template::language(),
+            Some(CachedLspAdapter::new(ruby::RubyLanguageServer).await),
+        ),
     ] {
         languages.add(language(name, grammar, lsp_adapter));
     }

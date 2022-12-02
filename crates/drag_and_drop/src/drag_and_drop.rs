@@ -4,12 +4,16 @@ use collections::HashSet;
 use gpui::{
     elements::{Empty, MouseEventHandler, Overlay},
     geometry::{rect::RectF, vector::Vector2F},
-    scene::MouseDrag,
+    scene::{MouseDown, MouseDrag},
     CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
     View, WeakViewHandle,
 };
 
 enum State<V: View> {
+    Down {
+        region_offset: Vector2F,
+        region: RectF,
+    },
     Dragging {
         window_id: usize,
         position: Vector2F,
@@ -24,6 +28,13 @@ enum State<V: View> {
 impl<V: View> Clone for State<V> {
     fn clone(&self) -> Self {
         match self {
+            &State::Down {
+                region_offset,
+                region,
+            } => State::Down {
+                region_offset,
+                region,
+            },
             State::Dragging {
                 window_id,
                 position,
@@ -87,6 +98,15 @@ impl<V: View> DragAndDrop<V> {
         })
     }
 
+    pub fn drag_started(event: MouseDown, cx: &mut EventContext) {
+        cx.update_global(|this: &mut Self, _| {
+            this.currently_dragged = Some(State::Down {
+                region_offset: event.region.origin() - event.position,
+                region: event.region,
+            });
+        })
+    }
+
     pub fn dragging<T: Any>(
         event: MouseDrag,
         payload: Rc<T>,
@@ -94,37 +114,32 @@ impl<V: View> DragAndDrop<V> {
         render: Rc<impl 'static + Fn(&T, &mut RenderContext<V>) -> ElementBox>,
     ) {
         let window_id = cx.window_id();
-        cx.update_global::<Self, _, _>(|this, cx| {
+        cx.update_global(|this: &mut Self, cx| {
             this.notify_containers_for_window(window_id, cx);
 
-            if matches!(this.currently_dragged, Some(State::Canceled)) {
-                return;
+            match this.currently_dragged.as_ref() {
+                Some(&State::Down {
+                    region_offset,
+                    region,
+                })
+                | Some(&State::Dragging {
+                    region_offset,
+                    region,
+                    ..
+                }) => {
+                    this.currently_dragged = Some(State::Dragging {
+                        window_id,
+                        region_offset,
+                        region,
+                        position: event.position,
+                        payload,
+                        render: Rc::new(move |payload, cx| {
+                            render(payload.downcast_ref::<T>().unwrap(), cx)
+                        }),
+                    });
+                }
+                _ => {}
             }
-
-            let (region_offset, region) = if let Some(State::Dragging {
-                region_offset,
-                region,
-                ..
-            }) = this.currently_dragged.as_ref()
-            {
-                (*region_offset, *region)
-            } else {
-                (
-                    event.region.origin() - event.prev_mouse_position,
-                    event.region,
-                )
-            };
-
-            this.currently_dragged = Some(State::Dragging {
-                window_id,
-                region_offset,
-                region,
-                position: event.position,
-                payload,
-                render: Rc::new(move |payload, cx| {
-                    render(payload.downcast_ref::<T>().unwrap(), cx)
-                }),
-            });
         });
     }
 
@@ -135,6 +150,7 @@ impl<V: View> DragAndDrop<V> {
             .clone()
             .and_then(|state| {
                 match state {
+                    State::Down { .. } => None,
                     State::Dragging {
                         window_id,
                         region_offset,
@@ -263,7 +279,11 @@ impl<Tag> Draggable for MouseEventHandler<Tag> {
     {
         let payload = Rc::new(payload);
         let render = Rc::new(render);
-        self.on_drag(MouseButton::Left, move |e, cx| {
+        self.on_down(MouseButton::Left, move |e, cx| {
+            cx.propagate_event();
+            DragAndDrop::<V>::drag_started(e, cx);
+        })
+        .on_drag(MouseButton::Left, move |e, cx| {
             let payload = payload.clone();
             let render = render.clone();
             DragAndDrop::<V>::dragging(e, payload, cx, render)

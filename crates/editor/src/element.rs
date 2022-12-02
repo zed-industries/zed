@@ -192,8 +192,14 @@ impl EditorElement {
                 .on_scroll({
                     let position_map = position_map.clone();
                     move |e, cx| {
-                        if !Self::scroll(e.position, e.delta, e.precise, &position_map, bounds, cx)
-                        {
+                        if !Self::scroll(
+                            e.position,
+                            *e.delta.raw(),
+                            e.delta.precise(),
+                            &position_map,
+                            bounds,
+                            cx,
+                        ) {
                             cx.propagate_event()
                         }
                     }
@@ -1328,12 +1334,13 @@ impl EditorElement {
                     })
                 }
                 TransformBlock::ExcerptHeader {
-                    key,
+                    id,
                     buffer,
                     range,
                     starts_new_buffer,
                     ..
                 } => {
+                    let id = *id;
                     let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_position = range
                             .primary
@@ -1350,7 +1357,7 @@ impl EditorElement {
 
                         enum JumpIcon {}
                         cx.render(&editor, |_, cx| {
-                            MouseEventHandler::<JumpIcon>::new(*key, cx, |state, _| {
+                            MouseEventHandler::<JumpIcon>::new(id.into(), cx, |state, _| {
                                 let style = style.jump_icon.style_for(state, false);
                                 Svg::new("icons/arrow_up_right_8.svg")
                                     .with_color(style.color)
@@ -1369,7 +1376,7 @@ impl EditorElement {
                                 cx.dispatch_action(jump_action.clone())
                             })
                             .with_tooltip::<JumpIcon, _>(
-                                *key,
+                                id.into(),
                                 "Jump to Buffer".to_string(),
                                 Some(Box::new(crate::OpenExcerpts)),
                                 tooltip_style.clone(),
@@ -1600,16 +1607,13 @@ impl Element for EditorElement {
 
             highlighted_rows = view.highlighted_rows();
             let theme = cx.global::<Settings>().theme.as_ref();
-            highlighted_ranges = view.background_highlights_in_range(
-                start_anchor.clone()..end_anchor.clone(),
-                &display_map,
-                theme,
-            );
+            highlighted_ranges =
+                view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
 
             let mut remote_selections = HashMap::default();
             for (replica_id, line_mode, cursor_shape, selection) in display_map
                 .buffer_snapshot
-                .remote_selections_in_range(&(start_anchor.clone()..end_anchor.clone()))
+                .remote_selections_in_range(&(start_anchor..end_anchor))
             {
                 // The local selections match the leader's selections.
                 if Some(replica_id) == view.leader_replica_id {

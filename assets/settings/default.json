@@ -1,230 +1,233 @@
 {
-  // The name of the Zed theme to use for the UI
-  "theme": "One Dark",
-  // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Mono",
-  // The default font size for text in the editor
-  "buffer_font_size": 15,
-  // Whether to enable vim modes and key bindings
-  "vim_mode": false,
-  // Whether to show the informational hover box when moving the mouse
-  // over symbols in the editor.
-  "hover_popover_enabled": true,
-  // Whether the cursor blinks in the editor.
-  "cursor_blink": true,
-  // Whether to pop the completions menu while typing in an editor without
-  // explicitly requesting it.
-  "show_completions_on_input": true,
-  // Whether new projects should start out 'online'. Online projects
-  // appear in the contacts panel under your name, so that your contacts
-  // can see which projects you are working on. Regardless of this
-  // setting, projects keep their last online status when you reopen them.
-  "projects_online_by_default": true,
-  // Whether to use language servers to provide code intelligence.
-  "enable_language_server": true,
-  // When to automatically save edited buffers. This setting can
-  // take four values.
-  //
-  // 1. Never automatically save:
-  //     "autosave": "off",
-  // 2. Save when changing focus away from the Zed window:
-  //     "autosave": "on_window_change",
-  // 3. Save when changing focus away from a specific buffer:
-  //     "autosave": "on_focus_change",
-  // 4. Save when idle for a certain amount of time:
-  //     "autosave": { "after_delay": {"milliseconds": 500} },
-  "autosave": "off",
-  // Where to place the dock by default. This setting can take three
-  // values:
-  //
-  // 1. Position the dock attached to the bottom of the workspace
-  //     "default_dock_anchor": "bottom"
-  // 2. Position the dock to the right of the workspace like a side panel
-  //     "default_dock_anchor": "right"
-  // 3. Position the dock full screen over the entire workspace"
-  //     "default_dock_anchor": "expanded"
-  "default_dock_anchor": "right",
-  // Whether or not to perform a buffer format before saving
-  "format_on_save": "on",
-  // How to perform a buffer format. This setting can take two values:
-  //
-  // 1. Format code using the current language server:
-  //     "format_on_save": "language_server"
-  // 2. Format code using an external command:
-  //     "format_on_save": {
-  //       "external": {
-  //         "command": "prettier",
-  //         "arguments": ["--stdin-filepath", "{buffer_path}"]
-  //       }
-  //     }
-  "formatter": "language_server",
-  // How to soft-wrap long lines of text. This setting can take
-  // three values:
-  //
-  // 1. Do not soft wrap.
-  //      "soft_wrap": "none",
-  // 2. Soft wrap lines that overflow the editor:
-  //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length
-  //      "soft_wrap": "preferred_line_length",
-  "soft_wrap": "none",
-  // The column at which to soft-wrap lines, for buffers where soft-wrap
-  // is enabled.
-  "preferred_line_length": 80,
-  // Whether to indent lines using tab characters, as opposed to multiple
-  // spaces.
-  "hard_tabs": false,
-  // How many columns a tab should occupy.
-  "tab_size": 4,
-  // Git gutter behavior configuration.
-  "git": {
-    // Control whether the git gutter is shown. May take 2 values:
-    // 1. Show the gutter
-    //      "git_gutter": "tracked_files"
-    // 2. Hide the gutter
-    //      "git_gutter": "hide"
-    "git_gutter": "tracked_files"
-  },
-  // Settings specific to journaling
-  "journal": {
-    // The path of the directory where journal entries are stored
-    "path": "~",
-    // What format to display the hours in
-    // May take 2 values:
-    // 1. hour12
-    // 2. hour24
-    "hour_format": "hour12"
-  },
-  // Settings specific to the terminal
-  "terminal": {
-    // What shell to use when opening a terminal. May take 3 values:
-    // 1. Use the system's default terminal configuration (e.g. $TERM).
-    //      "shell": "system"
-    // 2. A program:
-    //      "shell": {
-    //        "program": "sh"
-    //      }
-    // 3. A program with arguments:
-    //     "shell": {
-    //         "with_arguments": {
-    //           "program": "/bin/bash",
-    //           "arguments": ["--login"]
-    //         }
-    //     }
-    "shell": "system",
-    // What working directory to use when launching the terminal.
-    // May take 4 values:
-    // 1. Use the current file's project directory.  Will Fallback to the
-    //    first project directory strategy if unsuccessful
-    //      "working_directory": "current_project_directory"
-    // 2. Use the first project in this workspace's directory
-    //      "working_directory": "first_project_directory"
-    // 3. Always use this platform's home directory (if we can find it)
-    //     "working_directory": "always_home"
-    // 4. Always use a specific directory. This value will be shell expanded.
-    //    If this path is not a valid directory the terminal will default to
-    //    this platform's home directory  (if we can find it)
-    //      "working_directory": {
-    //        "always": {
-    //          "directory": "~/zed/projects/"
-    //        }
-    //      }
+    // The name of the Zed theme to use for the UI
+    "theme": "One Dark",
+    // The name of a font to use for rendering text in the editor
+    "buffer_font_family": "Zed Mono",
+    // The default font size for text in the editor
+    "buffer_font_size": 15,
+    // The factor to grow the active pane by. Defaults to 1.0
+    // which gives the same size as all other panes.
+    "active_pane_magnification": 1.0,
+    // Whether to enable vim modes and key bindings
+    "vim_mode": false,
+    // Whether to show the informational hover box when moving the mouse
+    // over symbols in the editor.
+    "hover_popover_enabled": true,
+    // Whether the cursor blinks in the editor.
+    "cursor_blink": true,
+    // Whether to pop the completions menu while typing in an editor without
+    // explicitly requesting it.
+    "show_completions_on_input": true,
+    // Whether new projects should start out 'online'. Online projects
+    // appear in the contacts panel under your name, so that your contacts
+    // can see which projects you are working on. Regardless of this
+    // setting, projects keep their last online status when you reopen them.
+    "projects_online_by_default": true,
+    // Whether to use language servers to provide code intelligence.
+    "enable_language_server": true,
+    // When to automatically save edited buffers. This setting can
+    // take four values.
     //
+    // 1. Never automatically save:
+    //     "autosave": "off",
+    // 2. Save when changing focus away from the Zed window:
+    //     "autosave": "on_window_change",
+    // 3. Save when changing focus away from a specific buffer:
+    //     "autosave": "on_focus_change",
+    // 4. Save when idle for a certain amount of time:
+    //     "autosave": { "after_delay": {"milliseconds": 500} },
+    "autosave": "off",
+    // Where to place the dock by default. This setting can take three
+    // values:
     //
-    "working_directory": "current_project_directory",
-    // Set the cursor blinking behavior in the terminal.
-    // May take 4 values:
-    //  1. Never blink the cursor, ignoring the terminal mode
-    //         "blinking": "off",
-    //  2. Default the cursor blink to off, but allow the terminal to
-    //     set blinking
-    //         "blinking": "terminal_controlled",
-    //  3. Always blink the cursor, ignoring the terminal mode
-    //         "blinking": "on",
-    "blinking": "terminal_controlled",
-    // Set whether Alternate Scroll mode (code: ?1007) is active by default.
-    // Alternate Scroll mode converts mouse scroll events into up / down key
-    // presses when in the alternate screen (e.g. when running applications
-    // like vim or  less). The terminal can still set and unset this mode.
-    // May take 2 values:
-    //  1. Default alternate scroll mode to on
-    //         "alternate_scroll": "on",
-    //  2. Default alternate scroll mode to off
-    //         "alternate_scroll": "off",
-    "alternate_scroll": "off",
-    // Set whether the option key behaves as the meta key.
-    // May take 2 values:
-    //  1. Rely on default platform handling of option key, on macOS
-    //     this means generating certain unicode characters
-    //         "option_to_meta": false,
-    //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
-    //         "option_to_meta": true,
-    "option_as_meta": false,
-    // Whether or not selecting text in the terminal will automatically
-    // copy to the system clipboard.
-    "copy_on_select": false,
-    // Any key-value pairs added to this list will be added to the terminal's
-    // enviroment. Use `:` to seperate multiple values.
-    "env": {
-      // "KEY": "value1:value2"
-    }
-    // Set the terminal's font size. If this option is not included,
-    // the terminal will default to matching the buffer's font size.
-    // "font_size": "15"
-    // Set the terminal's font family. If this option is not included,
-    // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Mono"
-  },
-  // Different settings for specific languages.
-  "languages": {
-    "Plain Text": {
-      "soft_wrap": "preferred_line_length"
-    },
-    "C": {
-      "tab_size": 2
-    },
-    "C++": {
-      "tab_size": 2
-    },
-    "Elixir": {
-      "tab_size": 2
-    },
-    "Go": {
-      "tab_size": 4,
-      "hard_tabs": true
-    },
-    "Markdown": {
-      "soft_wrap": "preferred_line_length"
-    },
-    "Rust": {
-      "tab_size": 4
-    },
-    "JavaScript": {
-      "tab_size": 2
-    },
-    "TypeScript": {
-      "tab_size": 2
-    },
-    "TSX": {
-      "tab_size": 2
-    }
-  },
-  // LSP Specific settings.
-  "lsp": {
-    // Specify the LSP name as a key here.
-    // As of 8/10/22, supported LSPs are:
-    // pyright
-    // gopls
-    // rust-analyzer
-    // typescript-language-server
-    // vscode-json-languageserver
-    // "rust_analyzer": {
-    //     //These initialization options are merged into Zed's defaults
-    //     "initialization_options": {
-    //         "checkOnSave": {
-    //             "command": "clippy"
-    //         }
+    // 1. Position the dock attached to the bottom of the workspace
+    //     "default_dock_anchor": "bottom"
+    // 2. Position the dock to the right of the workspace like a side panel
+    //     "default_dock_anchor": "right"
+    // 3. Position the dock full screen over the entire workspace"
+    //     "default_dock_anchor": "expanded"
+    "default_dock_anchor": "right",
+    // Whether or not to perform a buffer format before saving
+    "format_on_save": "on",
+    // How to perform a buffer format. This setting can take two values:
+    //
+    // 1. Format code using the current language server:
+    //     "format_on_save": "language_server"
+    // 2. Format code using an external command:
+    //     "format_on_save": {
+    //       "external": {
+    //         "command": "prettier",
+    //         "arguments": ["--stdin-filepath", "{buffer_path}"]
+    //       }
     //     }
-    // }
-  }
+    "formatter": "language_server",
+    // How to soft-wrap long lines of text. This setting can take
+    // three values:
+    //
+    // 1. Do not soft wrap.
+    //      "soft_wrap": "none",
+    // 2. Soft wrap lines that overflow the editor:
+    //      "soft_wrap": "editor_width",
+    // 3. Soft wrap lines at the preferred line length
+    //      "soft_wrap": "preferred_line_length",
+    "soft_wrap": "none",
+    // The column at which to soft-wrap lines, for buffers where soft-wrap
+    // is enabled.
+    "preferred_line_length": 80,
+    // Whether to indent lines using tab characters, as opposed to multiple
+    // spaces.
+    "hard_tabs": false,
+    // How many columns a tab should occupy.
+    "tab_size": 4,
+    // Git gutter behavior configuration.
+    "git": {
+        // Control whether the git gutter is shown. May take 2 values:
+        // 1. Show the gutter
+        //      "git_gutter": "tracked_files"
+        // 2. Hide the gutter
+        //      "git_gutter": "hide"
+        "git_gutter": "tracked_files"
+    },
+    // Settings specific to journaling
+    "journal": {
+        // The path of the directory where journal entries are stored
+        "path": "~",
+        // What format to display the hours in
+        // May take 2 values:
+        // 1. hour12
+        // 2. hour24
+        "hour_format": "hour12"
+    },
+    // Settings specific to the terminal
+    "terminal": {
+        // What shell to use when opening a terminal. May take 3 values:
+        // 1. Use the system's default terminal configuration (e.g. $TERM).
+        //      "shell": "system"
+        // 2. A program:
+        //      "shell": {
+        //        "program": "sh"
+        //      }
+        // 3. A program with arguments:
+        //     "shell": {
+        //         "with_arguments": {
+        //           "program": "/bin/bash",
+        //           "arguments": ["--login"]
+        //         }
+        //     }
+        "shell": "system",
+        // What working directory to use when launching the terminal.
+        // May take 4 values:
+        // 1. Use the current file's project directory.  Will Fallback to the
+        //    first project directory strategy if unsuccessful
+        //      "working_directory": "current_project_directory"
+        // 2. Use the first project in this workspace's directory
+        //      "working_directory": "first_project_directory"
+        // 3. Always use this platform's home directory (if we can find it)
+        //     "working_directory": "always_home"
+        // 4. Always use a specific directory. This value will be shell expanded.
+        //    If this path is not a valid directory the terminal will default to
+        //    this platform's home directory  (if we can find it)
+        //      "working_directory": {
+        //        "always": {
+        //          "directory": "~/zed/projects/"
+        //        }
+        //      }
+        //
+        //
+        "working_directory": "current_project_directory",
+        // Set the cursor blinking behavior in the terminal.
+        // May take 4 values:
+        //  1. Never blink the cursor, ignoring the terminal mode
+        //         "blinking": "off",
+        //  2. Default the cursor blink to off, but allow the terminal to
+        //     set blinking
+        //         "blinking": "terminal_controlled",
+        //  3. Always blink the cursor, ignoring the terminal mode
+        //         "blinking": "on",
+        "blinking": "terminal_controlled",
+        // Set whether Alternate Scroll mode (code: ?1007) is active by default.
+        // Alternate Scroll mode converts mouse scroll events into up / down key
+        // presses when in the alternate screen (e.g. when running applications
+        // like vim or  less). The terminal can still set and unset this mode.
+        // May take 2 values:
+        //  1. Default alternate scroll mode to on
+        //         "alternate_scroll": "on",
+        //  2. Default alternate scroll mode to off
+        //         "alternate_scroll": "off",
+        "alternate_scroll": "off",
+        // Set whether the option key behaves as the meta key.
+        // May take 2 values:
+        //  1. Rely on default platform handling of option key, on macOS
+        //     this means generating certain unicode characters
+        //         "option_to_meta": false,
+        //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
+        //         "option_to_meta": true,
+        "option_as_meta": false,
+        // Whether or not selecting text in the terminal will automatically
+        // copy to the system clipboard.
+        "copy_on_select": false,
+        // Any key-value pairs added to this list will be added to the terminal's
+        // enviroment. Use `:` to seperate multiple values.
+        "env": {
+            // "KEY": "value1:value2"
+        }
+        // Set the terminal's font size. If this option is not included,
+        // the terminal will default to matching the buffer's font size.
+        // "font_size": "15"
+        // Set the terminal's font family. If this option is not included,
+        // the terminal will default to matching the buffer's font family.
+        // "font_family": "Zed Mono"
+    },
+    // Different settings for specific languages.
+    "languages": {
+        "Plain Text": {
+            "soft_wrap": "preferred_line_length"
+        },
+        "C": {
+            "tab_size": 2
+        },
+        "C++": {
+            "tab_size": 2
+        },
+        "Elixir": {
+            "tab_size": 2
+        },
+        "Go": {
+            "tab_size": 4,
+            "hard_tabs": true
+        },
+        "Markdown": {
+            "soft_wrap": "preferred_line_length"
+        },
+        "Rust": {
+            "tab_size": 4
+        },
+        "JavaScript": {
+            "tab_size": 2
+        },
+        "TypeScript": {
+            "tab_size": 2
+        },
+        "TSX": {
+            "tab_size": 2
+        }
+    },
+    // LSP Specific settings.
+    "lsp": {
+        // Specify the LSP name as a key here.
+        // As of 8/10/22, supported LSPs are:
+        // pyright
+        // gopls
+        // rust-analyzer
+        // typescript-language-server
+        // vscode-json-languageserver
+        // "rust_analyzer": {
+        //     //These initialization options are merged into Zed's defaults
+        //     "initialization_options": {
+        //         "checkOnSave": {
+        //             "command": "clippy"
+        //         }
+        //     }
+        // }
+    }
 }

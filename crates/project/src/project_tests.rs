@@ -1239,7 +1239,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                 &buffer,
                 vec![
                     DiagnosticEntry {
-                        range: PointUtf16::new(0, 10)..PointUtf16::new(0, 10),
+                        range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "syntax error 1".to_string(),
@@ -1247,7 +1247,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                         },
                     },
                     DiagnosticEntry {
-                        range: PointUtf16::new(1, 10)..PointUtf16::new(1, 10),
+                        range: Unclipped(PointUtf16::new(1, 10))..Unclipped(PointUtf16::new(1, 10)),
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "syntax error 2".to_string(),

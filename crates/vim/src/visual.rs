@@ -114,12 +114,12 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
                         };
 
                         edits.push((expanded_range, "\n"));
-                        new_selections.push(selection.map(|_| anchor.clone()));
+                        new_selections.push(selection.map(|_| anchor));
                     } else {
                         let range = selection.map(|p| p.to_point(map)).range();
                         let anchor = map.buffer_snapshot.anchor_after(range.end);
                         edits.push((range, ""));
-                        new_selections.push(selection.map(|_| anchor.clone()));
+                        new_selections.push(selection.map(|_| anchor));
                     }
                     selection.goal = SelectionGoal::None;
                 });
