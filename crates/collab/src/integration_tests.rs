@@ -5040,14 +5040,6 @@ async fn test_following_tab_order(
     //Verify that the tabs opened in the order we expect
     assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt"]);
 
-    //Open just 2 on client B
-    workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
-        })
-        .await
-        .unwrap();
-
     //Follow client B as client A
     workspace_a
         .update(cx_a, |workspace, cx| {
@@ -5057,6 +5049,15 @@ async fn test_following_tab_order(
         })
         .await
         .unwrap();
+
+    //Open just 2 on client B
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
 
     // Verify that newly opened followed file is at the end
     assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
@@ -5069,6 +5070,7 @@ async fn test_following_tab_order(
         .await
         .unwrap();
     assert_eq!(&pane_paths(&pane_b, cx_b), &["2.txt", "1.txt"]);
+    deterministic.run_until_parked();
 
     // Verify that following into 1 did not reorder
     assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);

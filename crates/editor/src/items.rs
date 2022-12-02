@@ -55,9 +55,11 @@ impl FollowableItem for Editor {
             let buffer = buffer.await?;
             let editor = pane
                 .read_with(&cx, |pane, cx| {
-                    pane.items_of_type::<Self>().find(|editor| {
+                    let existing = pane.items_of_type::<Self>().find(|editor| {
                         editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffer)
-                    })
+                    });
+                    dbg!(&existing);
+                    existing
                 })
                 .unwrap_or_else(|| {
                     pane.update(&mut cx, |_, cx| {
