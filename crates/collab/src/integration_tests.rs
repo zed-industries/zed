@@ -4953,6 +4953,127 @@ async fn test_following(
     );
 }
 
+#[gpui::test]
+async fn test_following_tab_order(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let mut server = TestServer::start(cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/a",
+            json!({
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
+
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
+
+    let client_b_id = project_a.read_with(cx_a, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+
+    //Open 1, 3 in that order on client A
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "3.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    let pane_paths = |pane: &ViewHandle<workspace::Pane>, cx: &mut TestAppContext| {
+        pane.update(cx, |pane, cx| {
+            pane.items()
+                .map(|item| {
+                    item.project_path(cx)
+                        .unwrap()
+                        .path
+                        .to_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+
+    //Verify that the tabs opened in the order we expect
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt"]);
+
+    //Open just 2 on client B
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    //Follow client B as client A
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace
+                .toggle_follow(&ToggleFollow(client_b_id), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // Verify that newly opened followed file is at the end
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+
+    //Open just 1 on client B
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(&pane_paths(&pane_b, cx_b), &["2.txt", "1.txt"]);
+
+    // Verify that following into 1 did not reorder
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
