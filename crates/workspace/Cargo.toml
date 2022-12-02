@@ -54,3 +54,4 @@ gpui = { path = "../gpui", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
+db = { path = "../db", features = ["test-support"] }

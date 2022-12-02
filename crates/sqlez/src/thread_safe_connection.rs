@@ -266,12 +266,10 @@ pub fn background_thread_queue() -> WriteQueueConstructor {
 
 pub fn locking_queue() -> WriteQueueConstructor {
     Box::new(|| {
-        let mutex = Mutex::new(());
+        let write_mutex = Mutex::new(());
         Box::new(move |queued_write| {
-            eprintln!("Write started");
-            let _ = mutex.lock();
+            let _lock = write_mutex.lock();
             queued_write();
-            eprintln!("Write finished");
         })
     })
 }

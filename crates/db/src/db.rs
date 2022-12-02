@@ -40,7 +40,7 @@ lazy_static::lazy_static! {
     static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
     static ref DB_WIPED: RwLock<bool> = RwLock::new(false);
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
-    pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);
+    pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);    
 }
 
 /// Open or create a database at the given directory path.
@@ -58,7 +58,6 @@ pub async fn open_db<M: Migrator + 'static>(wipe_db: bool, db_dir: &Path, releas
         let mut db_wiped = DB_WIPED.write();
         if !*db_wiped {
             remove_dir_all(&main_db_dir).ok();
-            
             *db_wiped = true;
         }
     }
@@ -71,7 +70,7 @@ pub async fn open_db<M: Migrator + 'static>(wipe_db: bool, db_dir: &Path, releas
         // cause errors in the log and so should be observed by developers while writing
         // soon-to-be good migrations. If user databases are corrupted, we toss them out
         // and try again from a blank. As long as running all migrations from start to end 
-        // is ok, this race condition will never be triggered.
+        // on a blank database is ok, this race condition will never be triggered.
         //
         // Basically: Don't ever push invalid migrations to stable or everyone will have
         // a bad time.
@@ -137,7 +136,7 @@ pub async fn open_db<M: Migrator + 'static>(wipe_db: bool, db_dir: &Path, releas
 }
 
 async fn open_main_db<M: Migrator>(db_path: &PathBuf) -> Option<ThreadSafeConnection<M>> {
-    println!("Opening main db");
+    log::info!("Opening main db");
     ThreadSafeConnection::<M>::builder(db_path.to_string_lossy().as_ref(), true)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
@@ -147,7 +146,7 @@ async fn open_main_db<M: Migrator>(db_path: &PathBuf) -> Option<ThreadSafeConnec
 }
 
 async fn open_fallback_db<M: Migrator>() -> ThreadSafeConnection<M> {
-    println!("Opening fallback db");
+    log::info!("Opening fallback db");
     ThreadSafeConnection::<M>::builder(FALLBACK_DB_NAME, false)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)

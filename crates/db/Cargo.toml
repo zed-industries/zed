@@ -27,5 +27,5 @@ smol = "1.2"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
-tempdir = { version = "0.3.7" }
 env_logger = "0.9.1"
+tempdir = { version = "0.3.7" }
