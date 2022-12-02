@@ -1854,9 +1854,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     let live_kit_room;
     let delete_live_kit_room;
     {
-        let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? else {
-            return Err(anyhow!("no room to leave"))?;
-        };
+        let mut left_room = session.db().await.leave_room(session.connection_id).await?;
         contacts_to_update.insert(session.user_id);
 
         for project in left_room.left_projects.values() {
