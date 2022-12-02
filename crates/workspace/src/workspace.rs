@@ -1244,6 +1244,8 @@ impl Workspace {
             Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
         }
 
+        self.serialize_workspace(cx);
+
         cx.focus_self();
         cx.notify();
     }
@@ -1275,6 +1277,9 @@ impl Workspace {
         } else {
             cx.focus_self();
         }
+
+        self.serialize_workspace(cx);
+
         cx.notify();
     }
 
@@ -1302,6 +1307,9 @@ impl Workspace {
                 cx.focus(active_item.to_any());
             }
         }
+
+        self.serialize_workspace(cx);
+
         cx.notify();
     }
 
@@ -2268,13 +2276,20 @@ impl Workspace {
         self.database_id
     }
 
-    fn location(&self, cx: &AppContext) -> WorkspaceLocation {
-        self.project()
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).abs_path())
-            .collect::<Vec<_>>()
-            .into()
+    fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
+        let project = self.project().read(cx);
+
+        if project.is_local() {
+            Some(
+                project
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path())
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+        } else {
+            None
+        }
     }
 
     fn remove_panes(&mut self, member: Member, cx: &mut ViewContext<Workspace>) {
@@ -2331,24 +2346,24 @@ impl Workspace {
             }
         }
 
-        let location = self.location(cx);
+        if let Some(location) = self.location(cx) {
+            if !location.paths().is_empty() {
+                let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
+                let center_group = build_serialized_pane_group(&self.center.root, cx);
 
-        if !location.paths().is_empty() {
-            let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
-            let center_group = build_serialized_pane_group(&self.center.root, cx);
+                let serialized_workspace = SerializedWorkspace {
+                    id: self.database_id,
+                    location,
+                    dock_position: self.dock.position(),
+                    dock_pane,
+                    center_group,
+                    left_sidebar_open: self.left_sidebar.read(cx).is_open(),
+                };
 
-            let serialized_workspace = SerializedWorkspace {
-                id: self.database_id,
-                location: self.location(cx),
-                dock_position: self.dock.position(),
-                dock_pane,
-                center_group,
-                project_panel_open: self.left_sidebar.read(cx).is_open(),
-            };
-
-            cx.background()
-                .spawn(persistence::DB.save_workspace(serialized_workspace))
-                .detach();
+                cx.background()
+                    .spawn(persistence::DB.save_workspace(serialized_workspace))
+                    .detach();
+            }
         }
     }
 
@@ -2375,34 +2390,46 @@ impl Workspace {
                     .await;
 
                 // Traverse the splits tree and add to things
-                let (root, active_pane) = serialized_workspace
+                let center_group = serialized_workspace
                     .center_group
                     .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
                     .await;
 
                 // Remove old panes from workspace panes list
                 workspace.update(&mut cx, |workspace, cx| {
-                    workspace.remove_panes(workspace.center.root.clone(), cx);
+                    if let Some((center_group, active_pane)) = center_group {
+                        workspace.remove_panes(workspace.center.root.clone(), cx);
 
-                    // Swap workspace center group
-                    workspace.center = PaneGroup::with_root(root);
+                        // Swap workspace center group
+                        workspace.center = PaneGroup::with_root(center_group);
+
+                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
+                        cx.focus_self();
+
+                        if let Some(active_pane) = active_pane {
+                            cx.focus(active_pane);
+                        } else {
+                            cx.focus(workspace.panes.last().unwrap().clone());
+                        }
+                    } else {
+                        cx.focus_self();
+                    }
 
                     // Note, if this is moved after 'set_dock_position'
                     // it causes an infinite loop.
-                    if serialized_workspace.project_panel_open {
-                        workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx)
+                    if workspace.left_sidebar().read(cx).is_open()
+                        != serialized_workspace.left_sidebar_open
+                    {
+                        workspace.toggle_sidebar(SidebarSide::Left, cx);
                     }
 
-                    Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
-
-                    if let Some(active_pane) = active_pane {
-                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                        cx.focus_self();
-                        cx.focus(active_pane);
-                    }
+                    // Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
 
                     cx.notify();
                 });
+
+                // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))
             }
         })
         .detach();

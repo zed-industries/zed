@@ -377,7 +377,7 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
-    let app_name = cx.global::<ReleaseChannel>().name();
+    let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
     cx.prompt(
         gpui::PromptLevel::Info,

@@ -22,11 +22,19 @@ pub enum ReleaseChannel {
 }
 
 impl ReleaseChannel {
-    pub fn name(&self) -> &'static str {
+    pub fn display_name(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "Zed Dev",
             ReleaseChannel::Preview => "Zed Preview",
             ReleaseChannel::Stable => "Zed",
+        }
+    }
+
+    pub fn dev_name(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Dev => "dev",
+            ReleaseChannel::Preview => "preview",
+            ReleaseChannel::Stable => "stable",
         }
     }
 }

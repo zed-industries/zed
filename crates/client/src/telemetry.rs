@@ -106,7 +106,7 @@ impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
         let release_channel = if cx.has_global::<ReleaseChannel>() {
-            Some(cx.global::<ReleaseChannel>().name())
+            Some(cx.global::<ReleaseChannel>().display_name())
         } else {
             None
         };

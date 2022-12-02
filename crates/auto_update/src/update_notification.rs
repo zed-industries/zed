@@ -30,7 +30,7 @@ impl View for UpdateNotification {
         let theme = cx.global::<Settings>().theme.clone();
         let theme = &theme.update_notification;
 
-        let app_name = cx.global::<ReleaseChannel>().name();
+        let app_name = cx.global::<ReleaseChannel>().display_name();
 
         MouseEventHandler::<ViewReleaseNotes>::new(0, cx, |state, cx| {
             Flex::column()

@@ -175,16 +175,21 @@ impl Dock {
         new_position: DockPosition,
         cx: &mut ViewContext<Workspace>,
     ) {
+        dbg!("starting", &new_position);
         workspace.dock.position = new_position;
         // Tell the pane about the new anchor position
         workspace.dock.pane.update(cx, |pane, cx| {
+            dbg!("setting docked");
             pane.set_docked(Some(new_position.anchor()), cx)
         });
 
         if workspace.dock.position.is_visible() {
+            dbg!("dock is visible");
             // Close the right sidebar if the dock is on the right side and the right sidebar is open
             if workspace.dock.position.anchor() == DockAnchor::Right {
+                dbg!("dock anchor is right");
                 if workspace.right_sidebar().read(cx).is_open() {
+                    dbg!("Toggling right sidebar");
                     workspace.toggle_sidebar(SidebarSide::Right, cx);
                 }
             }
@@ -194,8 +199,10 @@ impl Dock {
             if pane.read(cx).items().next().is_none() {
                 let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
                 // Adding the item focuses the pane by default
+                dbg!("Adding item to dock");
                 Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
             } else {
+                dbg!("just focusing dock");
                 cx.focus(pane);
             }
         } else if let Some(last_active_center_pane) = workspace
@@ -207,6 +214,7 @@ impl Dock {
         }
         cx.emit(crate::Event::DockAnchorChanged);
         workspace.serialize_workspace(cx);
+        dbg!("Serializing workspace after dock position changed");
         cx.notify();
     }
 

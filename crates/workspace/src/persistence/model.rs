@@ -65,7 +65,7 @@ pub struct SerializedWorkspace {
     pub dock_position: DockPosition,
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
-    pub project_panel_open: bool,
+    pub left_sidebar_open: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -95,26 +95,33 @@ impl SerializedPaneGroup {
         workspace_id: WorkspaceId,
         workspace: &ViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
-    ) -> (Member, Option<ViewHandle<Pane>>) {
+    ) -> Option<(Member, Option<ViewHandle<Pane>>)> {
         match self {
             SerializedPaneGroup::Group { axis, children } => {
                 let mut current_active_pane = None;
                 let mut members = Vec::new();
                 for child in children {
-                    let (new_member, active_pane) = child
+                    if let Some((new_member, active_pane)) = child
                         .deserialize(project, workspace_id, workspace, cx)
-                        .await;
-                    members.push(new_member);
+                        .await
+                    {
+                        members.push(new_member);
 
-                    current_active_pane = current_active_pane.or(active_pane);
+                        current_active_pane = current_active_pane.or(active_pane);
+                    }
                 }
-                (
+
+                if members.is_empty() {
+                    return None;
+                }
+
+                Some((
                     Member::Axis(PaneAxis {
                         axis: *axis,
                         members,
                     }),
                     current_active_pane,
-                )
+                ))
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace.update(cx, |workspace, cx| workspace.add_pane(cx));
@@ -123,7 +130,11 @@ impl SerializedPaneGroup {
                     .deserialize_to(project, &pane, workspace_id, workspace, cx)
                     .await;
 
-                (Member::Pane(pane.clone()), active.then(|| pane))
+                if pane.read_with(cx, |pane, _| pane.items().next().is_some()) {
+                    Some((Member::Pane(pane.clone()), active.then(|| pane)))
+                } else {
+                    None
+                }
             }
         }
     }

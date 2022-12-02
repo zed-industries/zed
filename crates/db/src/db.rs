@@ -36,6 +36,8 @@ const DB_INITIALIZE_QUERY: &'static str = sql!(
 
 const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
 
+const DB_FILE_NAME: &'static str = "db.sqlite";
+
 lazy_static::lazy_static! {
     static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
     static ref DB_WIPED: RwLock<bool> = RwLock::new(false);
@@ -48,7 +50,8 @@ lazy_static::lazy_static! {
 /// is moved to a backup folder and a new one is created. If that fails, a shared in memory db is created.
 /// In either case, static variables are set so that the user can be notified.
 pub async fn open_db<M: Migrator + 'static>(wipe_db: bool, db_dir: &Path, release_channel: &ReleaseChannel) -> ThreadSafeConnection<M> {
-    let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel.name())));
+    let release_channel_name = release_channel.dev_name();
+    let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel_name)));
 
     // If WIPE_DB, delete 0-{channel}
     if release_channel == &ReleaseChannel::Dev
@@ -77,7 +80,7 @@ pub async fn open_db<M: Migrator + 'static>(wipe_db: bool, db_dir: &Path, releas
         
         // If no db folder, create one at 0-{channel}
         create_dir_all(&main_db_dir).context("Could not create db directory")?;
-        let db_path = main_db_dir.join(Path::new("db.sqlite"));
+        let db_path = main_db_dir.join(Path::new(DB_FILE_NAME));
         
         // Optimistically open databases in parallel
         if !DB_FILE_OPERATIONS.is_locked() {
@@ -104,7 +107,7 @@ pub async fn open_db<M: Migrator + 'static>(wipe_db: bool, db_dir: &Path, releas
         let backup_db_dir = db_dir.join(Path::new(&format!(
             "{}-{}",
             backup_timestamp,
-            release_channel.name(),
+            release_channel_name,
         )));
 
         std::fs::rename(&main_db_dir, &backup_db_dir)
@@ -118,7 +121,7 @@ pub async fn open_db<M: Migrator + 'static>(wipe_db: bool, db_dir: &Path, releas
         
         // Create a new 0-{channel}
         create_dir_all(&main_db_dir).context("Should be able to create the database directory")?;
-        let db_path = main_db_dir.join(Path::new("db.sqlite"));
+        let db_path = main_db_dir.join(Path::new(DB_FILE_NAME));
 
         // Try again
         open_main_db(&db_path).await.context("Could not newly created db")
@@ -240,86 +243,130 @@ macro_rules! define_connection {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::{thread, fs};
 
-    use sqlez::domain::Domain;
+    use sqlez::{domain::Domain, connection::Connection};
     use sqlez_macros::sql;
     use tempdir::TempDir;
     use util::channel::ReleaseChannel;
 
-    use crate::open_db;
-    
-    enum TestDB {}
-    
-    impl Domain for TestDB {
-        fn name() -> &'static str {
-            "db_tests"
-        }
-
-        fn migrations() -> &'static [&'static str] {
-            &[sql!(
-                CREATE TABLE test(value);
-            )]
-        }
-    }
+    use crate::{open_db, DB_FILE_NAME};
     
     // Test that wipe_db exists and works and gives a new db
-    #[test]
-    fn test_wipe_db() {
-        env_logger::try_init().ok();
+    #[gpui::test]
+    async fn test_wipe_db() {
+        enum TestDB {}
         
-        smol::block_on(async {
-            let tempdir = TempDir::new("DbTests").unwrap();
+        impl Domain for TestDB {
+            fn name() -> &'static str {
+                "db_tests"
+            }
             
-            let test_db = open_db::<TestDB>(false, tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
-            test_db.write(|connection|  
-                connection.exec(sql!(
-                    INSERT INTO test(value) VALUES (10)
-                )).unwrap()().unwrap()
-            ).await;
-            drop(test_db);
-            
-            let mut guards = vec![];
-            for _ in 0..5 {
-                let path = tempdir.path().to_path_buf();
-                let guard = thread::spawn(move || smol::block_on(async {
-                    let test_db = open_db::<TestDB>(true, &path, &ReleaseChannel::Dev).await;
-                    
-                    assert!(test_db.select_row::<()>(sql!(SELECT value FROM test)).unwrap()().unwrap().is_none())
-                }));
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(
+                    CREATE TABLE test(value);
+                )]
+            }
+        }
+        
+        let tempdir = TempDir::new("DbTests").unwrap();
+        
+        // Create a db and insert a marker value
+        let test_db = open_db::<TestDB>(false, tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
+        test_db.write(|connection|  
+            connection.exec(sql!(
+                INSERT INTO test(value) VALUES (10)
+            )).unwrap()().unwrap()
+        ).await;
+        drop(test_db);
+        
+        // Opening db with wipe clears once and removes the marker value
+        let mut guards = vec![];
+        for _ in 0..5 {
+            let path = tempdir.path().to_path_buf();
+            let guard = thread::spawn(move || smol::block_on(async {
+                let test_db = open_db::<TestDB>(true, &path, &ReleaseChannel::Dev).await;
                 
-                guards.push(guard);
+                assert!(test_db.select_row::<()>(sql!(SELECT value FROM test)).unwrap()().unwrap().is_none())
+            }));
+            
+            guards.push(guard);
+        }
+        
+        for guard in guards {
+            guard.join().unwrap();
+        }
+    }
+        
+    // Test bad migration panics
+    #[gpui::test]
+    #[should_panic]
+    async fn test_bad_migration_panics() {
+        enum BadDB {}
+        
+        impl Domain for BadDB {
+            fn name() -> &'static str {
+                "db_tests"
             }
             
-            for guard in guards {
-                guard.join().unwrap();
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(CREATE TABLE test(value);),
+                    // failure because test already exists
+                  sql!(CREATE TABLE test(value);)]
             }
-        })
-    }
-
-    // Test a file system failure (like in create_dir_all())
-    #[test]
-    fn test_file_system_failure() {
-        
-    }
-    
-    // Test happy path where everything exists and opens
-    #[test]
-    fn test_open_db() {
-        
-    }
-    
-    // Test bad migration panics
-    #[test]
-    fn test_bad_migration_panics() {
-        
+        }
+       
+        let tempdir = TempDir::new("DbTests").unwrap();
+        let _bad_db = open_db::<BadDB>(false, tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
     }
     
     /// Test that DB exists but corrupted (causing recreate)
-    #[test]
-    fn test_db_corruption() {
+    #[gpui::test]
+    async fn test_db_corruption() {
+        enum CorruptedDB {}
         
+        impl Domain for CorruptedDB {
+            fn name() -> &'static str {
+                "db_tests"
+            }
+            
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(CREATE TABLE test(value);)]
+            }
+        }
         
-        // open_db(db_dir, release_channel)
+        enum GoodDB {}
+        
+        impl Domain for GoodDB {
+            fn name() -> &'static str {
+                "db_tests" //Notice same name
+            }
+            
+            fn migrations() -> &'static [&'static str] {
+                &[sql!(CREATE TABLE test2(value);)] //But different migration
+            }
+        }
+       
+        let tempdir = TempDir::new("DbTests").unwrap();
+        {
+            let corrupt_db = open_db::<CorruptedDB>(false, tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
+            assert!(corrupt_db.persistent());
+        }
+        
+        let good_db = open_db::<GoodDB>(false, tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
+        assert!(good_db.select_row::<usize>("SELECT * FROM test2").unwrap()().unwrap().is_none());
+        
+        let mut corrupted_backup_dir = fs::read_dir(
+            tempdir.path()
+        ).unwrap().find(|entry| {
+            !entry.as_ref().unwrap().file_name().to_str().unwrap().starts_with("0")
+        }
+        ).unwrap().unwrap().path();
+        corrupted_backup_dir.push(DB_FILE_NAME);
+        
+        dbg!(&corrupted_backup_dir);
+        
+        let backup = Connection::open_file(&corrupted_backup_dir.to_string_lossy());
+        assert!(backup.select_row::<usize>("SELECT * FROM test").unwrap()().unwrap().is_none());
     }
 }

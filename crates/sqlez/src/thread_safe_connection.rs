@@ -96,7 +96,6 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
                         .with_savepoint("thread_safe_multi_migration", || M::migrate(connection));
 
                     if migration_result.is_ok() {
-                        println!("Migration succeded");
                         break;
                     }
                 }
