@@ -1,11 +1,7 @@
-use collab::{Error, Result};
-use db::{DefaultDb, UserId};
+use collab::{db, Error, Result};
+use db::{ConnectOptions, Database, UserId};
 use serde::{de::DeserializeOwned, Deserialize};
 use std::fmt::Write;
-
-#[allow(unused)]
-#[path = "../db.rs"]
-mod db;
 
 #[derive(Debug, Deserialize)]
 struct GitHubUser {
@@ -17,7 +13,7 @@ struct GitHubUser {
 #[tokio::main]
 async fn main() {
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL env var");
-    let db = DefaultDb::new(&database_url, 5)
+    let db = Database::new(ConnectOptions::new(database_url))
         .await
         .expect("failed to connect to postgres database");
     let github_token = std::env::var("GITHUB_TOKEN").expect("missing GITHUB_TOKEN env var");

@@ -1,82 +1,17 @@
-mod api;
-mod auth;
-mod db;
-mod env;
-mod rpc;
-
-#[cfg(test)]
-mod integration_tests;
-
 use anyhow::anyhow;
 use axum::{routing::get, Router};
-use collab::{Error, Result};
+use collab::{db, env, AppState, Config, MigrateConfig, Result};
 use db::Database;
-use serde::Deserialize;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::Path,
 };
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
-
-#[derive(Default, Deserialize)]
-pub struct Config {
-    pub http_port: u16,
-    pub database_url: String,
-    pub api_token: String,
-    pub invite_link_prefix: String,
-    pub live_kit_server: Option<String>,
-    pub live_kit_key: Option<String>,
-    pub live_kit_secret: Option<String>,
-    pub rust_log: Option<String>,
-    pub log_json: Option<bool>,
-}
-
-#[derive(Default, Deserialize)]
-pub struct MigrateConfig {
-    pub database_url: String,
-    pub migrations_path: Option<PathBuf>,
-}
-
-pub struct AppState {
-    db: Arc<Database>,
-    live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
-    config: Config,
-}
-
-impl AppState {
-    async fn new(config: Config) -> Result<Arc<Self>> {
-        let mut db_options = db::ConnectOptions::new(config.database_url.clone());
-        db_options.max_connections(5);
-        let db = Database::new(db_options).await?;
-        let live_kit_client = if let Some(((server, key), secret)) = config
-            .live_kit_server
-            .as_ref()
-            .zip(config.live_kit_key.as_ref())
-            .zip(config.live_kit_secret.as_ref())
-        {
-            Some(Arc::new(live_kit_server::api::LiveKitClient::new(
-                server.clone(),
-                key.clone(),
-                secret.clone(),
-            )) as Arc<dyn live_kit_server::api::Client>)
-        } else {
-            None
-        };
-
-        let this = Self {
-            db: Arc::new(db),
-            live_kit_client,
-            config,
-        };
-        Ok(Arc::new(this))
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -120,10 +55,10 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = rpc::Server::new(state.clone());
+            let rpc_server = collab::rpc::Server::new(state.clone());
 
-            let app = api::routes(rpc_server.clone(), state.clone())
-                .merge(rpc::routes(rpc_server.clone()))
+            let app = collab::api::routes(rpc_server.clone(), state.clone())
+                .merge(collab::rpc::routes(rpc_server.clone()))
                 .merge(Router::new().route("/", get(handle_root)));
 
             axum::Server::from_tcp(listener)?
