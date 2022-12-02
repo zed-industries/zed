@@ -381,7 +381,7 @@ impl Server {
                 if let Some((code, count)) = invite_code {
                     this.peer.send(connection_id, proto::UpdateInviteInfo {
                         url: format!("{}{}", this.app_state.config.invite_link_prefix, code),
-                        count,
+                        count: count as u32,
                     })?;
                 }
             }
@@ -1008,7 +1008,7 @@ async fn join_project(
     let collaborators = project
         .collaborators
         .iter()
-        .filter(|collaborator| collaborator.connection_id != session.connection_id.0)
+        .filter(|collaborator| collaborator.connection_id != session.connection_id.0 as i32)
         .map(|collaborator| proto::Collaborator {
             peer_id: collaborator.connection_id as u32,
             replica_id: collaborator.replica_id.0 as u32,
@@ -1313,7 +1313,8 @@ async fn save_buffer(
         .await
         .project_collaborators(project_id, session.connection_id)
         .await?;
-    collaborators.retain(|collaborator| collaborator.connection_id != session.connection_id.0);
+    collaborators
+        .retain(|collaborator| collaborator.connection_id != session.connection_id.0 as i32);
     let project_connection_ids = collaborators
         .into_iter()
         .map(|collaborator| ConnectionId(collaborator.connection_id as u32));

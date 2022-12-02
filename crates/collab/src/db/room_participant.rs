@@ -8,12 +8,12 @@ pub struct Model {
     pub id: RoomParticipantId,
     pub room_id: RoomId,
     pub user_id: UserId,
-    pub answering_connection_id: Option<u32>,
-    pub location_kind: Option<u32>,
+    pub answering_connection_id: Option<i32>,
+    pub location_kind: Option<i32>,
     pub location_project_id: Option<ProjectId>,
     pub initial_project_id: Option<ProjectId>,
     pub calling_user_id: UserId,
-    pub calling_connection_id: u32,
+    pub calling_connection_id: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

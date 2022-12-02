@@ -159,7 +159,7 @@ impl Database {
     pub async fn get_user_by_github_account(
         &self,
         github_login: &str,
-        github_user_id: Option<u32>,
+        github_user_id: Option<i32>,
     ) -> Result<Option<User>> {
         self.transact(|tx| async {
             let tx = tx;
@@ -879,7 +879,7 @@ impl Database {
         .await
     }
 
-    pub async fn set_invite_count_for_user(&self, id: UserId, count: u32) -> Result<()> {
+    pub async fn set_invite_count_for_user(&self, id: UserId, count: i32) -> Result<()> {
         self.transact(|tx| async move {
             if count > 0 {
                 user::Entity::update_many()
@@ -910,11 +910,11 @@ impl Database {
         .await
     }
 
-    pub async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, u32)>> {
+    pub async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, i32)>> {
         self.transact(|tx| async move {
             match user::Entity::find_by_id(id).one(&tx).await? {
                 Some(user) if user.invite_code.is_some() => {
-                    Ok(Some((user.invite_code.unwrap(), user.invite_count as u32)))
+                    Ok(Some((user.invite_code.unwrap(), user.invite_count)))
                 }
                 _ => Ok(None),
             }
@@ -982,9 +982,9 @@ impl Database {
             room_participant::ActiveModel {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(user_id),
-                answering_connection_id: ActiveValue::set(Some(connection_id.0)),
+                answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                 calling_user_id: ActiveValue::set(user_id),
-                calling_connection_id: ActiveValue::set(connection_id.0),
+                calling_connection_id: ActiveValue::set(connection_id.0 as i32),
                 ..Default::default()
             }
             .insert(&tx)
@@ -1009,7 +1009,7 @@ impl Database {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
                 calling_user_id: ActiveValue::set(calling_user_id),
-                calling_connection_id: ActiveValue::set(calling_connection_id.0),
+                calling_connection_id: ActiveValue::set(calling_connection_id.0 as i32),
                 initial_project_id: ActiveValue::set(initial_project_id),
                 ..Default::default()
             }
@@ -1126,7 +1126,7 @@ impl Database {
                         .and(room_participant::Column::AnsweringConnectionId.is_null()),
                 )
                 .set(room_participant::ActiveModel {
-                    answering_connection_id: ActiveValue::set(Some(connection_id.0)),
+                    answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                     ..Default::default()
                 })
                 .exec(&tx)
@@ -1488,7 +1488,7 @@ impl Database {
             let project = project::ActiveModel {
                 room_id: ActiveValue::set(participant.room_id),
                 host_user_id: ActiveValue::set(participant.user_id),
-                host_connection_id: ActiveValue::set(connection_id.0),
+                host_connection_id: ActiveValue::set(connection_id.0 as i32),
                 ..Default::default()
             }
             .insert(&tx)
@@ -1508,7 +1508,7 @@ impl Database {
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
-                connection_id: ActiveValue::set(connection_id.0),
+                connection_id: ActiveValue::set(connection_id.0 as i32),
                 user_id: ActiveValue::set(participant.user_id),
                 replica_id: ActiveValue::set(ReplicaId(0)),
                 is_host: ActiveValue::set(true),
@@ -1536,7 +1536,7 @@ impl Database {
                 .one(&tx)
                 .await?
                 .ok_or_else(|| anyhow!("project not found"))?;
-            if project.host_connection_id == connection_id.0 {
+            if project.host_connection_id == connection_id.0 as i32 {
                 let room_id = project.room_id;
                 project::Entity::delete(project.into_active_model())
                     .exec(&tx)
@@ -1633,7 +1633,7 @@ impl Database {
                     path: ActiveValue::set(entry.path.clone()),
                     inode: ActiveValue::set(entry.inode as i64),
                     mtime_seconds: ActiveValue::set(mtime.seconds as i64),
-                    mtime_nanos: ActiveValue::set(mtime.nanos),
+                    mtime_nanos: ActiveValue::set(mtime.nanos as i32),
                     is_symlink: ActiveValue::set(entry.is_symlink),
                     is_ignored: ActiveValue::set(entry.is_ignored),
                 }
@@ -1696,7 +1696,7 @@ impl Database {
                 .one(&tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            if project.host_connection_id != connection_id.0 {
+            if project.host_connection_id != connection_id.0 as i32 {
                 return Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
@@ -1706,8 +1706,8 @@ impl Database {
                 worktree_id: ActiveValue::set(worktree_id),
                 path: ActiveValue::set(summary.path.clone()),
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
-                error_count: ActiveValue::set(summary.error_count),
-                warning_count: ActiveValue::set(summary.warning_count),
+                error_count: ActiveValue::set(summary.error_count as i32),
+                warning_count: ActiveValue::set(summary.warning_count as i32),
                 ..Default::default()
             })
             .on_conflict(
@@ -1750,7 +1750,7 @@ impl Database {
                 .one(&tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            if project.host_connection_id != connection_id.0 {
+            if project.host_connection_id != connection_id.0 as i32 {
                 return Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
@@ -1813,7 +1813,7 @@ impl Database {
             }
             let new_collaborator = project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project_id),
-                connection_id: ActiveValue::set(connection_id.0),
+                connection_id: ActiveValue::set(connection_id.0 as i32),
                 user_id: ActiveValue::set(participant.user_id),
                 replica_id: ActiveValue::set(replica_id),
                 is_host: ActiveValue::set(false),
@@ -1859,7 +1859,7 @@ impl Database {
                             inode: db_entry.inode as u64,
                             mtime: Some(proto::Timestamp {
                                 seconds: db_entry.mtime_seconds as u64,
-                                nanos: db_entry.mtime_nanos,
+                                nanos: db_entry.mtime_nanos as u32,
                             }),
                             is_symlink: db_entry.is_symlink,
                             is_ignored: db_entry.is_ignored,
@@ -1946,7 +1946,7 @@ impl Database {
                 .await?;
             let connection_ids = collaborators
                 .into_iter()
-                .map(|collaborator| ConnectionId(collaborator.connection_id))
+                .map(|collaborator| ConnectionId(collaborator.connection_id as u32))
                 .collect();
 
             self.commit_room_transaction(
@@ -1955,7 +1955,7 @@ impl Database {
                 LeftProject {
                     id: project_id,
                     host_user_id: project.host_user_id,
-                    host_connection_id: ConnectionId(project.host_connection_id),
+                    host_connection_id: ConnectionId(project.host_connection_id as u32),
                     connection_ids,
                 },
             )
@@ -1977,7 +1977,7 @@ impl Database {
 
             if collaborators
                 .iter()
-                .any(|collaborator| collaborator.connection_id == connection_id.0)
+                .any(|collaborator| collaborator.connection_id == connection_id.0 as i32)
             {
                 Ok(collaborators)
             } else {
@@ -2191,8 +2191,8 @@ impl<T> DerefMut for RoomGuard<T> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewUserParams {
     pub github_login: String,
-    pub github_user_id: u32,
-    pub invite_count: u32,
+    pub github_user_id: i32,
+    pub invite_count: i32,
 }
 
 #[derive(Debug)]
@@ -2227,15 +2227,15 @@ macro_rules! id_type {
             Deserialize,
         )]
         #[serde(transparent)]
-        pub struct $name(pub u32);
+        pub struct $name(pub i32);
 
         impl $name {
             #[allow(unused)]
-            pub const MAX: Self = Self(u32::MAX);
+            pub const MAX: Self = Self(i32::MAX);
 
             #[allow(unused)]
             pub fn from_proto(value: u64) -> Self {
-                Self(value as u32)
+                Self(value as i32)
             }
 
             #[allow(unused)]
@@ -2252,7 +2252,7 @@ macro_rules! id_type {
 
         impl From<$name> for sea_query::Value {
             fn from(value: $name) -> Self {
-                sea_query::Value::Unsigned(Some(value.0))
+                sea_query::Value::Int(Some(value.0))
             }
         }
 
@@ -2262,7 +2262,7 @@ macro_rules! id_type {
                 pre: &str,
                 col: &str,
             ) -> Result<Self, sea_orm::TryGetError> {
-                Ok(Self(u32::try_get(res, pre, col)?))
+                Ok(Self(i32::try_get(res, pre, col)?))
             }
         }
 
@@ -2302,11 +2302,11 @@ macro_rules! id_type {
             }
 
             fn array_type() -> sea_query::ArrayType {
-                sea_query::ArrayType::Unsigned
+                sea_query::ArrayType::Int
             }
 
             fn column_type() -> sea_query::ColumnType {
-                sea_query::ColumnType::Unsigned(None)
+                sea_query::ColumnType::Integer(None)
             }
         }
 

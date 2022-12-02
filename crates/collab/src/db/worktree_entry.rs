@@ -14,7 +14,7 @@ pub struct Model {
     pub path: String,
     pub inode: i64,
     pub mtime_seconds: i64,
-    pub mtime_nanos: u32,
+    pub mtime_nanos: i32,
     pub is_symlink: bool,
     pub is_ignored: bool,
 }

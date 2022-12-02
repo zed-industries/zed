@@ -76,7 +76,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
 #[derive(Debug, Deserialize)]
 struct AuthenticatedUserParams {
-    github_user_id: Option<u32>,
+    github_user_id: Option<i32>,
     github_login: String,
 }
 
@@ -123,14 +123,14 @@ async fn get_users(
 
 #[derive(Deserialize, Debug)]
 struct CreateUserParams {
-    github_user_id: u32,
+    github_user_id: i32,
     github_login: String,
     email_address: String,
     email_confirmation_code: Option<String>,
     #[serde(default)]
     admin: bool,
     #[serde(default)]
-    invite_count: u32,
+    invite_count: i32,
 }
 
 #[derive(Serialize, Debug)]
@@ -204,11 +204,11 @@ async fn create_user(
 #[derive(Deserialize)]
 struct UpdateUserParams {
     admin: Option<bool>,
-    invite_count: Option<u32>,
+    invite_count: Option<i32>,
 }
 
 async fn update_user(
-    Path(user_id): Path<u32>,
+    Path(user_id): Path<i32>,
     Json(params): Json<UpdateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
@@ -230,7 +230,7 @@ async fn update_user(
 }
 
 async fn destroy_user(
-    Path(user_id): Path<u32>,
+    Path(user_id): Path<i32>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
     app.db.destroy_user(UserId(user_id)).await?;

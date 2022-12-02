@@ -430,7 +430,7 @@ async fn test_fuzzy_search_users() {
             false,
             NewUserParams {
                 github_login: github_login.into(),
-                github_user_id: i as u32,
+                github_user_id: i as i32,
                 invite_count: 0,
             },
         )

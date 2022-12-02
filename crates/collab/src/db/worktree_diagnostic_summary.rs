@@ -11,8 +11,8 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub path: String,
     pub language_server_id: i64,
-    pub error_count: u32,
-    pub warning_count: u32,
+    pub error_count: i32,
+    pub warning_count: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
