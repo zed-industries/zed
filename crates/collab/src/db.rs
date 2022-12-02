@@ -123,6 +123,18 @@ impl Database {
                 .filter(project::Column::HostConnectionEpoch.ne(self.epoch))
                 .exec(&tx)
                 .await?;
+            room::Entity::delete_many()
+                .filter(
+                    room::Column::Id.not_in_subquery(
+                        Query::select()
+                            .column(room_participant::Column::RoomId)
+                            .from(room_participant::Entity)
+                            .distinct()
+                            .to_owned(),
+                    ),
+                )
+                .exec(&tx)
+                .await?;
             tx.commit().await?;
             Ok(())
         })
@@ -1272,8 +1284,12 @@ impl Database {
                     .await?;
 
                 let room = self.get_room(room_id, &tx).await?;
-                Ok(Some(
-                    self.commit_room_transaction(
+                if room.participants.is_empty() {
+                    room::Entity::delete_by_id(room_id).exec(&tx).await?;
+                }
+
+                let left_room = self
+                    .commit_room_transaction(
                         room_id,
                         tx,
                         LeftRoom {
@@ -1282,8 +1298,13 @@ impl Database {
                             canceled_calls_to_user_ids,
                         },
                     )
-                    .await?,
-                ))
+                    .await?;
+
+                if left_room.room.participants.is_empty() {
+                    self.rooms.remove(&room_id);
+                }
+
+                Ok(Some(left_room))
             } else {
                 Ok(None)
             }
