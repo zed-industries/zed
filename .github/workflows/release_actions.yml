@@ -14,7 +14,7 @@ jobs:
         content: |
           📣 Zed ${{ github.event.release.tag_name }} was just released!
           
-          Restart your Zed or head to https://zed.dev/releases to grab it.
+          Restart your Zed or head to https://zed.dev/releases/latest to grab it.
         
           ```md
           # Changelog
