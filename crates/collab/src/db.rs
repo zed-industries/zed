@@ -1494,17 +1494,21 @@ impl Database {
             .insert(&tx)
             .await?;
 
-            worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
-                id: ActiveValue::set(worktree.id as i64),
-                project_id: ActiveValue::set(project.id),
-                abs_path: ActiveValue::set(worktree.abs_path.clone()),
-                root_name: ActiveValue::set(worktree.root_name.clone()),
-                visible: ActiveValue::set(worktree.visible),
-                scan_id: ActiveValue::set(0),
-                is_complete: ActiveValue::set(false),
-            }))
-            .exec(&tx)
-            .await?;
+            if !worktrees.is_empty() {
+                worktree::Entity::insert_many(worktrees.iter().map(|worktree| {
+                    worktree::ActiveModel {
+                        id: ActiveValue::set(worktree.id as i64),
+                        project_id: ActiveValue::set(project.id),
+                        abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                        root_name: ActiveValue::set(worktree.root_name.clone()),
+                        visible: ActiveValue::set(worktree.visible),
+                        scan_id: ActiveValue::set(0),
+                        is_complete: ActiveValue::set(false),
+                    }
+                }))
+                .exec(&tx)
+                .await?;
+            }
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
@@ -1564,17 +1568,27 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
 
-            worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
-                id: ActiveValue::set(worktree.id as i64),
-                project_id: ActiveValue::set(project.id),
-                abs_path: ActiveValue::set(worktree.abs_path.clone()),
-                root_name: ActiveValue::set(worktree.root_name.clone()),
-                visible: ActiveValue::set(worktree.visible),
-                scan_id: ActiveValue::set(0),
-                is_complete: ActiveValue::set(false),
-            }))
-            .exec(&tx)
-            .await?;
+            if !worktrees.is_empty() {
+                worktree::Entity::insert_many(worktrees.iter().map(|worktree| {
+                    worktree::ActiveModel {
+                        id: ActiveValue::set(worktree.id as i64),
+                        project_id: ActiveValue::set(project.id),
+                        abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                        root_name: ActiveValue::set(worktree.root_name.clone()),
+                        visible: ActiveValue::set(worktree.visible),
+                        scan_id: ActiveValue::set(0),
+                        is_complete: ActiveValue::set(false),
+                    }
+                }))
+                .on_conflict(
+                    OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
+                        .update_column(worktree::Column::RootName)
+                        .to_owned(),
+                )
+                .exec(&tx)
+                .await?;
+            }
+
             worktree::Entity::delete_many()
                 .filter(
                     worktree::Column::ProjectId.eq(project.id).and(
@@ -1623,53 +1637,57 @@ impl Database {
             .exec(&tx)
             .await?;
 
-            worktree_entry::Entity::insert_many(update.updated_entries.iter().map(|entry| {
-                let mtime = entry.mtime.clone().unwrap_or_default();
-                worktree_entry::ActiveModel {
-                    project_id: ActiveValue::set(project_id),
-                    worktree_id: ActiveValue::set(worktree_id),
-                    id: ActiveValue::set(entry.id as i64),
-                    is_dir: ActiveValue::set(entry.is_dir),
-                    path: ActiveValue::set(entry.path.clone()),
-                    inode: ActiveValue::set(entry.inode as i64),
-                    mtime_seconds: ActiveValue::set(mtime.seconds as i64),
-                    mtime_nanos: ActiveValue::set(mtime.nanos as i32),
-                    is_symlink: ActiveValue::set(entry.is_symlink),
-                    is_ignored: ActiveValue::set(entry.is_ignored),
-                }
-            }))
-            .on_conflict(
-                OnConflict::columns([
-                    worktree_entry::Column::ProjectId,
-                    worktree_entry::Column::WorktreeId,
-                    worktree_entry::Column::Id,
-                ])
-                .update_columns([
-                    worktree_entry::Column::IsDir,
-                    worktree_entry::Column::Path,
-                    worktree_entry::Column::Inode,
-                    worktree_entry::Column::MtimeSeconds,
-                    worktree_entry::Column::MtimeNanos,
-                    worktree_entry::Column::IsSymlink,
-                    worktree_entry::Column::IsIgnored,
-                ])
-                .to_owned(),
-            )
-            .exec(&tx)
-            .await?;
-
-            worktree_entry::Entity::delete_many()
-                .filter(
-                    worktree_entry::Column::ProjectId
-                        .eq(project_id)
-                        .and(worktree_entry::Column::WorktreeId.eq(worktree_id))
-                        .and(
-                            worktree_entry::Column::Id
-                                .is_in(update.removed_entries.iter().map(|id| *id as i64)),
-                        ),
+            if !update.updated_entries.is_empty() {
+                worktree_entry::Entity::insert_many(update.updated_entries.iter().map(|entry| {
+                    let mtime = entry.mtime.clone().unwrap_or_default();
+                    worktree_entry::ActiveModel {
+                        project_id: ActiveValue::set(project_id),
+                        worktree_id: ActiveValue::set(worktree_id),
+                        id: ActiveValue::set(entry.id as i64),
+                        is_dir: ActiveValue::set(entry.is_dir),
+                        path: ActiveValue::set(entry.path.clone()),
+                        inode: ActiveValue::set(entry.inode as i64),
+                        mtime_seconds: ActiveValue::set(mtime.seconds as i64),
+                        mtime_nanos: ActiveValue::set(mtime.nanos as i32),
+                        is_symlink: ActiveValue::set(entry.is_symlink),
+                        is_ignored: ActiveValue::set(entry.is_ignored),
+                    }
+                }))
+                .on_conflict(
+                    OnConflict::columns([
+                        worktree_entry::Column::ProjectId,
+                        worktree_entry::Column::WorktreeId,
+                        worktree_entry::Column::Id,
+                    ])
+                    .update_columns([
+                        worktree_entry::Column::IsDir,
+                        worktree_entry::Column::Path,
+                        worktree_entry::Column::Inode,
+                        worktree_entry::Column::MtimeSeconds,
+                        worktree_entry::Column::MtimeNanos,
+                        worktree_entry::Column::IsSymlink,
+                        worktree_entry::Column::IsIgnored,
+                    ])
+                    .to_owned(),
                 )
                 .exec(&tx)
                 .await?;
+            }
+
+            if !update.removed_entries.is_empty() {
+                worktree_entry::Entity::delete_many()
+                    .filter(
+                        worktree_entry::Column::ProjectId
+                            .eq(project_id)
+                            .and(worktree_entry::Column::WorktreeId.eq(worktree_id))
+                            .and(
+                                worktree_entry::Column::Id
+                                    .is_in(update.removed_entries.iter().map(|id| *id as i64)),
+                            ),
+                    )
+                    .exec(&tx)
+                    .await?;
+            }
 
             let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
             self.commit_room_transaction(room_id, tx, connection_ids)
