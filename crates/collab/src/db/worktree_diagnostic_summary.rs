@@ -2,21 +2,17 @@ use super::ProjectId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "worktree_entries")]
+#[sea_orm(table_name = "worktree_diagnostic_summaries")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub project_id: ProjectId,
     #[sea_orm(primary_key)]
     pub worktree_id: i64,
     #[sea_orm(primary_key)]
-    pub id: i64,
-    pub is_dir: bool,
     pub path: String,
-    pub inode: i64,
-    pub mtime_seconds: i64,
-    pub mtime_nanos: u32,
-    pub is_symlink: bool,
-    pub is_ignored: bool,
+    pub language_server_id: i64,
+    pub error_count: u32,
+    pub warning_count: u32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -1019,7 +1019,7 @@ async fn join_project(
         .worktrees
         .iter()
         .map(|(id, worktree)| proto::WorktreeMetadata {
-            id: id.to_proto(),
+            id: *id,
             root_name: worktree.root_name.clone(),
             visible: worktree.visible,
             abs_path: worktree.abs_path.clone(),
@@ -1060,7 +1060,7 @@ async fn join_project(
         // Stream this worktree's entries.
         let message = proto::UpdateWorktree {
             project_id: project_id.to_proto(),
-            worktree_id: worktree_id.to_proto(),
+            worktree_id,
             abs_path: worktree.abs_path.clone(),
             root_name: worktree.root_name,
             updated_entries: worktree.entries,
@@ -1078,7 +1078,7 @@ async fn join_project(
                 session.connection_id,
                 proto::UpdateDiagnosticSummary {
                     project_id: project_id.to_proto(),
-                    worktree_id: worktree.id.to_proto(),
+                    worktree_id: worktree.id,
                     summary: Some(summary),
                 },
             )?;

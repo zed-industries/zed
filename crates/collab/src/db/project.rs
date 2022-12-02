@@ -26,7 +26,11 @@ pub enum Relation {
     )]
     Room,
     #[sea_orm(has_many = "super::worktree::Entity")]
-    Worktree,
+    Worktrees,
+    #[sea_orm(has_many = "super::project_collaborator::Entity")]
+    Collaborators,
+    #[sea_orm(has_many = "super::language_server::Entity")]
+    LanguageServers,
 }
 
 impl Related<super::user::Entity> for Entity {
@@ -43,7 +47,19 @@ impl Related<super::room::Entity> for Entity {
 
 impl Related<super::worktree::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Worktree.def()
+        Relation::Worktrees.def()
+    }
+}
+
+impl Related<super::project_collaborator::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Collaborators.def()
+    }
+}
+
+impl Related<super::language_server::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::LanguageServers.def()
     }
 }
 

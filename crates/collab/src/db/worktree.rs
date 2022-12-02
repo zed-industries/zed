@@ -1,17 +1,17 @@
-use super::{ProjectId, WorktreeId};
+use super::ProjectId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "worktrees")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: WorktreeId,
+    pub id: i64,
     #[sea_orm(primary_key)]
     pub project_id: ProjectId,
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
-    pub scan_id: u32,
+    pub scan_id: i64,
     pub is_complete: bool,
 }
 

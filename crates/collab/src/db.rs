@@ -1,5 +1,6 @@
 mod access_token;
 mod contact;
+mod language_server;
 mod project;
 mod project_collaborator;
 mod room;
@@ -9,6 +10,7 @@ mod signup;
 mod tests;
 mod user;
 mod worktree;
+mod worktree_diagnostic_summary;
 mod worktree_entry;
 
 use crate::{Error, Result};
@@ -1493,7 +1495,7 @@ impl Database {
             .await?;
 
             worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
-                id: ActiveValue::set(WorktreeId(worktree.id as u32)),
+                id: ActiveValue::set(worktree.id as i64),
                 project_id: ActiveValue::set(project.id),
                 abs_path: ActiveValue::set(worktree.abs_path.clone()),
                 root_name: ActiveValue::set(worktree.root_name.clone()),
@@ -1563,7 +1565,7 @@ impl Database {
                 .ok_or_else(|| anyhow!("no such project"))?;
 
             worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
-                id: ActiveValue::set(WorktreeId(worktree.id as u32)),
+                id: ActiveValue::set(worktree.id as i64),
                 project_id: ActiveValue::set(project.id),
                 abs_path: ActiveValue::set(worktree.abs_path.clone()),
                 root_name: ActiveValue::set(worktree.root_name.clone()),
@@ -1576,11 +1578,8 @@ impl Database {
             worktree::Entity::delete_many()
                 .filter(
                     worktree::Column::ProjectId.eq(project.id).and(
-                        worktree::Column::Id.is_not_in(
-                            worktrees
-                                .iter()
-                                .map(|worktree| WorktreeId(worktree.id as u32)),
-                        ),
+                        worktree::Column::Id
+                            .is_not_in(worktrees.iter().map(|worktree| worktree.id as i64)),
                     ),
                 )
                 .exec(&tx)
@@ -1601,7 +1600,7 @@ impl Database {
     ) -> Result<RoomGuard<Vec<ConnectionId>>> {
         self.transact(|tx| async move {
             let project_id = ProjectId::from_proto(update.project_id);
-            let worktree_id = WorktreeId::from_proto(update.worktree_id);
+            let worktree_id = update.worktree_id as i64;
 
             // Ensure the update comes from the host.
             let project = project::Entity::find_by_id(project_id)
@@ -1609,13 +1608,14 @@ impl Database {
                 .one(&tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
+            let room_id = project.room_id;
 
             // Update metadata.
             worktree::Entity::update(worktree::ActiveModel {
                 id: ActiveValue::set(worktree_id),
                 project_id: ActiveValue::set(project_id),
                 root_name: ActiveValue::set(update.root_name.clone()),
-                scan_id: ActiveValue::set(update.scan_id as u32),
+                scan_id: ActiveValue::set(update.scan_id as i64),
                 is_complete: ActiveValue::set(update.is_last_update),
                 abs_path: ActiveValue::set(update.abs_path.clone()),
                 ..Default::default()
@@ -1623,76 +1623,57 @@ impl Database {
             .exec(&tx)
             .await?;
 
-            // if !update.updated_entries.is_empty() {
-            //     let mut params =
-            //         "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?),".repeat(update.updated_entries.len());
-            //     params.pop();
+            worktree_entry::Entity::insert_many(update.updated_entries.iter().map(|entry| {
+                let mtime = entry.mtime.clone().unwrap_or_default();
+                worktree_entry::ActiveModel {
+                    project_id: ActiveValue::set(project_id),
+                    worktree_id: ActiveValue::set(worktree_id),
+                    id: ActiveValue::set(entry.id as i64),
+                    is_dir: ActiveValue::set(entry.is_dir),
+                    path: ActiveValue::set(entry.path.clone()),
+                    inode: ActiveValue::set(entry.inode as i64),
+                    mtime_seconds: ActiveValue::set(mtime.seconds as i64),
+                    mtime_nanos: ActiveValue::set(mtime.nanos),
+                    is_symlink: ActiveValue::set(entry.is_symlink),
+                    is_ignored: ActiveValue::set(entry.is_ignored),
+                }
+            }))
+            .on_conflict(
+                OnConflict::columns([
+                    worktree_entry::Column::ProjectId,
+                    worktree_entry::Column::WorktreeId,
+                    worktree_entry::Column::Id,
+                ])
+                .update_columns([
+                    worktree_entry::Column::IsDir,
+                    worktree_entry::Column::Path,
+                    worktree_entry::Column::Inode,
+                    worktree_entry::Column::MtimeSeconds,
+                    worktree_entry::Column::MtimeNanos,
+                    worktree_entry::Column::IsSymlink,
+                    worktree_entry::Column::IsIgnored,
+                ])
+                .to_owned(),
+            )
+            .exec(&tx)
+            .await?;
 
-            //     let query = format!(
-            //         "
-            //         INSERT INTO worktree_entries (
-            //         project_id,
-            //         worktree_id,
-            //         id,
-            //         is_dir,
-            //         path,
-            //         inode,
-            //         mtime_seconds,
-            //         mtime_nanos,
-            //         is_symlink,
-            //         is_ignored
-            //         )
-            //         VALUES {params}
-            //         ON CONFLICT (project_id, worktree_id, id) DO UPDATE SET
-            //         is_dir = excluded.is_dir,
-            //         path = excluded.path,
-            //         inode = excluded.inode,
-            //         mtime_seconds = excluded.mtime_seconds,
-            //         mtime_nanos = excluded.mtime_nanos,
-            //         is_symlink = excluded.is_symlink,
-            //         is_ignored = excluded.is_ignored
-            //         "
-            //     );
-            //     let mut query = sqlx::query(&query);
-            //     for entry in &update.updated_entries {
-            //         let mtime = entry.mtime.clone().unwrap_or_default();
-            //         query = query
-            //             .bind(project_id)
-            //             .bind(worktree_id)
-            //             .bind(entry.id as i64)
-            //             .bind(entry.is_dir)
-            //             .bind(&entry.path)
-            //             .bind(entry.inode as i64)
-            //             .bind(mtime.seconds as i64)
-            //             .bind(mtime.nanos as i32)
-            //             .bind(entry.is_symlink)
-            //             .bind(entry.is_ignored);
-            //     }
-            //     query.execute(&mut tx).await?;
-            // }
+            worktree_entry::Entity::delete_many()
+                .filter(
+                    worktree_entry::Column::ProjectId
+                        .eq(project_id)
+                        .and(worktree_entry::Column::WorktreeId.eq(worktree_id))
+                        .and(
+                            worktree_entry::Column::Id
+                                .is_in(update.removed_entries.iter().map(|id| *id as i64)),
+                        ),
+                )
+                .exec(&tx)
+                .await?;
 
-            // if !update.removed_entries.is_empty() {
-            //     let mut params = "?,".repeat(update.removed_entries.len());
-            //     params.pop();
-            //     let query = format!(
-            //         "
-            //         DELETE FROM worktree_entries
-            //         WHERE project_id = ? AND worktree_id = ? AND id IN ({params})
-            //         "
-            //     );
-
-            //     let mut query = sqlx::query(&query).bind(project_id).bind(worktree_id);
-            //     for entry_id in &update.removed_entries {
-            //         query = query.bind(*entry_id as i64);
-            //     }
-            //     query.execute(&mut tx).await?;
-            // }
-
-            // let connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
-            // self.commit_room_transaction(room_id, tx, connection_ids)
-            //     .await
-
-            todo!()
+            let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            self.commit_room_transaction(room_id, tx, connection_ids)
+                .await
         })
         .await
     }
@@ -1703,57 +1684,51 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<Vec<ConnectionId>>> {
         self.transact(|tx| async {
-            todo!()
-            // let project_id = ProjectId::from_proto(update.project_id);
-            // let worktree_id = WorktreeId::from_proto(update.worktree_id);
-            // let summary = update
-            //     .summary
-            //     .as_ref()
-            //     .ok_or_else(|| anyhow!("invalid summary"))?;
+            let project_id = ProjectId::from_proto(update.project_id);
+            let worktree_id = update.worktree_id as i64;
+            let summary = update
+                .summary
+                .as_ref()
+                .ok_or_else(|| anyhow!("invalid summary"))?;
 
-            // // Ensure the update comes from the host.
-            // let room_id: RoomId = sqlx::query_scalar(
-            //     "
-            //     SELECT room_id
-            //     FROM projects
-            //     WHERE id = $1 AND host_connection_id = $2
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(connection_id.0 as i32)
-            // .fetch_one(&mut tx)
-            // .await?;
+            // Ensure the update comes from the host.
+            let project = project::Entity::find_by_id(project_id)
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+            if project.host_connection_id != connection_id.0 {
+                return Err(anyhow!("can't update a project hosted by someone else"))?;
+            }
 
-            // // Update summary.
-            // sqlx::query(
-            //     "
-            //     INSERT INTO worktree_diagnostic_summaries (
-            //     project_id,
-            //     worktree_id,
-            //     path,
-            //     language_server_id,
-            //     error_count,
-            //     warning_count
-            //     )
-            //     VALUES ($1, $2, $3, $4, $5, $6)
-            //     ON CONFLICT (project_id, worktree_id, path) DO UPDATE SET
-            //     language_server_id = excluded.language_server_id,
-            //     error_count = excluded.error_count,
-            //     warning_count = excluded.warning_count
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(worktree_id)
-            // .bind(&summary.path)
-            // .bind(summary.language_server_id as i64)
-            // .bind(summary.error_count as i32)
-            // .bind(summary.warning_count as i32)
-            // .execute(&mut tx)
-            // .await?;
+            // Update summary.
+            worktree_diagnostic_summary::Entity::insert(worktree_diagnostic_summary::ActiveModel {
+                project_id: ActiveValue::set(project_id),
+                worktree_id: ActiveValue::set(worktree_id),
+                path: ActiveValue::set(summary.path.clone()),
+                language_server_id: ActiveValue::set(summary.language_server_id as i64),
+                error_count: ActiveValue::set(summary.error_count),
+                warning_count: ActiveValue::set(summary.warning_count),
+                ..Default::default()
+            })
+            .on_conflict(
+                OnConflict::columns([
+                    worktree_diagnostic_summary::Column::ProjectId,
+                    worktree_diagnostic_summary::Column::WorktreeId,
+                    worktree_diagnostic_summary::Column::Path,
+                ])
+                .update_columns([
+                    worktree_diagnostic_summary::Column::LanguageServerId,
+                    worktree_diagnostic_summary::Column::ErrorCount,
+                    worktree_diagnostic_summary::Column::WarningCount,
+                ])
+                .to_owned(),
+            )
+            .exec(&tx)
+            .await?;
 
-            // let connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
-            // self.commit_room_transaction(room_id, tx, connection_ids)
-            //     .await
+            let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            self.commit_room_transaction(project.room_id, tx, connection_ids)
+                .await
         })
         .await
     }
@@ -1764,44 +1739,42 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<Vec<ConnectionId>>> {
         self.transact(|tx| async {
-            todo!()
-            // let project_id = ProjectId::from_proto(update.project_id);
-            // let server = update
-            //     .server
-            //     .as_ref()
-            //     .ok_or_else(|| anyhow!("invalid language server"))?;
+            let project_id = ProjectId::from_proto(update.project_id);
+            let server = update
+                .server
+                .as_ref()
+                .ok_or_else(|| anyhow!("invalid language server"))?;
 
-            // // Ensure the update comes from the host.
-            // let room_id: RoomId = sqlx::query_scalar(
-            //     "
-            //     SELECT room_id
-            //     FROM projects
-            //     WHERE id = $1 AND host_connection_id = $2
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(connection_id.0 as i32)
-            // .fetch_one(&mut tx)
-            // .await?;
+            // Ensure the update comes from the host.
+            let project = project::Entity::find_by_id(project_id)
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+            if project.host_connection_id != connection_id.0 {
+                return Err(anyhow!("can't update a project hosted by someone else"))?;
+            }
 
-            // // Add the newly-started language server.
-            // sqlx::query(
-            //     "
-            //     INSERT INTO language_servers (project_id, id, name)
-            //     VALUES ($1, $2, $3)
-            //     ON CONFLICT (project_id, id) DO UPDATE SET
-            //     name = excluded.name
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(server.id as i64)
-            // .bind(&server.name)
-            // .execute(&mut tx)
-            // .await?;
+            // Add the newly-started language server.
+            language_server::Entity::insert(language_server::ActiveModel {
+                project_id: ActiveValue::set(project_id),
+                id: ActiveValue::set(server.id as i64),
+                name: ActiveValue::set(server.name.clone()),
+                ..Default::default()
+            })
+            .on_conflict(
+                OnConflict::columns([
+                    language_server::Column::ProjectId,
+                    language_server::Column::Id,
+                ])
+                .update_column(language_server::Column::Name)
+                .to_owned(),
+            )
+            .exec(&tx)
+            .await?;
 
-            // let connection_ids = self.get_guest_connection_ids(project_id, &mut tx).await?;
-            // self.commit_room_transaction(room_id, tx, connection_ids)
-            //     .await
+            let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            self.commit_room_transaction(project.room_id, tx, connection_ids)
+                .await
         })
         .await
     }
@@ -1812,194 +1785,135 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<(Project, ReplicaId)>> {
         self.transact(|tx| async move {
-            todo!()
-            // let (room_id, user_id) = sqlx::query_as::<_, (RoomId, UserId)>(
-            //     "
-            //     SELECT room_id, user_id
-            //     FROM room_participants
-            //     WHERE answering_connection_id = $1
-            //     ",
-            // )
-            // .bind(connection_id.0 as i32)
-            // .fetch_one(&mut tx)
-            // .await?;
+            let participant = room_participant::Entity::find()
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0))
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("must join a room first"))?;
 
-            // // Ensure project id was shared on this room.
-            // sqlx::query(
-            //     "
-            //     SELECT 1
-            //     FROM projects
-            //     WHERE id = $1 AND room_id = $2
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(room_id)
-            // .fetch_one(&mut tx)
-            // .await?;
+            let project = project::Entity::find_by_id(project_id)
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+            if project.room_id != participant.room_id {
+                return Err(anyhow!("no such project"))?;
+            }
 
-            // let mut collaborators = sqlx::query_as::<_, ProjectCollaborator>(
-            //     "
-            //     SELECT *
-            //     FROM project_collaborators
-            //     WHERE project_id = $1
-            //     ",
-            // )
-            // .bind(project_id)
-            // .fetch_all(&mut tx)
-            // .await?;
-            // let replica_ids = collaborators
-            //     .iter()
-            //     .map(|c| c.replica_id)
-            //     .collect::<HashSet<_>>();
-            // let mut replica_id = ReplicaId(1);
-            // while replica_ids.contains(&replica_id) {
-            //     replica_id.0 += 1;
-            // }
-            // let new_collaborator = ProjectCollaborator {
-            //     project_id,
-            //     connection_id: connection_id.0 as i32,
-            //     user_id,
-            //     replica_id,
-            //     is_host: false,
-            // };
+            let mut collaborators = project
+                .find_related(project_collaborator::Entity)
+                .all(&tx)
+                .await?;
+            let replica_ids = collaborators
+                .iter()
+                .map(|c| c.replica_id)
+                .collect::<HashSet<_>>();
+            let mut replica_id = ReplicaId(1);
+            while replica_ids.contains(&replica_id) {
+                replica_id.0 += 1;
+            }
+            let new_collaborator = project_collaborator::ActiveModel {
+                project_id: ActiveValue::set(project_id),
+                connection_id: ActiveValue::set(connection_id.0),
+                user_id: ActiveValue::set(participant.user_id),
+                replica_id: ActiveValue::set(replica_id),
+                is_host: ActiveValue::set(false),
+                ..Default::default()
+            }
+            .insert(&tx)
+            .await?;
+            collaborators.push(new_collaborator);
 
-            // sqlx::query(
-            //     "
-            //     INSERT INTO project_collaborators (
-            //     project_id,
-            //     connection_id,
-            //     user_id,
-            //     replica_id,
-            //     is_host
-            //     )
-            //     VALUES ($1, $2, $3, $4, $5)
-            //     ",
-            // )
-            // .bind(new_collaborator.project_id)
-            // .bind(new_collaborator.connection_id)
-            // .bind(new_collaborator.user_id)
-            // .bind(new_collaborator.replica_id)
-            // .bind(new_collaborator.is_host)
-            // .execute(&mut tx)
-            // .await?;
-            // collaborators.push(new_collaborator);
+            let db_worktrees = project.find_related(worktree::Entity).all(&tx).await?;
+            let mut worktrees = db_worktrees
+                .into_iter()
+                .map(|db_worktree| {
+                    (
+                        db_worktree.id as u64,
+                        Worktree {
+                            id: db_worktree.id as u64,
+                            abs_path: db_worktree.abs_path,
+                            root_name: db_worktree.root_name,
+                            visible: db_worktree.visible,
+                            entries: Default::default(),
+                            diagnostic_summaries: Default::default(),
+                            scan_id: db_worktree.scan_id as u64,
+                            is_complete: db_worktree.is_complete,
+                        },
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
 
-            // let worktree_rows = sqlx::query_as::<_, WorktreeRow>(
-            //     "
-            //     SELECT *
-            //     FROM worktrees
-            //     WHERE project_id = $1
-            //     ",
-            // )
-            // .bind(project_id)
-            // .fetch_all(&mut tx)
-            // .await?;
-            // let mut worktrees = worktree_rows
-            //     .into_iter()
-            //     .map(|worktree_row| {
-            //         (
-            //             worktree_row.id,
-            //             Worktree {
-            //                 id: worktree_row.id,
-            //                 abs_path: worktree_row.abs_path,
-            //                 root_name: worktree_row.root_name,
-            //                 visible: worktree_row.visible,
-            //                 entries: Default::default(),
-            //                 diagnostic_summaries: Default::default(),
-            //                 scan_id: worktree_row.scan_id as u64,
-            //                 is_complete: worktree_row.is_complete,
-            //             },
-            //         )
-            //     })
-            //     .collect::<BTreeMap<_, _>>();
+            // Populate worktree entries.
+            {
+                let mut db_entries = worktree_entry::Entity::find()
+                    .filter(worktree_entry::Column::ProjectId.eq(project_id))
+                    .stream(&tx)
+                    .await?;
+                while let Some(db_entry) = db_entries.next().await {
+                    let db_entry = db_entry?;
+                    if let Some(worktree) = worktrees.get_mut(&(db_entry.worktree_id as u64)) {
+                        worktree.entries.push(proto::Entry {
+                            id: db_entry.id as u64,
+                            is_dir: db_entry.is_dir,
+                            path: db_entry.path,
+                            inode: db_entry.inode as u64,
+                            mtime: Some(proto::Timestamp {
+                                seconds: db_entry.mtime_seconds as u64,
+                                nanos: db_entry.mtime_nanos,
+                            }),
+                            is_symlink: db_entry.is_symlink,
+                            is_ignored: db_entry.is_ignored,
+                        });
+                    }
+                }
+            }
 
-            // // Populate worktree entries.
-            // {
-            //     let mut entries = sqlx::query_as::<_, WorktreeEntry>(
-            //         "
-            //         SELECT *
-            //         FROM worktree_entries
-            //         WHERE project_id = $1
-            //         ",
-            //     )
-            //     .bind(project_id)
-            //     .fetch(&mut tx);
-            //     while let Some(entry) = entries.next().await {
-            //         let entry = entry?;
-            //         if let Some(worktree) = worktrees.get_mut(&entry.worktree_id) {
-            //             worktree.entries.push(proto::Entry {
-            //                 id: entry.id as u64,
-            //                 is_dir: entry.is_dir,
-            //                 path: entry.path,
-            //                 inode: entry.inode as u64,
-            //                 mtime: Some(proto::Timestamp {
-            //                     seconds: entry.mtime_seconds as u64,
-            //                     nanos: entry.mtime_nanos as u32,
-            //                 }),
-            //                 is_symlink: entry.is_symlink,
-            //                 is_ignored: entry.is_ignored,
-            //             });
-            //         }
-            //     }
-            // }
+            // Populate worktree diagnostic summaries.
+            {
+                let mut db_summaries = worktree_diagnostic_summary::Entity::find()
+                    .filter(worktree_diagnostic_summary::Column::ProjectId.eq(project_id))
+                    .stream(&tx)
+                    .await?;
+                while let Some(db_summary) = db_summaries.next().await {
+                    let db_summary = db_summary?;
+                    if let Some(worktree) = worktrees.get_mut(&(db_summary.worktree_id as u64)) {
+                        worktree
+                            .diagnostic_summaries
+                            .push(proto::DiagnosticSummary {
+                                path: db_summary.path,
+                                language_server_id: db_summary.language_server_id as u64,
+                                error_count: db_summary.error_count as u32,
+                                warning_count: db_summary.warning_count as u32,
+                            });
+                    }
+                }
+            }
 
-            // // Populate worktree diagnostic summaries.
-            // {
-            //     let mut summaries = sqlx::query_as::<_, WorktreeDiagnosticSummary>(
-            //         "
-            //         SELECT *
-            //         FROM worktree_diagnostic_summaries
-            //         WHERE project_id = $1
-            //         ",
-            //     )
-            //     .bind(project_id)
-            //     .fetch(&mut tx);
-            //     while let Some(summary) = summaries.next().await {
-            //         let summary = summary?;
-            //         if let Some(worktree) = worktrees.get_mut(&summary.worktree_id) {
-            //             worktree
-            //                 .diagnostic_summaries
-            //                 .push(proto::DiagnosticSummary {
-            //                     path: summary.path,
-            //                     language_server_id: summary.language_server_id as u64,
-            //                     error_count: summary.error_count as u32,
-            //                     warning_count: summary.warning_count as u32,
-            //                 });
-            //         }
-            //     }
-            // }
+            // Populate language servers.
+            let language_servers = project
+                .find_related(language_server::Entity)
+                .all(&tx)
+                .await?;
 
-            // // Populate language servers.
-            // let language_servers = sqlx::query_as::<_, LanguageServer>(
-            //     "
-            //     SELECT *
-            //     FROM language_servers
-            //     WHERE project_id = $1
-            //     ",
-            // )
-            // .bind(project_id)
-            // .fetch_all(&mut tx)
-            // .await?;
-
-            // self.commit_room_transaction(
-            //     room_id,
-            //     tx,
-            //     (
-            //         Project {
-            //             collaborators,
-            //             worktrees,
-            //             language_servers: language_servers
-            //                 .into_iter()
-            //                 .map(|language_server| proto::LanguageServer {
-            //                     id: language_server.id.to_proto(),
-            //                     name: language_server.name,
-            //                 })
-            //                 .collect(),
-            //         },
-            //         replica_id as ReplicaId,
-            //     ),
-            // )
-            // .await
+            self.commit_room_transaction(
+                project.room_id,
+                tx,
+                (
+                    Project {
+                        collaborators,
+                        worktrees,
+                        language_servers: language_servers
+                            .into_iter()
+                            .map(|language_server| proto::LanguageServer {
+                                id: language_server.id as u64,
+                                name: language_server.name,
+                            })
+                            .collect(),
+                    },
+                    replica_id as ReplicaId,
+                ),
+            )
+            .await
         })
         .await
     }
@@ -2010,59 +1924,42 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<LeftProject>> {
         self.transact(|tx| async move {
-            todo!()
-            // let result = sqlx::query(
-            //     "
-            //     DELETE FROM project_collaborators
-            //     WHERE project_id = $1 AND connection_id = $2
-            //     ",
-            // )
-            // .bind(project_id)
-            // .bind(connection_id.0 as i32)
-            // .execute(&mut tx)
-            // .await?;
+            let result = project_collaborator::Entity::delete_many()
+                .filter(
+                    project_collaborator::Column::ProjectId
+                        .eq(project_id)
+                        .and(project_collaborator::Column::ConnectionId.eq(connection_id.0)),
+                )
+                .exec(&tx)
+                .await?;
+            if result.rows_affected == 0 {
+                Err(anyhow!("not a collaborator on this project"))?;
+            }
 
-            // if result.rows_affected() == 0 {
-            //     Err(anyhow!("not a collaborator on this project"))?;
-            // }
+            let project = project::Entity::find_by_id(project_id)
+                .one(&tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+            let collaborators = project
+                .find_related(project_collaborator::Entity)
+                .all(&tx)
+                .await?;
+            let connection_ids = collaborators
+                .into_iter()
+                .map(|collaborator| ConnectionId(collaborator.connection_id))
+                .collect();
 
-            // let connection_ids = sqlx::query_scalar::<_, i32>(
-            //     "
-            //     SELECT connection_id
-            //     FROM project_collaborators
-            //     WHERE project_id = $1
-            //     ",
-            // )
-            // .bind(project_id)
-            // .fetch_all(&mut tx)
-            // .await?
-            // .into_iter()
-            // .map(|id| ConnectionId(id as u32))
-            // .collect();
-
-            // let (room_id, host_user_id, host_connection_id) =
-            //     sqlx::query_as::<_, (RoomId, i32, i32)>(
-            //         "
-            //         SELECT room_id, host_user_id, host_connection_id
-            //         FROM projects
-            //         WHERE id = $1
-            //         ",
-            //     )
-            //     .bind(project_id)
-            //     .fetch_one(&mut tx)
-            //     .await?;
-
-            // self.commit_room_transaction(
-            //     room_id,
-            //     tx,
-            //     LeftProject {
-            //         id: project_id,
-            //         host_user_id: UserId(host_user_id),
-            //         host_connection_id: ConnectionId(host_connection_id as u32),
-            //         connection_ids,
-            //     },
-            // )
-            // .await
+            self.commit_room_transaction(
+                project.room_id,
+                tx,
+                LeftProject {
+                    id: project_id,
+                    host_user_id: project.host_user_id,
+                    host_connection_id: ConnectionId(project.host_connection_id),
+                    connection_ids,
+                },
+            )
+            .await
         })
         .await
     }
@@ -2442,8 +2339,6 @@ id_type!(ProjectCollaboratorId);
 id_type!(ReplicaId);
 id_type!(SignupId);
 id_type!(UserId);
-id_type!(WorktreeId);
-id_type!(WorktreeEntryId);
 
 pub struct LeftRoom {
     pub room: proto::Room,
@@ -2453,7 +2348,7 @@ pub struct LeftRoom {
 
 pub struct Project {
     pub collaborators: Vec<project_collaborator::Model>,
-    pub worktrees: BTreeMap<WorktreeId, Worktree>,
+    pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
@@ -2465,7 +2360,7 @@ pub struct LeftProject {
 }
 
 pub struct Worktree {
-    pub id: WorktreeId,
+    pub id: u64,
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,

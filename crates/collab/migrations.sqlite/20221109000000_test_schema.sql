@@ -72,6 +72,7 @@ CREATE TABLE "worktree_entries" (
     PRIMARY KEY(project_id, worktree_id, id),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
+CREATE INDEX "index_worktree_entries_on_project_id" ON "worktree_entries" ("project_id");
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
 
 CREATE TABLE "worktree_diagnostic_summaries" (
@@ -84,6 +85,7 @@ CREATE TABLE "worktree_diagnostic_summaries" (
     PRIMARY KEY(project_id, worktree_id, path),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
+CREATE INDEX "index_worktree_diagnostic_summaries_on_project_id" ON "worktree_diagnostic_summaries" ("project_id");
 CREATE INDEX "index_worktree_diagnostic_summaries_on_project_id_and_worktree_id" ON "worktree_diagnostic_summaries" ("project_id", "worktree_id");
 
 CREATE TABLE "language_servers" (
