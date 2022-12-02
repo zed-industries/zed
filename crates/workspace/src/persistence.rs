@@ -5,30 +5,21 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use db::{connection, query, sqlez::connection::Connection, sqlez_macros::sql};
+use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::Axis;
 
-use db::sqlez::domain::Domain;
 use util::{iife, unzip_option, ResultExt};
 
 use crate::dock::DockPosition;
 use crate::WorkspaceId;
-
-use super::Workspace;
 
 use model::{
     GroupId, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
     WorkspaceLocation,
 };
 
-connection!(DB: WorkspaceDb<Workspace>);
-
-impl Domain for Workspace {
-    fn name() -> &'static str {
-        "workspace"
-    }
-
-    fn migrations() -> &'static [&'static str] {
+define_connection! {
+    pub static ref DB: WorkspaceDb<()> =
         &[sql!(
             CREATE TABLE workspaces(
                 workspace_id INTEGER PRIMARY KEY,
@@ -40,7 +31,7 @@ impl Domain for Workspace {
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
                 FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
             ) STRICT;
-
+            
             CREATE TABLE pane_groups(
                 group_id INTEGER PRIMARY KEY,
                 workspace_id INTEGER NOT NULL,
@@ -48,29 +39,29 @@ impl Domain for Workspace {
                 position INTEGER, // NULL indicates that this is a root node
                 axis TEXT NOT NULL, // Enum: 'Vertical' / 'Horizontal'
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE,
+                ON DELETE CASCADE
+                ON UPDATE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
-
+            
             CREATE TABLE panes(
                 pane_id INTEGER PRIMARY KEY,
                 workspace_id INTEGER NOT NULL,
                 active INTEGER NOT NULL, // Boolean
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
             ) STRICT;
-
+            
             CREATE TABLE center_panes(
                 pane_id INTEGER PRIMARY KEY,
                 parent_group_id INTEGER, // NULL means that this is a root pane
                 position INTEGER, // NULL means that this is a root pane
                 FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
-                    ON DELETE CASCADE,
+                ON DELETE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
-
+            
             CREATE TABLE items(
                 item_id INTEGER NOT NULL, // This is the item's view id, so this is not unique
                 workspace_id INTEGER NOT NULL,
@@ -79,14 +70,13 @@ impl Domain for Workspace {
                 position INTEGER NOT NULL,
                 active INTEGER NOT NULL,
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE,
+                ON DELETE CASCADE
+                ON UPDATE CASCADE,
                 FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
-                    ON DELETE CASCADE,
+                ON DELETE CASCADE,
                 PRIMARY KEY(item_id, workspace_id)
             ) STRICT;
-        )]
-    }
+        )];
 }
 
 impl WorkspaceDb {
@@ -149,7 +139,7 @@ impl WorkspaceDb {
                     UPDATE workspaces SET dock_pane = NULL WHERE workspace_id = ?1;
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                .context("Clearing old panes")?;
+                .expect("Clearing old panes");
 
                 conn.exec_bound(sql!(
                     DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?

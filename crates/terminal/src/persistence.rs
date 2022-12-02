@@ -1,19 +1,11 @@
 use std::path::PathBuf;
 
-use db::{connection, query, sqlez::domain::Domain, sqlez_macros::sql};
+use db::{define_connection, query, sqlez_macros::sql};
 
-use workspace::{ItemId, Workspace, WorkspaceId};
+use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
-use crate::Terminal;
-
-connection!(TERMINAL_CONNECTION: TerminalDb<(Workspace, Terminal)>);
-
-impl Domain for Terminal {
-    fn name() -> &'static str {
-        "terminal"
-    }
-
-    fn migrations() -> &'static [&'static str] {
+define_connection! {
+    pub static ref TERMINAL_CONNECTION: TerminalDb<WorkspaceDb> =
         &[sql!(
             CREATE TABLE terminals (
                 workspace_id INTEGER,
@@ -23,8 +15,7 @@ impl Domain for Terminal {
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
             ) STRICT;
-        )]
-    }
+        )];
 }
 
 impl TerminalDb {

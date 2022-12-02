@@ -44,8 +44,11 @@ use language::LanguageRegistry;
 use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
-pub use persistence::model::{ItemId, WorkspaceLocation};
 use persistence::{model::SerializedItem, DB};
+pub use persistence::{
+    model::{ItemId, WorkspaceLocation},
+    WorkspaceDb,
+};
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use serde::Deserialize;

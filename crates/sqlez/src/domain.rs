@@ -1,11 +1,11 @@
 use crate::connection::Connection;
 
-pub trait Domain {
+pub trait Domain: 'static {
     fn name() -> &'static str;
     fn migrations() -> &'static [&'static str];
 }
 
-pub trait Migrator {
+pub trait Migrator: 'static {
     fn migrate(connection: &Connection) -> anyhow::Result<()>;
 }
 

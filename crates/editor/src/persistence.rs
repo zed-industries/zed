@@ -1,19 +1,11 @@
 use std::path::PathBuf;
 
-use crate::Editor;
 use db::sqlez_macros::sql;
-use db::{connection, query};
-use sqlez::domain::Domain;
-use workspace::{ItemId, Workspace, WorkspaceId};
+use db::{define_connection, query};
+use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
-connection!(DB: EditorDb<(Workspace, Editor)>);
-
-impl Domain for Editor {
-    fn name() -> &'static str {
-        "editor"
-    }
-
-    fn migrations() -> &'static [&'static str] {
+define_connection!(
+    pub static ref DB: EditorDb<WorkspaceDb> =
         &[sql! (
             CREATE TABLE editors(
                 item_id INTEGER NOT NULL,
@@ -21,12 +13,11 @@ impl Domain for Editor {
                 path BLOB NOT NULL,
                 PRIMARY KEY(item_id, workspace_id),
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE
-            ) STRICT;
-        )]
-    }
-}
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+        ) STRICT;
+    )];
+);
 
 impl EditorDb {
     query! {

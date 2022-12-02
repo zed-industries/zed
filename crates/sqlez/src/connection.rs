@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     ffi::{CStr, CString},
     marker::PhantomData,
     path::Path,
@@ -11,7 +12,7 @@ use libsqlite3_sys::*;
 pub struct Connection {
     pub(crate) sqlite3: *mut sqlite3,
     persistent: bool,
-    pub(crate) write: bool,
+    pub(crate) write: RefCell<bool>,
     _sqlite: PhantomData<sqlite3>,
 }
 unsafe impl Send for Connection {}
@@ -21,7 +22,7 @@ impl Connection {
         let mut connection = Self {
             sqlite3: 0 as *mut _,
             persistent,
-            write: true,
+            write: RefCell::new(true),
             _sqlite: PhantomData,
         };
 
@@ -64,7 +65,7 @@ impl Connection {
     }
 
     pub fn can_write(&self) -> bool {
-        self.write
+        *self.write.borrow()
     }
 
     pub fn backup_main(&self, destination: &Connection) -> Result<()> {
@@ -151,6 +152,13 @@ impl Connection {
                 message
             ))
         }
+    }
+
+    pub(crate) fn with_write<T>(&self, callback: impl FnOnce(&Connection) -> T) -> T {
+        *self.write.borrow_mut() = true;
+        let result = callback(self);
+        *self.write.borrow_mut() = false;
+        result
     }
 }
 

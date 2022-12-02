@@ -1,26 +1,15 @@
-use sqlez::domain::Domain;
 use sqlez_macros::sql;
 
-use crate::{connection, query};
+use crate::{define_connection, query};
 
-connection!(KEY_VALUE_STORE: KeyValueStore<KeyValueStore>);
-
-impl Domain for KeyValueStore {
-    fn name() -> &'static str {
-        "kvp"
-    }
-
-    fn migrations() -> &'static [&'static str] {
-        // Legacy migrations using rusqlite may have already created kv_store during alpha,
-        // migrations must be infallible so this must have 'IF NOT EXISTS'
-        &[sql!(
-            CREATE TABLE IF NOT EXISTS kv_store(
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            ) STRICT;
-        )]
-    }
-}
+define_connection!(pub static ref KEY_VALUE_STORE: KeyValueStore<()> =
+    &[sql!(
+        CREATE TABLE IF NOT EXISTS kv_store(
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        ) STRICT;
+    )];
+);
 
 impl KeyValueStore {
     query! {

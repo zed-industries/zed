@@ -12,6 +12,7 @@ use crate::connection::Connection;
 impl Connection {
     pub fn migrate(&self, domain: &'static str, migrations: &[&'static str]) -> Result<()> {
         self.with_savepoint("migrating", || {
+            println!("Processing domain");
             // Setup the migrations table unconditionally
             self.exec(indoc! {"
                 CREATE TABLE IF NOT EXISTS migrations (
@@ -43,11 +44,13 @@ impl Connection {
                             {}", domain, index, completed_migration, migration}));
                     } else {
                         // Migration already run. Continue
+                        println!("Migration already run");
                         continue;
                     }
                 }
 
                 self.exec(migration)?()?;
+                println!("Ran migration");
                 store_completed_migration((domain, index, *migration))?;
             }
 
