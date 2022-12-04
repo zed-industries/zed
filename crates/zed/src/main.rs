@@ -204,10 +204,10 @@ fn main() {
 }
 
 fn init_paths() {
-    std::fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
-    std::fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
-    std::fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
-    std::fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
+    std::fs::create_dir_all(&*util::paths::CONFIG_DIR).expect("could not create config path");
+    std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
+    std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
+    std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
 }
 
 fn init_logger() {
