@@ -3,13 +3,25 @@
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
 /// specific locations.
 pub mod dock;
+pub mod item;
+pub mod notifications;
 pub mod pane;
 pub mod pane_group;
+mod persistence;
 pub mod searchable;
 pub mod shared_screen;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
+
+use std::{
+    any::TypeId,
+    borrow::Cow,
+    future::Future,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
@@ -28,56 +40,34 @@ use gpui::{
     MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
+use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
+
 use log::{error, warn};
+use notifications::NotificationHandle;
 pub use pane::*;
 pub use pane_group::*;
+use persistence::{model::SerializedItem, DB};
+pub use persistence::{
+    model::{ItemId, WorkspaceLocation},
+    WorkspaceDb,
+};
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
-use searchable::SearchableItemHandle;
 use serde::Deserialize;
 use settings::{Autosave, DockAnchor, Settings};
 use shared_screen::SharedScreen;
 use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
-use smallvec::SmallVec;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
-use std::{
-    any::{Any, TypeId},
-    borrow::Cow,
-    cell::RefCell,
-    fmt,
-    future::Future,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
-    },
-    time::Duration,
-};
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
-type ProjectItemBuilders = HashMap<
-    TypeId,
-    fn(ModelHandle<Project>, AnyModelHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
->;
-
-type FollowableItemBuilder = fn(
-    ViewHandle<Pane>,
-    ModelHandle<Project>,
-    &mut Option<proto::view::Variant>,
-    &mut MutableAppContext,
-) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
-type FollowableItemBuilders = HashMap<
-    TypeId,
-    (
-        FollowableItemBuilder,
-        fn(AnyViewHandle) -> Box<dyn FollowableItemHandle>,
-    ),
->;
+use crate::{
+    notifications::simple_message_notification::{MessageNotification, OsOpen},
+    persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
+};
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -147,6 +137,8 @@ pub struct OpenProjectEntryInPane {
     project_entry: ProjectEntryId,
 }
 
+pub type WorkspaceId = i64;
+
 impl_internal_actions!(
     workspace,
     [
@@ -165,6 +157,7 @@ impl_actions!(workspace, [ActivatePane]);
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
     dock::init(cx);
+    notifications::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action({
@@ -179,7 +172,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewFile, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx)
+                open_new(&app_state, cx).detach();
             }
         }
     });
@@ -187,7 +180,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx)
+                open_new(&app_state, cx).detach();
             }
         }
     });
@@ -306,6 +299,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     client.add_view_message_handler(Workspace::handle_update_followers);
 }
 
+type ProjectItemBuilders = HashMap<
+    TypeId,
+    fn(ModelHandle<Project>, AnyModelHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
+>;
 pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
         builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
@@ -315,6 +312,19 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
     });
 }
 
+type FollowableItemBuilder = fn(
+    ViewHandle<Pane>,
+    ModelHandle<Project>,
+    &mut Option<proto::view::Variant>,
+    &mut MutableAppContext,
+) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
+type FollowableItemBuilders = HashMap<
+    TypeId,
+    (
+        FollowableItemBuilder,
+        fn(AnyViewHandle) -> Box<dyn FollowableItemHandle>,
+    ),
+>;
 pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
         builders.insert(
@@ -332,6 +342,31 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
     });
 }
 
+type ItemDeserializers = HashMap<
+    Arc<str>,
+    fn(
+        ModelHandle<Project>,
+        WeakViewHandle<Workspace>,
+        WorkspaceId,
+        ItemId,
+        &mut ViewContext<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>>,
+>;
+pub fn register_deserializable_item<I: Item>(cx: &mut MutableAppContext) {
+    cx.update_default_global(|deserializers: &mut ItemDeserializers, _cx| {
+        if let Some(serialized_item_kind) = I::serialized_item_kind() {
+            deserializers.insert(
+                Arc::from(serialized_item_kind),
+                |project, workspace, workspace_id, item_id, cx| {
+                    let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+                    cx.foreground()
+                        .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
+                },
+            );
+        }
+    });
+}
+
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub themes: Arc<ThemeRegistry>,
@@ -344,188 +379,33 @@ pub struct AppState {
     pub default_item_factory: DefaultItemFactory,
 }
 
-#[derive(Eq, PartialEq, Hash)]
-pub enum ItemEvent {
-    CloseItem,
-    UpdateTab,
-    UpdateBreadcrumbs,
-    Edit,
-}
+impl AppState {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(cx: &mut MutableAppContext) -> Arc<Self> {
+        use fs::HomeDir;
 
-pub trait Item: View {
-    fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
-    fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
-    fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
-        false
-    }
-    fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
-        None
-    }
-    fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
-        -> ElementBox;
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
-    fn is_singleton(&self, cx: &AppContext) -> bool;
-    fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
-    fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        None
-    }
-    fn is_dirty(&self, _: &AppContext) -> bool {
-        false
-    }
-    fn has_conflict(&self, _: &AppContext) -> bool {
-        false
-    }
-    fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
-    fn save_as(
-        &mut self,
-        project: ModelHandle<Project>,
-        abs_path: PathBuf,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
-    fn reload(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
-    fn git_diff_recalc(
-        &mut self,
-        _project: ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
-    }
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent>;
-    fn should_close_item_on_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn should_update_tab_on_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn is_edit_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn act_as_type(
-        &self,
-        type_id: TypeId,
-        self_handle: &ViewHandle<Self>,
-        _: &AppContext,
-    ) -> Option<AnyViewHandle> {
-        if TypeId::of::<Self>() == type_id {
-            Some(self_handle.into())
-        } else {
-            None
-        }
-    }
-    fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
-        None
-    }
+        cx.set_global(HomeDir(Path::new("/tmp/").to_path_buf()));
+        let settings = Settings::test(cx);
+        cx.set_global(settings);
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::Hidden
-    }
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox>> {
-        None
-    }
-}
-
-pub trait ProjectItem: Item {
-    type Item: project::Item;
-
-    fn for_project_item(
-        project: ModelHandle<Project>,
-        item: ModelHandle<Self::Item>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self;
-}
-
-pub trait FollowableItem: Item {
-    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
-    fn from_state_proto(
-        pane: ViewHandle<Pane>,
-        project: ModelHandle<Project>,
-        state: &mut Option<proto::view::Variant>,
-        cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<ViewHandle<Self>>>>;
-    fn add_event_to_update_proto(
-        &self,
-        event: &Self::Event,
-        update: &mut Option<proto::update_view::Variant>,
-        cx: &AppContext,
-    ) -> bool;
-    fn apply_update_proto(
-        &mut self,
-        message: proto::update_view::Variant,
-        cx: &mut ViewContext<Self>,
-    ) -> Result<()>;
-
-    fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
-    fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
-}
-
-pub trait FollowableItemHandle: ItemHandle {
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext);
-    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
-    fn add_event_to_update_proto(
-        &self,
-        event: &dyn Any,
-        update: &mut Option<proto::update_view::Variant>,
-        cx: &AppContext,
-    ) -> bool;
-    fn apply_update_proto(
-        &self,
-        message: proto::update_view::Variant,
-        cx: &mut MutableAppContext,
-    ) -> Result<()>;
-    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
-}
-
-impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext) {
-        self.update(cx, |this, cx| {
-            this.set_leader_replica_id(leader_replica_id, cx)
+        let fs = fs::FakeFs::new(cx.background().clone());
+        let languages = Arc::new(LanguageRegistry::test());
+        let http_client = client::test::FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone(), cx);
+        let project_store = cx.add_model(|_| ProjectStore::new());
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let themes = ThemeRegistry::new((), cx.font_cache().clone());
+        Arc::new(Self {
+            client,
+            themes,
+            fs,
+            languages,
+            user_store,
+            project_store,
+            initialize_workspace: |_, _, _| {},
+            build_window_options: Default::default,
+            default_item_factory: |_, _| unimplemented!(),
         })
-    }
-
-    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        self.read(cx).to_state_proto(cx)
-    }
-
-    fn add_event_to_update_proto(
-        &self,
-        event: &dyn Any,
-        update: &mut Option<proto::update_view::Variant>,
-        cx: &AppContext,
-    ) -> bool {
-        if let Some(event) = event.downcast_ref() {
-            self.read(cx).add_event_to_update_proto(event, update, cx)
-        } else {
-            false
-        }
-    }
-
-    fn apply_update_proto(
-        &self,
-        message: proto::update_view::Variant,
-        cx: &mut MutableAppContext,
-    ) -> Result<()> {
-        self.update(cx, |this, cx| this.apply_update_proto(message, cx))
-    }
-
-    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
-        if let Some(event) = event.downcast_ref() {
-            T::should_unfollow_on_event(event, cx)
-        } else {
-            false
-        }
     }
 }
 
@@ -570,7 +450,7 @@ impl DelayedDebouncedEditAction {
 
             futures::select_biased! {
                 _ = receiver => return,
-                _ = timer => {}
+                    _ = timer => {}
             }
 
             if let Some(project) = project.upgrade(&cx) {
@@ -580,480 +460,23 @@ impl DelayedDebouncedEditAction {
     }
 }
 
-pub trait ItemHandle: 'static + fmt::Debug {
-    fn subscribe_to_item_events(
-        &self,
-        cx: &mut MutableAppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
-    ) -> gpui::Subscription;
-    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
-    fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
-        -> ElementBox;
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
-    fn is_singleton(&self, cx: &AppContext) -> bool;
-    fn boxed_clone(&self) -> Box<dyn ItemHandle>;
-    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
-    fn added_to_pane(
-        &self,
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
-        cx: &mut ViewContext<Workspace>,
-    );
-    fn deactivated(&self, cx: &mut MutableAppContext);
-    fn workspace_deactivated(&self, cx: &mut MutableAppContext);
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool;
-    fn id(&self) -> usize;
-    fn window_id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
-    fn is_dirty(&self, cx: &AppContext) -> bool;
-    fn has_conflict(&self, cx: &AppContext) -> bool;
-    fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>>;
-    fn save_as(
-        &self,
-        project: ModelHandle<Project>,
-        abs_path: PathBuf,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<()>>;
-    fn reload(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext)
-        -> Task<Result<()>>;
-    fn git_diff_recalc(
-        &self,
-        project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<()>>;
-    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
-    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
-    fn on_release(
-        &self,
-        cx: &mut MutableAppContext,
-        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
-    ) -> gpui::Subscription;
-    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
-    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>>;
+#[derive(Default)]
+struct LeaderState {
+    followers: HashSet<PeerId>,
 }
 
-pub trait WeakItemHandle {
-    fn id(&self) -> usize;
-    fn window_id(&self) -> usize;
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
+type FollowerStatesByLeader = HashMap<PeerId, HashMap<ViewHandle<Pane>, FollowerState>>;
+
+#[derive(Default)]
+struct FollowerState {
+    active_view_id: Option<u64>,
+    items_by_leader_view_id: HashMap<u64, FollowerItem>,
 }
 
-impl dyn ItemHandle {
-    pub fn downcast<T: View>(&self) -> Option<ViewHandle<T>> {
-        self.to_any().downcast()
-    }
-
-    pub fn act_as<T: View>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
-        self.act_as_type(TypeId::of::<T>(), cx)
-            .and_then(|t| t.downcast())
-    }
-}
-
-impl<T: Item> ItemHandle for ViewHandle<T> {
-    fn subscribe_to_item_events(
-        &self,
-        cx: &mut MutableAppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
-    ) -> gpui::Subscription {
-        cx.subscribe(self, move |_, event, cx| {
-            for item_event in T::to_item_events(event) {
-                handler(item_event, cx)
-            }
-        })
-    }
-
-    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
-        self.read(cx).tab_description(detail, cx)
-    }
-
-    fn tab_content(
-        &self,
-        detail: Option<usize>,
-        style: &theme::Tab,
-        cx: &AppContext,
-    ) -> ElementBox {
-        self.read(cx).tab_content(detail, style, cx)
-    }
-
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.read(cx).project_path(cx)
-    }
-
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-        self.read(cx).project_entry_ids(cx)
-    }
-
-    fn is_singleton(&self, cx: &AppContext) -> bool {
-        self.read(cx).is_singleton(cx)
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
-        Box::new(self.clone())
-    }
-
-    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>> {
-        self.update(cx, |item, cx| {
-            cx.add_option_view(|cx| item.clone_on_split(cx))
-        })
-        .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
-    }
-
-    fn added_to_pane(
-        &self,
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let history = pane.read(cx).nav_history_for_item(self);
-        self.update(cx, |this, cx| this.set_nav_history(history, cx));
-
-        if let Some(followed_item) = self.to_followable_item_handle(cx) {
-            if let Some(message) = followed_item.to_state_proto(cx) {
-                workspace.update_followers(
-                    proto::update_followers::Variant::CreateView(proto::View {
-                        id: followed_item.id() as u64,
-                        variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
-                    }),
-                    cx,
-                );
-            }
-        }
-
-        if workspace
-            .panes_by_item
-            .insert(self.id(), pane.downgrade())
-            .is_none()
-        {
-            let mut pending_autosave = DelayedDebouncedEditAction::new();
-            let mut pending_git_update = DelayedDebouncedEditAction::new();
-            let pending_update = Rc::new(RefCell::new(None));
-            let pending_update_scheduled = Rc::new(AtomicBool::new(false));
-
-            let mut event_subscription =
-                Some(cx.subscribe(self, move |workspace, item, event, cx| {
-                    let pane = if let Some(pane) = workspace
-                        .panes_by_item
-                        .get(&item.id())
-                        .and_then(|pane| pane.upgrade(cx))
-                    {
-                        pane
-                    } else {
-                        log::error!("unexpected item event after pane was dropped");
-                        return;
-                    };
-
-                    if let Some(item) = item.to_followable_item_handle(cx) {
-                        let leader_id = workspace.leader_for_pane(&pane);
-
-                        if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
-                            workspace.unfollow(&pane, cx);
-                        }
-
-                        if item.add_event_to_update_proto(
-                            event,
-                            &mut *pending_update.borrow_mut(),
-                            cx,
-                        ) && !pending_update_scheduled.load(SeqCst)
-                        {
-                            pending_update_scheduled.store(true, SeqCst);
-                            cx.after_window_update({
-                                let pending_update = pending_update.clone();
-                                let pending_update_scheduled = pending_update_scheduled.clone();
-                                move |this, cx| {
-                                    pending_update_scheduled.store(false, SeqCst);
-                                    this.update_followers(
-                                        proto::update_followers::Variant::UpdateView(
-                                            proto::UpdateView {
-                                                id: item.id() as u64,
-                                                variant: pending_update.borrow_mut().take(),
-                                                leader_id: leader_id.map(|id| id.0),
-                                            },
-                                        ),
-                                        cx,
-                                    );
-                                }
-                            });
-                        }
-                    }
-
-                    for item_event in T::to_item_events(event).into_iter() {
-                        match item_event {
-                            ItemEvent::CloseItem => {
-                                Pane::close_item(workspace, pane, item.id(), cx)
-                                    .detach_and_log_err(cx);
-                                return;
-                            }
-
-                            ItemEvent::UpdateTab => {
-                                pane.update(cx, |_, cx| {
-                                    cx.emit(pane::Event::ChangeItemTitle);
-                                    cx.notify();
-                                });
-                            }
-
-                            ItemEvent::Edit => {
-                                if let Autosave::AfterDelay { milliseconds } =
-                                    cx.global::<Settings>().autosave
-                                {
-                                    let delay = Duration::from_millis(milliseconds);
-                                    let item = item.clone();
-                                    pending_autosave.fire_new(
-                                        delay,
-                                        workspace,
-                                        cx,
-                                        |project, mut cx| async move {
-                                            cx.update(|cx| Pane::autosave_item(&item, project, cx))
-                                                .await
-                                                .log_err();
-                                        },
-                                    );
-                                }
-
-                                let settings = cx.global::<Settings>();
-                                let debounce_delay = settings.git_overrides.gutter_debounce;
-
-                                let item = item.clone();
-
-                                if let Some(delay) = debounce_delay {
-                                    const MIN_GIT_DELAY: u64 = 50;
-
-                                    let delay = delay.max(MIN_GIT_DELAY);
-                                    let duration = Duration::from_millis(delay);
-
-                                    pending_git_update.fire_new(
-                                        duration,
-                                        workspace,
-                                        cx,
-                                        |project, mut cx| async move {
-                                            cx.update(|cx| item.git_diff_recalc(project, cx))
-                                                .await
-                                                .log_err();
-                                        },
-                                    );
-                                } else {
-                                    let project = workspace.project().downgrade();
-                                    cx.spawn_weak(|_, mut cx| async move {
-                                        if let Some(project) = project.upgrade(&cx) {
-                                            cx.update(|cx| item.git_diff_recalc(project, cx))
-                                                .await
-                                                .log_err();
-                                        }
-                                    })
-                                    .detach();
-                                }
-                            }
-
-                            _ => {}
-                        }
-                    }
-                }));
-
-            cx.observe_focus(self, move |workspace, item, focused, cx| {
-                if !focused && cx.global::<Settings>().autosave == Autosave::OnFocusChange {
-                    Pane::autosave_item(&item, workspace.project.clone(), cx)
-                        .detach_and_log_err(cx);
-                }
-            })
-            .detach();
-
-            let item_id = self.id();
-            cx.observe_release(self, move |workspace, _, _| {
-                workspace.panes_by_item.remove(&item_id);
-                event_subscription.take();
-            })
-            .detach();
-        }
-    }
-
-    fn deactivated(&self, cx: &mut MutableAppContext) {
-        self.update(cx, |this, cx| this.deactivated(cx));
-    }
-
-    fn workspace_deactivated(&self, cx: &mut MutableAppContext) {
-        self.update(cx, |this, cx| this.workspace_deactivated(cx));
-    }
-
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool {
-        self.update(cx, |this, cx| this.navigate(data, cx))
-    }
-
-    fn id(&self) -> usize {
-        self.id()
-    }
-
-    fn window_id(&self) -> usize {
-        self.window_id()
-    }
-
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
-    }
-
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.read(cx).is_dirty(cx)
-    }
-
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.read(cx).has_conflict(cx)
-    }
-
-    fn can_save(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_save(cx)
-    }
-
-    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(project, cx))
-    }
-
-    fn save_as(
-        &self,
-        project: ModelHandle<Project>,
-        abs_path: PathBuf,
-        cx: &mut MutableAppContext,
-    ) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
-    }
-
-    fn reload(
-        &self,
-        project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.reload(project, cx))
-    }
-
-    fn git_diff_recalc(
-        &self,
-        project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.git_diff_recalc(project, cx))
-    }
-
-    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
-        self.read(cx).act_as_type(type_id, self, cx)
-    }
-
-    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
-        if cx.has_global::<FollowableItemBuilders>() {
-            let builders = cx.global::<FollowableItemBuilders>();
-            let item = self.to_any();
-            Some(builders.get(&item.view_type())?.1(item))
-        } else {
-            None
-        }
-    }
-
-    fn on_release(
-        &self,
-        cx: &mut MutableAppContext,
-        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
-    ) -> gpui::Subscription {
-        cx.observe_release(self, move |_, cx| callback(cx))
-    }
-
-    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
-        self.read(cx).as_searchable(self)
-    }
-
-    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
-        self.read(cx).breadcrumb_location()
-    }
-
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
-        self.read(cx).breadcrumbs(theme, cx)
-    }
-}
-
-impl From<Box<dyn ItemHandle>> for AnyViewHandle {
-    fn from(val: Box<dyn ItemHandle>) -> Self {
-        val.to_any()
-    }
-}
-
-impl From<&Box<dyn ItemHandle>> for AnyViewHandle {
-    fn from(val: &Box<dyn ItemHandle>) -> Self {
-        val.to_any()
-    }
-}
-
-impl Clone for Box<dyn ItemHandle> {
-    fn clone(&self) -> Box<dyn ItemHandle> {
-        self.boxed_clone()
-    }
-}
-
-impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
-    fn id(&self) -> usize {
-        self.id()
-    }
-
-    fn window_id(&self) -> usize {
-        self.window_id()
-    }
-
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        self.upgrade(cx).map(|v| Box::new(v) as Box<dyn ItemHandle>)
-    }
-}
-
-pub trait Notification: View {
-    fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool;
-}
-
-pub trait NotificationHandle {
-    fn id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
-}
-
-impl<T: Notification> NotificationHandle for ViewHandle<T> {
-    fn id(&self) -> usize {
-        self.id()
-    }
-
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
-    }
-}
-
-impl From<&dyn NotificationHandle> for AnyViewHandle {
-    fn from(val: &dyn NotificationHandle) -> Self {
-        val.to_any()
-    }
-}
-
-impl AppState {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut MutableAppContext) -> Arc<Self> {
-        use fs::HomeDir;
-
-        cx.set_global(HomeDir(Path::new("/tmp/").to_path_buf()));
-        let settings = Settings::test(cx);
-        cx.set_global(settings);
-
-        let fs = fs::FakeFs::new(cx.background().clone());
-        let languages = Arc::new(LanguageRegistry::test());
-        let http_client = client::test::FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone(), cx);
-        let project_store = cx.add_model(|_| ProjectStore::new());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let themes = ThemeRegistry::new((), cx.font_cache().clone());
-        Arc::new(Self {
-            client,
-            themes,
-            fs,
-            languages,
-            user_store,
-            project_store,
-            initialize_workspace: |_, _, _| {},
-            build_window_options: Default::default,
-            default_item_factory: |_, _| unimplemented!(),
-        })
-    }
+#[derive(Debug)]
+enum FollowerItem {
+    Loading(Vec<proto::update_view::Variant>),
+    Loaded(Box<dyn FollowableItemHandle>),
 }
 
 pub enum Event {
@@ -1086,30 +509,14 @@ pub struct Workspace {
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
     active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
+    database_id: WorkspaceId,
     _observe_current_user: Task<()>,
-}
-
-#[derive(Default)]
-struct LeaderState {
-    followers: HashSet<PeerId>,
-}
-
-type FollowerStatesByLeader = HashMap<PeerId, HashMap<ViewHandle<Pane>, FollowerState>>;
-
-#[derive(Default)]
-struct FollowerState {
-    active_view_id: Option<u64>,
-    items_by_leader_view_id: HashMap<u64, FollowerItem>,
-}
-
-#[derive(Debug)]
-enum FollowerItem {
-    Loading(Vec<proto::update_view::Variant>),
-    Loaded(Box<dyn FollowableItemHandle>),
 }
 
 impl Workspace {
     pub fn new(
+        serialized_workspace: Option<SerializedWorkspace>,
+        workspace_id: WorkspaceId,
         project: ModelHandle<Project>,
         dock_default_factory: DefaultItemFactory,
         cx: &mut ViewContext<Self>,
@@ -1129,6 +536,7 @@ impl Workspace {
                 }
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
+                    this.serialize_workspace(cx);
                 }
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(cx);
@@ -1148,6 +556,8 @@ impl Workspace {
         .detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
+        let dock = Dock::new(dock_default_factory, cx);
+        let dock_pane = dock.pane().clone();
 
         let fs = project.read(cx).fs().clone();
         let user_store = project.read(cx).user_store();
@@ -1173,9 +583,6 @@ impl Workspace {
         let weak_handle = cx.weak_handle();
 
         cx.emit_global(WorkspaceCreated(weak_handle.clone()));
-
-        let dock = Dock::new(cx, dock_default_factory);
-        let dock_pane = dock.pane().clone();
 
         let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
@@ -1205,13 +612,13 @@ impl Workspace {
 
         let mut this = Workspace {
             modal: None,
-            weak_self: weak_handle,
+            weak_self: weak_handle.clone(),
             center: PaneGroup::new(center_pane.clone()),
             dock,
             // When removing an item, the last element remaining in this array
             // is used to find where focus should fallback to. As such, the order
             // of these two variables is important.
-            panes: vec![dock_pane, center_pane.clone()],
+            panes: vec![dock_pane.clone(), center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
@@ -1224,18 +631,123 @@ impl Workspace {
             fs,
             left_sidebar,
             right_sidebar,
-            project,
+            project: project.clone(),
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
+            database_id: workspace_id,
             _observe_current_user,
         };
-        this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
+        this.project_remote_id_changed(project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
 
+        if let Some(serialized_workspace) = serialized_workspace {
+            cx.defer(move |_, cx| {
+                Self::load_from_serialized_workspace(weak_handle, serialized_workspace, cx)
+            });
+        }
+
         this
+    }
+
+    fn new_local(
+        abs_paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        cx: &mut MutableAppContext,
+    ) -> Task<(
+        ViewHandle<Workspace>,
+        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+    )> {
+        let project_handle = Project::local(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            app_state.project_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        );
+
+        cx.spawn(|mut cx| async move {
+            let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+
+            let paths_to_open = serialized_workspace
+                .as_ref()
+                .map(|workspace| workspace.location.paths())
+                .unwrap_or(Arc::new(abs_paths));
+
+            // Get project paths for all of the abs_paths
+            let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
+            let mut project_paths = Vec::new();
+            for path in paths_to_open.iter() {
+                if let Some((worktree, project_entry)) = cx
+                    .update(|cx| {
+                        Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+                    })
+                    .await
+                    .log_err()
+                {
+                    worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
+                    project_paths.push(Some(project_entry));
+                } else {
+                    project_paths.push(None);
+                }
+            }
+
+            let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
+                serialized_workspace.id
+            } else {
+                DB.next_id().await.unwrap_or(0)
+            };
+
+            // Use the serialized workspace to construct the new window
+            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
+                let mut workspace = Workspace::new(
+                    serialized_workspace,
+                    workspace_id,
+                    project_handle,
+                    app_state.default_item_factory,
+                    cx,
+                );
+                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                workspace
+            });
+
+            notify_if_database_failed(&workspace, &mut cx);
+
+            // Call open path for each of the project paths
+            // (this will bring them to the front if they were in the serialized workspace)
+            debug_assert!(paths_to_open.len() == project_paths.len());
+            let tasks = paths_to_open
+                .iter()
+                .cloned()
+                .zip(project_paths.into_iter())
+                .map(|(abs_path, project_path)| {
+                    let workspace = workspace.clone();
+                    cx.spawn(|mut cx| {
+                        let fs = app_state.fs.clone();
+                        async move {
+                            let project_path = project_path?;
+                            if fs.is_file(&abs_path).await {
+                                Some(
+                                    workspace
+                                        .update(&mut cx, |workspace, cx| {
+                                            workspace.open_path(project_path, None, true, cx)
+                                        })
+                                        .await,
+                                )
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                });
+
+            let opened_items = futures::future::join_all(tasks.into_iter()).await;
+
+            (workspace, opened_items)
+        })
     }
 
     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
@@ -1285,34 +797,22 @@ impl Workspace {
     /// to the callback. Otherwise, a new empty window will be created.
     pub fn with_local_workspace<T, F>(
         &mut self,
+        app_state: &Arc<AppState>,
         cx: &mut ViewContext<Self>,
-        app_state: Arc<AppState>,
         callback: F,
-    ) -> T
+    ) -> Task<T>
     where
         T: 'static,
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
-            callback(self, cx)
+            Task::Ready(Some(callback(self, cx)))
         } else {
-            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-                let mut workspace = Workspace::new(
-                    Project::local(
-                        app_state.client.clone(),
-                        app_state.user_store.clone(),
-                        app_state.project_store.clone(),
-                        app_state.languages.clone(),
-                        app_state.fs.clone(),
-                        cx,
-                    ),
-                    app_state.default_item_factory,
-                    cx,
-                );
-                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                workspace
-            });
-            workspace.update(cx, callback)
+            let task = Self::new_local(Vec::new(), app_state.clone(), cx);
+            cx.spawn(|_vh, mut cx| async move {
+                let (workspace, _) = task.await;
+                workspace.update(&mut cx, callback)
+            })
         }
     }
 
@@ -1475,7 +975,7 @@ impl Workspace {
             for path in &abs_paths {
                 project_paths.push(
                     this.update(&mut cx, |this, cx| {
-                        this.project_path_for_path(path, visible, cx)
+                        Workspace::project_path_for_path(this.project.clone(), path, visible, cx)
                     })
                     .await
                     .log_err(),
@@ -1540,15 +1040,15 @@ impl Workspace {
     }
 
     fn project_path_for_path(
-        &self,
+        project: ModelHandle<Project>,
         abs_path: &Path,
         visible: bool,
-        cx: &mut ViewContext<Self>,
+        cx: &mut MutableAppContext,
     ) -> Task<Result<(ModelHandle<Worktree>, ProjectPath)>> {
-        let entry = self.project().update(cx, |project, cx| {
+        let entry = project.update(cx, |project, cx| {
             project.find_or_create_local_worktree(abs_path, visible, cx)
         });
-        cx.spawn(|_, cx| async move {
+        cx.spawn(|cx| async move {
             let (worktree, path) = entry.await?;
             let worktree_id = worktree.read_with(&cx, |t, _| t.id());
             Ok((
@@ -1597,45 +1097,6 @@ impl Workspace {
             cx.focus(&self.active_pane);
             cx.notify();
         }
-    }
-
-    pub fn show_notification<V: Notification>(
-        &mut self,
-        id: usize,
-        cx: &mut ViewContext<Self>,
-        build_notification: impl FnOnce(&mut ViewContext<Self>) -> ViewHandle<V>,
-    ) {
-        let type_id = TypeId::of::<V>();
-        if self
-            .notifications
-            .iter()
-            .all(|(existing_type_id, existing_id, _)| {
-                (*existing_type_id, *existing_id) != (type_id, id)
-            })
-        {
-            let notification = build_notification(cx);
-            cx.subscribe(&notification, move |this, handle, event, cx| {
-                if handle.read(cx).should_dismiss_notification_on_event(event) {
-                    this.dismiss_notification(type_id, id, cx);
-                }
-            })
-            .detach();
-            self.notifications
-                .push((type_id, id, Box::new(notification)));
-            cx.notify();
-        }
-    }
-
-    fn dismiss_notification(&mut self, type_id: TypeId, id: usize, cx: &mut ViewContext<Self>) {
-        self.notifications
-            .retain(|(existing_type_id, existing_id, _)| {
-                if (*existing_type_id, *existing_id) == (type_id, id) {
-                    cx.notify();
-                    false
-                } else {
-                    true
-                }
-            });
     }
 
     pub fn items<'a>(
@@ -1728,6 +1189,8 @@ impl Workspace {
             Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
         }
 
+        self.serialize_workspace(cx);
+
         cx.focus_self();
         cx.notify();
     }
@@ -1759,6 +1222,9 @@ impl Workspace {
         } else {
             cx.focus_self();
         }
+
+        self.serialize_workspace(cx);
+
         cx.notify();
     }
 
@@ -1786,6 +1252,9 @@ impl Workspace {
                 cx.focus(active_item.to_any());
             }
         }
+
+        self.serialize_workspace(cx);
+
         cx.notify();
     }
 
@@ -2017,6 +1486,8 @@ impl Workspace {
                 }
                 _ => {}
             }
+
+            self.serialize_workspace(cx);
         } else if self.dock.visible_pane().is_none() {
             error!("pane {} not found", pane_id);
         }
@@ -2035,7 +1506,7 @@ impl Workspace {
 
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
-            if let Some(clone) = item.clone_on_split(cx.as_mut()) {
+            if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
                 Pane::add_item(self, &new_pane, clone, true, true, None, cx);
             }
             self.center.split(&pane, &new_pane, direction).unwrap();
@@ -2745,6 +2216,210 @@ impl Workspace {
             _ => {}
         }
     }
+
+    pub fn database_id(&self) -> WorkspaceId {
+        self.database_id
+    }
+
+    fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
+        let project = self.project().read(cx);
+
+        if project.is_local() {
+            Some(
+                project
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path())
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+        } else {
+            None
+        }
+    }
+
+    fn remove_panes(&mut self, member: Member, cx: &mut ViewContext<Workspace>) {
+        match member {
+            Member::Axis(PaneAxis { members, .. }) => {
+                for child in members.iter() {
+                    self.remove_panes(child.clone(), cx)
+                }
+            }
+            Member::Pane(pane) => self.remove_pane(pane.clone(), cx),
+        }
+    }
+
+    fn serialize_workspace(&self, cx: &AppContext) {
+        fn serialize_pane_handle(
+            pane_handle: &ViewHandle<Pane>,
+            cx: &AppContext,
+        ) -> SerializedPane {
+            let (items, active) = {
+                let pane = pane_handle.read(cx);
+                let active_item_id = pane.active_item().map(|item| item.id());
+                (
+                    pane.items()
+                        .filter_map(|item_handle| {
+                            Some(SerializedItem {
+                                kind: Arc::from(item_handle.serialized_item_kind()?),
+                                item_id: item_handle.id(),
+                                active: Some(item_handle.id()) == active_item_id,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                    pane.is_active(),
+                )
+            };
+
+            SerializedPane::new(items, active)
+        }
+
+        fn build_serialized_pane_group(
+            pane_group: &Member,
+            cx: &AppContext,
+        ) -> SerializedPaneGroup {
+            match pane_group {
+                Member::Axis(PaneAxis { axis, members }) => SerializedPaneGroup::Group {
+                    axis: *axis,
+                    children: members
+                        .iter()
+                        .map(|member| build_serialized_pane_group(member, cx))
+                        .collect::<Vec<_>>(),
+                },
+                Member::Pane(pane_handle) => {
+                    SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
+                }
+            }
+        }
+
+        if let Some(location) = self.location(cx) {
+            if !location.paths().is_empty() {
+                let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
+                let center_group = build_serialized_pane_group(&self.center.root, cx);
+
+                let serialized_workspace = SerializedWorkspace {
+                    id: self.database_id,
+                    location,
+                    dock_position: self.dock.position(),
+                    dock_pane,
+                    center_group,
+                    left_sidebar_open: self.left_sidebar.read(cx).is_open(),
+                };
+
+                cx.background()
+                    .spawn(persistence::DB.save_workspace(serialized_workspace))
+                    .detach();
+            }
+        }
+    }
+
+    fn load_from_serialized_workspace(
+        workspace: WeakViewHandle<Workspace>,
+        serialized_workspace: SerializedWorkspace,
+        cx: &mut MutableAppContext,
+    ) {
+        cx.spawn(|mut cx| async move {
+            if let Some(workspace) = workspace.upgrade(&cx) {
+                let (project, dock_pane_handle) = workspace.read_with(&cx, |workspace, _| {
+                    (workspace.project().clone(), workspace.dock_pane().clone())
+                });
+
+                serialized_workspace
+                    .dock_pane
+                    .deserialize_to(
+                        &project,
+                        &dock_pane_handle,
+                        serialized_workspace.id,
+                        &workspace,
+                        &mut cx,
+                    )
+                    .await;
+
+                // Traverse the splits tree and add to things
+                let center_group = serialized_workspace
+                    .center_group
+                    .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
+                    .await;
+
+                // Remove old panes from workspace panes list
+                workspace.update(&mut cx, |workspace, cx| {
+                    if let Some((center_group, active_pane)) = center_group {
+                        workspace.remove_panes(workspace.center.root.clone(), cx);
+
+                        // Swap workspace center group
+                        workspace.center = PaneGroup::with_root(center_group);
+
+                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
+                        cx.focus_self();
+
+                        if let Some(active_pane) = active_pane {
+                            cx.focus(active_pane);
+                        } else {
+                            cx.focus(workspace.panes.last().unwrap().clone());
+                        }
+                    } else {
+                        cx.focus_self();
+                    }
+
+                    // Note, if this is moved after 'set_dock_position'
+                    // it causes an infinite loop.
+                    if workspace.left_sidebar().read(cx).is_open()
+                        != serialized_workspace.left_sidebar_open
+                    {
+                        workspace.toggle_sidebar(SidebarSide::Left, cx);
+                    }
+
+                    // Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+
+                    cx.notify();
+                });
+
+                // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))
+            }
+        })
+        .detach();
+    }
+}
+
+fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+    if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_notification_once(0, cx, |cx| {
+                cx.add_view(|_| {
+                    MessageNotification::new(
+                        indoc::indoc! {"
+                            Failed to load any database file :(
+                        "},
+                        OsOpen("https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
+                        "Click to let us know about this error"
+                    )
+                })
+            });
+        });
+    } else {
+        let backup_path = (*db::BACKUP_DB_PATH).read();
+        if let Some(backup_path) = &*backup_path {
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_notification_once(0, cx, |cx| {
+                    cx.add_view(|_| {
+                        let backup_path = backup_path.to_string_lossy();
+                        MessageNotification::new(
+                            format!(
+                                indoc::indoc! {"
+                                Database file was corrupted :(
+                                Old database backed up to:
+                                {}
+                                "},
+                                backup_path
+                            ),
+                            OsOpen(backup_path.to_string()),
+                            "Click to show old database in finder",
+                        )
+                    })
+                });
+            });
+        }
+    }
 }
 
 impl Entity for Workspace {
@@ -2953,74 +2628,63 @@ pub fn open_paths(
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
-        let mut new_project = None;
-        let workspace = if let Some(existing) = existing {
-            existing
+        if let Some(existing) = existing {
+            (
+                existing.clone(),
+                existing
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_paths(abs_paths, true, cx)
+                    })
+                    .await,
+            )
         } else {
             let contains_directory =
                 futures::future::join_all(abs_paths.iter().map(|path| app_state.fs.is_file(path)))
                     .await
                     .contains(&false);
 
-            cx.add_window((app_state.build_window_options)(), |cx| {
-                let project = Project::local(
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    app_state.project_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
-                    cx,
-                );
-                new_project = Some(project.clone());
-                let mut workspace = Workspace::new(project, app_state.default_item_factory, cx);
-                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                if contains_directory {
-                    workspace.toggle_sidebar(SidebarSide::Left, cx);
-                }
-                workspace
-            })
-            .1
-        };
+            cx.update(|cx| {
+                let task = Workspace::new_local(abs_paths, app_state.clone(), cx);
 
-        let items = workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.open_paths(abs_paths, true, cx)
-            })
-            .await;
+                cx.spawn(|mut cx| async move {
+                    let (workspace, items) = task.await;
 
-        (workspace, items)
+                    workspace.update(&mut cx, |workspace, cx| {
+                        if contains_directory {
+                            workspace.toggle_sidebar(SidebarSide::Left, cx);
+                        }
+                    });
+
+                    (workspace, items)
+                })
+            })
+            .await
+        }
     })
 }
 
-fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
-    let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-        let mut workspace = Workspace::new(
-            Project::local(
-                app_state.client.clone(),
-                app_state.user_store.clone(),
-                app_state.project_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx,
-            ),
-            app_state.default_item_factory,
-            cx,
-        );
-        (app_state.initialize_workspace)(&mut workspace, app_state, cx);
-        workspace
-    });
-    cx.dispatch_action_at(window_id, workspace.id(), NewFile);
+pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
+    cx.spawn(|mut cx| async move {
+        let (workspace, opened_paths) = task.await;
+
+        workspace.update(&mut cx, |_, cx| {
+            if opened_paths.is_empty() {
+                cx.dispatch_action(NewFile);
+            }
+        })
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::{cell::RefCell, rc::Rc};
 
-    use crate::sidebar::SidebarItem;
+    use crate::item::test::{TestItem, TestItemEvent};
 
     use super::*;
     use fs::FakeFs;
-    use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
+    use gpui::{executor::Deterministic, TestAppContext, ViewContext};
     use project::{Project, ProjectEntryId};
     use serde_json::json;
 
@@ -3038,8 +2702,15 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
 
         // Adding an item with no ambiguity renders the tab without detail.
         let item1 = cx.add_view(&workspace, |_| {
@@ -3103,8 +2774,15 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3200,8 +2878,15 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
@@ -3241,8 +2926,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3337,8 +3023,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -3439,8 +3126,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3557,7 +3245,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+        });
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3606,209 +3296,4 @@ mod tests {
             assert!(pane.can_navigate_forward());
         });
     }
-
-    pub struct TestItem {
-        state: String,
-        pub label: String,
-        save_count: usize,
-        save_as_count: usize,
-        reload_count: usize,
-        is_dirty: bool,
-        is_singleton: bool,
-        has_conflict: bool,
-        project_entry_ids: Vec<ProjectEntryId>,
-        project_path: Option<ProjectPath>,
-        nav_history: Option<ItemNavHistory>,
-        tab_descriptions: Option<Vec<&'static str>>,
-        tab_detail: Cell<Option<usize>>,
-    }
-
-    pub enum TestItemEvent {
-        Edit,
-    }
-
-    impl Clone for TestItem {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-                label: self.label.clone(),
-                save_count: self.save_count,
-                save_as_count: self.save_as_count,
-                reload_count: self.reload_count,
-                is_dirty: self.is_dirty,
-                is_singleton: self.is_singleton,
-                has_conflict: self.has_conflict,
-                project_entry_ids: self.project_entry_ids.clone(),
-                project_path: self.project_path.clone(),
-                nav_history: None,
-                tab_descriptions: None,
-                tab_detail: Default::default(),
-            }
-        }
-    }
-
-    impl TestItem {
-        pub fn new() -> Self {
-            Self {
-                state: String::new(),
-                label: String::new(),
-                save_count: 0,
-                save_as_count: 0,
-                reload_count: 0,
-                is_dirty: false,
-                has_conflict: false,
-                project_entry_ids: Vec::new(),
-                project_path: None,
-                is_singleton: true,
-                nav_history: None,
-                tab_descriptions: None,
-                tab_detail: Default::default(),
-            }
-        }
-
-        pub fn with_label(mut self, state: &str) -> Self {
-            self.label = state.to_string();
-            self
-        }
-
-        pub fn with_singleton(mut self, singleton: bool) -> Self {
-            self.is_singleton = singleton;
-            self
-        }
-
-        pub fn with_project_entry_ids(mut self, project_entry_ids: &[u64]) -> Self {
-            self.project_entry_ids.extend(
-                project_entry_ids
-                    .iter()
-                    .copied()
-                    .map(ProjectEntryId::from_proto),
-            );
-            self
-        }
-
-        fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {
-            self.push_to_nav_history(cx);
-            self.state = state;
-        }
-
-        fn push_to_nav_history(&mut self, cx: &mut ViewContext<Self>) {
-            if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), cx);
-            }
-        }
-    }
-
-    impl Entity for TestItem {
-        type Event = TestItemEvent;
-    }
-
-    impl View for TestItem {
-        fn ui_name() -> &'static str {
-            "TestItem"
-        }
-
-        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-            Empty::new().boxed()
-        }
-    }
-
-    impl Item for TestItem {
-        fn tab_description<'a>(&'a self, detail: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
-            self.tab_descriptions.as_ref().and_then(|descriptions| {
-                let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
-                Some(description.into())
-            })
-        }
-
-        fn tab_content(&self, detail: Option<usize>, _: &theme::Tab, _: &AppContext) -> ElementBox {
-            self.tab_detail.set(detail);
-            Empty::new().boxed()
-        }
-
-        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-            self.project_path.clone()
-        }
-
-        fn project_entry_ids(&self, _: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-            self.project_entry_ids.iter().copied().collect()
-        }
-
-        fn is_singleton(&self, _: &AppContext) -> bool {
-            self.is_singleton
-        }
-
-        fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
-            self.nav_history = Some(history);
-        }
-
-        fn navigate(&mut self, state: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
-            let state = *state.downcast::<String>().unwrap_or_default();
-            if state != self.state {
-                self.state = state;
-                true
-            } else {
-                false
-            }
-        }
-
-        fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-            self.push_to_nav_history(cx);
-        }
-
-        fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
-        where
-            Self: Sized,
-        {
-            Some(self.clone())
-        }
-
-        fn is_dirty(&self, _: &AppContext) -> bool {
-            self.is_dirty
-        }
-
-        fn has_conflict(&self, _: &AppContext) -> bool {
-            self.has_conflict
-        }
-
-        fn can_save(&self, _: &AppContext) -> bool {
-            !self.project_entry_ids.is_empty()
-        }
-
-        fn save(
-            &mut self,
-            _: ModelHandle<Project>,
-            _: &mut ViewContext<Self>,
-        ) -> Task<anyhow::Result<()>> {
-            self.save_count += 1;
-            self.is_dirty = false;
-            Task::ready(Ok(()))
-        }
-
-        fn save_as(
-            &mut self,
-            _: ModelHandle<Project>,
-            _: std::path::PathBuf,
-            _: &mut ViewContext<Self>,
-        ) -> Task<anyhow::Result<()>> {
-            self.save_as_count += 1;
-            self.is_dirty = false;
-            Task::ready(Ok(()))
-        }
-
-        fn reload(
-            &mut self,
-            _: ModelHandle<Project>,
-            _: &mut ViewContext<Self>,
-        ) -> Task<anyhow::Result<()>> {
-            self.reload_count += 1;
-            self.is_dirty = false;
-            Task::ready(Ok(()))
-        }
-
-        fn to_item_events(_: &Self::Event) -> Vec<ItemEvent> {
-            vec![ItemEvent::UpdateTab, ItemEvent::Edit]
-        }
-    }
-
-    impl SidebarItem for TestItem {}
 }

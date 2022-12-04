@@ -1393,8 +1393,15 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1486,8 +1493,15 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);

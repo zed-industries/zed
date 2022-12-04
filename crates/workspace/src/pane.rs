@@ -3,8 +3,9 @@ mod dragged_item_receiver;
 use super::{ItemHandle, SplitDirection};
 use crate::{
     dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, ExpandDock, HideDock},
+    item::WeakItemHandle,
     toolbar::Toolbar,
-    Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
+    Item, NewFile, NewSearch, NewTerminal, Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -1634,7 +1635,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::tests::TestItem;
+    use crate::item::test::TestItem;
     use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
 
@@ -1645,8 +1646,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1734,8 +1736,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1811,8 +1814,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view
@@ -1922,7 +1926,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+            cx.add_window(|cx| Workspace::new(None, 0, project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labled_item(&workspace, &pane, "A", cx);

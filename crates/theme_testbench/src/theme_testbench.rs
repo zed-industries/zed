@@ -6,18 +6,24 @@ use gpui::{
         Padding, ParentElement,
     },
     fonts::TextStyle,
-    Border, Element, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
+    Border, Element, Entity, ModelHandle, MutableAppContext, Quad, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::{ColorScheme, Layer, Style, StyleSet};
-use workspace::{Item, Workspace};
+use workspace::{
+    item::{Item, ItemEvent},
+    register_deserializable_item, Pane, Workspace,
+};
 
 actions!(theme, [DeployThemeTestbench]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ThemeTestbench::deploy);
+
+    register_deserializable_item::<ThemeTestbench>(cx)
 }
 
 pub struct ThemeTestbench {}
@@ -351,7 +357,21 @@ impl Item for ThemeTestbench {
         gpui::Task::ready(Ok(()))
     }
 
-    fn to_item_events(_: &Self::Event) -> Vec<workspace::ItemEvent> {
+    fn to_item_events(_: &Self::Event) -> Vec<ItemEvent> {
         Vec::new()
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("ThemeTestBench")
+    }
+
+    fn deserialize(
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<gpui::anyhow::Result<ViewHandle<Self>>> {
+        Task::ready(Ok(cx.add_view(|_| Self {})))
     }
 }

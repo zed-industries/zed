@@ -6,7 +6,7 @@ use gpui::{
 };
 use project::search::SearchQuery;
 
-use crate::{Item, ItemHandle, WeakItemHandle};
+use crate::{item::WeakItemHandle, Item, ItemHandle};
 
 #[derive(Debug)]
 pub enum SearchEvent {

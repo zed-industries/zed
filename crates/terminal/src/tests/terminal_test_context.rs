@@ -28,9 +28,15 @@ impl<'a> TerminalTestContext<'a> {
         let params = self.cx.update(AppState::test);
 
         let project = Project::test(params.fs.clone(), [], self.cx).await;
-        let (_, workspace) = self
-            .cx
-            .add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = self.cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
 
         (project, workspace)
     }

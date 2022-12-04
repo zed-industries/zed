@@ -6,7 +6,7 @@ use gpui::{
     elements::*, impl_internal_actions, Entity, ModelHandle, MutableAppContext, RenderContext,
     View, ViewContext,
 };
-use workspace::Notification;
+use workspace::notifications::Notification;
 
 impl_internal_actions!(contact_notifications, [Dismiss, RespondToContactRequest]);
 

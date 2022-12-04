@@ -29,7 +29,10 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
+use workspace::{
+    item::{Item, ItemEvent, ItemHandle},
+    ItemNavHistory, Pane, Workspace,
+};
 
 actions!(diagnostics, [Deploy]);
 
@@ -503,7 +506,7 @@ impl ProjectDiagnosticsEditor {
     }
 }
 
-impl workspace::Item for ProjectDiagnosticsEditor {
+impl Item for ProjectDiagnosticsEditor {
     fn tab_content(
         &self,
         _detail: Option<usize>,
@@ -571,7 +574,7 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         unreachable!()
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         Editor::to_item_events(event)
     }
 
@@ -581,7 +584,11 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         });
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(
+        &self,
+        _workspace_id: workspace::WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self>
     where
         Self: Sized,
     {
@@ -609,6 +616,20 @@ impl workspace::Item for ProjectDiagnosticsEditor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| editor.deactivated(cx));
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("diagnostics")
+    }
+
+    fn deserialize(
+        project: ModelHandle<Project>,
+        workspace: WeakViewHandle<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        Task::ready(Ok(cx.add_view(|cx| Self::new(project, workspace, cx))))
     }
 }
 
@@ -781,8 +802,15 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
 
         // Create some diagnostics
         project.update(cx, |project, cx| {

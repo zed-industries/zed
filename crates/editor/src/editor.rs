@@ -9,6 +9,7 @@ mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod multi_buffer;
+mod persistence;
 pub mod selections_collection;
 
 #[cfg(test)]
@@ -80,7 +81,7 @@ use std::{
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, Workspace};
+use workspace::{ItemNavHistory, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
 
@@ -372,6 +373,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
+    workspace::register_deserializable_item::<Editor>(cx);
 }
 
 trait InvalidationRegion {
@@ -582,6 +584,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    workspace_id: Option<WorkspaceId>,
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
@@ -1235,6 +1238,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            workspace_id: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,

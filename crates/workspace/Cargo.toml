@@ -18,6 +18,7 @@ test-support = [
 ]
 
 [dependencies]
+db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }
 collections = { path = "../collections" }
@@ -31,14 +32,19 @@ project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+async-recursion = "1.0.0"
+bincode = "1.2.1"
 anyhow = "1.0.38"
 futures = "0.3"
+lazy_static = "1.4"
+env_logger = "0.9.1"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 smallvec = { version = "1.6", features = ["union"] }
+indoc = "1.0.4"
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }
@@ -47,3 +53,4 @@ gpui = { path = "../gpui", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
+db = { path = "../db", features = ["test-support"] }

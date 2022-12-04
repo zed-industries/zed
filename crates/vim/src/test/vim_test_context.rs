@@ -41,8 +41,15 @@ impl<'a> VimTestContext<'a> {
             .insert_tree("/root", json!({ "dir": { "test.txt": "" } }))
             .await;
 
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
 
         // Setup search toolbars
         workspace.update(cx, |workspace, cx| {

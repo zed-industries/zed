@@ -2,7 +2,7 @@ mod keymap_file;
 pub mod settings_file;
 pub mod watched_json;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use gpui::{
     font_cache::{FamilyId, FontCache},
     AssetSource,
@@ -14,6 +14,10 @@ use schemars::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use sqlez::{
+    bindable::{Bind, Column},
+    statement::Statement,
+};
 use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use tree_sitter::Query;
@@ -53,24 +57,6 @@ pub struct Settings {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FeatureFlags {
     pub experimental_themes: bool,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ReleaseChannel {
-    #[default]
-    Dev,
-    Preview,
-    Stable,
-}
-
-impl ReleaseChannel {
-    pub fn name(&self) -> &'static str {
-        match self {
-            ReleaseChannel::Dev => "Zed Dev",
-            ReleaseChannel::Preview => "Zed Preview",
-            ReleaseChannel::Stable => "Zed",
-        }
-    }
 }
 
 impl FeatureFlags {
@@ -242,6 +228,33 @@ pub enum DockAnchor {
     Bottom,
     Right,
     Expanded,
+}
+
+impl Bind for DockAnchor {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            DockAnchor::Bottom => "Bottom",
+            DockAnchor::Right => "Right",
+            DockAnchor::Expanded => "Expanded",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for DockAnchor {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
+            Ok((
+                match anchor_text.as_ref() {
+                    "Bottom" => DockAnchor::Bottom,
+                    "Right" => DockAnchor::Right,
+                    "Expanded" => DockAnchor::Expanded,
+                    _ => bail!("Stored dock anchor is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

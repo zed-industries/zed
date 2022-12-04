@@ -19,6 +19,7 @@ rand = { workspace = true }
 tempdir = { version = "0.3.7", optional = true }
 serde_json = { version = "1.0", features = ["preserve_order"], optional = true }
 git2 = { version = "0.15", default-features = false, optional = true }
+dirs = "3.0"
 
 
 [dev-dependencies]

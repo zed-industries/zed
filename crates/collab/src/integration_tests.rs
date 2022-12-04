@@ -3,6 +3,7 @@ use crate::{
     rpc::{Executor, Server},
     AppState,
 };
+
 use ::rpc::Peer;
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
@@ -51,7 +52,7 @@ use std::{
 use theme::ThemeRegistry;
 use unindent::Unindent as _;
 use util::post_inc;
-use workspace::{shared_screen::SharedScreen, Item, SplitDirection, ToggleFollow, Workspace};
+use workspace::{item::Item, shared_screen::SharedScreen, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -905,8 +906,15 @@ async fn test_host_disconnect(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let (_, workspace_b) =
-        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
+    let (_, workspace_b) = cx_b.add_window(|cx| {
+        Workspace::new(
+            Default::default(),
+            0,
+            project_b.clone(),
+            |_, _| unimplemented!(),
+            cx,
+        )
+    });
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
@@ -3701,8 +3709,15 @@ async fn test_collaborating_with_code_actions(
 
     // Join the project as client B.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let (_window_b, workspace_b) =
-        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
+    let (_window_b, workspace_b) = cx_b.add_window(|cx| {
+        Workspace::new(
+            Default::default(),
+            0,
+            project_b.clone(),
+            |_, _| unimplemented!(),
+            cx,
+        )
+    });
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -3922,8 +3937,15 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let (_window_b, workspace_b) =
-        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
+    let (_window_b, workspace_b) = cx_b.add_window(|cx| {
+        Workspace::new(
+            Default::default(),
+            0,
+            project_b.clone(),
+            |_, _| unimplemented!(),
+            cx,
+        )
+    });
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "one.rs"), None, true, cx)
@@ -6054,7 +6076,13 @@ impl TestClient {
     ) -> ViewHandle<Workspace> {
         let (_, root_view) = cx.add_window(|_| EmptyView);
         cx.add_view(&root_view, |cx| {
-            Workspace::new(project.clone(), |_, _| unimplemented!(), cx)
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
         })
     }
 

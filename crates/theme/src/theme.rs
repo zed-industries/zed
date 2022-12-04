@@ -31,6 +31,7 @@ pub struct Theme {
     pub shared_screen: ContainerStyle,
     pub contact_notification: ContactNotification,
     pub update_notification: UpdateNotification,
+    pub simple_message_notification: MessageNotification,
     pub project_shared_notification: ProjectSharedNotification,
     pub incoming_call_notification: IncomingCallNotification,
     pub tooltip: TooltipStyle,
@@ -473,6 +474,13 @@ pub struct ContactNotification {
 
 #[derive(Deserialize, Default)]
 pub struct UpdateNotification {
+    pub message: ContainedText,
+    pub action_message: Interactive<ContainedText>,
+    pub dismiss_button: Interactive<IconButton>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct MessageNotification {
     pub message: ContainedText,
     pub action_message: Interactive<ContainedText>,
     pub dismiss_button: Interactive<IconButton>,

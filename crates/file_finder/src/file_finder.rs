@@ -316,8 +316,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         cx.dispatch_action(window_id, Toggle);
 
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
@@ -371,8 +372,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
@@ -446,8 +448,9 @@ mod tests {
             cx,
         )
         .await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
         finder
@@ -471,8 +474,9 @@ mod tests {
             cx,
         )
         .await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
@@ -524,8 +528,9 @@ mod tests {
             cx,
         )
         .await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
@@ -563,8 +568,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
         finder
