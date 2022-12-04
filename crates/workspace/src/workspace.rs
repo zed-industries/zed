@@ -4,6 +4,7 @@
 /// specific locations.
 pub mod dock;
 pub mod item;
+pub mod notifications;
 pub mod pane;
 pub mod pane_group;
 mod persistence;
@@ -41,7 +42,9 @@ use gpui::{
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
+
 use log::{error, warn};
+use notifications::NotificationHandle;
 pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedItem, DB};
@@ -61,7 +64,10 @@ use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
-use crate::persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace};
+use crate::{
+    notifications::simple_message_notification::{MessageNotification, OsOpen},
+    persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
+};
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -151,6 +157,7 @@ impl_actions!(workspace, [ActivatePane]);
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
     dock::init(cx);
+    notifications::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action({
@@ -453,31 +460,6 @@ impl DelayedDebouncedEditAction {
     }
 }
 
-pub trait Notification: View {
-    fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool;
-}
-
-pub trait NotificationHandle {
-    fn id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
-}
-
-impl<T: Notification> NotificationHandle for ViewHandle<T> {
-    fn id(&self) -> usize {
-        self.id()
-    }
-
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
-    }
-}
-
-impl From<&dyn NotificationHandle> for AnyViewHandle {
-    fn from(val: &dyn NotificationHandle) -> Self {
-        val.to_any()
-    }
-}
-
 #[derive(Default)]
 struct LeaderState {
     followers: HashSet<PeerId>,
@@ -731,6 +713,8 @@ impl Workspace {
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 workspace
             });
+
+            notify_if_database_failed(&workspace, &mut cx);
 
             // Call open path for each of the project paths
             // (this will bring them to the front if they were in the serialized workspace)
@@ -1113,45 +1097,6 @@ impl Workspace {
             cx.focus(&self.active_pane);
             cx.notify();
         }
-    }
-
-    pub fn show_notification<V: Notification>(
-        &mut self,
-        id: usize,
-        cx: &mut ViewContext<Self>,
-        build_notification: impl FnOnce(&mut ViewContext<Self>) -> ViewHandle<V>,
-    ) {
-        let type_id = TypeId::of::<V>();
-        if self
-            .notifications
-            .iter()
-            .all(|(existing_type_id, existing_id, _)| {
-                (*existing_type_id, *existing_id) != (type_id, id)
-            })
-        {
-            let notification = build_notification(cx);
-            cx.subscribe(&notification, move |this, handle, event, cx| {
-                if handle.read(cx).should_dismiss_notification_on_event(event) {
-                    this.dismiss_notification(type_id, id, cx);
-                }
-            })
-            .detach();
-            self.notifications
-                .push((type_id, id, Box::new(notification)));
-            cx.notify();
-        }
-    }
-
-    fn dismiss_notification(&mut self, type_id: TypeId, id: usize, cx: &mut ViewContext<Self>) {
-        self.notifications
-            .retain(|(existing_type_id, existing_id, _)| {
-                if (*existing_type_id, *existing_id) == (type_id, id) {
-                    cx.notify();
-                    false
-                } else {
-                    true
-                }
-            });
     }
 
     pub fn items<'a>(
@@ -2433,6 +2378,47 @@ impl Workspace {
             }
         })
         .detach();
+    }
+}
+
+fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+    if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_notification_once(0, cx, |cx| {
+                cx.add_view(|_| {
+                    MessageNotification::new(
+                        indoc::indoc! {"
+                            Failed to load any database file :(
+                        "},
+                        OsOpen("https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
+                        "Click to let us know about this error"
+                    )
+                })
+            });
+        });
+    } else {
+        let backup_path = (*db::BACKUP_DB_PATH).read();
+        if let Some(backup_path) = &*backup_path {
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_notification_once(0, cx, |cx| {
+                    cx.add_view(|_| {
+                        let backup_path = backup_path.to_string_lossy();
+                        MessageNotification::new(
+                            format!(
+                                indoc::indoc! {"
+                                Database file was corrupted :(
+                                Old database backed up to:
+                                {}
+                                "},
+                                backup_path
+                            ),
+                            OsOpen(backup_path.to_string()),
+                            "Click to show old database in finder",
+                        )
+                    })
+                });
+            });
+        }
     }
 }
 

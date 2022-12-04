@@ -12,6 +12,7 @@ import sharedScreen from "./sharedScreen";
 import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
 import updateNotification from "./updateNotification";
+import simpleMessageNotification from "./simpleMessageNotification";
 import projectSharedNotification from "./projectSharedNotification";
 import tooltip from "./tooltip";
 import terminal from "./terminal";
@@ -47,6 +48,7 @@ export default function app(colorScheme: ColorScheme): Object {
       },
     },
     updateNotification: updateNotification(colorScheme),
+    simpleMessageNotification: simpleMessageNotification(colorScheme),
     tooltip: tooltip(colorScheme),
     terminal: terminal(colorScheme),
     colorScheme: {
