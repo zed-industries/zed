@@ -40,7 +40,6 @@ const DB_FILE_NAME: &'static str = "db.sqlite";
 
 lazy_static::lazy_static! {
     static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
-    // static ref DB_WIPED: RwLock<bool> = RwLock::new(false);
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
     pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);    
 }
@@ -52,18 +51,6 @@ lazy_static::lazy_static! {
 pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, release_channel: &ReleaseChannel) -> ThreadSafeConnection<M> {
     let release_channel_name = release_channel.dev_name();
     let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel_name)));
-
-    // // If WIPE_DB, delete 0-{channel}
-    // if release_channel == &ReleaseChannel::Dev
-    //     && wipe_db
-    //     && !*DB_WIPED.read()
-    // {
-    //     let mut db_wiped = DB_WIPED.write();
-    //     if !*db_wiped {
-    //         remove_dir_all(&main_db_dir).ok();
-    //         *db_wiped = true;
-    //     }
-    // }
 
     let connection = async_iife!({
         // Note: This still has a race condition where 1 set of migrations succeeds
@@ -250,52 +237,6 @@ mod tests {
     use tempdir::TempDir;
 
     use crate::{open_db, DB_FILE_NAME};
-    
-    // // Test that wipe_db exists and works and gives a new db
-    // #[gpui::test]
-    // async fn test_wipe_db() {
-    //     enum TestDB {}
-        
-    //     impl Domain for TestDB {
-    //         fn name() -> &'static str {
-    //             "db_tests"
-    //         }
-            
-    //         fn migrations() -> &'static [&'static str] {
-    //             &[sql!(
-    //                 CREATE TABLE test(value);
-    //             )]
-    //         }
-    //     }
-        
-    //     let tempdir = TempDir::new("DbTests").unwrap();
-        
-    //     // Create a db and insert a marker value
-    //     let test_db = open_db::<TestDB>(false, tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
-    //     test_db.write(|connection|  
-    //         connection.exec(sql!(
-    //             INSERT INTO test(value) VALUES (10)
-    //         )).unwrap()().unwrap()
-    //     ).await;
-    //     drop(test_db);
-        
-    //     // Opening db with wipe clears once and removes the marker value
-    //     let mut guards = vec![];
-    //     for _ in 0..5 {
-    //         let path = tempdir.path().to_path_buf();
-    //         let guard = thread::spawn(move || smol::block_on(async {
-    //             let test_db = open_db::<TestDB>(true, &path, &ReleaseChannel::Dev).await;
-                
-    //             assert!(test_db.select_row::<()>(sql!(SELECT value FROM test)).unwrap()().unwrap().is_none())
-    //         }));
-            
-    //         guards.push(guard);
-    //     }
-        
-    //     for guard in guards {
-    //         guard.join().unwrap();
-    //     }
-    // }
         
     // Test bad migration panics
     #[gpui::test]
