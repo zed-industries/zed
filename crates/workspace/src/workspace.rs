@@ -2147,7 +2147,12 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_add {
-            Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
+            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
+                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
+            } else {
+                Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
+            }
+
             if pane == self.active_pane {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }
