@@ -168,7 +168,7 @@ impl<M: Migrator> ThreadSafeConnection<M> {
             let result = connection.with_write(|connection| callback(connection));
             sender.send(result).ok();
         }));
-        reciever.map(|response| response.expect("Background writer thread unexpectedly closed"))
+        reciever.map(|response| response.expect("Write queue unexpectedly closed"))
     }
 
     pub(crate) fn create_connection(

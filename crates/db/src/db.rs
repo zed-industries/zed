@@ -24,14 +24,14 @@ use util::{async_iife, ResultExt};
 use util::channel::ReleaseChannel;
 
 const CONNECTION_INITIALIZE_QUERY: &'static str = sql!(
-    PRAGMA synchronous=NORMAL;
-    PRAGMA busy_timeout=1;
     PRAGMA foreign_keys=TRUE;
-    PRAGMA case_sensitive_like=TRUE;
 );
 
 const DB_INITIALIZE_QUERY: &'static str = sql!(
     PRAGMA journal_mode=WAL;
+    PRAGMA busy_timeout=1;
+    PRAGMA case_sensitive_like=TRUE;
+    PRAGMA synchronous=NORMAL;
 );
 
 const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
@@ -293,6 +293,7 @@ mod tests {
             assert!(corrupt_db.persistent());
         }
         
+        
         let good_db = open_db::<GoodDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
         assert!(good_db.select_row::<usize>("SELECT * FROM test2").unwrap()().unwrap().is_none());
         
@@ -339,10 +340,12 @@ mod tests {
        
         let tempdir = TempDir::new("DbTests").unwrap();
         {
+            // Setup the bad database
             let corrupt_db = open_db::<CorruptedDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
             assert!(corrupt_db.persistent());
         }
         
+        // Try to connect to it a bunch of times at once
         let mut guards = vec![];
         for _ in 0..10 {
             let tmp_path = tempdir.path().to_path_buf();
