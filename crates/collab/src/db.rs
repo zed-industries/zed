@@ -2131,31 +2131,35 @@ impl Database {
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
     {
-        loop {
-            let (tx, result) = self.run(self.with_transaction(&f)).await?;
-            match result {
-                Ok(result) => {
-                    match self.run(async move { Ok(tx.commit().await?) }).await {
-                        Ok(()) => return Ok(result),
-                        Err(error) => {
-                            if is_serialization_error(&error) {
-                                // Retry (don't break the loop)
-                            } else {
-                                return Err(error);
+        let body = async {
+            loop {
+                let (tx, result) = self.with_transaction(&f).await?;
+                match result {
+                    Ok(result) => {
+                        match tx.commit().await.map_err(Into::into) {
+                            Ok(()) => return Ok(result),
+                            Err(error) => {
+                                if is_serialization_error(&error) {
+                                    // Retry (don't break the loop)
+                                } else {
+                                    return Err(error);
+                                }
                             }
                         }
                     }
-                }
-                Err(error) => {
-                    self.run(tx.rollback()).await?;
-                    if is_serialization_error(&error) {
-                        // Retry (don't break the loop)
-                    } else {
-                        return Err(error);
+                    Err(error) => {
+                        tx.rollback().await?;
+                        if is_serialization_error(&error) {
+                            // Retry (don't break the loop)
+                        } else {
+                            return Err(error);
+                        }
                     }
                 }
             }
-        }
+        };
+
+        self.run(body).await
     }
 
     async fn room_transaction<F, Fut, T>(&self, f: F) -> Result<RoomGuard<T>>
@@ -2163,39 +2167,43 @@ impl Database {
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<(RoomId, T)>>,
     {
-        loop {
-            let (tx, result) = self.run(self.with_transaction(&f)).await?;
-            match result {
-                Ok((room_id, data)) => {
-                    let lock = self.rooms.entry(room_id).or_default().clone();
-                    let _guard = lock.lock_owned().await;
-                    match self.run(async move { Ok(tx.commit().await?) }).await {
-                        Ok(()) => {
-                            return Ok(RoomGuard {
-                                data,
-                                _guard,
-                                _not_send: PhantomData,
-                            });
-                        }
-                        Err(error) => {
-                            if is_serialization_error(&error) {
-                                // Retry (don't break the loop)
-                            } else {
-                                return Err(error);
+        let body = async {
+            loop {
+                let (tx, result) = self.with_transaction(&f).await?;
+                match result {
+                    Ok((room_id, data)) => {
+                        let lock = self.rooms.entry(room_id).or_default().clone();
+                        let _guard = lock.lock_owned().await;
+                        match tx.commit().await.map_err(Into::into) {
+                            Ok(()) => {
+                                return Ok(RoomGuard {
+                                    data,
+                                    _guard,
+                                    _not_send: PhantomData,
+                                });
+                            }
+                            Err(error) => {
+                                if is_serialization_error(&error) {
+                                    // Retry (don't break the loop)
+                                } else {
+                                    return Err(error);
+                                }
                             }
                         }
                     }
-                }
-                Err(error) => {
-                    self.run(tx.rollback()).await?;
-                    if is_serialization_error(&error) {
-                        // Retry (don't break the loop)
-                    } else {
-                        return Err(error);
+                    Err(error) => {
+                        tx.rollback().await?;
+                        if is_serialization_error(&error) {
+                            // Retry (don't break the loop)
+                        } else {
+                            return Err(error);
+                        }
                     }
                 }
             }
-        }
+        };
+
+        self.run(body).await
     }
 
     async fn with_transaction<F, Fut, T>(&self, f: &F) -> Result<(DatabaseTransaction, Result<T>)>
@@ -2233,13 +2241,7 @@ impl Database {
                 background.simulate_random_delay().await;
             }
 
-            let result = self.runtime.as_ref().unwrap().block_on(future);
-
-            if let Some(background) = self.background.as_ref() {
-                background.simulate_random_delay().await;
-            }
-
-            result
+            self.runtime.as_ref().unwrap().block_on(future)
         }
 
         #[cfg(not(test))]

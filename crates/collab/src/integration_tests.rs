@@ -5672,7 +5672,13 @@ impl TestServer {
     async fn start(background: Arc<executor::Background>) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
-        let test_db = TestDb::sqlite(background.clone());
+        let use_postgres = env::var("USE_POSTGRES").ok();
+        let use_postgres = use_postgres.as_deref();
+        let test_db = if use_postgres == Some("true") || use_postgres == Some("1") {
+            TestDb::postgres(background.clone())
+        } else {
+            TestDb::sqlite(background.clone())
+        };
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
