@@ -118,8 +118,8 @@ CREATE TABLE "room_participants" (
     "answering_connection_id" INTEGER,
     "answering_connection_epoch" TEXT,
     "location_kind" INTEGER,
-    "location_project_id" INTEGER REFERENCES projects (id),
-    "initial_project_id" INTEGER REFERENCES projects (id),
+    "location_project_id" INTEGER,
+    "initial_project_id" INTEGER,
     "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
     "calling_connection_id" INTEGER NOT NULL,
     "calling_connection_epoch" TEXT NOT NULL
