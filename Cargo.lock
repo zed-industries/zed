@@ -3204,9 +3204,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.25.1"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f0455f2c1bc9a7caa792907026e469c1d91761fb0ea37cbb16427c77280cf35"
+checksum = "29f835d03d717946d28b1d1ed632eb6f0e24a299388ee623d0c23118d3e8a7fa"
 dependencies = [
  "cc",
  "pkg-config",
@@ -5328,9 +5328,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm"
-version = "0.10.4"
+version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3120bc435b8640963ffda698f877610e07e077157e216eb99408d819c344034d"
+checksum = "28fc9dad132e450d6320bd5953e70fb88b42785080b591e9be804da69bd8a170"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -5356,9 +5356,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm-macros"
-version = "0.10.4"
+version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c54bacfeb842813c16821e21f9456c358861a448294075184ea1d6307e386d08"
+checksum = "66af5d33e04e56dafb2c700f9b1201a39e6c2c77b53ed9ee93244f21f8de6041"
 dependencies = [
  "bae",
  "heck 0.3.3",

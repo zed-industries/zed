@@ -23,9 +23,9 @@ use hyper::StatusCode;
 use rpc::{proto, ConnectionId};
 pub use sea_orm::ConnectOptions;
 use sea_orm::{
-    entity::prelude::*, ActiveValue, ConnectionTrait, DatabaseBackend, DatabaseConnection,
-    DatabaseTransaction, DbErr, FromQueryResult, IntoActiveModel, JoinType, QueryOrder,
-    QuerySelect, Statement, TransactionTrait,
+    entity::prelude::*, ActiveValue, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect,
+    Statement, TransactionTrait,
 };
 use sea_query::{Alias, Expr, OnConflict, Query};
 use serde::{Deserialize, Serialize};
@@ -2211,16 +2211,10 @@ impl Database {
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
     {
-        let tx = self.pool.begin().await?;
-
-        // In Postgres, serializable transactions are opt-in
-        if let DatabaseBackend::Postgres = self.pool.get_database_backend() {
-            tx.execute(Statement::from_string(
-                DatabaseBackend::Postgres,
-                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;".into(),
-            ))
+        let tx = self
+            .pool
+            .begin_with_config(Some(IsolationLevel::Serializable), None)
             .await?;
-        }
 
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
@@ -2584,7 +2578,7 @@ mod test {
     impl Drop for TestDb {
         fn drop(&mut self) {
             let db = self.db.take().unwrap();
-            if let DatabaseBackend::Postgres = db.pool.get_database_backend() {
+            if let sea_orm::DatabaseBackend::Postgres = db.pool.get_database_backend() {
                 db.runtime.as_ref().unwrap().block_on(async {
                     use util::ResultExt;
                     let query = "
