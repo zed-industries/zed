@@ -1981,8 +1981,12 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-    ) -> Result<Vec<project_collaborator::Model>> {
-        self.transaction(|tx| async move {
+    ) -> Result<RoomGuard<Vec<project_collaborator::Model>>> {
+        self.room_transaction(|tx| async move {
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
             let collaborators = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
                 .all(&*tx)
@@ -1992,7 +1996,7 @@ impl Database {
                 .iter()
                 .any(|collaborator| collaborator.connection_id == connection_id.0 as i32)
             {
-                Ok(collaborators)
+                Ok((project.room_id, collaborators))
             } else {
                 Err(anyhow!("no such project"))?
             }
@@ -2004,13 +2008,17 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-    ) -> Result<HashSet<ConnectionId>> {
-        self.transaction(|tx| async move {
+    ) -> Result<RoomGuard<HashSet<ConnectionId>>> {
+        self.room_transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryAs {
                 ConnectionId,
             }
 
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
             let mut db_connection_ids = project_collaborator::Entity::find()
                 .select_only()
                 .column_as(
@@ -2028,7 +2036,7 @@ impl Database {
             }
 
             if connection_ids.contains(&connection_id) {
-                Ok(connection_ids)
+                Ok((project.room_id, connection_ids))
             } else {
                 Err(anyhow!("no such project"))?
             }
