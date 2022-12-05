@@ -1,3 +1,5 @@
+pub mod channel;
+pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -204,6 +206,30 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
     }
 }
 
+// copy unstable standard feature option unzip
+// https://github.com/rust-lang/rust/issues/87800
+// Remove when this ship in Rust 1.66 or 1.67
+pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
+    match option {
+        Some((a, b)) => (Some(a), Some(b)),
+        None => (None, None),
+    }
+}
+
+#[macro_export]
+macro_rules! iife {
+    ($block:block) => {
+        (|| $block)()
+    };
+}
+
+#[macro_export]
+macro_rules! async_iife {
+    ($block:block) => {
+        (|| async move { $block })()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +246,19 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
+    }
+
+    #[test]
+    fn test_iife() {
+        fn option_returning_function() -> Option<()> {
+            None
+        }
+
+        let foo = iife!({
+            option_returning_function()?;
+            Some(())
+        });
+
+        assert_eq!(foo, None);
     }
 }

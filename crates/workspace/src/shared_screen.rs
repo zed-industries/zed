@@ -1,4 +1,6 @@
-use crate::{Item, ItemNavHistory};
+use crate::{
+    item::ItemEvent, persistence::model::ItemId, Item, ItemNavHistory, Pane, Workspace, WorkspaceId,
+};
 use anyhow::{anyhow, Result};
 use call::participant::{Frame, RemoteVideoTrack};
 use client::{PeerId, User};
@@ -6,8 +8,10 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext,
+    Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
+use project::Project;
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
@@ -142,7 +146,11 @@ impl Item for SharedScreen {
         self.nav_history = Some(history);
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
+    fn clone_on_split(
+        &self,
+        _workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self> {
         let track = self.track.upgrade()?;
         Some(Self::new(&track, self.peer_id, self.user.clone(), cx))
     }
@@ -176,9 +184,23 @@ impl Item for SharedScreen {
         Task::ready(Err(anyhow!("Item::reload called on SharedScreen")))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<crate::ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         match event {
-            Event::Close => vec![crate::ItemEvent::CloseItem],
+            Event::Close => vec![ItemEvent::CloseItem],
         }
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
+
+    fn deserialize(
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: WorkspaceId,
+        _item_id: ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        unreachable!("Shared screen can not be deserialized")
     }
 }

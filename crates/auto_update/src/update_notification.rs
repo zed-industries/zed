@@ -5,8 +5,9 @@ use gpui::{
     Element, Entity, MouseButton, View, ViewContext,
 };
 use menu::Cancel;
-use settings::{ReleaseChannel, Settings};
-use workspace::Notification;
+use settings::Settings;
+use util::channel::ReleaseChannel;
+use workspace::notifications::Notification;
 
 pub struct UpdateNotification {
     version: AppVersion,
@@ -27,9 +28,9 @@ impl View for UpdateNotification {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
-        let theme = &theme.update_notification;
+        let theme = &theme.simple_message_notification;
 
-        let app_name = cx.global::<ReleaseChannel>().name();
+        let app_name = cx.global::<ReleaseChannel>().display_name();
 
         MouseEventHandler::<ViewReleaseNotes>::new(0, cx, |state, cx| {
             Flex::column()

@@ -1,15 +1,20 @@
+use crate::persistence::TERMINAL_CONNECTION;
 use crate::terminal_view::TerminalView;
-use crate::{Event, Terminal, TerminalBuilder, TerminalError};
+use crate::{Event, TerminalBuilder, TerminalError};
 
 use alacritty_terminal::index::Point;
 use dirs::home_dir;
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
-    View, ViewContext, ViewHandle,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use util::truncate_and_trailoff;
+use util::{truncate_and_trailoff, ResultExt};
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
-use workspace::{Item, ItemEvent, ToolbarItemLocation, Workspace};
+use workspace::{
+    item::{Item, ItemEvent},
+    ToolbarItemLocation, Workspace,
+};
+use workspace::{register_deserializable_item, Pane, WorkspaceId};
 
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{AlternateScroll, Settings, WorkingDirectory};
@@ -23,6 +28,8 @@ actions!(terminal, [DeployModal]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalContainer::deploy);
+
+    register_deserializable_item::<TerminalContainer>(cx);
 }
 
 //Make terminal view an enum, that can give you views for the error and non-error states
@@ -75,7 +82,9 @@ impl TerminalContainer {
             .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
 
         let working_directory = get_working_directory(workspace, cx, strategy);
-        let view = cx.add_view(|cx| TerminalContainer::new(working_directory, false, cx));
+        let view = cx.add_view(|cx| {
+            TerminalContainer::new(working_directory, false, workspace.database_id(), cx)
+        });
         workspace.add_item(Box::new(view), cx);
     }
 
@@ -83,6 +92,7 @@ impl TerminalContainer {
     pub fn new(
         working_directory: Option<PathBuf>,
         modal: bool,
+        workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let settings = cx.global::<Settings>();
@@ -109,10 +119,13 @@ impl TerminalContainer {
             settings.terminal_overrides.blinking.clone(),
             scroll,
             cx.window_id(),
+            cx.view_id(),
+            workspace_id,
         ) {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
                 let view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
+
                 cx.subscribe(&view, |_this, _content, event, cx| cx.emit(*event))
                     .detach();
                 TerminalContainerContent::Connected(view)
@@ -124,23 +137,10 @@ impl TerminalContainer {
                 TerminalContainerContent::Error(view)
             }
         };
-        cx.focus(content.handle());
 
         TerminalContainer {
             content,
             associated_directory: working_directory,
-        }
-    }
-
-    pub fn from_terminal(
-        terminal: ModelHandle<Terminal>,
-        modal: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let connected_view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
-        TerminalContainer {
-            content: TerminalContainerContent::Connected(connected_view),
-            associated_directory: None,
         }
     }
 
@@ -271,13 +271,18 @@ impl Item for TerminalContainer {
             .boxed()
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
+    fn clone_on_split(
+        &self,
+        workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self> {
         //From what I can tell, there's no  way to tell the current working
         //Directory of the terminal from outside the shell. There might be
         //solutions to this, but they are non-trivial and require more IPC
         Some(TerminalContainer::new(
             self.associated_directory.clone(),
             false,
+            workspace_id,
             cx,
         ))
     }
@@ -371,6 +376,36 @@ impl Item for TerminalContainer {
             theme.breadcrumbs.text.clone(),
         )
         .boxed()])
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("Terminal")
+    }
+
+    fn deserialize(
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<anyhow::Result<ViewHandle<Self>>> {
+        let working_directory = TERMINAL_CONNECTION.get_working_directory(item_id, workspace_id);
+        Task::ready(Ok(cx.add_view(|cx| {
+            TerminalContainer::new(
+                working_directory.log_err().flatten(),
+                false,
+                workspace_id,
+                cx,
+            )
+        })))
+    }
+
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        if let Some(connected) = self.connected() {
+            let id = workspace.database_id();
+            let terminal_handle = connected.read(cx).terminal().clone();
+            terminal_handle.update(cx, |terminal, cx| terminal.set_workspace_id(id, cx))
+        }
     }
 }
 

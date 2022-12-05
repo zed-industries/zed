@@ -5,7 +5,7 @@ use gpui::{
     Element, Entity, MouseButton, RenderContext, View,
 };
 use settings::Settings;
-use workspace::StatusItemView;
+use workspace::{item::ItemHandle, StatusItemView};
 
 pub const NEW_ISSUE_URL: &str = "https://github.com/zed-industries/feedback/issues/new/choose";
 
@@ -43,7 +43,7 @@ impl View for FeedbackLink {
 impl StatusItemView for FeedbackLink {
     fn set_active_pane_item(
         &mut self,
-        _: Option<&dyn workspace::ItemHandle>,
+        _: Option<&dyn ItemHandle>,
         _: &mut gpui::ViewContext<Self>,
     ) {
     }

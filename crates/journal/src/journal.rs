@@ -115,7 +115,7 @@ mod tests {
 
         #[test]
         fn test_heading_entry_defaults_to_hour_12() {
-            let naive_time = NaiveTime::from_hms_milli(15, 0, 0, 0);
+            let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
             let actual_heading_entry = heading_entry(naive_time, &None);
             let expected_heading_entry = "# 3:00 PM";
 
@@ -124,7 +124,7 @@ mod tests {
 
         #[test]
         fn test_heading_entry_is_hour_12() {
-            let naive_time = NaiveTime::from_hms_milli(15, 0, 0, 0);
+            let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
             let actual_heading_entry = heading_entry(naive_time, &Some(HourFormat::Hour12));
             let expected_heading_entry = "# 3:00 PM";
 
@@ -133,7 +133,7 @@ mod tests {
 
         #[test]
         fn test_heading_entry_is_hour_24() {
-            let naive_time = NaiveTime::from_hms_milli(15, 0, 0, 0);
+            let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
             let actual_heading_entry = heading_entry(naive_time, &Some(HourFormat::Hour24));
             let expected_heading_entry = "# 15:00";
 

@@ -1,82 +1,62 @@
-use anyhow::Result;
-use rusqlite::OptionalExtension;
+use sqlez_macros::sql;
 
-use super::Db;
+use crate::{define_connection, query};
 
-pub(crate) const KVP_M_1_UP: &str = "
-CREATE TABLE kv_store(
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-) STRICT;
-";
+define_connection!(pub static ref KEY_VALUE_STORE: KeyValueStore<()> =
+    &[sql!(
+        CREATE TABLE IF NOT EXISTS kv_store(
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        ) STRICT;
+    )];
+);
 
-impl Db {
-    pub fn read_kvp(&self, key: &str) -> Result<Option<String>> {
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-                let mut stmt = lock.prepare_cached("SELECT value FROM kv_store WHERE key = (?)")?;
-
-                Ok(stmt.query_row([key], |row| row.get(0)).optional()?)
-            })
-            .unwrap_or(Ok(None))
+impl KeyValueStore {
+    query! {
+        pub fn read_kvp(key: &str) -> Result<Option<String>> {
+            SELECT value FROM kv_store WHERE key = (?)
+        }
     }
 
-    pub fn write_kvp(&self, key: &str, value: &str) -> Result<()> {
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-
-                let mut stmt = lock.prepare_cached(
-                    "INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))",
-                )?;
-
-                stmt.execute([key, value])?;
-
-                Ok(())
-            })
-            .unwrap_or(Ok(()))
+    query! {
+        pub async fn write_kvp(key: String, value: String) -> Result<()> {
+            INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))
+        }
     }
 
-    pub fn delete_kvp(&self, key: &str) -> Result<()> {
-        self.real()
-            .map(|db| {
-                let lock = db.connection.lock();
-
-                let mut stmt = lock.prepare_cached("DELETE FROM kv_store WHERE key = (?)")?;
-
-                stmt.execute([key])?;
-
-                Ok(())
-            })
-            .unwrap_or(Ok(()))
+    query! {
+        pub async fn delete_kvp(key: String) -> Result<()> {
+            DELETE FROM kv_store WHERE key = (?)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
+    use crate::kvp::KeyValueStore;
 
-    use super::*;
+    #[gpui::test]
+    async fn test_kvp() {
+        let db = KeyValueStore(crate::open_test_db("test_kvp").await);
 
-    #[test]
-    fn test_kvp() -> Result<()> {
-        let db = Db::open_in_memory();
+        assert_eq!(db.read_kvp("key-1").unwrap(), None);
 
-        assert_eq!(db.read_kvp("key-1")?, None);
+        db.write_kvp("key-1".to_string(), "one".to_string())
+            .await
+            .unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), Some("one".to_string()));
 
-        db.write_kvp("key-1", "one")?;
-        assert_eq!(db.read_kvp("key-1")?, Some("one".to_string()));
+        db.write_kvp("key-1".to_string(), "one-2".to_string())
+            .await
+            .unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), Some("one-2".to_string()));
 
-        db.write_kvp("key-1", "one-2")?;
-        assert_eq!(db.read_kvp("key-1")?, Some("one-2".to_string()));
+        db.write_kvp("key-2".to_string(), "two".to_string())
+            .await
+            .unwrap();
+        assert_eq!(db.read_kvp("key-2").unwrap(), Some("two".to_string()));
 
-        db.write_kvp("key-2", "two")?;
-        assert_eq!(db.read_kvp("key-2")?, Some("two".to_string()));
-
-        db.delete_kvp("key-1")?;
-        assert_eq!(db.read_kvp("key-1")?, None);
-
-        Ok(())
+        db.delete_kvp("key-1".to_string()).await.unwrap();
+        assert_eq!(db.read_kvp("key-1").unwrap(), None);
     }
 }

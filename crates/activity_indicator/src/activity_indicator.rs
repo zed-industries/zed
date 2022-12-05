@@ -11,7 +11,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc};
 use util::ResultExt;
-use workspace::{ItemHandle, StatusItemView, Workspace};
+use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 actions!(lsp_status, [ShowErrorMessage]);
 

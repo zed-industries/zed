@@ -98,14 +98,14 @@ pub fn icon_for_dock_anchor(anchor: DockAnchor) -> &'static str {
 }
 
 impl DockPosition {
-    fn is_visible(&self) -> bool {
+    pub fn is_visible(&self) -> bool {
         match self {
             DockPosition::Shown(_) => true,
             DockPosition::Hidden(_) => false,
         }
     }
 
-    fn anchor(&self) -> DockAnchor {
+    pub fn anchor(&self) -> DockAnchor {
         match self {
             DockPosition::Shown(anchor) | DockPosition::Hidden(anchor) => *anchor,
         }
@@ -137,9 +137,10 @@ pub struct Dock {
 }
 
 impl Dock {
-    pub fn new(cx: &mut ViewContext<Workspace>, default_item_factory: DefaultItemFactory) -> Self {
-        let anchor = cx.global::<Settings>().default_dock_anchor;
-        let pane = cx.add_view(|cx| Pane::new(Some(anchor), cx));
+    pub fn new(default_item_factory: DefaultItemFactory, cx: &mut ViewContext<Workspace>) -> Self {
+        let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
+
+        let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), cx));
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
@@ -152,7 +153,7 @@ impl Dock {
         Self {
             pane,
             panel_sizes: Default::default(),
-            position: DockPosition::Hidden(anchor),
+            position,
             default_item_factory,
         }
     }
@@ -169,21 +170,26 @@ impl Dock {
         self.position.is_visible() && self.position.anchor() == anchor
     }
 
-    fn set_dock_position(
+    pub(crate) fn set_dock_position(
         workspace: &mut Workspace,
         new_position: DockPosition,
         cx: &mut ViewContext<Workspace>,
     ) {
+        dbg!("starting", &new_position);
         workspace.dock.position = new_position;
         // Tell the pane about the new anchor position
         workspace.dock.pane.update(cx, |pane, cx| {
+            dbg!("setting docked");
             pane.set_docked(Some(new_position.anchor()), cx)
         });
 
         if workspace.dock.position.is_visible() {
+            dbg!("dock is visible");
             // Close the right sidebar if the dock is on the right side and the right sidebar is open
             if workspace.dock.position.anchor() == DockAnchor::Right {
+                dbg!("dock anchor is right");
                 if workspace.right_sidebar().read(cx).is_open() {
+                    dbg!("Toggling right sidebar");
                     workspace.toggle_sidebar(SidebarSide::Right, cx);
                 }
             }
@@ -193,8 +199,10 @@ impl Dock {
             if pane.read(cx).items().next().is_none() {
                 let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
                 // Adding the item focuses the pane by default
+                dbg!("Adding item to dock");
                 Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
             } else {
+                dbg!("just focusing dock");
                 cx.focus(pane);
             }
         } else if let Some(last_active_center_pane) = workspace
@@ -205,6 +213,8 @@ impl Dock {
             cx.focus(last_active_center_pane);
         }
         cx.emit(crate::Event::DockAnchorChanged);
+        workspace.serialize_workspace(cx);
+        dbg!("Serializing workspace after dock position changed");
         cx.notify();
     }
 
@@ -341,6 +351,10 @@ impl Dock {
                 }
             })
     }
+
+    pub fn position(&self) -> DockPosition {
+        self.position
+    }
 }
 
 pub struct ToggleDockButton {
@@ -454,7 +468,7 @@ mod tests {
     use settings::Settings;
 
     use super::*;
-    use crate::{sidebar::Sidebar, tests::TestItem, ItemHandle, Workspace};
+    use crate::{item::test::TestItem, sidebar::Sidebar, ItemHandle, Workspace};
 
     pub fn default_item_factory(
         _workspace: &mut Workspace,
@@ -568,8 +582,9 @@ mod tests {
 
             cx.update(|cx| init(cx));
             let project = Project::test(fs, [], cx).await;
-            let (window_id, workspace) =
-                cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+            let (window_id, workspace) = cx.add_window(|cx| {
+                Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            });
 
             workspace.update(cx, |workspace, cx| {
                 let left_panel = cx.add_view(|_| TestItem::new());

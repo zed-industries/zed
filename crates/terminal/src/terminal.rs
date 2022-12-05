@@ -1,4 +1,5 @@
 pub mod mappings;
+mod persistence;
 pub mod terminal_container_view;
 pub mod terminal_element;
 pub mod terminal_view;
@@ -32,9 +33,11 @@ use mappings::mouse::{
     alt_scroll, grid_point, mouse_button_report, mouse_moved_report, mouse_side, scroll_report,
 };
 
+use persistence::TERMINAL_CONNECTION;
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use util::ResultExt;
+use workspace::{ItemId, WorkspaceId};
 
 use std::{
     cmp::min,
@@ -54,7 +57,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
-    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext, Task,
+    AppContext, ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent,
+    MutableAppContext, Task,
 };
 
 use crate::mappings::{
@@ -281,6 +285,8 @@ impl TerminalBuilder {
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: &AlternateScroll,
         window_id: usize,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -385,6 +391,8 @@ impl TerminalBuilder {
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
+            workspace_id,
+            item_id,
         };
 
         Ok(TerminalBuilder {
@@ -528,6 +536,8 @@ pub struct Terminal {
     scroll_px: f32,
     next_link_id: usize,
     selection_phase: SelectionPhase,
+    workspace_id: WorkspaceId,
+    item_id: ItemId,
 }
 
 impl Terminal {
@@ -567,7 +577,21 @@ impl Terminal {
                 cx.emit(Event::Wakeup);
 
                 if self.update_process_info() {
-                    cx.emit(Event::TitleChanged)
+                    cx.emit(Event::TitleChanged);
+
+                    if let Some(foreground_info) = &self.foreground_process_info {
+                        let cwd = foreground_info.cwd.clone();
+                        let item_id = self.item_id;
+                        let workspace_id = self.workspace_id;
+                        cx.background()
+                            .spawn(async move {
+                                TERMINAL_CONNECTION
+                                    .save_working_directory(item_id, workspace_id, cwd)
+                                    .await
+                                    .log_err();
+                            })
+                            .detach();
+                    }
                 }
             }
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
@@ -875,10 +899,6 @@ impl Terminal {
             return;
         };
 
-        if self.update_process_info() {
-            cx.emit(Event::TitleChanged);
-        }
-
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, cx)
@@ -1172,6 +1192,21 @@ impl Terminal {
             ),
             _ => None,
         }
+    }
+
+    pub fn set_workspace_id(&mut self, id: WorkspaceId, cx: &AppContext) {
+        let old_workspace_id = self.workspace_id;
+        let item_id = self.item_id;
+        cx.background()
+            .spawn(async move {
+                TERMINAL_CONNECTION
+                    .update_workspace_id(id, old_workspace_id, item_id)
+                    .await
+                    .log_err()
+            })
+            .detach();
+
+        self.workspace_id = id;
     }
 
     pub fn find_matches(

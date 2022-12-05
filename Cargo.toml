@@ -45,6 +45,8 @@ members = [
     "crates/search",
     "crates/settings",
     "crates/snippet",
+    "crates/sqlez",
+    "crates/sqlez_macros",
     "crates/sum_tree",
     "crates/terminal",
     "crates/text",
@@ -67,7 +69,6 @@ rand = { version = "0.8" }
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "36b5b6c89e55ad1a502f8b3234bb3e12ec83a5da" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
-sqlx = { git = "https://github.com/launchbadge/sqlx", rev = "4b7053807c705df312bcb9b6281e184bf7534eb3" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
 cocoa = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
@@ -81,4 +82,5 @@ split-debuginfo = "unpacked"
 
 [profile.release]
 debug = true
+
 

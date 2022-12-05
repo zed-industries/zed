@@ -23,6 +23,7 @@ test-support = [
 drag_and_drop = { path = "../drag_and_drop" }
 text = { path = "../text" }
 clock = { path = "../clock" }
+db = { path = "../db" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 fuzzy = { path = "../fuzzy" }
@@ -37,6 +38,7 @@ snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+sqlez = { path = "../sqlez" }
 workspace = { path = "../workspace" }
 aho-corasick = "0.7"
 anyhow = "1.0"

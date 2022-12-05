@@ -14,6 +14,7 @@ test-support = []
 assets = { path = "../assets" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
+sqlez = { path = "../sqlez" }
 fs = { path = "../fs" }
 anyhow = "1.0.38"
 futures = "0.3"
