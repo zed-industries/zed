@@ -201,7 +201,7 @@ impl Server {
             .add_request_handler(update_worktree)
             .add_message_handler(start_language_server)
             .add_message_handler(update_language_server)
-            .add_request_handler(update_diagnostic_summary)
+            .add_message_handler(update_diagnostic_summary)
             .add_request_handler(forward_project_request::<proto::GetHover>)
             .add_request_handler(forward_project_request::<proto::GetDefinition>)
             .add_request_handler(forward_project_request::<proto::GetTypeDefinition>)
@@ -1187,14 +1187,13 @@ async fn update_worktree(
 }
 
 async fn update_diagnostic_summary(
-    request: proto::UpdateDiagnosticSummary,
-    response: Response<proto::UpdateDiagnosticSummary>,
+    message: proto::UpdateDiagnosticSummary,
     session: Session,
 ) -> Result<()> {
     let guest_connection_ids = session
         .db()
         .await
-        .update_diagnostic_summary(&request, session.connection_id)
+        .update_diagnostic_summary(&message, session.connection_id)
         .await?;
 
     broadcast(
@@ -1203,11 +1202,10 @@ async fn update_diagnostic_summary(
         |connection_id| {
             session
                 .peer
-                .forward_send(session.connection_id, connection_id, request.clone())
+                .forward_send(session.connection_id, connection_id, message.clone())
         },
     );
 
-    response.send(proto::Ack {})?;
     Ok(())
 }
 
