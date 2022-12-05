@@ -51,6 +51,22 @@
                 parameters: (parameter_list
                     "(" @context
                     ")" @context)))
+        (pointer_declarator
+            "*" @context
+            declarator: (pointer_declarator
+                "*" @context
+                declarator: (function_declarator
+                    declarator: (_) @name
+                    parameters: (parameter_list
+                        "(" @context
+                        ")" @context))))
+        (reference_declarator
+            ["&" "&&"] @context
+            (function_declarator
+                declarator: (_) @name
+                parameters: (parameter_list
+                    "(" @context
+                    ")" @context)))
     ]
     (type_qualifier)? @context) @item
 
@@ -74,6 +90,22 @@
                 parameters: (parameter_list
                     "(" @context
                     ")" @context)))
+        (pointer_declarator
+            "*" @context
+            declarator: (pointer_declarator
+                "*" @context
+                declarator: (function_declarator
+                    declarator: (_) @name
+                    parameters: (parameter_list
+                        "(" @context
+                        ")" @context))))
+        (reference_declarator
+            ["&" "&&"] @context
+            (function_declarator
+                declarator: (_) @name
+                parameters: (parameter_list
+                    "(" @context
+                    ")" @context)))
     ]
     (type_qualifier)? @context) @item
 
@@ -93,6 +125,22 @@
         (pointer_declarator
             "*" @context
             declarator: (function_declarator
+                declarator: (_) @name
+                parameters: (parameter_list
+                    "(" @context
+                    ")" @context)))
+        (pointer_declarator
+            "*" @context
+            declarator: (pointer_declarator
+                "*" @context
+                declarator: (function_declarator
+                    declarator: (_) @name
+                    parameters: (parameter_list
+                        "(" @context
+                        ")" @context))))
+        (reference_declarator
+            ["&" "&&"] @context
+            (function_declarator
                 declarator: (_) @name
                 parameters: (parameter_list
                     "(" @context
