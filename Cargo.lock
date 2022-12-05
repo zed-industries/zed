@@ -6462,15 +6462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-commonlisp"
-version = "0.3.0"
-source = "git+https://github.com/theHamsta/tree-sitter-commonlisp?rev=c7e814975ab0d0d04333d1f32391c41180c58919#c7e814975ab0d0d04333d1f32391c41180c58919"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-cpp"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6578,7 +6569,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-racket"
 version = "0.0.1"
-source = "git+https://github.com/6cdh/tree-sitter-racket?rev=69ca563af3bcf9d67220532e0814786f2dc34db1#69ca563af3bcf9d67220532e0814786f2dc34db1"
+source = "git+https://github.com/zed-industries/tree-sitter-racket?rev=eb010cf2c674c6fd9a6316a84e28ef90190fe51a#eb010cf2c674c6fd9a6316a84e28ef90190fe51a"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -7823,7 +7814,6 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-c",
- "tree-sitter-commonlisp",
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-elixir",
