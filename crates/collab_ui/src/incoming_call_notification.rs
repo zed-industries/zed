@@ -74,7 +74,7 @@ impl IncomingCallNotification {
         let active_call = ActiveCall::global(cx);
         if action.accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
-            let caller_user_id = self.call.caller.id;
+            let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             cx.spawn_weak(|_, mut cx| async move {
                 join.await?;
@@ -105,7 +105,7 @@ impl IncomingCallNotification {
             .as_ref()
             .unwrap_or(&default_project);
         Flex::row()
-            .with_children(self.call.caller.avatar.clone().map(|avatar| {
+            .with_children(self.call.calling_user.avatar.clone().map(|avatar| {
                 Image::new(avatar)
                     .with_style(theme.caller_avatar)
                     .aligned()
@@ -115,7 +115,7 @@ impl IncomingCallNotification {
                 Flex::column()
                     .with_child(
                         Label::new(
-                            self.call.caller.github_login.clone(),
+                            self.call.calling_user.github_login.clone(),
                             theme.caller_username.text.clone(),
                         )
                         .contained()

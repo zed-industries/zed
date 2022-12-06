@@ -10,7 +10,7 @@ use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
 use project::Project;
-use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
+use std::{mem, sync::Arc};
 use util::{post_inc, ResultExt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,7 +53,7 @@ impl Entity for Room {
 
     fn release(&mut self, _: &mut MutableAppContext) {
         if self.status.is_online() {
-            self.client.send(proto::LeaveRoom { id: self.id }).log_err();
+            self.client.send(proto::LeaveRoom {}).log_err();
         }
     }
 }
@@ -149,7 +149,7 @@ impl Room {
     }
 
     pub(crate) fn create(
-        recipient_user_id: u64,
+        called_user_id: u64,
         initial_project: Option<ModelHandle<Project>>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -182,7 +182,7 @@ impl Room {
             match room
                 .update(&mut cx, |room, cx| {
                     room.leave_when_empty = true;
-                    room.call(recipient_user_id, initial_project_id, cx)
+                    room.call(called_user_id, initial_project_id, cx)
                 })
                 .await
             {
@@ -241,7 +241,7 @@ impl Room {
         self.participant_user_ids.clear();
         self.subscriptions.clear();
         self.live_kit.take();
-        self.client.send(proto::LeaveRoom { id: self.id })?;
+        self.client.send(proto::LeaveRoom {})?;
         Ok(())
     }
 
@@ -294,6 +294,11 @@ impl Room {
             .position(|participant| Some(participant.user_id) == self.client.user_id());
         let local_participant = local_participant_ix.map(|ix| room.participants.swap_remove(ix));
 
+        let pending_participant_user_ids = room
+            .pending_participants
+            .iter()
+            .map(|p| p.user_id)
+            .collect::<Vec<_>>();
         let remote_participant_user_ids = room
             .participants
             .iter()
@@ -303,7 +308,7 @@ impl Room {
             self.user_store.update(cx, move |user_store, cx| {
                 (
                     user_store.get_users(remote_participant_user_ids, cx),
-                    user_store.get_users(room.pending_participant_user_ids, cx),
+                    user_store.get_users(pending_participant_user_ids, cx),
                 )
             });
         self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {
@@ -487,7 +492,7 @@ impl Room {
 
     pub(crate) fn call(
         &mut self,
-        recipient_user_id: u64,
+        called_user_id: u64,
         initial_project_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -503,7 +508,7 @@ impl Room {
             let result = client
                 .request(proto::Call {
                     room_id,
-                    recipient_user_id,
+                    called_user_id,
                     initial_project_id,
                 })
                 .await;
@@ -538,7 +543,7 @@ impl Room {
                         id: worktree.id().to_proto(),
                         root_name: worktree.root_name().into(),
                         visible: worktree.is_visible(),
-                        abs_path: worktree.abs_path().as_os_str().as_bytes().to_vec(),
+                        abs_path: worktree.abs_path().to_string_lossy().into(),
                     }
                 })
                 .collect(),

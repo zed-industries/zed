@@ -23,7 +23,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Fs, HomeDir, ProjectStore};
+use project::{Fs, HomeDir};
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -139,8 +139,6 @@ fn main() {
         })
         .detach();
 
-        let project_store = cx.add_model(|_| ProjectStore::new());
-
         client.start_telemetry();
         client.report_event("start app", Default::default());
 
@@ -149,7 +147,6 @@ fn main() {
             themes,
             client: client.clone(),
             user_store,
-            project_store,
             fs,
             build_window_options,
             initialize_workspace,

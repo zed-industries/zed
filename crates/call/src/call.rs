@@ -22,7 +22,7 @@ pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut Mu
 #[derive(Clone)]
 pub struct IncomingCall {
     pub room_id: u64,
-    pub caller: Arc<User>,
+    pub calling_user: Arc<User>,
     pub participants: Vec<Arc<User>>,
     pub initial_project: Option<proto::ParticipantProject>,
 }
@@ -78,9 +78,9 @@ impl ActiveCall {
                     user_store.get_users(envelope.payload.participant_user_ids, cx)
                 })
                 .await?,
-            caller: user_store
+            calling_user: user_store
                 .update(&mut cx, |user_store, cx| {
-                    user_store.get_user(envelope.payload.caller_user_id, cx)
+                    user_store.get_user(envelope.payload.calling_user_id, cx)
                 })
                 .await?,
             initial_project: envelope.payload.initial_project,
@@ -110,13 +110,13 @@ impl ActiveCall {
 
     pub fn invite(
         &mut self,
-        recipient_user_id: u64,
+        called_user_id: u64,
         initial_project: Option<ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        if !self.pending_invites.insert(recipient_user_id) {
+        if !self.pending_invites.insert(called_user_id) {
             return Task::ready(Err(anyhow!("user was already invited")));
         }
 
@@ -136,13 +136,13 @@ impl ActiveCall {
                     };
 
                     room.update(&mut cx, |room, cx| {
-                        room.call(recipient_user_id, initial_project_id, cx)
+                        room.call(called_user_id, initial_project_id, cx)
                     })
                     .await?;
                 } else {
                     let room = cx
                         .update(|cx| {
-                            Room::create(recipient_user_id, initial_project, client, user_store, cx)
+                            Room::create(called_user_id, initial_project, client, user_store, cx)
                         })
                         .await?;
 
@@ -155,7 +155,7 @@ impl ActiveCall {
 
             let result = invite.await;
             this.update(&mut cx, |this, cx| {
-                this.pending_invites.remove(&recipient_user_id);
+                this.pending_invites.remove(&called_user_id);
                 cx.notify();
             });
             result
@@ -164,7 +164,7 @@ impl ActiveCall {
 
     pub fn cancel_invite(
         &mut self,
-        recipient_user_id: u64,
+        called_user_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let room_id = if let Some(room) = self.room() {
@@ -178,7 +178,7 @@ impl ActiveCall {
             client
                 .request(proto::CancelCall {
                     room_id,
-                    recipient_user_id,
+                    called_user_id,
                 })
                 .await?;
             anyhow::Ok(())

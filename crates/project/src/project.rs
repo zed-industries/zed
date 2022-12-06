@@ -10,7 +10,11 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
-use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
+use futures::{
+    channel::{mpsc, oneshot},
+    future::Shared,
+    AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
+};
 
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -45,12 +49,10 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     convert::TryInto,
-    ffi::OsString,
     hash::Hash,
     mem,
     num::NonZeroU32,
     ops::Range,
-    os::unix::{ffi::OsStrExt, prelude::OsStringExt},
     path::{Component, Path, PathBuf},
     rc::Rc,
     str,
@@ -68,10 +70,6 @@ pub use worktree::*;
 
 pub trait Item: Entity {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
-}
-
-pub struct ProjectStore {
-    projects: Vec<WeakModelHandle<Project>>,
 }
 
 // Language server state is stored across 3 collections:
@@ -102,7 +100,6 @@ pub struct Project {
     next_entry_id: Arc<AtomicUsize>,
     next_diagnostic_group_id: usize,
     user_store: ModelHandle<UserStore>,
-    project_store: ModelHandle<ProjectStore>,
     fs: Arc<dyn Fs>,
     client_state: Option<ProjectClientState>,
     collaborators: HashMap<PeerId, Collaborator>,
@@ -152,6 +149,8 @@ enum WorktreeHandle {
 enum ProjectClientState {
     Local {
         remote_id: u64,
+        metadata_changed: mpsc::UnboundedSender<oneshot::Sender<()>>,
+        _maintain_metadata: Task<()>,
         _detect_unshare: Task<Option<()>>,
     },
     Remote {
@@ -412,46 +411,39 @@ impl Project {
     pub fn local(
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
-        project_store: ModelHandle<ProjectStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut MutableAppContext,
     ) -> ModelHandle<Self> {
-        cx.add_model(|cx: &mut ModelContext<Self>| {
-            let handle = cx.weak_handle();
-            project_store.update(cx, |store, cx| store.add_project(handle, cx));
-
-            Self {
-                worktrees: Default::default(),
-                collaborators: Default::default(),
-                opened_buffers: Default::default(),
-                shared_buffers: Default::default(),
-                incomplete_buffers: Default::default(),
-                loading_buffers: Default::default(),
-                loading_local_worktrees: Default::default(),
-                buffer_snapshots: Default::default(),
-                client_state: None,
-                opened_buffer: watch::channel(),
-                client_subscriptions: Vec::new(),
-                _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
-                _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
-                active_entry: None,
-                languages,
-                client,
-                user_store,
-                project_store,
-                fs,
-                next_entry_id: Default::default(),
-                next_diagnostic_group_id: Default::default(),
-                language_servers: Default::default(),
-                language_server_ids: Default::default(),
-                language_server_statuses: Default::default(),
-                last_workspace_edits_by_language_server: Default::default(),
-                language_server_settings: Default::default(),
-                buffers_being_formatted: Default::default(),
-                next_language_server_id: 0,
-                nonce: StdRng::from_entropy().gen(),
-            }
+        cx.add_model(|cx: &mut ModelContext<Self>| Self {
+            worktrees: Default::default(),
+            collaborators: Default::default(),
+            opened_buffers: Default::default(),
+            shared_buffers: Default::default(),
+            incomplete_buffers: Default::default(),
+            loading_buffers: Default::default(),
+            loading_local_worktrees: Default::default(),
+            buffer_snapshots: Default::default(),
+            client_state: None,
+            opened_buffer: watch::channel(),
+            client_subscriptions: Vec::new(),
+            _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
+            _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
+            active_entry: None,
+            languages,
+            client,
+            user_store,
+            fs,
+            next_entry_id: Default::default(),
+            next_diagnostic_group_id: Default::default(),
+            language_servers: Default::default(),
+            language_server_ids: Default::default(),
+            language_server_statuses: Default::default(),
+            last_workspace_edits_by_language_server: Default::default(),
+            language_server_settings: Default::default(),
+            buffers_being_formatted: Default::default(),
+            next_language_server_id: 0,
+            nonce: StdRng::from_entropy().gen(),
         })
     }
 
@@ -459,31 +451,28 @@ impl Project {
         remote_id: u64,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
-        project_store: ModelHandle<ProjectStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         mut cx: AsyncAppContext,
     ) -> Result<ModelHandle<Self>, JoinProjectError> {
         client.authenticate_and_connect(true, &cx).await?;
 
+        let subscription = client.subscribe_to_entity(remote_id);
         let response = client
             .request(proto::JoinProject {
                 project_id: remote_id,
             })
             .await?;
+        let this = cx.add_model(|cx| {
+            let replica_id = response.replica_id as ReplicaId;
 
-        let replica_id = response.replica_id as ReplicaId;
-
-        let mut worktrees = Vec::new();
-        for worktree in response.worktrees {
-            let worktree = cx
-                .update(|cx| Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx));
-            worktrees.push(worktree);
-        }
-
-        let this = cx.add_model(|cx: &mut ModelContext<Self>| {
-            let handle = cx.weak_handle();
-            project_store.update(cx, |store, cx| store.add_project(handle, cx));
+            let mut worktrees = Vec::new();
+            for worktree in response.worktrees {
+                let worktree = cx.update(|cx| {
+                    Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx)
+                });
+                worktrees.push(worktree);
+            }
 
             let mut this = Self {
                 worktrees: Vec::new(),
@@ -497,11 +486,10 @@ impl Project {
                 _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
                 languages,
                 user_store: user_store.clone(),
-                project_store,
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
-                client_subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
+                client_subscriptions: Default::default(),
                 _subscriptions: Default::default(),
                 client: client.clone(),
                 client_state: Some(ProjectClientState::Remote {
@@ -550,10 +538,11 @@ impl Project {
                 nonce: StdRng::from_entropy().gen(),
             };
             for worktree in worktrees {
-                this.add_worktree(&worktree, cx);
+                let _ = this.add_worktree(&worktree, cx);
             }
             this
         });
+        let subscription = subscription.set_model(&this, &mut cx);
 
         let user_ids = response
             .collaborators
@@ -571,6 +560,7 @@ impl Project {
 
         this.update(&mut cx, |this, _| {
             this.collaborators = collaborators;
+            this.client_subscriptions.push(subscription);
         });
 
         Ok(this)
@@ -593,9 +583,7 @@ impl Project {
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new());
-        let project =
-            cx.update(|cx| Project::local(client, user_store, project_store, languages, fs, cx));
+        let project = cx.update(|cx| Project::local(client, user_store, languages, fs, cx));
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
@@ -676,10 +664,6 @@ impl Project {
         self.user_store.clone()
     }
 
-    pub fn project_store(&self) -> ModelHandle<ProjectStore> {
-        self.project_store.clone()
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn check_invariants(&self, cx: &AppContext) {
         if self.is_local() {
@@ -751,53 +735,22 @@ impl Project {
         }
     }
 
-    fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(ProjectClientState::Local { remote_id, .. }) = &self.client_state {
-            let project_id = *remote_id;
-            // Broadcast worktrees only if the project is online.
-            let worktrees = self
-                .worktrees
-                .iter()
-                .filter_map(|worktree| {
-                    worktree
-                        .upgrade(cx)
-                        .map(|worktree| worktree.read(cx).as_local().unwrap().metadata_proto())
-                })
-                .collect();
-            self.client
-                .send(proto::UpdateProject {
-                    project_id,
-                    worktrees,
-                })
-                .log_err();
-
-            let worktrees = self.visible_worktrees(cx).collect::<Vec<_>>();
-            let scans_complete = futures::future::join_all(
-                worktrees
-                    .iter()
-                    .filter_map(|worktree| Some(worktree.read(cx).as_local()?.scan_complete())),
-            );
-
-            let worktrees = worktrees.into_iter().map(|handle| handle.downgrade());
-
-            cx.spawn_weak(move |_, cx| async move {
-                scans_complete.await;
-                cx.read(|cx| {
-                    for worktree in worktrees {
-                        if let Some(worktree) = worktree
-                            .upgrade(cx)
-                            .and_then(|worktree| worktree.read(cx).as_local())
-                        {
-                            worktree.send_extension_counts(project_id);
-                        }
-                    }
-                })
-            })
-            .detach();
+    fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
+        let (tx, rx) = oneshot::channel();
+        if let Some(ProjectClientState::Local {
+            metadata_changed, ..
+        }) = &mut self.client_state
+        {
+            let _ = metadata_changed.unbounded_send(tx);
         }
-
-        self.project_store.update(cx, |_, cx| cx.notify());
         cx.notify();
+
+        async move {
+            // If the project is shared, this will resolve when the `_maintain_metadata` task has
+            // a chance to update the metadata. Otherwise, it will resolve right away because `tx`
+            // will get dropped.
+            let _ = rx.await;
+        }
     }
 
     pub fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
@@ -899,7 +852,7 @@ impl Project {
                     .request(proto::CreateProjectEntry {
                         worktree_id: project_path.worktree_id.to_proto(),
                         project_id,
-                        path: project_path.path.as_os_str().as_bytes().to_vec(),
+                        path: project_path.path.to_string_lossy().into(),
                         is_directory,
                     })
                     .await?;
@@ -943,7 +896,7 @@ impl Project {
                     .request(proto::CopyProjectEntry {
                         project_id,
                         entry_id: entry_id.to_proto(),
-                        new_path: new_path.as_os_str().as_bytes().to_vec(),
+                        new_path: new_path.to_string_lossy().into(),
                     })
                     .await?;
                 let entry = response
@@ -986,7 +939,7 @@ impl Project {
                     .request(proto::RenameProjectEntry {
                         project_id,
                         entry_id: entry_id.to_proto(),
-                        new_path: new_path.as_os_str().as_bytes().to_vec(),
+                        new_path: new_path.to_string_lossy().into(),
                     })
                     .await?;
                 let entry = response
@@ -1087,15 +1040,51 @@ impl Project {
             });
         }
 
-        self.client_subscriptions
-            .push(self.client.add_model_for_remote_entity(project_id, cx));
-        self.metadata_changed(cx);
+        self.client_subscriptions.push(
+            self.client
+                .subscribe_to_entity(project_id)
+                .set_model(&cx.handle(), &mut cx.to_async()),
+        );
+        let _ = self.metadata_changed(cx);
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
         cx.notify();
 
         let mut status = self.client.status();
+        let (metadata_changed_tx, mut metadata_changed_rx) = mpsc::unbounded();
         self.client_state = Some(ProjectClientState::Local {
             remote_id: project_id,
+            metadata_changed: metadata_changed_tx,
+            _maintain_metadata: cx.spawn_weak(move |this, cx| async move {
+                while let Some(tx) = metadata_changed_rx.next().await {
+                    let mut txs = vec![tx];
+                    while let Ok(Some(next_tx)) = metadata_changed_rx.try_next() {
+                        txs.push(next_tx);
+                    }
+
+                    let Some(this) = this.upgrade(&cx) else { break };
+                    this.read_with(&cx, |this, cx| {
+                        let worktrees = this
+                            .worktrees
+                            .iter()
+                            .filter_map(|worktree| {
+                                worktree.upgrade(cx).map(|worktree| {
+                                    worktree.read(cx).as_local().unwrap().metadata_proto()
+                                })
+                            })
+                            .collect();
+                        this.client.request(proto::UpdateProject {
+                            project_id,
+                            worktrees,
+                        })
+                    })
+                    .await
+                    .log_err();
+
+                    for tx in txs {
+                        let _ = tx.send(());
+                    }
+                }
+            }),
             _detect_unshare: cx.spawn_weak(move |this, mut cx| {
                 async move {
                     let is_connected = status.next().await.map_or(false, |s| s.is_connected());
@@ -1145,7 +1134,7 @@ impl Project {
                 }
             }
 
-            self.metadata_changed(cx);
+            let _ = self.metadata_changed(cx);
             cx.notify();
             self.client.send(proto::UnshareProject {
                 project_id: remote_id,
@@ -1634,10 +1623,6 @@ impl Project {
                         operations: vec![language::proto::serialize_operation(operation)],
                     });
                     cx.background().spawn(request).detach_and_log_err(cx);
-                } else if let Some(project_id) = self.remote_id() {
-                    let _ = self
-                        .client
-                        .send(proto::RegisterProjectActivity { project_id });
                 }
             }
             BufferEvent::Edited { .. } => {
@@ -3429,19 +3414,29 @@ impl Project {
                 position: Some(language::proto::serialize_anchor(&anchor)),
                 version: serialize_version(&source_buffer.version()),
             };
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn_weak(|this, mut cx| async move {
                 let response = rpc.request(message).await?;
 
-                source_buffer_handle
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(response.version))
-                    })
-                    .await;
+                if this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("project was dropped"))?
+                    .read_with(&cx, |this, _| this.is_read_only())
+                {
+                    return Err(anyhow!(
+                        "failed to get completions: project was disconnected"
+                    ));
+                } else {
+                    source_buffer_handle
+                        .update(&mut cx, |buffer, _| {
+                            buffer.wait_for_version(deserialize_version(response.version))
+                        })
+                        .await;
 
-                let completions = response.completions.into_iter().map(|completion| {
-                    language::proto::deserialize_completion(completion, language.clone())
-                });
-                futures::future::try_join_all(completions).await
+                    let completions = response.completions.into_iter().map(|completion| {
+                        language::proto::deserialize_completion(completion, language.clone())
+                    });
+                    futures::future::try_join_all(completions).await
+                }
             })
         } else {
             Task::ready(Ok(Default::default()))
@@ -3618,7 +3613,7 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
             let version = buffer.version();
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn_weak(|this, mut cx| async move {
                 let response = rpc
                     .request(proto::GetCodeActions {
                         project_id,
@@ -3629,17 +3624,27 @@ impl Project {
                     })
                     .await?;
 
-                buffer_handle
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(response.version))
-                    })
-                    .await;
+                if this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("project was dropped"))?
+                    .read_with(&cx, |this, _| this.is_read_only())
+                {
+                    return Err(anyhow!(
+                        "failed to get code actions: project was disconnected"
+                    ));
+                } else {
+                    buffer_handle
+                        .update(&mut cx, |buffer, _| {
+                            buffer.wait_for_version(deserialize_version(response.version))
+                        })
+                        .await;
 
-                response
-                    .actions
-                    .into_iter()
-                    .map(language::proto::deserialize_code_action)
-                    .collect()
+                    response
+                        .actions
+                        .into_iter()
+                        .map(language::proto::deserialize_code_action)
+                        .collect()
+                }
             })
         } else {
             Task::ready(Ok(Default::default()))
@@ -4148,9 +4153,13 @@ impl Project {
             let message = request.to_proto(project_id, buffer);
             return cx.spawn(|this, cx| async move {
                 let response = rpc.request(message).await?;
-                request
-                    .response_from_proto(response, this, buffer_handle, cx)
-                    .await
+                if this.read_with(&cx, |this, _| this.is_read_only()) {
+                    Err(anyhow!("disconnected before completing request"))
+                } else {
+                    request
+                        .response_from_proto(response, this, buffer_handle, cx)
+                        .await
+                }
             });
         }
         Task::ready(Ok(Default::default()))
@@ -4228,12 +4237,13 @@ impl Project {
                         });
                         let worktree = worktree?;
 
-                        let project_id = project.update(&mut cx, |project, cx| {
-                            project.add_worktree(&worktree, cx);
-                            project.remote_id()
-                        });
+                        project
+                            .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))
+                            .await;
 
-                        if let Some(project_id) = project_id {
+                        if let Some(project_id) =
+                            project.read_with(&cx, |project, _| project.remote_id())
+                        {
                             worktree
                                 .update(&mut cx, |worktree, cx| {
                                     worktree.as_local_mut().unwrap().share(project_id, cx)
@@ -4257,7 +4267,11 @@ impl Project {
         })
     }
 
-    pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    pub fn remove_worktree(
+        &mut self,
+        id_to_remove: WorktreeId,
+        cx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = ()> {
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade(cx) {
                 let id = worktree.read(cx).id();
@@ -4271,11 +4285,14 @@ impl Project {
                 false
             }
         });
-        self.metadata_changed(cx);
-        cx.notify();
+        self.metadata_changed(cx)
     }
 
-    fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
+    fn add_worktree(
+        &mut self,
+        worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = ()> {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
@@ -4299,15 +4316,13 @@ impl Project {
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
 
-        self.metadata_changed(cx);
         cx.observe_release(worktree, |this, worktree, cx| {
-            this.remove_worktree(worktree.id(), cx);
-            cx.notify();
+            let _ = this.remove_worktree(worktree.id(), cx);
         })
         .detach();
 
         cx.emit(Event::WorktreeAdded);
-        cx.notify();
+        self.metadata_changed(cx)
     }
 
     fn update_local_worktree_buffers(
@@ -4624,11 +4639,11 @@ impl Project {
                 } else {
                     let worktree =
                         Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
-                    this.add_worktree(&worktree, cx);
+                    let _ = this.add_worktree(&worktree, cx);
                 }
             }
 
-            this.metadata_changed(cx);
+            let _ = this.metadata_changed(cx);
             for (id, _) in old_worktrees_by_id {
                 cx.emit(Event::WorktreeRemoved(id));
             }
@@ -4670,7 +4685,7 @@ impl Project {
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
                 let worktree = worktree.as_local_mut().unwrap();
-                let path = PathBuf::from(OsString::from_vec(envelope.payload.path));
+                let path = PathBuf::from(envelope.payload.path);
                 worktree.create_entry(path, envelope.payload.is_directory, cx)
             })
             .await?;
@@ -4694,7 +4709,7 @@ impl Project {
         let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
+                let new_path = PathBuf::from(envelope.payload.new_path);
                 worktree
                     .as_local_mut()
                     .unwrap()
@@ -4722,7 +4737,7 @@ impl Project {
         let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
         let entry = worktree
             .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
+                let new_path = PathBuf::from(envelope.payload.new_path);
                 worktree
                     .as_local_mut()
                     .unwrap()
@@ -5864,48 +5879,6 @@ impl Project {
     }
 }
 
-impl ProjectStore {
-    pub fn new() -> Self {
-        Self {
-            projects: Default::default(),
-        }
-    }
-
-    pub fn projects<'a>(
-        &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = ModelHandle<Project>> {
-        self.projects
-            .iter()
-            .filter_map(|project| project.upgrade(cx))
-    }
-
-    fn add_project(&mut self, project: WeakModelHandle<Project>, cx: &mut ModelContext<Self>) {
-        if let Err(ix) = self
-            .projects
-            .binary_search_by_key(&project.id(), WeakModelHandle::id)
-        {
-            self.projects.insert(ix, project);
-        }
-        cx.notify();
-    }
-
-    fn prune_projects(&mut self, cx: &mut ModelContext<Self>) {
-        let mut did_change = false;
-        self.projects.retain(|project| {
-            if project.is_upgradable(cx) {
-                true
-            } else {
-                did_change = true;
-                false
-            }
-        });
-        if did_change {
-            cx.notify();
-        }
-    }
-}
-
 impl WorktreeHandle {
     pub fn upgrade(&self, cx: &AppContext) -> Option<ModelHandle<Worktree>> {
         match self {
@@ -5984,16 +5957,10 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
     }
 }
 
-impl Entity for ProjectStore {
-    type Event = ();
-}
-
 impl Entity for Project {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut gpui::MutableAppContext) {
-        self.project_store.update(cx, ProjectStore::prune_projects);
-
+    fn release(&mut self, _: &mut gpui::MutableAppContext) {
         match &self.client_state {
             Some(ProjectClientState::Local { remote_id, .. }) => {
                 self.client

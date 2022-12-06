@@ -140,12 +140,11 @@ messages!(
     (OpenBufferResponse, Background),
     (PerformRename, Background),
     (PerformRenameResponse, Background),
+    (Ping, Foreground),
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
     (RemoveContact, Foreground),
-    (Ping, Foreground),
-    (RegisterProjectActivity, Foreground),
     (ReloadBuffers, Foreground),
     (ReloadBuffersResponse, Foreground),
     (RemoveProjectCollaborator, Foreground),
@@ -175,7 +174,6 @@ messages!(
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateWorktree, Foreground),
-    (UpdateWorktreeExtensions, Background),
     (UpdateDiffBase, Background),
     (GetPrivateUserInfo, Foreground),
     (GetPrivateUserInfoResponse, Foreground),
@@ -231,6 +229,7 @@ request_messages!(
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
+    (UpdateProject, Ack),
     (UpdateWorktree, Ack),
 );
 
@@ -262,7 +261,6 @@ entity_messages!(
     OpenBufferForSymbol,
     PerformRename,
     PrepareRename,
-    RegisterProjectActivity,
     ReloadBuffers,
     RemoveProjectCollaborator,
     RenameProjectEntry,
@@ -278,7 +276,6 @@ entity_messages!(
     UpdateLanguageServer,
     UpdateProject,
     UpdateWorktree,
-    UpdateWorktreeExtensions,
     UpdateDiffBase
 );
 

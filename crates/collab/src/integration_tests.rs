@@ -1,5 +1,5 @@
 use crate::{
-    db::{NewUserParams, ProjectId, SqliteTestDb as TestDb, UserId},
+    db::{self, NewUserParams, TestDb, UserId},
     rpc::{Executor, Server},
     AppState,
 };
@@ -31,9 +31,7 @@ use language::{
 use live_kit_client::MacOSDisplay;
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
-use project::{
-    search::SearchQuery, DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
-};
+use project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath, WorktreeId};
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Formatter, Settings};
@@ -72,8 +70,6 @@ async fn test_basic_calls(
     deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.background()).await;
 
-    let start = std::time::Instant::now();
-
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -105,7 +101,7 @@ async fn test_basic_calls(
     // User B receives the call.
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b.caller.github_login, "user_a");
+    assert_eq!(call_b.calling_user.github_login, "user_a");
 
     // User B connects via another client and also receives a ring on the newly-connected client.
     let _client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -113,7 +109,7 @@ async fn test_basic_calls(
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.caller.github_login, "user_a");
+    assert_eq!(call_b2.calling_user.github_login, "user_a");
 
     // User B joins the room using the first client.
     active_call_b
@@ -166,7 +162,7 @@ async fn test_basic_calls(
 
     // User C receives the call, but declines it.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
-    assert_eq!(call_c.caller.github_login, "user_b");
+    assert_eq!(call_c.calling_user.github_login, "user_b");
     active_call_c.update(cx_c, |call, _| call.decline_incoming().unwrap());
     assert!(incoming_call_c.next().await.unwrap().is_none());
 
@@ -259,8 +255,6 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
-
-    eprintln!("finished test {:?}", start.elapsed());
 }
 
 #[gpui::test(iterations = 10)]
@@ -309,7 +303,7 @@ async fn test_room_uniqueness(
     // User B receives the call from user A.
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b1.caller.github_login, "user_a");
+    assert_eq!(call_b1.calling_user.github_login, "user_a");
 
     // Ensure calling users A and B from client C fails.
     active_call_c
@@ -368,7 +362,7 @@ async fn test_room_uniqueness(
         .unwrap();
     deterministic.run_until_parked();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.caller.github_login, "user_c");
+    assert_eq!(call_b2.calling_user.github_login, "user_c");
 }
 
 #[gpui::test(iterations = 10)]
@@ -696,7 +690,7 @@ async fn test_share_project(
     let incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call = incoming_call_b.borrow().clone().unwrap();
-    assert_eq!(call.caller.github_login, "user_a");
+    assert_eq!(call.calling_user.github_login, "user_a");
     let initial_project = call.initial_project.unwrap();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
@@ -767,7 +761,7 @@ async fn test_share_project(
     let incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call = incoming_call_c.borrow().clone().unwrap();
-    assert_eq!(call.caller.github_login, "user_b");
+    assert_eq!(call.calling_user.github_login, "user_b");
     let initial_project = call.initial_project.unwrap();
     active_call_c
         .update(cx_c, |call, cx| call.accept_incoming(cx))
@@ -2292,7 +2286,6 @@ async fn test_leaving_project(
             project_id,
             client_b.client.clone(),
             client_b.user_store.clone(),
-            client_b.project_store.clone(),
             client_b.language_registry.clone(),
             FakeFs::new(cx.background()),
             cx,
@@ -2416,12 +2409,6 @@ async fn test_collaborating_with_diagnostics(
 
     // Wait for server to see the diagnostics update.
     deterministic.run_until_parked();
-    {
-        let store = server.store.lock().await;
-        let project = store.project(ProjectId::from_proto(project_id)).unwrap();
-        let worktree = project.worktrees.get(&worktree_id.to_proto()).unwrap();
-        assert!(!worktree.diagnostic_summaries.is_empty());
-    }
 
     // Ensure client B observes the new diagnostics.
     project_b.read_with(cx_b, |project, cx| {
@@ -2443,7 +2430,10 @@ async fn test_collaborating_with_diagnostics(
 
     // Join project as client C and observe the diagnostics.
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
-    let project_c_diagnostic_summaries = Rc::new(RefCell::new(Vec::new()));
+    let project_c_diagnostic_summaries =
+        Rc::new(RefCell::new(project_c.read_with(cx_c, |project, cx| {
+            project.diagnostic_summaries(cx).collect::<Vec<_>>()
+        })));
     project_c.update(cx_c, |_, cx| {
         let summaries = project_c_diagnostic_summaries.clone();
         cx.subscribe(&project_c, {
@@ -5627,18 +5617,15 @@ async fn test_random_collaboration(
                 }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
-                    let contacts = server
-                        .store
-                        .lock()
-                        .await
-                        .build_initial_contacts_update(contacts)
-                        .contacts;
+                    let pool = server.connection_pool.lock().await;
                     for contact in contacts {
-                        if contact.online {
-                            assert_ne!(
-                                contact.user_id, removed_guest_id.0 as u64,
-                                "removed guest is still a contact of another peer"
-                            );
+                        if let db::Contact::Accepted { user_id, .. } = contact {
+                            if pool.is_user_online(user_id) {
+                                assert_ne!(
+                                    user_id, removed_guest_id,
+                                    "removed guest is still a contact of another peer"
+                                );
+                            }
                         }
                     }
                 }
@@ -5830,7 +5817,13 @@ impl TestServer {
     async fn start(background: Arc<executor::Background>) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
-        let test_db = TestDb::new(background.clone());
+        let use_postgres = env::var("USE_POSTGRES").ok();
+        let use_postgres = use_postgres.as_deref();
+        let test_db = if use_postgres == Some("true") || use_postgres == Some("1") {
+            TestDb::postgres(background.clone())
+        } else {
+            TestDb::sqlite(background.clone())
+        };
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
@@ -5948,11 +5941,9 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            project_store: project_store.clone(),
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
@@ -5979,7 +5970,6 @@ impl TestServer {
             remote_projects: Default::default(),
             next_root_dir_id: 0,
             user_store,
-            project_store,
             fs,
             language_registry: Arc::new(LanguageRegistry::test()),
             buffers: Default::default(),
@@ -6085,7 +6075,6 @@ struct TestClient {
     remote_projects: Vec<ModelHandle<Project>>,
     next_root_dir_id: usize,
     pub user_store: ModelHandle<UserStore>,
-    pub project_store: ModelHandle<ProjectStore>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<FakeFs>,
     buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
@@ -6155,7 +6144,6 @@ impl TestClient {
             Project::local(
                 self.client.clone(),
                 self.user_store.clone(),
-                self.project_store.clone(),
                 self.language_registry.clone(),
                 self.fs.clone(),
                 cx,
@@ -6183,7 +6171,6 @@ impl TestClient {
                 host_project_id,
                 self.client.clone(),
                 self.user_store.clone(),
-                self.project_store.clone(),
                 self.language_registry.clone(),
                 FakeFs::new(cx.background()),
                 cx,
@@ -6319,7 +6306,6 @@ impl TestClient {
                             remote_project_id,
                             client.client.clone(),
                             client.user_store.clone(),
-                            client.project_store.clone(),
                             client.language_registry.clone(),
                             FakeFs::new(cx.background()),
                             cx.to_async(),
@@ -6569,7 +6555,7 @@ impl TestClient {
                         buffers.extend(search.await?.into_keys());
                     }
                 }
-                60..=69 => {
+                60..=79 => {
                     let worktree = project
                         .read_with(cx, |project, cx| {
                             project

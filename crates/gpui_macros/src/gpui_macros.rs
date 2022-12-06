@@ -14,6 +14,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut max_retries = 0;
     let mut num_iterations = 1;
     let mut starting_seed = 0;
+    let mut detect_nondeterminism = false;
 
     for arg in args {
         match arg {
@@ -26,6 +27,9 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                 let key_name = meta.path.get_ident().map(|i| i.to_string());
                 let result = (|| {
                     match key_name.as_deref() {
+                        Some("detect_nondeterminism") => {
+                            detect_nondeterminism = parse_bool(&meta.lit)?
+                        }
                         Some("retries") => max_retries = parse_int(&meta.lit)?,
                         Some("iterations") => num_iterations = parse_int(&meta.lit)?,
                         Some("seed") => starting_seed = parse_int(&meta.lit)?,
@@ -75,10 +79,6 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("StdRng") => {
                             inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
-                            continue;
-                        }
-                        Some("bool") => {
-                            inner_fn_args.extend(quote!(is_last_iteration,));
                             continue;
                         }
                         Some("Arc") => {
@@ -146,7 +146,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, foreground_platform, deterministic, seed, is_last_iteration| {
+                    #detect_nondeterminism,
+                    &mut |cx, foreground_platform, deterministic, seed| {
                         #cx_vars
                         cx.foreground().run(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
@@ -164,9 +165,6 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("StdRng") => {
                             inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
-                        }
-                        Some("bool") => {
-                            inner_fn_args.extend(quote!(is_last_iteration,));
                         }
                         _ => {}
                     }
@@ -189,7 +187,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, _, _, seed, is_last_iteration| #inner_fn_name(#inner_fn_args),
+                    #detect_nondeterminism,
+                    &mut |cx, _, _, seed| #inner_fn_name(#inner_fn_args),
                     stringify!(#outer_fn_name).to_string(),
                 );
             }
@@ -205,6 +204,16 @@ fn parse_int(literal: &Lit) -> Result<usize, TokenStream> {
         int.base10_parse()
     } else {
         Err(syn::Error::new(literal.span(), "must be an integer"))
+    };
+
+    result.map_err(|err| TokenStream::from(err.into_compile_error()))
+}
+
+fn parse_bool(literal: &Lit) -> Result<bool, TokenStream> {
+    let result = if let Lit::Bool(result) = &literal {
+        Ok(result.value)
+    } else {
+        Err(syn::Error::new(literal.span(), "must be a boolean"))
     };
 
     result.map_err(|err| TokenStream::from(err.into_compile_error()))

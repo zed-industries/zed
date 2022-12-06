@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{Invite, NewUserParams, Signup, User, UserId, WaitlistSummary},
+    db::{Invite, NewSignup, NewUserParams, User, UserId, WaitlistSummary},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -204,7 +204,7 @@ async fn create_user(
 #[derive(Deserialize)]
 struct UpdateUserParams {
     admin: Option<bool>,
-    invite_count: Option<u32>,
+    invite_count: Option<i32>,
 }
 
 async fn update_user(
@@ -335,7 +335,7 @@ async fn get_user_for_invite_code(
 }
 
 async fn create_signup(
-    Json(params): Json<Signup>,
+    Json(params): Json<NewSignup>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
     app.db.create_signup(&params).await?;
