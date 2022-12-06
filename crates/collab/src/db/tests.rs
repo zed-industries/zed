@@ -750,7 +750,6 @@ async fn test_multiple_signup_overwrite() {
 
     db.create_signup(&signup).await.unwrap();
 
-    // TODO: Remove this method and just have create_signup return an instance?
     let signup_from_db = db.get_signup(&signup.email_address).await.unwrap();
 
     assert_eq!(
