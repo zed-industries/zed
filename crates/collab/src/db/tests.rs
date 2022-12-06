@@ -402,6 +402,71 @@ test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
     assert_ne!(metrics_id1, metrics_id2);
 });
 
+test_both_dbs!(
+    test_project_count_postgres,
+    test_project_count_sqlite,
+    db,
+    {
+        let user1 = db
+            .create_user(
+                &format!("admin@example.com"),
+                true,
+                NewUserParams {
+                    github_login: "admin".into(),
+                    github_user_id: 0,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user2 = db
+            .create_user(
+                &format!("user@example.com"),
+                false,
+                NewUserParams {
+                    github_login: "user".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+
+        let room_id = RoomId::from_proto(
+            db.create_room(user1.user_id, ConnectionId(0), "")
+                .await
+                .unwrap()
+                .id,
+        );
+        db.call(room_id, user1.user_id, ConnectionId(0), user2.user_id, None)
+            .await
+            .unwrap();
+        db.join_room(room_id, user2.user_id, ConnectionId(1))
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
+
+        db.share_project(room_id, ConnectionId(1), &[])
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
+
+        db.share_project(room_id, ConnectionId(1), &[])
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
+
+        // Projects shared by admins aren't counted.
+        db.share_project(room_id, ConnectionId(0), &[])
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
+
+        db.leave_room(ConnectionId(1)).await.unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
+    }
+);
+
 #[test]
 fn test_fuzzy_like_string() {
     assert_eq!(Database::fuzzy_like_string("abcd"), "%a%b%c%d%");
