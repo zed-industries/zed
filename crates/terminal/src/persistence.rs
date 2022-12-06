@@ -2,16 +2,16 @@ use std::path::PathBuf;
 
 use db::{define_connection, query, sqlez_macros::sql};
 
-use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+type ModelId = usize;
 
 define_connection! {
-    pub static ref TERMINAL_CONNECTION: TerminalDb<WorkspaceDb> =
+    pub static ref TERMINAL_CONNECTION: TerminalDb<()> =
         &[sql!(
             CREATE TABLE terminals (
                 workspace_id INTEGER,
-                item_id INTEGER UNIQUE,
+                model_id INTEGER UNIQUE,
                 working_directory BLOB,
-                PRIMARY KEY(workspace_id, item_id),
+                PRIMARY KEY(workspace_id, model_id),
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
             ) STRICT;
@@ -23,7 +23,7 @@ impl TerminalDb {
        pub async fn update_workspace_id(
             new_id: WorkspaceId,
             old_id: WorkspaceId,
-            item_id: ItemId
+            item_id: ModelId
         ) -> Result<()> {
             UPDATE terminals
             SET workspace_id = ?
@@ -33,7 +33,7 @@ impl TerminalDb {
 
     query! {
         pub async fn save_working_directory(
-            item_id: ItemId,
+            item_id: ModelId,
             workspace_id: WorkspaceId,
             working_directory: PathBuf
         ) -> Result<()> {
@@ -43,7 +43,7 @@ impl TerminalDb {
     }
 
     query! {
-        pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
+        pub fn get_working_directory(item_id: ModelId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT working_directory
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?

@@ -1,8 +1,5 @@
 pub mod mappings;
 mod persistence;
-pub mod terminal_container_view;
-pub mod terminal_element;
-pub mod terminal_view;
 
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
@@ -37,7 +34,6 @@ use persistence::TERMINAL_CONNECTION;
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use util::ResultExt;
-use workspace::{ItemId, WorkspaceId};
 
 use std::{
     cmp::min,

@@ -4463,6 +4463,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
+ "terminal",
  "text",
  "thiserror",
  "toml",
@@ -6256,6 +6257,31 @@ dependencies = [
 
 [[package]]
 name = "terminal"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "db",
+ "dirs 4.0.0",
+ "futures 0.3.25",
+ "gpui",
+ "itertools",
+ "lazy_static",
+ "libc",
+ "mio-extras",
+ "ordered-float",
+ "procinfo",
+ "serde",
+ "settings",
+ "shellexpand",
+ "smallvec",
+ "smol",
+ "theme",
+ "thiserror",
+]
+
+[[package]]
+name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
@@ -8166,7 +8192,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
- "terminal",
+ "terminal_view",
  "text",
  "theme",
  "theme_selector",

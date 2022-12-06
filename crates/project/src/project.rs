@@ -60,6 +60,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
+    thread::panicking,
     time::Instant,
 };
 use thiserror::Error;
@@ -1191,6 +1192,17 @@ impl Project {
 
     pub fn is_remote(&self) -> bool {
         !self.is_local()
+    }
+
+    pub fn create_terminal_connection(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<ModelHandle<TerminalConnection>> {
+        if self.is_remote() {
+            return Err(anyhow!(
+                "creating terminals as a guest is not supported yet"
+            ));
+        }
     }
 
     pub fn create_buffer(
