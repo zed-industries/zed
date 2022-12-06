@@ -3,6 +3,7 @@ mod connection_pool;
 use crate::{
     auth,
     db::{self, Database, ProjectId, RoomId, User, UserId},
+    executor::Executor,
     AppState, Result,
 };
 use anyhow::anyhow;
@@ -50,12 +51,8 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
 };
-use tokio::{
-    sync::{Mutex, MutexGuard},
-    time::Sleep,
-};
+use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
@@ -144,15 +141,6 @@ pub struct Server {
     app_state: Arc<AppState>,
     handlers: HashMap<TypeId, MessageHandler>,
 }
-
-pub trait Executor: Send + Clone {
-    type Sleep: Send + Future;
-    fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F);
-    fn sleep(&self, duration: Duration) -> Self::Sleep;
-}
-
-#[derive(Clone)]
-pub struct RealExecutor;
 
 pub(crate) struct ConnectionPoolGuard<'a> {
     guard: MutexGuard<'a, ConnectionPool>,
@@ -330,13 +318,13 @@ impl Server {
         })
     }
 
-    pub fn handle_connection<E: Executor>(
+    pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,
         address: String,
         user: User,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
-        executor: E,
+        executor: Executor,
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         let user_id = user.id;
@@ -347,12 +335,7 @@ impl Server {
                 .peer
                 .add_connection(connection, {
                     let executor = executor.clone();
-                    move |duration| {
-                        let timer = executor.sleep(duration);
-                        async move {
-                            timer.await;
-                        }
-                    }
+                    move |duration| executor.sleep(duration)
                 });
 
             tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
@@ -543,18 +526,6 @@ impl<'a> Drop for ConnectionPoolGuard<'a> {
     }
 }
 
-impl Executor for RealExecutor {
-    type Sleep = Sleep;
-
-    fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
-        tokio::task::spawn(future);
-    }
-
-    fn sleep(&self, duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration)
-    }
-}
-
 fn broadcast<F>(
     sender_id: ConnectionId,
     receiver_ids: impl IntoIterator<Item = ConnectionId>,
@@ -636,7 +607,7 @@ pub async fn handle_websocket_request(
         let connection = Connection::new(Box::pin(socket));
         async move {
             server
-                .handle_connection(connection, socket_address, user, None, RealExecutor)
+                .handle_connection(connection, socket_address, user, None, Executor::Production)
                 .await
                 .log_err();
         }

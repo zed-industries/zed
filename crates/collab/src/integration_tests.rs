@@ -1,9 +1,9 @@
 use crate::{
     db::{self, NewUserParams, TestDb, UserId},
-    rpc::{Executor, Server},
+    executor::Executor,
+    rpc::Server,
     AppState,
 };
-
 use ::rpc::Peer;
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
@@ -17,7 +17,7 @@ use editor::{
     ToggleCodeActions, Undo,
 };
 use fs::{FakeFs, Fs as _, HomeDir, LineEnding};
-use futures::{channel::oneshot, Future, StreamExt as _};
+use futures::{channel::oneshot, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
     geometry::vector::vec2f,
@@ -45,7 +45,6 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
 };
 use theme::ThemeRegistry;
 use unindent::Unindent as _;
@@ -417,7 +416,7 @@ async fn test_leaving_room_on_disconnection(
 
     // When user A disconnects, both client A and B clear their room on the active call.
     server.disconnect_client(client_a.peer_id().unwrap());
-    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
     active_call_b.read_with(cx_b, |call, _| assert!(call.room().is_none()));
     assert_eq!(
@@ -6000,7 +5999,7 @@ impl TestServer {
                                 client_name,
                                 user,
                                 Some(connection_id_tx),
-                                cx.background(),
+                                Executor::Deterministic(cx.background()),
                             ))
                             .detach();
                         let connection_id = connection_id_rx.await.unwrap();
@@ -6826,18 +6825,6 @@ impl TestClient {
 impl Drop for TestClient {
     fn drop(&mut self) {
         self.client.tear_down();
-    }
-}
-
-impl Executor for Arc<gpui::executor::Background> {
-    type Sleep = gpui::executor::Timer;
-
-    fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
-        self.spawn(future).detach();
-    }
-
-    fn sleep(&self, duration: Duration) -> Self::Sleep {
-        self.as_ref().timer(duration)
     }
 }
 
