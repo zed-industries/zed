@@ -1472,7 +1472,7 @@ impl Database {
                 .into_values::<_, QueryAs>()
                 .one(&*tx)
                 .await?
-                .unwrap_or(0) as usize)
+                .unwrap_or(0i64) as usize)
         })
         .await
     }
