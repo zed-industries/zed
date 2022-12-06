@@ -1,5 +1,5 @@
 use collab::db;
-use db::{ConnectOptions, Database, UserId};
+use db::{ConnectOptions, Database};
 use serde::{de::DeserializeOwned, Deserialize};
 use std::fmt::Write;
 
