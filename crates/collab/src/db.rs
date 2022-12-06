@@ -669,12 +669,35 @@ impl Database {
             })
             .on_conflict(
                 OnConflict::column(signup::Column::EmailAddress)
-                    .update_column(signup::Column::EmailAddress)
+                    .update_columns([
+                        signup::Column::PlatformMac,
+                        signup::Column::PlatformWindows,
+                        signup::Column::PlatformLinux,
+                        signup::Column::EditorFeatures,
+                        signup::Column::ProgrammingLanguages,
+                        signup::Column::DeviceId,
+                        signup::Column::AddedToMailingList,
+                    ])
                     .to_owned(),
             )
             .exec(&*tx)
             .await?;
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_signup(&self, email_address: &str) -> Result<signup::Model> {
+        self.transaction(|tx| async move {
+            let signup = signup::Entity::find()
+                .filter(signup::Column::EmailAddress.eq(email_address))
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| {
+                    anyhow!("signup with email address {} doesn't exist", email_address)
+                })?;
+
+            Ok(signup)
         })
         .await
     }

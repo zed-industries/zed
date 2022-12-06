@@ -2,6 +2,9 @@ use super::*;
 use gpui::executor::{Background, Deterministic};
 use std::sync::Arc;
 
+#[cfg(test)]
+use pretty_assertions::{assert_eq, assert_ne};
+
 macro_rules! test_both_dbs {
     ($postgres_test_name:ident, $sqlite_test_name:ident, $db:ident, $body:block) => {
         #[gpui::test]
@@ -725,6 +728,78 @@ async fn test_invite_codes() {
         .unwrap_err();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 1);
+}
+
+#[gpui::test]
+async fn test_multiple_signup_overwrite() {
+    let test_db = TestDb::postgres(build_background_executor());
+    let db = test_db.db();
+
+    let email_address = "user_1@example.com".to_string();
+
+    let signup = NewSignup {
+        email_address: email_address.clone(),
+        platform_mac: false,
+        platform_linux: true,
+        platform_windows: false,
+        editor_features: vec!["speed".into()],
+        programming_languages: vec!["rust".into(), "c".into()],
+        device_id: Some(format!("device_id")),
+        added_to_mailing_list: false,
+    };
+
+    db.create_signup(&signup).await.unwrap();
+
+    // TODO: Remove this method and just have create_signup return an instance?
+    let signup_from_db = db.get_signup(&signup.email_address).await.unwrap();
+
+    assert_eq!(
+        signup_from_db.clone(),
+        signup::Model {
+            email_address: signup.email_address,
+            platform_mac: signup.platform_mac,
+            platform_linux: signup.platform_linux,
+            platform_windows: signup.platform_windows,
+            editor_features: Some(signup.editor_features),
+            programming_languages: Some(signup.programming_languages),
+            added_to_mailing_list: signup.added_to_mailing_list,
+            ..signup_from_db
+        }
+    );
+
+    let signup_overwrite = NewSignup {
+        email_address,
+        platform_mac: true,
+        platform_linux: false,
+        platform_windows: true,
+        editor_features: vec!["git integration".into(), "clean design".into()],
+        programming_languages: vec!["d".into(), "elm".into()],
+        device_id: Some(format!("different_device_id")),
+        added_to_mailing_list: true,
+    };
+
+    db.create_signup(&signup_overwrite).await.unwrap();
+
+    let signup_overwrite_from_db = db
+        .get_signup(&signup_overwrite.email_address)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        signup_overwrite_from_db.clone(),
+        signup::Model {
+            platform_mac: signup_overwrite.platform_mac,
+            platform_linux: signup_overwrite.platform_linux,
+            platform_windows: signup_overwrite.platform_windows,
+            editor_features: Some(signup_overwrite.editor_features),
+            programming_languages: Some(signup_overwrite.programming_languages),
+            device_id: signup_overwrite.device_id,
+            added_to_mailing_list: signup_overwrite.added_to_mailing_list,
+            // shouldn't overwrite their creation Datetime - user shouldn't lose their spot in line
+            created_at: signup_from_db.created_at,
+            ..signup_overwrite_from_db
+        }
+    );
 }
 
 #[gpui::test]

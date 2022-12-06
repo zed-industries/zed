@@ -34,7 +34,7 @@ pub struct Invite {
     pub email_confirmation_code: String,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct NewSignup {
     pub email_address: String,
     pub platform_mac: bool,
