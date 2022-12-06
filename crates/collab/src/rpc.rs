@@ -1616,7 +1616,8 @@ async fn respond_to_contact_request(
 
         db.respond_to_contact_request(responder_id, requester_id, accept)
             .await?;
-        let busy = db.is_user_busy(requester_id).await?;
+        let requester_busy = db.is_user_busy(requester_id).await?;
+        let responder_busy = db.is_user_busy(responder_id).await?;
 
         let pool = session.connection_pool().await;
         // Update responder with new contact
@@ -1624,7 +1625,7 @@ async fn respond_to_contact_request(
         if accept {
             update
                 .contacts
-                .push(contact_for_user(requester_id, false, busy, &pool));
+                .push(contact_for_user(requester_id, false, requester_busy, &pool));
         }
         update
             .remove_incoming_requests
@@ -1638,7 +1639,7 @@ async fn respond_to_contact_request(
         if accept {
             update
                 .contacts
-                .push(contact_for_user(responder_id, true, busy, &pool));
+                .push(contact_for_user(responder_id, true, responder_busy, &pool));
         }
         update
             .remove_outgoing_requests
