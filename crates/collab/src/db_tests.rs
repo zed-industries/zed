@@ -514,6 +514,8 @@ async fn test_invite_codes() {
             should_notify: false
         }]
     );
+    assert!(db.has_contact(user1, user2).await.unwrap());
+    assert!(db.has_contact(user2, user1).await.unwrap());
     assert_eq!(
         db.get_invite_code_for_user(user2).await.unwrap().unwrap().1,
         7
@@ -565,6 +567,8 @@ async fn test_invite_codes() {
             should_notify: false
         }]
     );
+    assert!(db.has_contact(user1, user3).await.unwrap());
+    assert!(db.has_contact(user3, user1).await.unwrap());
     assert_eq!(
         db.get_invite_code_for_user(user3).await.unwrap().unwrap().1,
         3
@@ -626,6 +630,8 @@ async fn test_invite_codes() {
             should_notify: false
         }]
     );
+    assert!(db.has_contact(user1, user4).await.unwrap());
+    assert!(db.has_contact(user4, user1).await.unwrap());
     assert_eq!(
         db.get_invite_code_for_user(user4).await.unwrap().unwrap().1,
         5
@@ -637,6 +643,72 @@ async fn test_invite_codes() {
         .unwrap_err();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 1);
+
+    // A newer user can invite an existing one via a different email address
+    // than the one they used to sign up.
+    let user5 = db
+        .create_user(
+            "user5@example.com",
+            false,
+            NewUserParams {
+                github_login: "user5".into(),
+                github_user_id: 5,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    db.set_invite_count_for_user(user5, 5).await.unwrap();
+    let (user5_invite_code, _) = db.get_invite_code_for_user(user5).await.unwrap().unwrap();
+    let user5_invite_to_user1 = db
+        .create_invite_from_code(&user5_invite_code, "user1@different.com", None)
+        .await
+        .unwrap();
+    let user1_2 = db
+        .create_user_from_invite(
+            &user5_invite_to_user1,
+            NewUserParams {
+                github_login: "user1".into(),
+                github_user_id: 1,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .user_id;
+    assert_eq!(user1_2, user1);
+    assert_eq!(
+        db.get_contacts(user1).await.unwrap(),
+        [
+            Contact::Accepted {
+                user_id: user2,
+                should_notify: true,
+            },
+            Contact::Accepted {
+                user_id: user3,
+                should_notify: true,
+            },
+            Contact::Accepted {
+                user_id: user4,
+                should_notify: true,
+            },
+            Contact::Accepted {
+                user_id: user5,
+                should_notify: false,
+            }
+        ]
+    );
+    assert_eq!(
+        db.get_contacts(user5).await.unwrap(),
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: true,
+        }]
+    );
+    assert!(db.has_contact(user1, user5).await.unwrap());
+    assert!(db.has_contact(user5, user1).await.unwrap());
 }
 
 #[gpui::test]
