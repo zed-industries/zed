@@ -878,10 +878,16 @@ impl Database {
             let signup = signup.update(&*tx).await?;
 
             if let Some(inviting_user_id) = signup.inviting_user_id {
+                let (user_id_a, user_id_b, a_to_b) = if inviting_user_id < user.id {
+                    (inviting_user_id, user.id, true)
+                } else {
+                    (user.id, inviting_user_id, false)
+                };
+
                 contact::Entity::insert(contact::ActiveModel {
-                    user_id_a: ActiveValue::set(inviting_user_id),
-                    user_id_b: ActiveValue::set(user.id),
-                    a_to_b: ActiveValue::set(true),
+                    user_id_a: ActiveValue::set(user_id_a),
+                    user_id_b: ActiveValue::set(user_id_b),
+                    a_to_b: ActiveValue::set(a_to_b),
                     should_notify: ActiveValue::set(true),
                     accepted: ActiveValue::set(true),
                     ..Default::default()
