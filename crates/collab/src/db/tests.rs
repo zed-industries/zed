@@ -737,7 +737,7 @@ async fn test_multiple_signup_overwrite() {
 
     let email_address = "user_1@example.com".to_string();
 
-    let signup = NewSignup {
+    let initial_signup = NewSignup {
         email_address: email_address.clone(),
         platform_mac: false,
         platform_linux: true,
@@ -748,26 +748,26 @@ async fn test_multiple_signup_overwrite() {
         added_to_mailing_list: false,
     };
 
-    db.create_signup(&signup).await.unwrap();
+    db.create_signup(&initial_signup).await.unwrap();
 
-    let signup_from_db = db.get_signup(&signup.email_address).await.unwrap();
+    let initial_signup_from_db = db.get_signup(&email_address).await.unwrap();
 
     assert_eq!(
-        signup_from_db.clone(),
+        initial_signup_from_db.clone(),
         signup::Model {
-            email_address: signup.email_address,
-            platform_mac: signup.platform_mac,
-            platform_linux: signup.platform_linux,
-            platform_windows: signup.platform_windows,
-            editor_features: Some(signup.editor_features),
-            programming_languages: Some(signup.programming_languages),
-            added_to_mailing_list: signup.added_to_mailing_list,
-            ..signup_from_db
+            email_address: initial_signup.email_address,
+            platform_mac: initial_signup.platform_mac,
+            platform_linux: initial_signup.platform_linux,
+            platform_windows: initial_signup.platform_windows,
+            editor_features: Some(initial_signup.editor_features),
+            programming_languages: Some(initial_signup.programming_languages),
+            added_to_mailing_list: initial_signup.added_to_mailing_list,
+            ..initial_signup_from_db
         }
     );
 
-    let signup_overwrite = NewSignup {
-        email_address,
+    let subsequent_signup = NewSignup {
+        email_address: email_address.clone(),
         platform_mac: true,
         platform_linux: false,
         platform_windows: true,
@@ -777,26 +777,23 @@ async fn test_multiple_signup_overwrite() {
         added_to_mailing_list: true,
     };
 
-    db.create_signup(&signup_overwrite).await.unwrap();
+    db.create_signup(&subsequent_signup).await.unwrap();
 
-    let signup_overwrite_from_db = db
-        .get_signup(&signup_overwrite.email_address)
-        .await
-        .unwrap();
+    let subsequent_signup_from_db = db.get_signup(&email_address).await.unwrap();
 
     assert_eq!(
-        signup_overwrite_from_db.clone(),
+        subsequent_signup_from_db.clone(),
         signup::Model {
-            platform_mac: signup_overwrite.platform_mac,
-            platform_linux: signup_overwrite.platform_linux,
-            platform_windows: signup_overwrite.platform_windows,
-            editor_features: Some(signup_overwrite.editor_features),
-            programming_languages: Some(signup_overwrite.programming_languages),
-            device_id: signup_overwrite.device_id,
-            added_to_mailing_list: signup_overwrite.added_to_mailing_list,
+            platform_mac: subsequent_signup.platform_mac,
+            platform_linux: subsequent_signup.platform_linux,
+            platform_windows: subsequent_signup.platform_windows,
+            editor_features: Some(subsequent_signup.editor_features),
+            programming_languages: Some(subsequent_signup.programming_languages),
+            device_id: subsequent_signup.device_id,
+            added_to_mailing_list: subsequent_signup.added_to_mailing_list,
             // shouldn't overwrite their creation Datetime - user shouldn't lose their spot in line
-            created_at: signup_from_db.created_at,
-            ..signup_overwrite_from_db
+            created_at: initial_signup_from_db.created_at,
+            ..subsequent_signup_from_db
         }
     );
 }
