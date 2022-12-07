@@ -350,17 +350,24 @@ impl Db<sqlx::Postgres> {
             .await?;
 
             if let Some(inviting_user_id) = inviting_user_id {
+                let (user_id_a, user_id_b, a_to_b) = if inviting_user_id < user_id {
+                    (inviting_user_id, user_id, true)
+                } else {
+                    (user_id, inviting_user_id, false)
+                };
+
                 sqlx::query(
                     "
                     INSERT INTO contacts
                         (user_id_a, user_id_b, a_to_b, should_notify, accepted)
                     VALUES
-                        ($1, $2, TRUE, TRUE, TRUE)
+                        ($1, $2, $3, TRUE, TRUE)
                     ON CONFLICT DO NOTHING
                     ",
                 )
-                .bind(inviting_user_id)
-                .bind(user_id)
+                .bind(user_id_a)
+                .bind(user_id_b)
+                .bind(a_to_b)
                 .execute(&mut tx)
                 .await?;
             }
