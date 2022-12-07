@@ -737,6 +737,8 @@ async fn test_multiple_signup_overwrite() {
 
     let email_address = "user_1@example.com".to_string();
 
+    let initial_signup_created_at_milliseconds = 0;
+
     let initial_signup = NewSignup {
         email_address: email_address.clone(),
         platform_mac: false,
@@ -746,6 +748,9 @@ async fn test_multiple_signup_overwrite() {
         programming_languages: vec!["rust".into(), "c".into()],
         device_id: Some(format!("device_id")),
         added_to_mailing_list: false,
+        created_at: Some(
+            DateTime::from_timestamp_millis(initial_signup_created_at_milliseconds).unwrap(),
+        ),
     };
 
     db.create_signup(&initial_signup).await.unwrap();
@@ -775,6 +780,13 @@ async fn test_multiple_signup_overwrite() {
         programming_languages: vec!["d".into(), "elm".into()],
         device_id: Some(format!("different_device_id")),
         added_to_mailing_list: true,
+        // subsequent signup happens next day
+        created_at: Some(
+            DateTime::from_timestamp_millis(
+                initial_signup_created_at_milliseconds + (1000 * 60 * 60 * 24),
+            )
+            .unwrap(),
+        ),
     };
 
     db.create_signup(&subsequent_signup).await.unwrap();
@@ -817,6 +829,7 @@ async fn test_signups() {
             programming_languages: vec!["rust".into(), "c".into()],
             device_id: Some(format!("device_id_{i}")),
             added_to_mailing_list: i != 0, // One user failed to subscribe
+            created_at: Some(DateTime::from_timestamp_millis(i as i64).unwrap()), // Signups are consecutive
         })
         .collect::<Vec<NewSignup>>();
 

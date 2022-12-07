@@ -44,6 +44,7 @@ pub struct NewSignup {
     pub programming_languages: Vec<String>,
     pub device_id: Option<String>,
     pub added_to_mailing_list: bool,
+    pub created_at: Option<DateTime>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromQueryResult)]
