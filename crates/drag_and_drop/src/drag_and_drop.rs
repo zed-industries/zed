@@ -9,8 +9,14 @@ use gpui::{
     View, WeakViewHandle,
 };
 
+const DEAD_ZONE: f32 = 4.;
+
 enum State<V: View> {
     Down {
+        region_offset: Vector2F,
+        region: RectF,
+    },
+    DeadZone {
         region_offset: Vector2F,
         region: RectF,
     },
@@ -32,6 +38,13 @@ impl<V: View> Clone for State<V> {
                 region_offset,
                 region,
             } => State::Down {
+                region_offset,
+                region,
+            },
+            &State::DeadZone {
+                region_offset,
+                region,
+            } => State::DeadZone {
                 region_offset,
                 region,
             },
@@ -101,7 +114,7 @@ impl<V: View> DragAndDrop<V> {
     pub fn drag_started(event: MouseDown, cx: &mut EventContext) {
         cx.update_global(|this: &mut Self, _| {
             this.currently_dragged = Some(State::Down {
-                region_offset: event.region.origin() - event.position,
+                region_offset: event.position - event.region.origin(),
                 region: event.region,
             });
         })
@@ -122,7 +135,31 @@ impl<V: View> DragAndDrop<V> {
                     region_offset,
                     region,
                 })
-                | Some(&State::Dragging {
+                | Some(&State::DeadZone {
+                    region_offset,
+                    region,
+                }) => {
+                    if (dbg!(event.position) - (dbg!(region.origin() + region_offset))).length()
+                        > DEAD_ZONE
+                    {
+                        this.currently_dragged = Some(State::Dragging {
+                            window_id,
+                            region_offset,
+                            region,
+                            position: event.position,
+                            payload,
+                            render: Rc::new(move |payload, cx| {
+                                render(payload.downcast_ref::<T>().unwrap(), cx)
+                            }),
+                        });
+                    } else {
+                        this.currently_dragged = Some(State::DeadZone {
+                            region_offset,
+                            region,
+                        })
+                    }
+                }
+                Some(&State::Dragging {
                     region_offset,
                     region,
                     ..
@@ -151,6 +188,7 @@ impl<V: View> DragAndDrop<V> {
             .and_then(|state| {
                 match state {
                     State::Down { .. } => None,
+                    State::DeadZone { .. } => None,
                     State::Dragging {
                         window_id,
                         region_offset,
@@ -163,7 +201,7 @@ impl<V: View> DragAndDrop<V> {
                             return None;
                         }
 
-                        let position = position + region_offset;
+                        let position = position - region_offset;
                         Some(
                             Overlay::new(
                                 MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, cx| {
