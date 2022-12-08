@@ -34,7 +34,7 @@ pub struct Invite {
     pub email_confirmation_code: String,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct NewSignup {
     pub email_address: String,
     pub platform_mac: bool,
@@ -44,6 +44,7 @@ pub struct NewSignup {
     pub programming_languages: Vec<String>,
     pub device_id: Option<String>,
     pub added_to_mailing_list: bool,
+    pub created_at: Option<DateTime>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromQueryResult)]

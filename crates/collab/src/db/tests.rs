@@ -2,6 +2,9 @@ use super::*;
 use gpui::executor::{Background, Deterministic};
 use std::sync::Arc;
 
+#[cfg(test)]
+use pretty_assertions::{assert_eq, assert_ne};
+
 macro_rules! test_both_dbs {
     ($postgres_test_name:ident, $sqlite_test_name:ident, $db:ident, $body:block) => {
         #[gpui::test]
@@ -805,6 +808,86 @@ async fn test_invite_codes() {
 }
 
 #[gpui::test]
+async fn test_multiple_signup_overwrite() {
+    let test_db = TestDb::postgres(build_background_executor());
+    let db = test_db.db();
+
+    let email_address = "user_1@example.com".to_string();
+
+    let initial_signup_created_at_milliseconds = 0;
+
+    let initial_signup = NewSignup {
+        email_address: email_address.clone(),
+        platform_mac: false,
+        platform_linux: true,
+        platform_windows: false,
+        editor_features: vec!["speed".into()],
+        programming_languages: vec!["rust".into(), "c".into()],
+        device_id: Some(format!("device_id")),
+        added_to_mailing_list: false,
+        created_at: Some(
+            DateTime::from_timestamp_millis(initial_signup_created_at_milliseconds).unwrap(),
+        ),
+    };
+
+    db.create_signup(&initial_signup).await.unwrap();
+
+    let initial_signup_from_db = db.get_signup(&email_address).await.unwrap();
+
+    assert_eq!(
+        initial_signup_from_db.clone(),
+        signup::Model {
+            email_address: initial_signup.email_address,
+            platform_mac: initial_signup.platform_mac,
+            platform_linux: initial_signup.platform_linux,
+            platform_windows: initial_signup.platform_windows,
+            editor_features: Some(initial_signup.editor_features),
+            programming_languages: Some(initial_signup.programming_languages),
+            added_to_mailing_list: initial_signup.added_to_mailing_list,
+            ..initial_signup_from_db
+        }
+    );
+
+    let subsequent_signup = NewSignup {
+        email_address: email_address.clone(),
+        platform_mac: true,
+        platform_linux: false,
+        platform_windows: true,
+        editor_features: vec!["git integration".into(), "clean design".into()],
+        programming_languages: vec!["d".into(), "elm".into()],
+        device_id: Some(format!("different_device_id")),
+        added_to_mailing_list: true,
+        // subsequent signup happens next day
+        created_at: Some(
+            DateTime::from_timestamp_millis(
+                initial_signup_created_at_milliseconds + (1000 * 60 * 60 * 24),
+            )
+            .unwrap(),
+        ),
+    };
+
+    db.create_signup(&subsequent_signup).await.unwrap();
+
+    let subsequent_signup_from_db = db.get_signup(&email_address).await.unwrap();
+
+    assert_eq!(
+        subsequent_signup_from_db.clone(),
+        signup::Model {
+            platform_mac: subsequent_signup.platform_mac,
+            platform_linux: subsequent_signup.platform_linux,
+            platform_windows: subsequent_signup.platform_windows,
+            editor_features: Some(subsequent_signup.editor_features),
+            programming_languages: Some(subsequent_signup.programming_languages),
+            device_id: subsequent_signup.device_id,
+            added_to_mailing_list: subsequent_signup.added_to_mailing_list,
+            // shouldn't overwrite their creation Datetime - user shouldn't lose their spot in line
+            created_at: initial_signup_from_db.created_at,
+            ..subsequent_signup_from_db
+        }
+    );
+}
+
+#[gpui::test]
 async fn test_signups() {
     let test_db = TestDb::postgres(build_background_executor());
     let db = test_db.db();
@@ -823,6 +906,7 @@ async fn test_signups() {
             programming_languages: vec!["rust".into(), "c".into()],
             device_id: Some(format!("device_id_{i}")),
             added_to_mailing_list: i != 0, // One user failed to subscribe
+            created_at: Some(DateTime::from_timestamp_millis(i as i64).unwrap()), // Signups are consecutive
         })
         .collect::<Vec<NewSignup>>();
 
