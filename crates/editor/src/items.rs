@@ -26,8 +26,9 @@ use workspace::{
 
 use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, persistence::DB, Anchor, Autoscroll, Editor, Event, ExcerptId,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
+    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
+    Event, ExcerptId, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+    FORMAT_TIMEOUT,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -87,14 +88,17 @@ impl FollowableItem for Editor {
                 }
 
                 if let Some(anchor) = state.scroll_top_anchor {
-                    editor.set_scroll_top_anchor(
-                        Anchor {
-                            buffer_id: Some(state.buffer_id as usize),
-                            excerpt_id,
-                            text_anchor: language::proto::deserialize_anchor(anchor)
-                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                    editor.set_scroll_anchor_internal(
+                        ScrollAnchor {
+                            top_anchor: Anchor {
+                                buffer_id: Some(state.buffer_id as usize),
+                                excerpt_id,
+                                text_anchor: language::proto::deserialize_anchor(anchor)
+                                    .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                            },
+                            offset: vec2f(state.scroll_x, state.scroll_y),
                         },
-                        vec2f(state.scroll_x, state.scroll_y),
+                        false,
                         cx,
                     );
                 }
@@ -132,13 +136,14 @@ impl FollowableItem for Editor {
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
         let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
+        let scroll_anchor = self.scroll_manager.anchor();
         Some(proto::view::Variant::Editor(proto::view::Editor {
             buffer_id,
             scroll_top_anchor: Some(language::proto::serialize_anchor(
-                &self.scroll_top_anchor.text_anchor,
+                &scroll_anchor.top_anchor.text_anchor,
             )),
-            scroll_x: self.scroll_position.x(),
-            scroll_y: self.scroll_position.y(),
+            scroll_x: scroll_anchor.offset.x(),
+            scroll_y: scroll_anchor.offset.y(),
             selections: self
                 .selections
                 .disjoint_anchors()
@@ -160,11 +165,12 @@ impl FollowableItem for Editor {
         match update {
             proto::update_view::Variant::Editor(update) => match event {
                 Event::ScrollPositionChanged { .. } => {
+                    let scroll_anchor = self.scroll_manager.anchor();
                     update.scroll_top_anchor = Some(language::proto::serialize_anchor(
-                        &self.scroll_top_anchor.text_anchor,
+                        &scroll_anchor.top_anchor.text_anchor,
                     ));
-                    update.scroll_x = self.scroll_position.x();
-                    update.scroll_y = self.scroll_position.y();
+                    update.scroll_x = scroll_anchor.offset.x();
+                    update.scroll_y = scroll_anchor.offset.y();
                     true
                 }
                 Event::SelectionsChanged { .. } => {
@@ -207,14 +213,16 @@ impl FollowableItem for Editor {
                     self.set_selections_from_remote(selections, cx);
                     self.request_autoscroll_remotely(Autoscroll::newest(), cx);
                 } else if let Some(anchor) = message.scroll_top_anchor {
-                    self.set_scroll_top_anchor(
-                        Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: language::proto::deserialize_anchor(anchor)
-                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                    self.set_scroll_anchor(
+                        ScrollAnchor {
+                            top_anchor: Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id,
+                                text_anchor: language::proto::deserialize_anchor(anchor)
+                                    .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                            },
+                            offset: vec2f(message.scroll_x, message.scroll_y),
                         },
-                        vec2f(message.scroll_x, message.scroll_y),
                         cx,
                     );
                 }
@@ -279,13 +287,12 @@ impl Item for Editor {
                 buffer.clip_point(data.cursor_position, Bias::Left)
             };
 
-            let scroll_top_anchor = if buffer.can_resolve(&data.scroll_top_anchor) {
-                data.scroll_top_anchor
-            } else {
-                buffer.anchor_before(
+            let mut scroll_anchor = data.scroll_anchor;
+            if !buffer.can_resolve(&scroll_anchor.top_anchor) {
+                scroll_anchor.top_anchor = buffer.anchor_before(
                     buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
-                )
-            };
+                );
+            }
 
             drop(buffer);
 
@@ -293,8 +300,7 @@ impl Item for Editor {
                 false
             } else {
                 let nav_history = self.nav_history.take();
-                self.scroll_position = data.scroll_position;
-                self.scroll_top_anchor = scroll_top_anchor;
+                self.set_scroll_anchor(scroll_anchor, cx);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([offset..offset])
                 });

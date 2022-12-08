@@ -61,7 +61,7 @@ impl SelectionsCollection {
         self.buffer.read(cx).read(cx)
     }
 
-    pub fn set_state(&mut self, other: &SelectionsCollection) {
+    pub fn clone_state(&mut self, other: &SelectionsCollection) {
         self.next_selection_id = other.next_selection_id;
         self.line_mode = other.line_mode;
         self.disjoint = other.disjoint.clone();

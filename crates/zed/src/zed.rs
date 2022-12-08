@@ -324,6 +324,9 @@ pub fn initialize_workspace(
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 
+    let window_id = cx.window_id();
+    vim::observe_keypresses(window_id, cx);
+
     cx.on_window_should_close(|workspace, cx| {
         if let Some(task) = workspace.close(&Default::default(), cx) {
             task.detach_and_log_err(cx);
@@ -613,7 +616,7 @@ fn schema_file_match(path: &Path) -> &Path {
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{Autoscroll, DisplayPoint, Editor};
+    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };

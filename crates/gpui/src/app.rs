@@ -594,6 +594,9 @@ type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContex
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
+type KeystrokeCallback = Box<
+    dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut MutableAppContext) -> bool,
+>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
@@ -619,6 +622,7 @@ pub struct MutableAppContext {
     observations: CallbackCollection<usize, ObservationCallback>,
     window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
     window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
+    keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
 
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
@@ -678,6 +682,7 @@ impl MutableAppContext {
             global_observations: Default::default(),
             window_activation_observations: Default::default(),
             window_fullscreen_observations: Default::default(),
+            keystroke_observations: Default::default(),
             action_dispatch_observations: Default::default(),
             presenters_and_platform_windows: Default::default(),
             foreground,
@@ -763,11 +768,11 @@ impl MutableAppContext {
             .with_context(|| format!("invalid data for action {}", name))
     }
 
-    pub fn add_action<A, V, F>(&mut self, handler: F)
+    pub fn add_action<A, V, F, R>(&mut self, handler: F)
     where
         A: Action,
         V: View,
-        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> R,
     {
         self.add_action_internal(handler, false)
     }
@@ -781,11 +786,11 @@ impl MutableAppContext {
         self.add_action_internal(handler, true)
     }
 
-    fn add_action_internal<A, V, F>(&mut self, mut handler: F, capture: bool)
+    fn add_action_internal<A, V, F, R>(&mut self, mut handler: F, capture: bool)
     where
         A: Action,
         V: View,
-        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> R,
     {
         let handler = Box::new(
             move |view: &mut dyn AnyView,
@@ -1255,6 +1260,27 @@ impl MutableAppContext {
         }
     }
 
+    pub fn observe_keystrokes<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    where
+        F: 'static
+            + FnMut(
+                &Keystroke,
+                &MatchResult,
+                Option<&Box<dyn Action>>,
+                &mut MutableAppContext,
+            ) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.keystroke_observations
+            .add_callback(window_id, subscription_id, Box::new(callback));
+
+        Subscription::KeystrokeObservation {
+            id: subscription_id,
+            window_id,
+            observations: Some(self.keystroke_observations.downgrade()),
+        }
+    }
+
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
         self.pending_effects.push_back(Effect::Deferred {
             callback: Box::new(callback),
@@ -1538,27 +1564,39 @@ impl MutableAppContext {
                 })
                 .collect();
 
-            match self
+            let match_result = self
                 .keystroke_matcher
-                .push_keystroke(keystroke.clone(), dispatch_path)
-            {
+                .push_keystroke(keystroke.clone(), dispatch_path);
+            let mut handled_by = None;
+
+            let keystroke_handled = match &match_result {
                 MatchResult::None => false,
                 MatchResult::Pending => true,
                 MatchResult::Matches(matches) => {
                     for (view_id, action) in matches {
                         if self.handle_dispatch_action_from_effect(
                             window_id,
-                            Some(view_id),
+                            Some(*view_id),
                             action.as_ref(),
                         ) {
                             self.keystroke_matcher.clear_pending();
-                            return true;
+                            handled_by = Some(action.boxed_clone());
+                            break;
                         }
                     }
-                    false
+                    handled_by.is_some()
                 }
-            }
+            };
+
+            self.keystroke(
+                window_id,
+                keystroke.clone(),
+                handled_by,
+                match_result.clone(),
+            );
+            keystroke_handled
         } else {
+            self.keystroke(window_id, keystroke.clone(), None, MatchResult::None);
             false
         }
     }
@@ -2110,6 +2148,12 @@ impl MutableAppContext {
                         } => {
                             self.handle_window_should_close_subscription_effect(window_id, callback)
                         }
+                        Effect::Keystroke {
+                            window_id,
+                            keystroke,
+                            handled_by,
+                            result,
+                        } => self.handle_keystroke_effect(window_id, keystroke, handled_by, result),
                     }
                     self.pending_notifications.clear();
                     self.remove_dropped_entities();
@@ -2185,6 +2229,21 @@ impl MutableAppContext {
         self.pending_effects.push_back(Effect::ActivateWindow {
             window_id,
             is_active,
+        });
+    }
+
+    fn keystroke(
+        &mut self,
+        window_id: usize,
+        keystroke: Keystroke,
+        handled_by: Option<Box<dyn Action>>,
+        result: MatchResult,
+    ) {
+        self.pending_effects.push_back(Effect::Keystroke {
+            window_id,
+            keystroke,
+            handled_by,
+            result,
         });
     }
 
@@ -2296,6 +2355,21 @@ impl MutableAppContext {
             });
 
             Some(())
+        });
+    }
+
+    fn handle_keystroke_effect(
+        &mut self,
+        window_id: usize,
+        keystroke: Keystroke,
+        handled_by: Option<Box<dyn Action>>,
+        result: MatchResult,
+    ) {
+        self.update(|this| {
+            let mut observations = this.keystroke_observations.clone();
+            observations.emit_and_cleanup(window_id, this, {
+                move |callback, this| callback(&keystroke, &result, handled_by.as_ref(), this)
+            });
         });
     }
 
@@ -2852,6 +2926,12 @@ pub enum Effect {
         subscription_id: usize,
         callback: WindowFullscreenCallback,
     },
+    Keystroke {
+        window_id: usize,
+        keystroke: Keystroke,
+        handled_by: Option<Box<dyn Action>>,
+        result: MatchResult,
+    },
     RefreshWindows,
     DispatchActionFrom {
         window_id: usize,
@@ -2994,6 +3074,21 @@ impl Debug for Effect {
             Effect::WindowShouldCloseSubscription { window_id, .. } => f
                 .debug_struct("Effect::WindowShouldCloseSubscription")
                 .field("window_id", window_id)
+                .finish(),
+            Effect::Keystroke {
+                window_id,
+                keystroke,
+                handled_by,
+                result,
+            } => f
+                .debug_struct("Effect::Keystroke")
+                .field("window_id", window_id)
+                .field("keystroke", keystroke)
+                .field(
+                    "keystroke",
+                    &handled_by.as_ref().map(|handled_by| handled_by.name()),
+                )
+                .field("result", result)
                 .finish(),
         }
     }
@@ -3824,6 +3919,33 @@ impl<'a, T: View> ViewContext<'a, T> {
                     false
                 }
             })
+    }
+
+    pub fn observe_keystroke<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static
+            + FnMut(
+                &mut T,
+                &Keystroke,
+                Option<&Box<dyn Action>>,
+                &MatchResult,
+                &mut ViewContext<T>,
+            ) -> bool,
+    {
+        let observer = self.weak_handle();
+        self.app.observe_keystrokes(
+            self.window_id(),
+            move |keystroke, result, handled_by, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, keystroke, handled_by, result, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            },
+        )
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -5018,6 +5140,11 @@ pub enum Subscription {
         window_id: usize,
         observations: Option<Weak<Mapping<usize, WindowFullscreenCallback>>>,
     },
+    KeystrokeObservation {
+        id: usize,
+        window_id: usize,
+        observations: Option<Weak<Mapping<usize, KeystrokeCallback>>>,
+    },
 
     ReleaseObservation {
         id: usize,
@@ -5054,6 +5181,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::ActionObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::KeystrokeObservation { observations, .. } => {
                 observations.take();
             }
             Subscription::WindowActivationObservation { observations, .. } => {
@@ -5173,6 +5303,27 @@ impl Drop for Subscription {
             Subscription::ActionObservation { id, observations } => {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
                     observations.lock().remove(id);
+                }
+            }
+            Subscription::KeystrokeObservation {
+                id,
+                window_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations
+                        .lock()
+                        .entry(*window_id)
+                        .or_default()
+                        .entry(*id)
+                    {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
                 }
             }
             Subscription::WindowActivationObservation {

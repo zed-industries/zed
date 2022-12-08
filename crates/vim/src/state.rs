@@ -18,6 +18,7 @@ impl Default for Mode {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Namespace {
     G,
+    Z,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -95,6 +96,7 @@ impl Operator {
         let operator_context = match operator {
             Some(Operator::Number(_)) => "n",
             Some(Operator::Namespace(Namespace::G)) => "g",
+            Some(Operator::Namespace(Namespace::Z)) => "z",
             Some(Operator::Object { around: false }) => "i",
             Some(Operator::Object { around: true }) => "a",
             Some(Operator::Change) => "c",

@@ -1,7 +1,7 @@
 use super::{
     display_map::{BlockContext, ToDisplayPoint},
-    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Scroll, Select, SelectPhase,
-    SoftWrap, ToPoint, MAX_LINE_LEN,
+    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Select, SelectPhase, SoftWrap,
+    ToPoint, MAX_LINE_LEN,
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
@@ -13,6 +13,7 @@ use crate::{
         GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
     },
     mouse_context_menu::DeployMouseContextMenu,
+    scroll::actions::Scroll,
     EditorStyle,
 };
 use clock::ReplicaId;
@@ -955,7 +956,7 @@ impl EditorElement {
                     move |_, cx| {
                         if let Some(view) = view.upgrade(cx.deref_mut()) {
                             view.update(cx.deref_mut(), |view, cx| {
-                                view.make_scrollbar_visible(cx);
+                                view.scroll_manager.show_scrollbar(cx);
                             });
                         }
                     }
@@ -977,7 +978,7 @@ impl EditorElement {
                                     position.set_y(top_row as f32);
                                     view.set_scroll_position(position, cx);
                                 } else {
-                                    view.make_scrollbar_visible(cx);
+                                    view.scroll_manager.show_scrollbar(cx);
                                 }
                             });
                         }
@@ -1298,7 +1299,7 @@ impl EditorElement {
         };
 
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
-        let scroll_x = snapshot.scroll_position.x();
+        let scroll_x = snapshot.scroll_anchor.offset.x();
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| match block {
@@ -1670,7 +1671,7 @@ impl Element for EditorElement {
                 ));
             }
 
-            show_scrollbars = view.show_scrollbars();
+            show_scrollbars = view.scroll_manager.scrollbars_visible();
             include_root = view
                 .project
                 .as_ref()
@@ -1725,7 +1726,7 @@ impl Element for EditorElement {
         );
 
         self.update_view(cx.app, |view, cx| {
-            let clamped = view.clamp_scroll_left(scroll_max.x());
+            let clamped = view.scroll_manager.clamp_scroll_left(scroll_max.x());
 
             let autoscrolled = if autoscroll_horizontally {
                 view.autoscroll_horizontally(

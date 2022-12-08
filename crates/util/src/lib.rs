@@ -216,6 +216,8 @@ pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
     }
 }
 
+/// Immediately invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result
 #[macro_export]
 macro_rules! iife {
     ($block:block) => {
@@ -223,6 +225,8 @@ macro_rules! iife {
     };
 }
 
+/// Async lImmediately invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result. Async version of above
 #[macro_export]
 macro_rules! async_iife {
     ($block:block) => {

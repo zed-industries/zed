@@ -2,7 +2,7 @@ mod change;
 mod delete;
 mod yank;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, cmp::Ordering};
 
 use crate::{
     motion::Motion,
@@ -12,10 +12,13 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, ClipboardSelection, DisplayPoint,
+    display_map::ToDisplayPoint,
+    scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
+    Anchor, Bias, ClipboardSelection, DisplayPoint, Editor,
 };
-use gpui::{actions, MutableAppContext, ViewContext};
+use gpui::{actions, impl_actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, Point, SelectionGoal};
+use serde::Deserialize;
 use workspace::Workspace;
 
 use self::{
@@ -23,6 +26,9 @@ use self::{
     delete::{delete_motion, delete_object},
     yank::{yank_motion, yank_object},
 };
+
+#[derive(Clone, PartialEq, Deserialize)]
+struct Scroll(ScrollAmount);
 
 actions!(
     vim,
@@ -40,6 +46,8 @@ actions!(
         Yank,
     ]
 );
+
+impl_actions!(vim, [Scroll]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(insert_after);
@@ -72,6 +80,13 @@ pub fn init(cx: &mut MutableAppContext) {
         })
     });
     cx.add_action(paste);
+    cx.add_action(|_: &mut Workspace, Scroll(amount): &Scroll, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.update_active_editor(cx, |editor, cx| {
+                scroll(editor, amount, cx);
+            })
+        })
+    });
 }
 
 pub fn normal_motion(
@@ -365,6 +380,46 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
             });
         });
     });
+}
+
+fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
+    let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
+    editor.scroll_screen(amount, cx);
+    if should_move_cursor {
+        let selection_ordering = editor.newest_selection_on_screen(cx);
+        if selection_ordering.is_eq() {
+            return;
+        }
+
+        let visible_rows = if let Some(visible_rows) = editor.visible_line_count() {
+            visible_rows as u32
+        } else {
+            return;
+        };
+
+        let scroll_margin_rows = editor.vertical_scroll_margin() as u32;
+        let top_anchor = editor.scroll_manager.anchor().top_anchor;
+
+        editor.change_selections(None, cx, |s| {
+            s.replace_cursors_with(|snapshot| {
+                let mut new_point = top_anchor.to_display_point(&snapshot);
+
+                match selection_ordering {
+                    Ordering::Less => {
+                        *new_point.row_mut() += scroll_margin_rows;
+                        new_point = snapshot.clip_point(new_point, Bias::Right);
+                    }
+                    Ordering::Greater => {
+                        *new_point.row_mut() += visible_rows - scroll_margin_rows as u32;
+                        new_point = snapshot.clip_point(new_point, Bias::Left);
+                    }
+                    Ordering::Equal => unreachable!(),
+                }
+
+                vec![new_point]
+            })
+        });
+    }
 }
 
 #[cfg(test)]

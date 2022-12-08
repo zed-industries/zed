@@ -10,6 +10,7 @@ mod mouse_context_menu;
 pub mod movement;
 mod multi_buffer;
 mod persistence;
+pub mod scroll;
 pub mod selections_collection;
 
 #[cfg(test)]
@@ -33,13 +34,13 @@ use gpui::{
     elements::*,
     executor,
     fonts::{self, HighlightStyle, TextStyle},
-    geometry::vector::{vec2f, Vector2F},
+    geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     serde_json::json,
-    text_layout, AnyViewHandle, AppContext, AsyncAppContext, Axis, ClipboardItem, Element,
-    ElementBox, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
+    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -61,11 +62,13 @@ pub use multi_buffer::{
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, LocationLink, Project, ProjectPath, ProjectTransaction};
+use scroll::{
+    autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
+};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
-use smol::Timer;
 use snippet::Snippet;
 use std::{
     any::TypeId,
@@ -86,11 +89,9 @@ use workspace::{ItemNavHistory, Workspace, WorkspaceId};
 use crate::git::diff_hunk_to_display;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
-pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -98,12 +99,6 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct Scroll {
-    pub scroll_position: Vector2F,
-    pub axis: Option<Axis>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -258,7 +253,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, Jump]);
+impl_internal_actions!(editor, [Select, Jump]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -270,12 +265,8 @@ pub enum Direction {
     Next,
 }
 
-#[derive(Default)]
-struct ScrollbarAutoHide(bool);
-
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::new_file);
-    cx.add_action(Editor::scroll);
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
@@ -305,12 +296,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::redo);
     cx.add_action(Editor::move_up);
     cx.add_action(Editor::move_page_up);
-    cx.add_action(Editor::page_up);
     cx.add_action(Editor::move_down);
     cx.add_action(Editor::move_page_down);
-    cx.add_action(Editor::page_down);
     cx.add_action(Editor::next_screen);
-
     cx.add_action(Editor::move_left);
     cx.add_action(Editor::move_right);
     cx.add_action(Editor::move_to_previous_word_start);
@@ -370,6 +358,7 @@ pub fn init(cx: &mut MutableAppContext) {
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
     mouse_context_menu::init(cx);
+    scroll::actions::init(cx);
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
@@ -411,46 +400,6 @@ pub enum SelectMode {
     All,
 }
 
-#[derive(PartialEq, Eq)]
-pub enum Autoscroll {
-    Next,
-    Strategy(AutoscrollStrategy),
-}
-
-impl Autoscroll {
-    pub fn fit() -> Self {
-        Self::Strategy(AutoscrollStrategy::Fit)
-    }
-
-    pub fn newest() -> Self {
-        Self::Strategy(AutoscrollStrategy::Newest)
-    }
-
-    pub fn center() -> Self {
-        Self::Strategy(AutoscrollStrategy::Center)
-    }
-}
-
-#[derive(PartialEq, Eq, Default)]
-pub enum AutoscrollStrategy {
-    Fit,
-    Newest,
-    #[default]
-    Center,
-    Top,
-    Bottom,
-}
-
-impl AutoscrollStrategy {
-    fn next(&self) -> Self {
-        match self {
-            AutoscrollStrategy::Center => AutoscrollStrategy::Top,
-            AutoscrollStrategy::Top => AutoscrollStrategy::Bottom,
-            _ => AutoscrollStrategy::Center,
-        }
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum EditorMode {
     SingleLine,
@@ -477,74 +426,12 @@ type CompletionId = usize;
 type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-#[derive(Clone, Copy)]
-pub struct OngoingScroll {
-    last_timestamp: Instant,
-    axis: Option<Axis>,
-}
-
-impl OngoingScroll {
-    fn initial() -> OngoingScroll {
-        OngoingScroll {
-            last_timestamp: Instant::now() - SCROLL_EVENT_SEPARATION,
-            axis: None,
-        }
-    }
-
-    fn update(&mut self, axis: Option<Axis>) {
-        self.last_timestamp = Instant::now();
-        self.axis = axis;
-    }
-
-    pub fn filter(&self, delta: &mut Vector2F) -> Option<Axis> {
-        const UNLOCK_PERCENT: f32 = 1.9;
-        const UNLOCK_LOWER_BOUND: f32 = 6.;
-        let mut axis = self.axis;
-
-        let x = delta.x().abs();
-        let y = delta.y().abs();
-        let duration = Instant::now().duration_since(self.last_timestamp);
-        if duration > SCROLL_EVENT_SEPARATION {
-            //New ongoing scroll will start, determine axis
-            axis = if x <= y {
-                Some(Axis::Vertical)
-            } else {
-                Some(Axis::Horizontal)
-            };
-        } else if x.max(y) >= UNLOCK_LOWER_BOUND {
-            //Check if the current ongoing will need to unlock
-            match axis {
-                Some(Axis::Vertical) => {
-                    if x > y && x >= y * UNLOCK_PERCENT {
-                        axis = None;
-                    }
-                }
-
-                Some(Axis::Horizontal) => {
-                    if y > x && y >= x * UNLOCK_PERCENT {
-                        axis = None;
-                    }
-                }
-
-                None => {}
-            }
-        }
-
-        match axis {
-            Some(Axis::Vertical) => *delta = vec2f(0., delta.y()),
-            Some(Axis::Horizontal) => *delta = vec2f(delta.x(), 0.),
-            None => {}
-        }
-
-        axis
-    }
-}
-
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
     display_map: ModelHandle<DisplayMap>,
     pub selections: SelectionsCollection,
+    pub scroll_manager: ScrollManager,
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
@@ -554,10 +441,6 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
-    ongoing_scroll: OngoingScroll,
-    scroll_position: Vector2F,
-    scroll_top_anchor: Anchor,
-    autoscroll_request: Option<(Autoscroll, bool)>,
     soft_wrap_mode_override: Option<settings::SoftWrap>,
     get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
@@ -565,10 +448,7 @@ pub struct Editor {
     focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
     show_local_selections: bool,
-    show_scrollbars: bool,
-    hide_scrollbar_task: Option<Task<()>>,
     mode: EditorMode,
-    vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
@@ -590,8 +470,6 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
-    visible_line_count: Option<f32>,
-    last_autoscroll: Option<(Vector2F, f32, f32, AutoscrollStrategy)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -600,9 +478,8 @@ pub struct EditorSnapshot {
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
+    scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
-    scroll_position: Vector2F,
-    scroll_top_anchor: Anchor,
 }
 
 #[derive(Clone, Debug)]
@@ -1090,12 +967,9 @@ pub struct ClipboardSelection {
 
 #[derive(Debug)]
 pub struct NavigationData {
-    // Matching offsets for anchor and scroll_top_anchor allows us to recreate the anchor if the buffer
-    // has since been closed
     cursor_anchor: Anchor,
     cursor_position: Point,
-    scroll_position: Vector2F,
-    scroll_top_anchor: Anchor,
+    scroll_anchor: ScrollAnchor,
     scroll_top_row: u32,
 }
 
@@ -1163,9 +1037,8 @@ impl Editor {
                 display_map.set_state(&snapshot, cx);
             });
         });
-        clone.selections.set_state(&self.selections);
-        clone.scroll_position = self.scroll_position;
-        clone.scroll_top_anchor = self.scroll_top_anchor;
+        clone.selections.clone_state(&self.selections);
+        clone.scroll_manager.clone_state(&self.scroll_manager);
         clone.searchable = self.searchable;
         clone
     }
@@ -1200,6 +1073,7 @@ impl Editor {
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
+            scroll_manager: ScrollManager::new(),
             columnar_selection_tail: None,
             add_selections_state: None,
             select_next_state: None,
@@ -1212,17 +1086,10 @@ impl Editor {
             soft_wrap_mode_override: None,
             get_field_editor_theme,
             project,
-            ongoing_scroll: OngoingScroll::initial(),
-            scroll_position: Vector2F::zero(),
-            scroll_top_anchor: Anchor::min(),
-            autoscroll_request: None,
             focused: false,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
-            show_scrollbars: true,
-            hide_scrollbar_task: None,
             mode,
-            vertical_scroll_margin: 3.0,
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
@@ -1244,8 +1111,6 @@ impl Editor {
             leader_replica_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
-            visible_line_count: None,
-            last_autoscroll: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1254,7 +1119,7 @@ impl Editor {
             ],
         };
         this.end_selection(cx);
-        this.make_scrollbar_visible(cx);
+        this.scroll_manager.show_scrollbar(cx);
 
         let editor_created_event = EditorCreated(cx.handle());
         cx.emit_global(editor_created_event);
@@ -1307,9 +1172,8 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
-            ongoing_scroll: self.ongoing_scroll,
-            scroll_position: self.scroll_position,
-            scroll_top_anchor: self.scroll_top_anchor,
+            scroll_anchor: self.scroll_manager.anchor(),
+            ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self
                 .handle
@@ -1348,64 +1212,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut ViewContext<Self>) {
-        self.vertical_scroll_margin = margin_rows as f32;
-        cx.notify();
-    }
-
-    pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
-        self.set_scroll_position_internal(scroll_position, true, cx);
-    }
-
-    fn set_scroll_position_internal(
-        &mut self,
-        scroll_position: Vector2F,
-        local: bool,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-
-        if scroll_position.y() <= 0. {
-            self.scroll_top_anchor = Anchor::min();
-            self.scroll_position = scroll_position.max(vec2f(0., 0.));
-        } else {
-            let scroll_top_buffer_offset =
-                DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
-            let anchor = map
-                .buffer_snapshot
-                .anchor_at(scroll_top_buffer_offset, Bias::Right);
-            self.scroll_position = vec2f(
-                scroll_position.x(),
-                scroll_position.y() - anchor.to_display_point(&map).row() as f32,
-            );
-            self.scroll_top_anchor = anchor;
-        }
-
-        self.make_scrollbar_visible(cx);
-        self.autoscroll_request.take();
-        hide_hover(self, cx);
-
-        cx.emit(Event::ScrollPositionChanged { local });
-        cx.notify();
-    }
-
-    fn set_visible_line_count(&mut self, lines: f32) {
-        self.visible_line_count = Some(lines)
-    }
-
-    fn set_scroll_top_anchor(
-        &mut self,
-        anchor: Anchor,
-        position: Vector2F,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.scroll_top_anchor = anchor;
-        self.scroll_position = position;
-        self.make_scrollbar_visible(cx);
-        cx.emit(Event::ScrollPositionChanged { local: false });
-        cx.notify();
-    }
-
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
         cx.notify();
@@ -1429,199 +1235,6 @@ impl Editor {
 
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
         self.input_enabled = input_enabled;
-    }
-
-    pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        compute_scroll_position(&display_map, self.scroll_position, &self.scroll_top_anchor)
-    }
-
-    pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
-        if max < self.scroll_position.x() {
-            self.scroll_position.set_x(max);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn autoscroll_vertically(
-        &mut self,
-        viewport_height: f32,
-        line_height: f32,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        let visible_lines = viewport_height / line_height;
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut scroll_position =
-            compute_scroll_position(&display_map, self.scroll_position, &self.scroll_top_anchor);
-        let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
-            (display_map.max_point().row() as f32 - visible_lines + 1.).max(0.)
-        } else {
-            display_map.max_point().row() as f32
-        };
-        if scroll_position.y() > max_scroll_top {
-            scroll_position.set_y(max_scroll_top);
-            self.set_scroll_position(scroll_position, cx);
-        }
-
-        let (autoscroll, local) = if let Some(autoscroll) = self.autoscroll_request.take() {
-            autoscroll
-        } else {
-            return false;
-        };
-
-        let first_cursor_top;
-        let last_cursor_bottom;
-        if let Some(highlighted_rows) = &self.highlighted_rows {
-            first_cursor_top = highlighted_rows.start as f32;
-            last_cursor_bottom = first_cursor_top + 1.;
-        } else if autoscroll == Autoscroll::newest() {
-            let newest_selection = self.selections.newest::<Point>(cx);
-            first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
-            last_cursor_bottom = first_cursor_top + 1.;
-        } else {
-            let selections = self.selections.all::<Point>(cx);
-            first_cursor_top = selections
-                .first()
-                .unwrap()
-                .head()
-                .to_display_point(&display_map)
-                .row() as f32;
-            last_cursor_bottom = selections
-                .last()
-                .unwrap()
-                .head()
-                .to_display_point(&display_map)
-                .row() as f32
-                + 1.0;
-        }
-
-        let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
-            0.
-        } else {
-            ((visible_lines - (last_cursor_bottom - first_cursor_top)) / 2.0).floor()
-        };
-        if margin < 0.0 {
-            return false;
-        }
-
-        let strategy = match autoscroll {
-            Autoscroll::Strategy(strategy) => strategy,
-            Autoscroll::Next => {
-                let last_autoscroll = &self.last_autoscroll;
-                if let Some(last_autoscroll) = last_autoscroll {
-                    if self.scroll_position == last_autoscroll.0
-                        && first_cursor_top == last_autoscroll.1
-                        && last_cursor_bottom == last_autoscroll.2
-                    {
-                        last_autoscroll.3.next()
-                    } else {
-                        AutoscrollStrategy::default()
-                    }
-                } else {
-                    AutoscrollStrategy::default()
-                }
-            }
-        };
-
-        match strategy {
-            AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
-                let margin = margin.min(self.vertical_scroll_margin);
-                let target_top = (first_cursor_top - margin).max(0.0);
-                let target_bottom = last_cursor_bottom + margin;
-                let start_row = scroll_position.y();
-                let end_row = start_row + visible_lines;
-
-                if target_top < start_row {
-                    scroll_position.set_y(target_top);
-                    self.set_scroll_position_internal(scroll_position, local, cx);
-                } else if target_bottom >= end_row {
-                    scroll_position.set_y(target_bottom - visible_lines);
-                    self.set_scroll_position_internal(scroll_position, local, cx);
-                }
-            }
-            AutoscrollStrategy::Center => {
-                scroll_position.set_y((first_cursor_top - margin).max(0.0));
-                self.set_scroll_position_internal(scroll_position, local, cx);
-            }
-            AutoscrollStrategy::Top => {
-                scroll_position.set_y((first_cursor_top).max(0.0));
-                self.set_scroll_position_internal(scroll_position, local, cx);
-            }
-            AutoscrollStrategy::Bottom => {
-                scroll_position.set_y((last_cursor_bottom - visible_lines).max(0.0));
-                self.set_scroll_position_internal(scroll_position, local, cx);
-            }
-        }
-
-        self.last_autoscroll = Some((
-            self.scroll_position,
-            first_cursor_top,
-            last_cursor_bottom,
-            strategy,
-        ));
-
-        true
-    }
-
-    pub fn autoscroll_horizontally(
-        &mut self,
-        start_row: u32,
-        viewport_width: f32,
-        scroll_width: f32,
-        max_glyph_width: f32,
-        layouts: &[text_layout::Line],
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.all::<Point>(cx);
-
-        let mut target_left;
-        let mut target_right;
-
-        if self.highlighted_rows.is_some() {
-            target_left = 0.0_f32;
-            target_right = 0.0_f32;
-        } else {
-            target_left = std::f32::INFINITY;
-            target_right = 0.0_f32;
-            for selection in selections {
-                let head = selection.head().to_display_point(&display_map);
-                if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
-                    let start_column = head.column().saturating_sub(3);
-                    let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
-                    target_left = target_left.min(
-                        layouts[(head.row() - start_row) as usize]
-                            .x_for_index(start_column as usize),
-                    );
-                    target_right = target_right.max(
-                        layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
-                            + max_glyph_width,
-                    );
-                }
-            }
-        }
-
-        target_right = target_right.min(scroll_width);
-
-        if target_right - target_left > viewport_width {
-            return false;
-        }
-
-        let scroll_left = self.scroll_position.x() * max_glyph_width;
-        let scroll_right = scroll_left + viewport_width;
-
-        if target_left < scroll_left {
-            self.scroll_position.set_x(target_left / max_glyph_width);
-            true
-        } else if target_right > scroll_right {
-            self.scroll_position
-                .set_x((target_right - viewport_width) / max_glyph_width);
-            true
-        } else {
-            false
-        }
     }
 
     fn selections_did_change(
@@ -1744,11 +1357,6 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
         });
-    }
-
-    fn scroll(&mut self, action: &Scroll, cx: &mut ViewContext<Self>) {
-        self.ongoing_scroll.update(action.axis);
-        self.set_scroll_position(action.scroll_position, cx);
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
@@ -4073,23 +3681,6 @@ impl Editor {
         })
     }
 
-    pub fn next_screen(&mut self, _: &NextScreen, cx: &mut ViewContext<Editor>) {
-        if self.take_rename(true, cx).is_some() {
-            return;
-        }
-
-        if let Some(_) = self.context_menu.as_mut() {
-            return;
-        }
-
-        if matches!(self.mode, EditorMode::SingleLine) {
-            cx.propagate_action();
-            return;
-        }
-
-        self.request_autoscroll(Autoscroll::Next, cx);
-    }
-
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -4123,10 +3714,13 @@ impl Editor {
             return;
         }
 
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_first(cx) {
-                return;
-            }
+        if self
+            .context_menu
+            .as_mut()
+            .map(|menu| menu.select_first(cx))
+            .unwrap_or(false)
+        {
+            return;
         }
 
         if matches!(self.mode, EditorMode::SingleLine) {
@@ -4134,9 +3728,10 @@ impl Editor {
             return;
         }
 
-        let row_count = match self.visible_line_count {
-            Some(row_count) => row_count as u32 - 1,
-            None => return,
+        let row_count = if let Some(row_count) = self.visible_line_count() {
+            row_count as u32 - 1
+        } else {
+            return;
         };
 
         let autoscroll = if action.center_cursor {
@@ -4156,32 +3751,6 @@ impl Editor {
                 selection.collapse_to(cursor, goal);
             });
         });
-    }
-
-    pub fn page_up(&mut self, _: &PageUp, cx: &mut ViewContext<Self>) {
-        if self.take_rename(true, cx).is_some() {
-            return;
-        }
-
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_first(cx) {
-                return;
-            }
-        }
-
-        if matches!(self.mode, EditorMode::SingleLine) {
-            cx.propagate_action();
-            return;
-        }
-
-        let lines = match self.visible_line_count {
-            Some(lines) => lines,
-            None => return,
-        };
-
-        let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position - vec2f(0., lines + 1.);
-        self.set_scroll_position(new_pos, cx);
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
@@ -4221,10 +3790,13 @@ impl Editor {
             return;
         }
 
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_last(cx) {
-                return;
-            }
+        if self
+            .context_menu
+            .as_mut()
+            .map(|menu| menu.select_last(cx))
+            .unwrap_or(false)
+        {
+            return;
         }
 
         if matches!(self.mode, EditorMode::SingleLine) {
@@ -4232,9 +3804,10 @@ impl Editor {
             return;
         }
 
-        let row_count = match self.visible_line_count {
-            Some(row_count) => row_count as u32 - 1,
-            None => return,
+        let row_count = if let Some(row_count) = self.visible_line_count() {
+            row_count as u32 - 1
+        } else {
+            return;
         };
 
         let autoscroll = if action.center_cursor {
@@ -4254,32 +3827,6 @@ impl Editor {
                 selection.collapse_to(cursor, goal);
             });
         });
-    }
-
-    pub fn page_down(&mut self, _: &PageDown, cx: &mut ViewContext<Self>) {
-        if self.take_rename(true, cx).is_some() {
-            return;
-        }
-
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_last(cx) {
-                return;
-            }
-        }
-
-        if matches!(self.mode, EditorMode::SingleLine) {
-            cx.propagate_action();
-            return;
-        }
-
-        let lines = match self.visible_line_count {
-            Some(lines) => lines,
-            None => return,
-        };
-
-        let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position + vec2f(0., lines - 1.);
-        self.set_scroll_position(new_pos, cx);
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
@@ -4602,18 +4149,19 @@ impl Editor {
 
     fn push_to_nav_history(
         &self,
-        position: Anchor,
+        cursor_anchor: Anchor,
         new_position: Option<Point>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(nav_history) = &self.nav_history {
             let buffer = self.buffer.read(cx).read(cx);
-            let point = position.to_point(&buffer);
-            let scroll_top_row = self.scroll_top_anchor.to_point(&buffer).row;
+            let cursor_position = cursor_anchor.to_point(&buffer);
+            let scroll_state = self.scroll_manager.anchor();
+            let scroll_top_row = scroll_state.top_row(&buffer);
             drop(buffer);
 
             if let Some(new_position) = new_position {
-                let row_delta = (new_position.row as i64 - point.row as i64).abs();
+                let row_delta = (new_position.row as i64 - cursor_position.row as i64).abs();
                 if row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA {
                     return;
                 }
@@ -4621,10 +4169,9 @@ impl Editor {
 
             nav_history.push(
                 Some(NavigationData {
-                    cursor_anchor: position,
-                    cursor_position: point,
-                    scroll_position: self.scroll_position,
-                    scroll_top_anchor: self.scroll_top_anchor,
+                    cursor_anchor,
+                    cursor_position,
+                    scroll_anchor: scroll_state,
                     scroll_top_row,
                 }),
                 cx,
@@ -5922,16 +5469,6 @@ impl Editor {
         });
     }
 
-    pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
-        self.autoscroll_request = Some((autoscroll, true));
-        cx.notify();
-    }
-
-    fn request_autoscroll_remotely(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
-        self.autoscroll_request = Some((autoscroll, false));
-        cx.notify();
-    }
-
     pub fn transact(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -6340,31 +5877,6 @@ impl Editor {
         self.blink_manager.read(cx).visible() && self.focused
     }
 
-    pub fn show_scrollbars(&self) -> bool {
-        self.show_scrollbars
-    }
-
-    fn make_scrollbar_visible(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.show_scrollbars {
-            self.show_scrollbars = true;
-            cx.notify();
-        }
-
-        if cx.default_global::<ScrollbarAutoHide>().0 {
-            self.hide_scrollbar_task = Some(cx.spawn_weak(|this, mut cx| async move {
-                Timer::after(SCROLLBAR_SHOW_INTERVAL).await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        this.show_scrollbars = false;
-                        cx.notify();
-                    });
-                }
-            }));
-        } else {
-            self.hide_scrollbar_task = None;
-        }
-    }
-
     fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {
         cx.notify();
     }
@@ -6561,11 +6073,7 @@ impl EditorSnapshot {
     }
 
     pub fn scroll_position(&self) -> Vector2F {
-        compute_scroll_position(
-            &self.display_snapshot,
-            self.scroll_position,
-            &self.scroll_top_anchor,
-        )
+        self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 }
 
@@ -6575,20 +6083,6 @@ impl Deref for EditorSnapshot {
     fn deref(&self) -> &Self::Target {
         &self.display_snapshot
     }
-}
-
-fn compute_scroll_position(
-    snapshot: &DisplaySnapshot,
-    mut scroll_position: Vector2F,
-    scroll_top_anchor: &Anchor,
-) -> Vector2F {
-    if *scroll_top_anchor != Anchor::min() {
-        let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
-        scroll_position.set_y(scroll_top + scroll_position.y());
-    } else {
-        scroll_position.set_y(0.);
-    }
-    scroll_position
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -6603,7 +6097,6 @@ pub enum Event {
     SelectionsChanged { local: bool },
     ScrollPositionChanged { local: bool },
     Closed,
-    IgnoredInput,
 }
 
 pub struct EditorFocused(pub ViewHandle<Editor>);
@@ -6789,7 +6282,6 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::IgnoredInput);
             return;
         }
 
@@ -6826,7 +6318,6 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::IgnoredInput);
             return;
         }
 

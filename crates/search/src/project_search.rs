@@ -4,8 +4,8 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{
-    items::active_match_index, Anchor, Autoscroll, Editor, MultiBuffer, SelectAll,
-    MAX_TAB_TITLE_LEN,
+    items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
+    SelectAll, MAX_TAB_TITLE_LEN,
 };
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,

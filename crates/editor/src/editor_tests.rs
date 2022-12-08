@@ -12,7 +12,7 @@ use crate::test::{
 };
 use gpui::{
     executor::Deterministic,
-    geometry::rect::RectF,
+    geometry::{rect::RectF, vector::vec2f},
     platform::{WindowBounds, WindowOptions},
 };
 use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
@@ -544,31 +544,30 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
 
         // Set scroll position to check later
         editor.set_scroll_position(Vector2F::new(5.5, 5.5), cx);
-        let original_scroll_position = editor.scroll_position;
-        let original_scroll_top_anchor = editor.scroll_top_anchor;
+        let original_scroll_position = editor.scroll_manager.anchor();
 
         // Jump to the end of the document and adjust scroll
         editor.move_to_end(&MoveToEnd, cx);
         editor.set_scroll_position(Vector2F::new(-2.5, -0.5), cx);
-        assert_ne!(editor.scroll_position, original_scroll_position);
-        assert_ne!(editor.scroll_top_anchor, original_scroll_top_anchor);
+        assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
 
         let nav_entry = pop_history(&mut editor, cx).unwrap();
         editor.navigate(nav_entry.data.unwrap(), cx);
-        assert_eq!(editor.scroll_position, original_scroll_position);
-        assert_eq!(editor.scroll_top_anchor, original_scroll_top_anchor);
+        assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
 
         // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-        let mut invalid_anchor = editor.scroll_top_anchor;
+        let mut invalid_anchor = editor.scroll_manager.anchor().top_anchor;
         invalid_anchor.text_anchor.buffer_id = Some(999);
         let invalid_point = Point::new(9999, 0);
         editor.navigate(
             Box::new(NavigationData {
                 cursor_anchor: invalid_anchor,
                 cursor_position: invalid_point,
-                scroll_top_anchor: invalid_anchor,
+                scroll_anchor: ScrollAnchor {
+                    top_anchor: invalid_anchor,
+                    offset: Default::default(),
+                },
                 scroll_top_row: invalid_point.row,
-                scroll_position: Default::default(),
             }),
             cx,
         );
@@ -5034,7 +5033,7 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
             .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
             .unwrap();
         assert_eq!(follower.scroll_position(cx), initial_scroll_position);
-        assert!(follower.autoscroll_request.is_some());
+        assert!(follower.scroll_manager.has_autoscroll_request());
     });
     assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..0]);
 
