@@ -1,5 +1,5 @@
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use editor::{Autoscroll, Editor};
+use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{actions, MutableAppContext};
 use settings::{HourFormat, Settings};
 use std::{

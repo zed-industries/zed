@@ -38,22 +38,6 @@
             ],
             "%": "vim::Matching",
             "escape": "editor::Cancel",
-            "i": [
-                "vim::PushOperator",
-                {
-                    "Object": {
-                        "around": false
-                    }
-                }
-            ],
-            "a": [
-                "vim::PushOperator",
-                {
-                    "Object": {
-                        "around": true
-                    }
-                }
-            ],
             "0": "vim::StartOfLine", // When no number operator present, use start of line motion
             "1": [
                 "vim::Number",
@@ -94,6 +78,28 @@
         }
     },
     {
+        //Operators
+        "context": "Editor && VimControl && vim_operator == none",
+        "bindings": {
+            "i": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": false
+                    }
+                }
+            ],
+            "a": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": true
+                    }
+                }
+            ]
+        }
+    },
+    {
         "context": "Editor && vim_mode == normal && vim_operator == none",
         "bindings": {
             "c": [
@@ -109,6 +115,12 @@
             "y": [
                 "vim::PushOperator",
                 "Yank"
+            ],
+            "z": [
+                "vim::PushOperator",
+                {
+                    "Namespace": "Z"
+                }
             ],
             "i": [
                 "vim::SwitchMode",
@@ -147,6 +159,30 @@
                 {
                     "focus": true
                 }
+            ],
+            "ctrl-f": [
+                "vim::Scroll",
+                "PageDown"
+            ],
+            "ctrl-b": [
+                "vim::Scroll",
+                "PageUp"
+            ],
+            "ctrl-d": [
+                "vim::Scroll",
+                "HalfPageDown"
+            ],
+            "ctrl-u": [
+                "vim::Scroll",
+                "HalfPageUp"
+            ],
+            "ctrl-e": [
+                "vim::Scroll",
+                "LineDown"
+            ],
+            "ctrl-y": [
+                "vim::Scroll",
+                "LineUp"
             ]
         }
     },
@@ -186,6 +222,18 @@
         "context": "Editor && vim_operator == y",
         "bindings": {
             "y": "vim::CurrentLine"
+        }
+    },
+    {
+        "context": "Editor && vim_operator == z",
+        "bindings": {
+            "t": "editor::ScrollCursorTop",
+            "z": "editor::ScrollCursorCenter",
+            "b": "editor::ScrollCursorBottom",
+            "escape": [
+                "vim::SwitchMode",
+                "Normal"
+            ]
         }
     },
     {

@@ -1,5 +1,6 @@
 use editor::{
-    combine_syntax_and_fuzzy_match_highlights, styled_runs_for_code_label, Autoscroll, Bias, Editor,
+    combine_syntax_and_fuzzy_match_highlights, scroll::autoscroll::Autoscroll,
+    styled_runs_for_code_label, Bias, Editor,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{

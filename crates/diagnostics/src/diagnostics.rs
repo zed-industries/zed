@@ -5,8 +5,9 @@ use collections::{BTreeMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
-    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, ExcerptRange, MultiBuffer,
-    ToOffset,
+    highlight_diagnostic_message,
+    scroll::autoscroll::Autoscroll,
+    Editor, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, impl_internal_actions, serde_json, AnyViewHandle,
