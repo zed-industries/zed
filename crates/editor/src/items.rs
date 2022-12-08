@@ -300,7 +300,7 @@ impl Item for Editor {
                 false
             } else {
                 let nav_history = self.nav_history.take();
-                self.set_scroll_anchor(data.scroll_anchor, cx);
+                self.set_scroll_anchor(scroll_anchor, cx);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([offset..offset])
                 });

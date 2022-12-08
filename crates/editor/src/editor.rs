@@ -3709,18 +3709,30 @@ impl Editor {
         })
     }
 
-    pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) -> Option<()> {
-        self.take_rename(true, cx)?;
-        if self.context_menu.as_mut()?.select_first(cx) {
-            return None;
+    pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
+        if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if self
+            .context_menu
+            .as_mut()
+            .map(|menu| menu.select_first(cx))
+            .unwrap_or(false)
+        {
+            return;
         }
 
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
-            return None;
+            return;
         }
 
-        let row_count = self.visible_line_count()? as u32 - 1;
+        let row_count = if let Some(row_count) = self.visible_line_count() {
+            row_count as u32 - 1
+        } else {
+            return;
+        };
 
         let autoscroll = if action.center_cursor {
             Autoscroll::center()
@@ -3739,8 +3751,6 @@ impl Editor {
                 selection.collapse_to(cursor, goal);
             });
         });
-
-        Some(())
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
@@ -3775,25 +3785,30 @@ impl Editor {
         });
     }
 
-    pub fn move_page_down(
-        &mut self,
-        action: &MovePageDown,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<()> {
+    pub fn move_page_down(&mut self, action: &MovePageDown, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
-            return None;
+            return;
         }
 
-        if self.context_menu.as_mut()?.select_last(cx) {
-            return None;
+        if self
+            .context_menu
+            .as_mut()
+            .map(|menu| menu.select_last(cx))
+            .unwrap_or(false)
+        {
+            return;
         }
 
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
-            return None;
+            return;
         }
 
-        let row_count = self.visible_line_count()? as u32 - 1;
+        let row_count = if let Some(row_count) = self.visible_line_count() {
+            row_count as u32 - 1
+        } else {
+            return;
+        };
 
         let autoscroll = if action.center_cursor {
             Autoscroll::center()
@@ -3812,8 +3827,6 @@ impl Editor {
                 selection.collapse_to(cursor, goal);
             });
         });
-
-        Some(())
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {

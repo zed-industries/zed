@@ -8,6 +8,22 @@
                     "Namespace": "G"
                 }
             ],
+            "i": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": false
+                    }
+                }
+            ],
+            "a": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": true
+                    }
+                }
+            ],
             "h": "vim::Left",
             "backspace": "vim::Backspace",
             "j": "vim::Down",
@@ -74,28 +90,6 @@
             "9": [
                 "vim::Number",
                 9
-            ]
-        }
-    },
-    {
-        //Operators
-        "context": "Editor && VimControl && vim_operator == none",
-        "bindings": {
-            "i": [
-                "vim::PushOperator",
-                {
-                    "Object": {
-                        "around": false
-                    }
-                }
-            ],
-            "a": [
-                "vim::PushOperator",
-                {
-                    "Object": {
-                        "around": true
-                    }
-                }
             ]
         }
     },

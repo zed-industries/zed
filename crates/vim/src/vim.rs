@@ -81,20 +81,20 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 }
 
-// Any keystrokes not mapped to vim should clar the active operator
+// Any keystrokes not mapped to vim should clear the active operator
 pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
     cx.observe_keystrokes(window_id, |_keystroke, _result, handled_by, cx| {
         dbg!(_keystroke);
-        dbg!(_result);
         if let Some(handled_by) = handled_by {
-            dbg!(handled_by.name());
             if handled_by.namespace() == "vim" {
+                println!("Vim action. Don't clear");
                 return true;
             }
         }
 
         Vim::update(cx, |vim, cx| {
             if vim.active_operator().is_some() {
+                println!("Clearing operator");
                 vim.clear_operator(cx);
             }
         });

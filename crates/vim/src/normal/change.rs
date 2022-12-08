@@ -200,7 +200,6 @@ mod test {
                 Test test
                 ˇtest"})
             .await;
-        println!("Marker");
         cx.assert(indoc! {"
                 Test test
                 ˇ
