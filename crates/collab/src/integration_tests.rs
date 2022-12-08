@@ -365,7 +365,7 @@ async fn test_room_uniqueness(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_leaving_room_on_disconnection(
+async fn test_disconnecting_from_room(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -414,9 +414,30 @@ async fn test_leaving_room_on_disconnection(
         }
     );
 
-    // When user A disconnects, both client A and B clear their room on the active call.
+    // User A automatically reconnects to the room upon disconnection.
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // When user A disconnects, both client A and B clear their room on the active call.
+    server.forbid_connections();
+    server.disconnect_client(client_a.peer_id().unwrap());
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT + crate::rpc::RECONNECTION_TIMEOUT);
+    deterministic.run_until_parked();
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
     active_call_b.read_with(cx_b, |call, _| assert!(call.room().is_none()));
     assert_eq!(
@@ -433,6 +454,11 @@ async fn test_leaving_room_on_disconnection(
             pending: Default::default()
         }
     );
+
+    // Allow user A to reconnect to the server.
+    server.allow_connections();
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.run_until_parked();
 
     // Call user B again from client A.
     active_call_a

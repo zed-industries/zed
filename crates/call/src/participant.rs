@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::WeakModelHandle;
 pub use live_kit_client::Frame;
 use project::Project;
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ParticipantLocation {
@@ -36,7 +36,7 @@ pub struct LocalParticipant {
     pub active_project: Option<WeakModelHandle<Project>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub projects: Vec<proto::ParticipantProject>,
@@ -47,6 +47,12 @@ pub struct RemoteParticipant {
 #[derive(Clone)]
 pub struct RemoteVideoTrack {
     pub(crate) live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
+}
+
+impl fmt::Debug for RemoteVideoTrack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteVideoTrack").finish()
+    }
 }
 
 impl RemoteVideoTrack {

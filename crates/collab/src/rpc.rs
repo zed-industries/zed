@@ -51,10 +51,13 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
+    time::Duration,
 };
 use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
+
+pub const RECONNECTION_TIMEOUT: Duration = rpc::RECEIVE_TIMEOUT;
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -435,7 +438,7 @@ impl Server {
 
             drop(foreground_message_handlers);
             tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
-            if let Err(error) = sign_out(session).await {
+            if let Err(error) = sign_out(session, executor).await {
                 tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
@@ -636,29 +639,38 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
     Ok(encoded_metrics)
 }
 
-#[instrument(err)]
-async fn sign_out(session: Session) -> Result<()> {
+#[instrument(err, skip(executor))]
+async fn sign_out(session: Session, executor: Executor) -> Result<()> {
     session.peer.disconnect(session.connection_id);
-    let decline_calls = {
-        let mut pool = session.connection_pool().await;
-        pool.remove_connection(session.connection_id)?;
-        let mut connections = pool.user_connection_ids(session.user_id);
-        connections.next().is_none()
-    };
+    session
+        .connection_pool()
+        .await
+        .remove_connection(session.connection_id)?;
 
-    leave_room_for_session(&session).await.trace_err();
-    if decline_calls {
-        if let Some(room) = session
-            .db()
-            .await
-            .decline_call(None, session.user_id)
-            .await
-            .trace_err()
-        {
-            room_updated(&room, &session);
+    if let Ok(mut left_projects) = session
+        .db()
+        .await
+        .connection_lost(session.connection_id)
+        .await
+    {
+        for left_project in mem::take(&mut *left_projects) {
+            project_left(&left_project, &session);
         }
     }
 
+    executor.sleep(RECONNECTION_TIMEOUT).await;
+    leave_room_for_session(&session).await.trace_err();
+
+    if !session
+        .connection_pool()
+        .await
+        .is_user_online(session.user_id)
+    {
+        let db = session.db().await;
+        if let Some(room) = db.decline_call(None, session.user_id).await.trace_err() {
+            room_updated(&room, &session);
+        }
+    }
     update_user_contacts(session.user_id, &session).await?;
 
     Ok(())
@@ -1089,20 +1101,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
         host_connection_id = %project.host_connection_id,
         "leave project"
     );
-
-    broadcast(
-        sender_id,
-        project.connection_ids.iter().copied(),
-        |conn_id| {
-            session.peer.send(
-                conn_id,
-                proto::RemoveProjectCollaborator {
-                    project_id: project_id.to_proto(),
-                    peer_id: sender_id.0,
-                },
-            )
-        },
-    );
+    project_left(&project, &session);
 
     Ok(())
 }
@@ -1833,40 +1832,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
         contacts_to_update.insert(session.user_id);
 
         for project in left_room.left_projects.values() {
-            for connection_id in &project.connection_ids {
-                if project.host_user_id == session.user_id {
-                    session
-                        .peer
-                        .send(
-                            *connection_id,
-                            proto::UnshareProject {
-                                project_id: project.id.to_proto(),
-                            },
-                        )
-                        .trace_err();
-                } else {
-                    session
-                        .peer
-                        .send(
-                            *connection_id,
-                            proto::RemoveProjectCollaborator {
-                                project_id: project.id.to_proto(),
-                                peer_id: session.connection_id.0,
-                            },
-                        )
-                        .trace_err();
-                }
-            }
-
-            session
-                .peer
-                .send(
-                    session.connection_id,
-                    proto::UnshareProject {
-                        project_id: project.id.to_proto(),
-                    },
-                )
-                .trace_err();
+            project_left(project, session);
         }
 
         room_updated(&left_room.room, &session);
@@ -1904,6 +1870,43 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn project_left(project: &db::LeftProject, session: &Session) {
+    for connection_id in &project.connection_ids {
+        if project.host_user_id == session.user_id {
+            session
+                .peer
+                .send(
+                    *connection_id,
+                    proto::UnshareProject {
+                        project_id: project.id.to_proto(),
+                    },
+                )
+                .trace_err();
+        } else {
+            session
+                .peer
+                .send(
+                    *connection_id,
+                    proto::RemoveProjectCollaborator {
+                        project_id: project.id.to_proto(),
+                        peer_id: session.connection_id.0,
+                    },
+                )
+                .trace_err();
+        }
+    }
+
+    session
+        .peer
+        .send(
+            session.connection_id,
+            proto::UnshareProject {
+                project_id: project.id.to_proto(),
+            },
+        )
+        .trace_err();
 }
 
 pub trait ResultExt {

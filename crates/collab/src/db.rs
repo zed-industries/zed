@@ -1034,6 +1034,7 @@ impl Database {
                 user_id: ActiveValue::set(user_id),
                 answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                 answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
+                connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(user_id),
                 calling_connection_id: ActiveValue::set(connection_id.0 as i32),
                 calling_connection_epoch: ActiveValue::set(self.epoch),
@@ -1060,6 +1061,7 @@ impl Database {
             room_participant::ActiveModel {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
+                connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(calling_user_id),
                 calling_connection_id: ActiveValue::set(calling_connection_id.0 as i32),
                 calling_connection_epoch: ActiveValue::set(self.epoch),
@@ -1175,11 +1177,16 @@ impl Database {
                     room_participant::Column::RoomId
                         .eq(room_id)
                         .and(room_participant::Column::UserId.eq(user_id))
-                        .and(room_participant::Column::AnsweringConnectionId.is_null()),
+                        .and(
+                            room_participant::Column::AnsweringConnectionId
+                                .is_null()
+                                .or(room_participant::Column::ConnectionLost.eq(true)),
+                        ),
                 )
                 .set(room_participant::ActiveModel {
                     answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                     answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
+                    connection_lost: ActiveValue::set(false),
                     ..Default::default()
                 })
                 .exec(&*tx)
@@ -1363,6 +1370,61 @@ impl Database {
             } else {
                 Err(anyhow!("could not update room participant location"))?
             }
+        })
+        .await
+    }
+
+    pub async fn connection_lost(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<RoomGuard<Vec<LeftProject>>> {
+        self.room_transaction(|tx| async move {
+            let participant = room_participant::Entity::find()
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0 as i32))
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("not a participant in any room"))?;
+            let room_id = participant.room_id;
+
+            room_participant::Entity::update(room_participant::ActiveModel {
+                connection_lost: ActiveValue::set(true),
+                ..participant.into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+
+            let collaborator_on_projects = project_collaborator::Entity::find()
+                .find_also_related(project::Entity)
+                .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0 as i32))
+                .all(&*tx)
+                .await?;
+            project_collaborator::Entity::delete_many()
+                .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0))
+                .exec(&*tx)
+                .await?;
+
+            let mut left_projects = Vec::new();
+            for (_, project) in collaborator_on_projects {
+                if let Some(project) = project {
+                    let collaborators = project
+                        .find_related(project_collaborator::Entity)
+                        .all(&*tx)
+                        .await?;
+                    let connection_ids = collaborators
+                        .into_iter()
+                        .map(|collaborator| ConnectionId(collaborator.connection_id as u32))
+                        .collect();
+
+                    left_projects.push(LeftProject {
+                        id: project.id,
+                        host_user_id: project.host_user_id,
+                        host_connection_id: ConnectionId(project.host_connection_id as u32),
+                        connection_ids,
+                    });
+                }
+            }
+
+            Ok((room_id, left_projects))
         })
         .await
     }
