@@ -284,8 +284,17 @@ impl Editor {
     }
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
+        self.set_scroll_anchor_internal(scroll_anchor, true, cx);
+    }
+
+    pub(crate) fn set_scroll_anchor_internal(
+        &mut self,
+        scroll_anchor: ScrollAnchor,
+        local: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         hide_hover(self, cx);
-        self.scroll_manager.set_anchor(scroll_anchor, true, cx);
+        self.scroll_manager.set_anchor(scroll_anchor, local, cx);
     }
 
     pub fn scroll_screen(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) {

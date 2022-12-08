@@ -88,7 +88,7 @@ impl FollowableItem for Editor {
                 }
 
                 if let Some(anchor) = state.scroll_top_anchor {
-                    editor.set_scroll_anchor(
+                    editor.set_scroll_anchor_internal(
                         ScrollAnchor {
                             top_anchor: Anchor {
                                 buffer_id: Some(state.buffer_id as usize),
@@ -98,6 +98,7 @@ impl FollowableItem for Editor {
                             },
                             offset: vec2f(state.scroll_x, state.scroll_y),
                         },
+                        false,
                         cx,
                     );
                 }
