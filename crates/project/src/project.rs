@@ -60,9 +60,9 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    thread::panicking,
     time::Instant,
 };
+use terminal::Terminal;
 use thiserror::Error;
 use util::{defer, post_inc, ResultExt, TryFutureExt as _};
 
@@ -1196,12 +1196,14 @@ impl Project {
 
     pub fn create_terminal_connection(
         &mut self,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<ModelHandle<TerminalConnection>> {
+        _cx: &mut ModelContext<Self>,
+    ) -> Result<ModelHandle<Terminal>> {
         if self.is_remote() {
             return Err(anyhow!(
                 "creating terminals as a guest is not supported yet"
             ));
+        } else {
+            unimplemented!()
         }
     }
 

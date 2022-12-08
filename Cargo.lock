@@ -6271,6 +6271,7 @@ dependencies = [
  "mio-extras",
  "ordered-float",
  "procinfo",
+ "rand 0.8.5",
  "serde",
  "settings",
  "shellexpand",
@@ -6278,13 +6279,13 @@ dependencies = [
  "smol",
  "theme",
  "thiserror",
+ "util",
 ]
 
 [[package]]
 name = "terminal_view"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "anyhow",
  "client",
  "context_menu",
@@ -6307,6 +6308,7 @@ dependencies = [
  "shellexpand",
  "smallvec",
  "smol",
+ "terminal",
  "theme",
  "thiserror",
  "util",

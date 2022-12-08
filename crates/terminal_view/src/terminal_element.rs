@@ -1,9 +1,3 @@
-use alacritty_terminal::{
-    ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
-    grid::Dimensions,
-    index::Point,
-    term::{cell::Flags, TermMode},
-};
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
@@ -22,17 +16,23 @@ use itertools::Itertools;
 use language::CursorShape;
 use ordered_float::OrderedFloat;
 use settings::Settings;
+use terminal::{
+    alacritty_terminal::{
+        ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor},
+        grid::Dimensions,
+        index::Point,
+        term::{cell::Flags, TermMode},
+    },
+    mappings::colors::convert_color,
+    IndexedCell, Terminal, TerminalContent, TerminalSize,
+};
 use theme::TerminalStyle;
 use util::ResultExt;
 
 use std::{fmt::Debug, ops::RangeInclusive};
 use std::{mem, ops::Range};
 
-use crate::{
-    mappings::colors::convert_color,
-    terminal_view::{DeployContextMenu, TerminalView},
-    IndexedCell, Terminal, TerminalContent, TerminalSize,
-};
+use crate::terminal_view::{DeployContextMenu, TerminalView};
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
@@ -198,7 +198,10 @@ impl TerminalElement {
 
                 //Expand background rect range
                 {
-                    if matches!(bg, Named(NamedColor::Background)) {
+                    if matches!(
+                        bg,
+                        terminal::alacritty_terminal::ansi::Color::Named(NamedColor::Background)
+                    ) {
                         //Continue to next cell, resetting variables if nescessary
                         cur_alac_color = None;
                         if let Some(rect) = cur_rect {
@@ -299,7 +302,7 @@ impl TerminalElement {
     ///Convert the Alacritty cell styles to GPUI text styles and background color
     fn cell_style(
         indexed: &IndexedCell,
-        fg: AnsiColor,
+        fg: terminal::alacritty_terminal::ansi::Color,
         style: &TerminalStyle,
         text_style: &TextStyle,
         font_cache: &FontCache,
@@ -636,7 +639,7 @@ impl Element for TerminalElement {
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
         //if we don't end up showing it.
-        let cursor = if let AlacCursorShape::Hidden = cursor.shape {
+        let cursor = if let terminal::alacritty_terminal::ansi::CursorShape::Hidden = cursor.shape {
             None
         } else {
             let cursor_point = DisplayCursor::from(cursor.point, *display_offset);

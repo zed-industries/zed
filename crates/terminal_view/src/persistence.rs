@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use db::{define_connection, query, sqlez_macros::sql};
+use workspace::{WorkspaceDb, WorkspaceId};
 
 type ModelId = usize;
 
 define_connection! {
-    pub static ref TERMINAL_CONNECTION: TerminalDb<()> =
+    pub static ref TERMINAL_DB: TerminalDb<WorkspaceDb> =
         &[sql!(
             CREATE TABLE terminals (
                 workspace_id INTEGER,
@@ -34,7 +35,7 @@ impl TerminalDb {
     query! {
         pub async fn save_working_directory(
             item_id: ModelId,
-            workspace_id: WorkspaceId,
+            workspace_id: i64,
             working_directory: PathBuf
         ) -> Result<()> {
             INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)

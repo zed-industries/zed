@@ -1,13 +1,18 @@
-use crate::persistence::TERMINAL_CONNECTION;
-use crate::terminal_view::TerminalView;
-use crate::{Event, TerminalBuilder, TerminalError};
+mod persistence;
+pub mod terminal_element;
+pub mod terminal_view;
 
-use alacritty_terminal::index::Point;
+use crate::persistence::TERMINAL_DB;
+use crate::terminal_view::TerminalView;
+use terminal::alacritty_terminal::index::Point;
+use terminal::{Event, TerminalBuilder, TerminalError};
+
 use dirs::home_dir;
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
+use terminal_view::regex_search_for_query;
 use util::{truncate_and_trailoff, ResultExt};
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
 use workspace::{
@@ -30,6 +35,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalContainer::deploy);
 
     register_deserializable_item::<TerminalContainer>(cx);
+
+    terminal_view::init(cx);
 }
 
 //Make terminal view an enum, that can give you views for the error and non-error states
@@ -92,7 +99,7 @@ impl TerminalContainer {
     pub fn new(
         working_directory: Option<PathBuf>,
         modal: bool,
-        workspace_id: WorkspaceId,
+        _workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let settings = cx.global::<Settings>();
@@ -119,8 +126,6 @@ impl TerminalContainer {
             settings.terminal_overrides.blinking.clone(),
             scroll,
             cx.window_id(),
-            cx.view_id(),
-            workspace_id,
         ) {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
@@ -389,7 +394,7 @@ impl Item for TerminalContainer {
         item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<anyhow::Result<ViewHandle<Self>>> {
-        let working_directory = TERMINAL_CONNECTION.get_working_directory(item_id, workspace_id);
+        let working_directory = TERMINAL_DB.get_working_directory(item_id, workspace_id);
         Task::ready(Ok(cx.add_view(|cx| {
             TerminalContainer::new(
                 working_directory.log_err().flatten(),
@@ -400,11 +405,14 @@ impl Item for TerminalContainer {
         })))
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if let Some(connected) = self.connected() {
-            let id = workspace.database_id();
-            let terminal_handle = connected.read(cx).terminal().clone();
-            terminal_handle.update(cx, |terminal, cx| terminal.set_workspace_id(id, cx))
+    fn added_to_workspace(&mut self, _workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        if let Some(_connected) = self.connected() {
+            // let id = workspace.database_id();
+            // let terminal_handle = connected.read(cx).terminal().clone();
+            //TODO
+            cx.background()
+                .spawn(TERMINAL_DB.update_workspace_id(0, 0, 0))
+                .detach();
         }
     }
 }
@@ -477,7 +485,11 @@ impl SearchableItem for TerminalContainer {
     ) -> Task<Vec<Self::Match>> {
         if let TerminalContainerContent::Connected(connected) = &self.content {
             let terminal = connected.read(cx).terminal().clone();
-            terminal.update(cx, |term, cx| term.find_matches(query, cx))
+            if let Some(searcher) = regex_search_for_query(query) {
+                terminal.update(cx, |term, cx| term.find_matches(searcher, cx))
+            } else {
+                cx.background().spawn(async { Vec::new() })
+            }
         } else {
             Task::ready(Vec::new())
         }
@@ -585,10 +597,10 @@ mod tests {
 
     use super::*;
     use gpui::TestAppContext;
+    use project::{Entry, Worktree};
+    use workspace::AppState;
 
     use std::path::Path;
-
-    use crate::tests::terminal_test_context::TerminalTestContext;
 
     ///Working directory calculation tests
 
@@ -596,10 +608,9 @@ mod tests {
     #[gpui::test]
     async fn no_worktree(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
+        let (project, workspace) = blank_workspace(cx).await;
         //Test
-        cx.cx.read(|cx| {
+        cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -619,11 +630,10 @@ mod tests {
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
 
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        cx.create_file_wt(project.clone(), "/root.txt").await;
+        let (project, workspace) = blank_workspace(cx).await;
+        create_file_wt(project.clone(), "/root.txt", cx).await;
 
-        cx.cx.read(|cx| {
+        cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -642,12 +652,11 @@ mod tests {
     #[gpui::test]
     async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root/").await;
+        let (project, workspace) = blank_workspace(cx).await;
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
 
         //Test
-        cx.cx.update(|cx| {
+        cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -665,14 +674,14 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
-        let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
-        cx.insert_active_entry_for(wt2, entry2, project.clone());
+
+        let (project, workspace) = blank_workspace(cx).await;
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root1/", cx).await;
+        let (wt2, entry2) = create_file_wt(project.clone(), "/root2.txt", cx).await;
+        insert_active_entry_for(wt2, entry2, project.clone(), cx);
 
         //Test
-        cx.cx.update(|cx| {
+        cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -689,14 +698,13 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
-        let (wt2, entry2) = cx.create_folder_wt(project.clone(), "/root2/").await;
-        cx.insert_active_entry_for(wt2, entry2, project.clone());
+        let (project, workspace) = blank_workspace(cx).await;
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root1/", cx).await;
+        let (wt2, entry2) = create_folder_wt(project.clone(), "/root2/", cx).await;
+        insert_active_entry_for(wt2, entry2, project.clone(), cx);
 
         //Test
-        cx.cx.update(|cx| {
+        cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -706,6 +714,86 @@ mod tests {
             assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
+        });
+    }
+
+    ///Creates a worktree with 1 file: /root.txt
+    pub async fn blank_workspace(
+        cx: &mut TestAppContext,
+    ) -> (ModelHandle<Project>, ViewHandle<Workspace>) {
+        let params = cx.update(AppState::test);
+
+        let project = Project::test(params.fs.clone(), [], cx).await;
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
+
+        (project, workspace)
+    }
+
+    ///Creates a worktree with 1 folder: /root{suffix}/
+    async fn create_folder_wt(
+        project: ModelHandle<Project>,
+        path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> (ModelHandle<Worktree>, Entry) {
+        create_wt(project, true, path, cx).await
+    }
+
+    ///Creates a worktree with 1 file: /root{suffix}.txt
+    async fn create_file_wt(
+        project: ModelHandle<Project>,
+        path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> (ModelHandle<Worktree>, Entry) {
+        create_wt(project, false, path, cx).await
+    }
+
+    async fn create_wt(
+        project: ModelHandle<Project>,
+        is_dir: bool,
+        path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> (ModelHandle<Worktree>, Entry) {
+        let (wt, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree(path, true, cx)
+            })
+            .await
+            .unwrap();
+
+        let entry = cx
+            .update(|cx| {
+                wt.update(cx, |wt, cx| {
+                    wt.as_local()
+                        .unwrap()
+                        .create_entry(Path::new(""), is_dir, cx)
+                })
+            })
+            .await
+            .unwrap();
+
+        (wt, entry)
+    }
+
+    pub fn insert_active_entry_for(
+        wt: ModelHandle<Worktree>,
+        entry: Entry,
+        project: ModelHandle<Project>,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let p = ProjectPath {
+                worktree_id: wt.read(cx).id(),
+                path: entry.path,
+            };
+            project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
     }
 }

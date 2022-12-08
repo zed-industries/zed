@@ -32,7 +32,7 @@ use settings::{
 use smol::process::Command;
 use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
-use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
+use terminal_view::{get_working_directory, TerminalContainer};
 
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
@@ -119,7 +119,7 @@ fn main() {
         diagnostics::init(cx);
         search::init(cx);
         vim::init(cx);
-        terminal::init(cx);
+        terminal_view::init(cx);
         theme_testbench::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))

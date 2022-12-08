@@ -2422,7 +2422,7 @@ impl Editor {
                         let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
                             let excerpt_range = excerpt_range.to_offset(buffer);
                             buffer
-                                .edited_ranges_for_transaction(transaction)
+                                .edited_ranges_for_transaction::<usize>(transaction)
                                 .all(|range| {
                                     excerpt_range.start <= range.start
                                         && excerpt_range.end >= range.end

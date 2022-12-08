@@ -1,6 +1,5 @@
-use std::{ops::RangeInclusive, time::Duration};
+use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
 
-use alacritty_terminal::{index::Point, term::TermMode};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     actions,
@@ -14,10 +13,17 @@ use gpui::{
 use serde::Deserialize;
 use settings::{Settings, TerminalBlink};
 use smol::Timer;
+use terminal::{
+    alacritty_terminal::{
+        index::Point,
+        term::{search::RegexSearch, TermMode},
+    },
+    Terminal,
+};
 use util::ResultExt;
 use workspace::pane;
 
-use crate::{terminal_element::TerminalElement, Event, Terminal};
+use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement, Event};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -95,6 +101,22 @@ impl TerminalView {
                 cx.emit(Event::Wakeup);
             }
             Event::BlinkChanged => this.blinking_on = !this.blinking_on,
+            Event::TitleChanged => {
+                // if let Some(foreground_info) = &terminal.read(cx).foreground_process_info {
+                // let cwd = foreground_info.cwd.clone();
+                //TODO
+                // let item_id = self.item_id;
+                // let workspace_id = self.workspace_id;
+                cx.background()
+                    .spawn(async move {
+                        TERMINAL_DB
+                            .save_working_directory(0, 0, PathBuf::new())
+                            .await
+                            .log_err();
+                    })
+                    .detach();
+                // }
+            }
             _ => cx.emit(*event),
         })
         .detach();
@@ -246,8 +268,14 @@ impl TerminalView {
         query: project::search::SearchQuery,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<RangeInclusive<Point>>> {
-        self.terminal
-            .update(cx, |term, cx| term.find_matches(query, cx))
+        let searcher = regex_search_for_query(query);
+
+        if let Some(searcher) = searcher {
+            self.terminal
+                .update(cx, |term, cx| term.find_matches(searcher, cx))
+        } else {
+            cx.background().spawn(async { Vec::new() })
+        }
     }
 
     pub fn terminal(&self) -> &ModelHandle<Terminal> {
@@ -300,6 +328,14 @@ impl TerminalView {
             });
         }
     }
+}
+
+pub fn regex_search_for_query(query: project::search::SearchQuery) -> Option<RegexSearch> {
+    let searcher = match query {
+        project::search::SearchQuery::Text { query, .. } => RegexSearch::new(&query),
+        project::search::SearchQuery::Regex { query, .. } => RegexSearch::new(&query),
+    };
+    searcher.ok()
 }
 
 impl View for TerminalView {
