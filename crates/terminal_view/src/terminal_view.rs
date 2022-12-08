@@ -1,4 +1,4 @@
-use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
+use std::{ops::RangeInclusive, time::Duration};
 
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
@@ -21,7 +21,7 @@ use terminal::{
     Terminal,
 };
 use util::ResultExt;
-use workspace::pane;
+use workspace::{pane, ItemId, WorkspaceId};
 
 use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement, Event};
 
@@ -75,6 +75,8 @@ pub struct TerminalView {
     blinking_on: bool,
     blinking_paused: bool,
     blink_epoch: usize,
+    workspace_id: WorkspaceId,
+    item_id: ItemId,
 }
 
 impl Entity for TerminalView {
@@ -85,6 +87,8 @@ impl TerminalView {
     pub fn from_terminal(
         terminal: ModelHandle<Terminal>,
         modal: bool,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
@@ -102,20 +106,20 @@ impl TerminalView {
             }
             Event::BlinkChanged => this.blinking_on = !this.blinking_on,
             Event::TitleChanged => {
-                // if let Some(foreground_info) = &terminal.read(cx).foreground_process_info {
-                // let cwd = foreground_info.cwd.clone();
-                //TODO
-                // let item_id = self.item_id;
-                // let workspace_id = self.workspace_id;
-                cx.background()
-                    .spawn(async move {
-                        TERMINAL_DB
-                            .save_working_directory(0, 0, PathBuf::new())
-                            .await
-                            .log_err();
-                    })
-                    .detach();
-                // }
+                if let Some(foreground_info) = &this.terminal().read(cx).foreground_process_info {
+                    let cwd = foreground_info.cwd.clone();
+
+                    let item_id = this.item_id;
+                    let workspace_id = this.workspace_id;
+                    cx.background()
+                        .spawn(async move {
+                            TERMINAL_DB
+                                .save_working_directory(item_id, workspace_id, cwd)
+                                .await
+                                .log_err();
+                        })
+                        .detach();
+                }
             }
             _ => cx.emit(*event),
         })
@@ -131,6 +135,8 @@ impl TerminalView {
             blinking_on: false,
             blinking_paused: false,
             blink_epoch: 0,
+            workspace_id,
+            item_id,
         }
     }
 
@@ -280,6 +286,13 @@ impl TerminalView {
 
     pub fn terminal(&self) -> &ModelHandle<Terminal> {
         &self.terminal
+    }
+
+    pub fn added_to_workspace(&mut self, new_id: WorkspaceId, cx: &mut ViewContext<Self>) {
+        cx.background()
+            .spawn(TERMINAL_DB.update_workspace_id(new_id, self.workspace_id, self.item_id))
+            .detach();
+        self.workspace_id = new_id;
     }
 
     fn next_blink_epoch(&mut self) -> usize {

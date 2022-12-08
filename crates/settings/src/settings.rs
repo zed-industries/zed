@@ -199,7 +199,7 @@ impl Default for Shell {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
     On,
@@ -470,6 +470,32 @@ impl Settings {
             self.git
                 .git_gutter
                 .expect("git_gutter should be some by setting setup")
+        })
+    }
+
+    pub fn terminal_scroll(&self) -> AlternateScroll {
+        *self.terminal_overrides.alternate_scroll.as_ref().unwrap_or(
+            self.terminal_defaults
+                .alternate_scroll
+                .as_ref()
+                .unwrap_or_else(|| &AlternateScroll::On),
+        )
+    }
+
+    pub fn terminal_shell(&self) -> Option<Shell> {
+        self.terminal_overrides
+            .shell
+            .as_ref()
+            .or(self.terminal_defaults.shell.as_ref())
+            .cloned()
+    }
+
+    pub fn terminal_env(&self) -> HashMap<String, String> {
+        self.terminal_overrides.env.clone().unwrap_or_else(|| {
+            self.terminal_defaults
+                .env
+                .clone()
+                .unwrap_or_else(|| HashMap::default())
         })
     }
 

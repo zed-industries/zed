@@ -22,7 +22,7 @@ use workspace::{
 use workspace::{register_deserializable_item, Pane, WorkspaceId};
 
 use project::{LocalWorktree, Project, ProjectPath};
-use settings::{AlternateScroll, Settings, WorkingDirectory};
+use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
@@ -99,25 +99,13 @@ impl TerminalContainer {
     pub fn new(
         working_directory: Option<PathBuf>,
         modal: bool,
-        _workspace_id: WorkspaceId,
+        workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let settings = cx.global::<Settings>();
-        let shell = settings.terminal_overrides.shell.clone();
-        let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
-
-        //TODO: move this pattern to settings
-        let scroll = settings
-            .terminal_overrides
-            .alternate_scroll
-            .as_ref()
-            .unwrap_or(
-                settings
-                    .terminal_defaults
-                    .alternate_scroll
-                    .as_ref()
-                    .unwrap_or_else(|| &AlternateScroll::On),
-            );
+        let shell = settings.terminal_shell();
+        let envs = settings.terminal_env();
+        let scroll = settings.terminal_scroll();
 
         let content = match TerminalBuilder::new(
             working_directory.clone(),
@@ -129,7 +117,10 @@ impl TerminalContainer {
         ) {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
-                let view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
+                let item_id = cx.view_id();
+                let view = cx.add_view(|cx| {
+                    TerminalView::from_terminal(terminal, modal, workspace_id, item_id, cx)
+                });
 
                 cx.subscribe(&view, |_this, _content, event, cx| cx.emit(*event))
                     .detach();
@@ -394,25 +385,26 @@ impl Item for TerminalContainer {
         item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<anyhow::Result<ViewHandle<Self>>> {
-        let working_directory = TERMINAL_DB.get_working_directory(item_id, workspace_id);
-        Task::ready(Ok(cx.add_view(|cx| {
-            TerminalContainer::new(
-                working_directory.log_err().flatten(),
-                false,
-                workspace_id,
-                cx,
-            )
-        })))
+        cx.spawn(|pane, mut cx| async move {
+            let cwd = TERMINAL_DB
+                .take_working_directory(item_id, workspace_id)
+                .await
+                .log_err()
+                .flatten();
+
+            cx.update(|cx| {
+                Ok(cx.add_view(pane, |cx| {
+                    TerminalContainer::new(cwd, false, workspace_id, cx)
+                }))
+            })
+        })
     }
 
-    fn added_to_workspace(&mut self, _workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if let Some(_connected) = self.connected() {
-            // let id = workspace.database_id();
-            // let terminal_handle = connected.read(cx).terminal().clone();
-            //TODO
-            cx.background()
-                .spawn(TERMINAL_DB.update_workspace_id(0, 0, 0))
-                .detach();
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        if let Some(connected) = self.connected() {
+            connected.update(cx, |connected_view, cx| {
+                connected_view.added_to_workspace(workspace.database_id(), cx);
+            })
         }
     }
 }

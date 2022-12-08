@@ -18,7 +18,7 @@ use ordered_float::OrderedFloat;
 use settings::Settings;
 use terminal::{
     alacritty_terminal::{
-        ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor},
+        ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
         grid::Dimensions,
         index::Point,
         term::{cell::Flags, TermMode},
@@ -198,10 +198,7 @@ impl TerminalElement {
 
                 //Expand background rect range
                 {
-                    if matches!(
-                        bg,
-                        terminal::alacritty_terminal::ansi::Color::Named(NamedColor::Background)
-                    ) {
+                    if matches!(bg, Named(NamedColor::Background)) {
                         //Continue to next cell, resetting variables if nescessary
                         cur_alac_color = None;
                         if let Some(rect) = cur_rect {
@@ -639,7 +636,7 @@ impl Element for TerminalElement {
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
         //if we don't end up showing it.
-        let cursor = if let terminal::alacritty_terminal::ansi::CursorShape::Hidden = cursor.shape {
+        let cursor = if let AlacCursorShape::Hidden = cursor.shape {
             None
         } else {
             let cursor_point = DisplayCursor::from(cursor.point, *display_offset);

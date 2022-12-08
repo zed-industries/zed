@@ -269,9 +269,9 @@ impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
-        env: Option<HashMap<String, String>>,
+        mut env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
-        alternate_scroll: &AlternateScroll,
+        alternate_scroll: AlternateScroll,
         window_id: usize,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
@@ -288,10 +288,9 @@ impl TerminalBuilder {
             }
         };
 
-        let mut env = env.unwrap_or_default();
-
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
+        env.insert("ZED_TERM".to_string(), true.to_string());
 
         let alac_scrolling = Scrolling::default();
         // alac_scrolling.set_history((BACK_BUFFER_SIZE * 2) as u32);
