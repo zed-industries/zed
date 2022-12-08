@@ -115,6 +115,7 @@ impl Tooltip {
                     } else {
                         state.visible.set(false);
                         state.debounce.take();
+                        cx.notify();
                     }
                 }
             })
