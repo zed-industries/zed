@@ -1424,6 +1424,11 @@ impl Database {
                 }
             }
 
+            project::Entity::delete_many()
+                .filter(project::Column::HostConnectionId.eq(connection_id.0 as i32))
+                .exec(&*tx)
+                .await?;
+
             Ok((room_id, left_projects))
         })
         .await
