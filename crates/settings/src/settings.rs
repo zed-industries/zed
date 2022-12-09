@@ -221,6 +221,12 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
+impl Default for WorkingDirectory {
+    fn default() -> Self {
+        Self::CurrentProjectDirectory
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DockAnchor {
@@ -473,30 +479,30 @@ impl Settings {
         })
     }
 
-    pub fn terminal_scroll(&self) -> AlternateScroll {
-        *self.terminal_overrides.alternate_scroll.as_ref().unwrap_or(
-            self.terminal_defaults
-                .alternate_scroll
-                .as_ref()
-                .unwrap_or_else(|| &AlternateScroll::On),
-        )
+    fn terminal_setting<F, R: Default + Clone>(&self, f: F) -> R
+    where
+        F: Fn(&TerminalSettings) -> Option<&R>,
+    {
+        f(&self.terminal_overrides)
+            .or_else(|| f(&self.terminal_defaults))
+            .cloned()
+            .unwrap_or_else(|| R::default())
     }
 
-    pub fn terminal_shell(&self) -> Option<Shell> {
-        self.terminal_overrides
-            .shell
-            .as_ref()
-            .or(self.terminal_defaults.shell.as_ref())
-            .cloned()
+    pub fn terminal_scroll(&self) -> AlternateScroll {
+        self.terminal_setting(|terminal_setting| terminal_setting.alternate_scroll.as_ref())
+    }
+
+    pub fn terminal_shell(&self) -> Shell {
+        self.terminal_setting(|terminal_setting| terminal_setting.shell.as_ref())
     }
 
     pub fn terminal_env(&self) -> HashMap<String, String> {
-        self.terminal_overrides.env.clone().unwrap_or_else(|| {
-            self.terminal_defaults
-                .env
-                .clone()
-                .unwrap_or_else(|| HashMap::default())
-        })
+        self.terminal_setting(|terminal_setting| terminal_setting.env.as_ref())
+    }
+
+    pub fn terminal_strategy(&self) -> WorkingDirectory {
+        self.terminal_setting(|terminal_setting| terminal_setting.working_directory.as_ref())
     }
 
     #[cfg(any(test, feature = "test-support"))]

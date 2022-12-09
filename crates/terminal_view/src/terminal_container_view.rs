@@ -1,18 +1,14 @@
-mod persistence;
-pub mod terminal_element;
-pub mod terminal_view;
-
 use crate::persistence::TERMINAL_DB;
-use crate::terminal_view::TerminalView;
+use crate::TerminalView;
 use terminal::alacritty_terminal::index::Point;
-use terminal::{Event, TerminalBuilder, TerminalError};
+use terminal::{Event, Terminal, TerminalError};
 
+use crate::regex_search_for_query;
 use dirs::home_dir;
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use terminal_view::regex_search_for_query;
 use util::{truncate_and_trailoff, ResultExt};
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
 use workspace::{
@@ -36,7 +32,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
     register_deserializable_item::<TerminalContainer>(cx);
 
-    terminal_view::init(cx);
+    // terminal_view::init(cx);
 }
 
 //Make terminal view an enum, that can give you views for the error and non-error states
@@ -81,47 +77,31 @@ impl TerminalContainer {
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let strategy = cx
-            .global::<Settings>()
-            .terminal_overrides
-            .working_directory
-            .clone()
-            .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+        let strategy = cx.global::<Settings>().terminal_strategy();
 
         let working_directory = get_working_directory(workspace, cx, strategy);
-        let view = cx.add_view(|cx| {
-            TerminalContainer::new(working_directory, false, workspace.database_id(), cx)
+
+        let window_id = cx.window_id();
+        let terminal = workspace.project().update(cx, |project, cx| {
+            project.create_terminal_connection(working_directory, window_id, cx)
         });
+
+        let view = cx.add_view(|cx| TerminalContainer::new(terminal, workspace.database_id(), cx));
         workspace.add_item(Box::new(view), cx);
     }
 
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices    
     pub fn new(
-        working_directory: Option<PathBuf>,
-        modal: bool,
+        model: anyhow::Result<ModelHandle<Terminal>>,
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let settings = cx.global::<Settings>();
-        let shell = settings.terminal_shell();
-        let envs = settings.terminal_env();
-        let scroll = settings.terminal_scroll();
-
-        let content = match TerminalBuilder::new(
-            working_directory.clone(),
-            shell,
-            envs,
-            settings.terminal_overrides.blinking.clone(),
-            scroll,
-            cx.window_id(),
-        ) {
+        let content = match model {
             Ok(terminal) => {
-                let terminal = cx.add_model(|cx| terminal.subscribe(cx));
                 let item_id = cx.view_id();
                 let view = cx.add_view(|cx| {
-                    TerminalView::from_terminal(terminal, modal, workspace_id, item_id, cx)
+                    TerminalView::from_terminal(terminal, false, workspace_id, item_id, cx)
                 });
-
                 cx.subscribe(&view, |_this, _content, event, cx| cx.emit(*event))
                     .detach();
                 TerminalContainerContent::Connected(view)
@@ -136,7 +116,7 @@ impl TerminalContainer {
 
         TerminalContainer {
             content,
-            associated_directory: working_directory,
+            associated_directory: None, //working_directory,
         }
     }
 
@@ -183,12 +163,7 @@ impl View for ErrorView {
         //We want to be able to select the text
         //Want to be able to scroll if the error message is massive somehow (resiliency)
 
-        let program_text = {
-            match self.error.shell_to_string() {
-                Some(shell_txt) => format!("Shell Program: `{}`", shell_txt),
-                None => "No program specified".to_string(),
-            }
-        };
+        let program_text = format!("Shell Program: `{}`", self.error.shell_to_string());
 
         let directory_text = {
             match self.error.directory.as_ref() {

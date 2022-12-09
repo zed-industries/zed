@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/terminal_container_view.rs"
+path = "src/terminal_view.rs"
 doctest = false
 
 [dependencies]

@@ -62,7 +62,7 @@ use std::{
     },
     time::Instant,
 };
-use terminal::Terminal;
+use terminal::{Terminal, TerminalBuilder};
 use thiserror::Error;
 use util::{defer, post_inc, ResultExt, TryFutureExt as _};
 
@@ -1196,14 +1196,29 @@ impl Project {
 
     pub fn create_terminal_connection(
         &mut self,
-        _cx: &mut ModelContext<Self>,
+        working_directory: Option<PathBuf>,
+        window_id: usize,
+        cx: &mut ModelContext<Self>,
     ) -> Result<ModelHandle<Terminal>> {
         if self.is_remote() {
             return Err(anyhow!(
                 "creating terminals as a guest is not supported yet"
             ));
         } else {
-            unimplemented!()
+            let settings = cx.global::<Settings>();
+            let shell = settings.terminal_shell();
+            let envs = settings.terminal_env();
+            let scroll = settings.terminal_scroll();
+
+            TerminalBuilder::new(
+                working_directory.clone(),
+                shell,
+                envs,
+                settings.terminal_overrides.blinking.clone(),
+                scroll,
+                window_id,
+            )
+            .map(|builder| cx.add_model(|cx| builder.subscribe(cx)))
         }
     }
 

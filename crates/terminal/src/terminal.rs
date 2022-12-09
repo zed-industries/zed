@@ -198,7 +198,7 @@ impl Dimensions for TerminalSize {
 #[derive(Error, Debug)]
 pub struct TerminalError {
     pub directory: Option<PathBuf>,
-    pub shell: Option<Shell>,
+    pub shell: Shell,
     pub source: std::io::Error,
 }
 
@@ -226,24 +226,20 @@ impl TerminalError {
             })
     }
 
-    pub fn shell_to_string(&self) -> Option<String> {
-        self.shell.as_ref().map(|shell| match shell {
+    pub fn shell_to_string(&self) -> String {
+        match &self.shell {
             Shell::System => "<system shell>".to_string(),
             Shell::Program(p) => p.to_string(),
             Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
-        })
+        }
     }
 
     pub fn fmt_shell(&self) -> String {
-        self.shell
-            .clone()
-            .map(|shell| match shell {
-                Shell::System => "<system defined shell>".to_string(),
-
-                Shell::Program(s) => s,
-                Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
-            })
-            .unwrap_or_else(|| "<none specified, using system defined shell>".to_string())
+        match &self.shell {
+            Shell::System => "<system defined shell>".to_string(),
+            Shell::Program(s) => s.to_string(),
+            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+        }
     }
 }
 
@@ -268,18 +264,18 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        shell: Option<Shell>,
+        shell: Shell,
         mut env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         window_id: usize,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
-            let alac_shell = shell.clone().and_then(|shell| match shell {
+            let alac_shell = match shell.clone() {
                 Shell::System => None,
                 Shell::Program(program) => Some(Program::Just(program)),
                 Shell::WithArguments { program, args } => Some(Program::WithArgs { program, args }),
-            });
+            };
 
             PtyConfig {
                 shell: alac_shell,

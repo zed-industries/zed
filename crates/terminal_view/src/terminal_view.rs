@@ -1,3 +1,7 @@
+mod persistence;
+pub mod terminal_container_view;
+pub mod terminal_element;
+
 use std::{ops::RangeInclusive, time::Duration};
 
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -52,6 +56,7 @@ impl_actions!(terminal, [SendText, SendKeystroke]);
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
+    terminal_container_view::init(cx);
     //Useful terminal views
     cx.add_action(TerminalView::send_text);
     cx.add_action(TerminalView::send_keystroke);
