@@ -2371,7 +2371,12 @@ impl Workspace {
                         workspace.toggle_sidebar(SidebarSide::Left, cx);
                     }
 
-                    // Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+                    // Note that without after_window, the focus_self() and
+                    // the focus the dock generates start generating alternating
+                    // focus due to the deferred execution each triggering each other
+                    cx.after_window_update(move |workspace, cx| {
+                        Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+                    });
 
                     cx.notify();
                 });
@@ -2695,7 +2700,7 @@ mod tests {
         _workspace: &mut Workspace,
         _cx: &mut ViewContext<Workspace>,
     ) -> Option<Box<dyn ItemHandle>> {
-        unimplemented!();
+        unimplemented!()
     }
 
     #[gpui::test]
