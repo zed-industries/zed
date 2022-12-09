@@ -1,5 +1,6 @@
 mod blink_manager;
 pub mod display_map;
+mod editor_util;
 mod element;
 mod git;
 mod highlight_matching_bracket;
@@ -25,6 +26,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
 use display_map::*;
+use editor_util::{end_row_for, IteratorExtension};
 pub use element::*;
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -3192,6 +3194,30 @@ impl Editor {
         });
     }
 
+    // Behavior notes:
+    // Drag to sort within contiguous selection
+    // what about behavior across selections?
+    pub fn sort_lines(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut edits = Vec::new();
+        let mut unfold_ranges = Vec::new();
+        let mut refold_ranges = Vec::new();
+
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter().peekable();
+        let mut contiguous_row_selections = Vec::new();
+        let mut new_selections = Vec::new();
+
+        let contiguous_row_selections = self
+            .selections
+            .all::<Point>(cx)
+            .into_iter()
+            .by_contiguous_rows(&display_map)
+            .collect::<Vec<_>>();
+    }
+
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -3209,19 +3235,11 @@ impl Editor {
             // Find all the selections that span a contiguous row range
             contiguous_row_selections.push(selection.clone());
             let start_row = selection.start.row;
-            let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).0.row + 1
-            } else {
-                selection.end.row
-            };
+            let end_row = editor_util::end_row_for(selection, &display_map);
 
             while let Some(next_selection) = selections.peek() {
                 if next_selection.start.row <= end_row {
-                    end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).0.row + 1
-                    } else {
-                        next_selection.end.row
-                    };
+                    end_row = end_row_for(next_selection, &display_map);
                     contiguous_row_selections.push(selections.next().unwrap().clone());
                 } else {
                     break;
@@ -3321,19 +3339,12 @@ impl Editor {
             // Find all the selections that span a contiguous row range
             contiguous_row_selections.push(selection.clone());
             let start_row = selection.start.row;
-            let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).0.row + 1
-            } else {
-                selection.end.row
-            };
+            let end_row = editor_util::end_row_for(selection, &display_map);
 
             while let Some(next_selection) = selections.peek() {
                 if next_selection.start.row <= end_row {
-                    end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).0.row + 1
-                    } else {
-                        next_selection.end.row
-                    };
+                    end_row = editor_util::end_row_for(next_selection, &display_map);
+
                     contiguous_row_selections.push(selections.next().unwrap().clone());
                 } else {
                     break;
