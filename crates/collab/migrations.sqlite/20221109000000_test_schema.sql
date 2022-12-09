@@ -118,7 +118,7 @@ CREATE TABLE "room_participants" (
     "user_id" INTEGER NOT NULL REFERENCES users (id),
     "answering_connection_id" INTEGER,
     "answering_connection_epoch" TEXT,
-    "connection_lost" BOOLEAN NOT NULL,
+    "answering_connection_lost" BOOLEAN NOT NULL,
     "location_kind" INTEGER,
     "location_project_id" INTEGER,
     "initial_project_id" INTEGER,

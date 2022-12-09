@@ -658,11 +658,12 @@ async fn sign_out(
         .await
         .remove_connection(session.connection_id)?;
 
-    if let Ok(mut left_projects) = session
+    if let Some(mut left_projects) = session
         .db()
         .await
         .connection_lost(session.connection_id)
         .await
+        .trace_err()
     {
         for left_project in mem::take(&mut *left_projects) {
             project_left(&left_project, &session);

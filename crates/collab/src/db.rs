@@ -1034,7 +1034,7 @@ impl Database {
                 user_id: ActiveValue::set(user_id),
                 answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                 answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
-                connection_lost: ActiveValue::set(false),
+                answering_connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(user_id),
                 calling_connection_id: ActiveValue::set(connection_id.0 as i32),
                 calling_connection_epoch: ActiveValue::set(self.epoch),
@@ -1061,7 +1061,7 @@ impl Database {
             room_participant::ActiveModel {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
-                connection_lost: ActiveValue::set(false),
+                answering_connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(calling_user_id),
                 calling_connection_id: ActiveValue::set(calling_connection_id.0 as i32),
                 calling_connection_epoch: ActiveValue::set(self.epoch),
@@ -1180,13 +1180,13 @@ impl Database {
                         .and(
                             room_participant::Column::AnsweringConnectionId
                                 .is_null()
-                                .or(room_participant::Column::ConnectionLost.eq(true)),
+                                .or(room_participant::Column::AnsweringConnectionLost.eq(true)),
                         ),
                 )
                 .set(room_participant::ActiveModel {
                     answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                     answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
-                    connection_lost: ActiveValue::set(false),
+                    answering_connection_lost: ActiveValue::set(false),
                     ..Default::default()
                 })
                 .exec(&*tx)
@@ -1387,7 +1387,7 @@ impl Database {
             let room_id = participant.room_id;
 
             room_participant::Entity::update(room_participant::ActiveModel {
-                connection_lost: ActiveValue::set(true),
+                answering_connection_lost: ActiveValue::set(true),
                 ..participant.into_active_model()
             })
             .exec(&*tx)
