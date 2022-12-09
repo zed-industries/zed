@@ -32,7 +32,7 @@ use settings::{
 use smol::process::Command;
 use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
-use terminal_view::{get_working_directory, TerminalContainer};
+use terminal_view::terminal_container_view::{get_working_directory, TerminalContainer};
 
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
@@ -595,7 +595,11 @@ pub fn default_item_factory(
     let working_directory = get_working_directory(workspace, cx, strategy);
 
     let terminal_handle = cx.add_view(|cx| {
-        TerminalContainer::new(working_directory, false, workspace.database_id(), cx)
+        TerminalContainer::new(
+            Err(anyhow!("Don't have a project to open a terminal")),
+            workspace.database_id(),
+            cx,
+        )
     });
     Box::new(terminal_handle)
 }

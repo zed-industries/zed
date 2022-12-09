@@ -22,12 +22,12 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Terminal,
+    Event, Terminal,
 };
 use util::ResultExt;
 use workspace::{pane, ItemId, WorkspaceId};
 
-use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement, Event};
+use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 

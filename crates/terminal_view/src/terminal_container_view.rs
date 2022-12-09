@@ -82,21 +82,22 @@ impl TerminalContainer {
         let working_directory = get_working_directory(workspace, cx, strategy);
 
         let window_id = cx.window_id();
+        let project = workspace.project().clone();
         let terminal = workspace.project().update(cx, |project, cx| {
-            project.create_terminal_connection(working_directory, window_id, cx)
+            project.create_terminal(working_directory, window_id, cx)
         });
 
         let view = cx.add_view(|cx| TerminalContainer::new(terminal, workspace.database_id(), cx));
         workspace.add_item(Box::new(view), cx);
     }
 
-    ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices    
+    ///Create a new Terminal view.
     pub fn new(
-        model: anyhow::Result<ModelHandle<Terminal>>,
+        maybe_terminal: anyhow::Result<ModelHandle<Terminal>>,
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let content = match model {
+        let content = match maybe_terminal {
             Ok(terminal) => {
                 let item_id = cx.view_id();
                 let view = cx.add_view(|cx| {
@@ -251,8 +252,7 @@ impl Item for TerminalContainer {
         //Directory of the terminal from outside the shell. There might be
         //solutions to this, but they are non-trivial and require more IPC
         Some(TerminalContainer::new(
-            self.associated_directory.clone(),
-            false,
+            Err(anyhow::anyhow!("failed to instantiate terminal")),
             workspace_id,
             cx,
         ))
@@ -354,12 +354,13 @@ impl Item for TerminalContainer {
     }
 
     fn deserialize(
-        _project: ModelHandle<Project>,
+        project: ModelHandle<Project>,
         _workspace: WeakViewHandle<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<anyhow::Result<ViewHandle<Self>>> {
+        let window_id = cx.window_id();
         cx.spawn(|pane, mut cx| async move {
             let cwd = TERMINAL_DB
                 .take_working_directory(item_id, workspace_id)
@@ -368,8 +369,12 @@ impl Item for TerminalContainer {
                 .flatten();
 
             cx.update(|cx| {
+                let terminal = project.update(cx, |project, cx| {
+                    project.create_terminal(cwd, window_id, cx)
+                });
+
                 Ok(cx.add_view(pane, |cx| {
-                    TerminalContainer::new(cwd, false, workspace_id, cx)
+                    TerminalContainer::new(terminal, workspace_id, cx)
                 }))
             })
         })

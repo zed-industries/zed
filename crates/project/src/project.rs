@@ -1194,7 +1194,7 @@ impl Project {
         !self.is_local()
     }
 
-    pub fn create_terminal_connection(
+    pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
         window_id: usize,

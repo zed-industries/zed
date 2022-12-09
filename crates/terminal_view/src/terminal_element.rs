@@ -32,7 +32,7 @@ use util::ResultExt;
 use std::{fmt::Debug, ops::RangeInclusive};
 use std::{mem, ops::Range};
 
-use crate::terminal_view::{DeployContextMenu, TerminalView};
+use crate::{DeployContextMenu, TerminalView};
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
