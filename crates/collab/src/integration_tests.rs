@@ -6022,7 +6022,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: Default::default,
             initialize_workspace: |_, _, _| unimplemented!(),
-            default_item_factory: |_, _| unimplemented!(),
+            dock_default_item_factory: |_, _| unimplemented!(),
         });
 
         Project::init(&client);

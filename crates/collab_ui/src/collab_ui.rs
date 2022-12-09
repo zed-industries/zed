@@ -54,7 +54,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                         Default::default(),
                         0,
                         project,
-                        app_state.default_item_factory,
+                        app_state.dock_default_item_factory,
                         cx,
                     );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);

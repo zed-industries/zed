@@ -27,7 +27,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
-use dock::{DefaultItemFactory, Dock, ToggleDockButton};
+use dock::{Dock, DockDefaultItemFactory, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use fs::{self, Fs};
 use futures::{channel::oneshot, FutureExt, StreamExt};
@@ -375,7 +375,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn() -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
-    pub default_item_factory: DefaultItemFactory,
+    pub dock_default_item_factory: DockDefaultItemFactory,
 }
 
 impl AppState {
@@ -401,7 +401,7 @@ impl AppState {
             user_store,
             initialize_workspace: |_, _, _| {},
             build_window_options: Default::default,
-            default_item_factory: |_, _| unimplemented!(),
+            dock_default_item_factory: |_, _| unimplemented!(),
         })
     }
 }
@@ -515,7 +515,7 @@ impl Workspace {
         serialized_workspace: Option<SerializedWorkspace>,
         workspace_id: WorkspaceId,
         project: ModelHandle<Project>,
-        dock_default_factory: DefaultItemFactory,
+        dock_default_factory: DockDefaultItemFactory,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe_fullscreen(|_, _, cx| cx.notify()).detach();
@@ -703,7 +703,7 @@ impl Workspace {
                     serialized_workspace,
                     workspace_id,
                     project_handle,
-                    app_state.default_item_factory,
+                    app_state.dock_default_item_factory,
                     cx,
                 );
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
@@ -2694,7 +2694,7 @@ mod tests {
     pub fn default_item_factory(
         _workspace: &mut Workspace,
         _cx: &mut ViewContext<Workspace>,
-    ) -> Box<dyn ItemHandle> {
+    ) -> Option<Box<dyn ItemHandle>> {
         unimplemented!();
     }
 
