@@ -2542,7 +2542,7 @@ impl View for Workspace {
         } else {
             for pane in self.panes() {
                 let view = view.clone();
-                if pane.update(cx, |_, cx| cx.is_child(view)) {
+                if pane.update(cx, |_, cx| view.id() == cx.view_id() || cx.is_child(view)) {
                     self.handle_pane_focused(pane.clone(), cx);
                     break;
                 }
