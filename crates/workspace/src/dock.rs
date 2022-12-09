@@ -453,20 +453,77 @@ impl StatusItemView for ToggleDockButton {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::{Deref, DerefMut};
+    use std::{
+        ops::{Deref, DerefMut},
+        path::PathBuf,
+    };
 
     use gpui::{AppContext, TestAppContext, UpdateView, ViewContext};
     use project::{FakeFs, Project};
     use settings::Settings;
 
     use super::*;
-    use crate::{item::test::TestItem, sidebar::Sidebar, ItemHandle, Workspace};
+    use crate::{
+        dock,
+        item::test::TestItem,
+        persistence::model::{
+            SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+        },
+        register_deserializable_item,
+        sidebar::Sidebar,
+        ItemHandle, Workspace,
+    };
 
     pub fn default_item_factory(
         _workspace: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> Box<dyn ItemHandle> {
         Box::new(cx.add_view(|_| TestItem::new()))
+    }
+
+    #[gpui::test]
+    async fn test_dock_workspace_infinite_loop(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+
+        cx.update(|cx| {
+            register_deserializable_item::<TestItem>(cx);
+        });
+
+        let serialized_workspace = SerializedWorkspace {
+            id: 0,
+            location: Vec::<PathBuf>::new().into(),
+            dock_position: dock::DockPosition::Shown(DockAnchor::Expanded),
+            center_group: SerializedPaneGroup::Pane(SerializedPane {
+                active: false,
+                children: vec![],
+            }),
+            dock_pane: SerializedPane {
+                active: true,
+                children: vec![SerializedItem {
+                    active: true,
+                    item_id: 0,
+                    kind: "test".into(),
+                }],
+            },
+            left_sidebar_open: false,
+        };
+
+        let fs = FakeFs::new(cx.background());
+        let project = Project::test(fs, [], cx).await;
+
+        let (_, _workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Some(serialized_workspace),
+                0,
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
+
+        cx.foreground().run_until_parked();
+        //Should terminate
     }
 
     #[gpui::test]

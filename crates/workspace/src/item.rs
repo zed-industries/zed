@@ -681,6 +681,7 @@ pub(crate) mod test {
     use super::{Item, ItemEvent};
 
     pub struct TestItem {
+        pub workspace_id: WorkspaceId,
         pub state: String,
         pub label: String,
         pub save_count: usize,
@@ -716,6 +717,7 @@ pub(crate) mod test {
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
+                workspace_id: self.workspace_id,
             }
         }
     }
@@ -736,7 +738,14 @@ pub(crate) mod test {
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
+                workspace_id: 0,
             }
+        }
+
+        pub fn new_deserialized(id: WorkspaceId) -> Self {
+            let mut this = Self::new();
+            this.workspace_id = id;
+            this
         }
 
         pub fn with_label(mut self, state: &str) -> Self {
@@ -893,11 +902,12 @@ pub(crate) mod test {
         fn deserialize(
             _project: ModelHandle<Project>,
             _workspace: WeakViewHandle<Workspace>,
-            _workspace_id: WorkspaceId,
+            workspace_id: WorkspaceId,
             _item_id: ItemId,
-            _cx: &mut ViewContext<Pane>,
+            cx: &mut ViewContext<Pane>,
         ) -> Task<anyhow::Result<ViewHandle<Self>>> {
-            unreachable!("Cannot deserialize test item")
+            let view = cx.add_view(|_cx| Self::new_deserialized(workspace_id));
+            Task::Ready(Some(anyhow::Ok(view)))
         }
     }
 

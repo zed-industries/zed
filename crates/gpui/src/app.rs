@@ -1431,8 +1431,8 @@ impl MutableAppContext {
         true
     }
 
-    // Returns an iterator over all of the view ids from the passed view up to the root of the window
-    // Includes the passed view itself
+    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
+    /// Includes the passed view itself
     fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
         std::iter::once(view_id)
             .into_iter()
@@ -3695,6 +3695,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             return false;
         }
         self.ancestors(view.window_id, view.view_id)
+            .skip(1) // Skip self id
             .any(|parent| parent == self.view_id)
     }
 

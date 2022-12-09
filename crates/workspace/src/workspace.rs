@@ -2371,7 +2371,12 @@ impl Workspace {
                         workspace.toggle_sidebar(SidebarSide::Left, cx);
                     }
 
-                    // Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+                    // Note that without after_window, the focus_self() and
+                    // the focus the dock generates start generating alternating
+                    // focus due to the deferred execution each triggering each other
+                    cx.after_window_update(move |workspace, cx| {
+                        Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+                    });
 
                     cx.notify();
                 });
@@ -2537,7 +2542,7 @@ impl View for Workspace {
         } else {
             for pane in self.panes() {
                 let view = view.clone();
-                if pane.update(cx, |_, cx| cx.is_child(view)) {
+                if pane.update(cx, |_, cx| view.id() == cx.view_id() || cx.is_child(view)) {
                     self.handle_pane_focused(pane.clone(), cx);
                     break;
                 }
