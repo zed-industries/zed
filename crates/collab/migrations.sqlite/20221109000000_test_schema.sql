@@ -44,7 +44,8 @@ CREATE TABLE "projects" (
     "room_id" INTEGER REFERENCES rooms (id) NOT NULL,
     "host_user_id" INTEGER REFERENCES users (id) NOT NULL,
     "host_connection_id" INTEGER NOT NULL,
-    "host_connection_epoch" TEXT NOT NULL
+    "host_connection_epoch" TEXT NOT NULL,
+    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX "index_projects_on_host_connection_epoch" ON "projects" ("host_connection_epoch");
 

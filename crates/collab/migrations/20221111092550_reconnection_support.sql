@@ -6,8 +6,7 @@ CREATE TABLE IF NOT EXISTS "rooms" (
 ALTER TABLE "projects"
     ADD "room_id" INTEGER REFERENCES rooms (id),
     ADD "host_connection_id" INTEGER,
-    ADD "host_connection_epoch" UUID,
-    DROP COLUMN "unregistered";
+    ADD "host_connection_epoch" UUID;
 CREATE INDEX "index_projects_on_host_connection_epoch" ON "projects" ("host_connection_epoch");
 
 CREATE TABLE "worktrees" (
