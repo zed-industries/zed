@@ -53,11 +53,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::{watch, Mutex, MutexGuard};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
-pub const RECONNECTION_TIMEOUT: Duration = rpc::RECEIVE_TIMEOUT;
+pub const RECONNECT_TIMEOUT: Duration = rpc::RECEIVE_TIMEOUT;
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -143,6 +143,7 @@ pub struct Server {
     pub(crate) connection_pool: Arc<Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
     handlers: HashMap<TypeId, MessageHandler>,
+    teardown: watch::Sender<()>,
 }
 
 pub(crate) struct ConnectionPoolGuard<'a> {
@@ -173,6 +174,7 @@ impl Server {
             app_state,
             connection_pool: Default::default(),
             handlers: Default::default(),
+            teardown: watch::channel(()).0,
         };
 
         server
@@ -233,6 +235,10 @@ impl Server {
             .add_request_handler(get_private_user_info);
 
         Arc::new(server)
+    }
+
+    pub fn teardown(&self) {
+        let _ = self.teardown.send(());
     }
 
     fn add_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
@@ -333,6 +339,7 @@ impl Server {
         let user_id = user.id;
         let login = user.github_login;
         let span = info_span!("handle connection", %user_id, %login, %address);
+        let teardown = self.teardown.subscribe();
         async move {
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
@@ -438,7 +445,7 @@ impl Server {
 
             drop(foreground_message_handlers);
             tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
-            if let Err(error) = sign_out(session, executor).await {
+            if let Err(error) = sign_out(session, teardown, executor).await {
                 tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
@@ -640,7 +647,11 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
 }
 
 #[instrument(err, skip(executor))]
-async fn sign_out(session: Session, executor: Executor) -> Result<()> {
+async fn sign_out(
+    session: Session,
+    mut teardown: watch::Receiver<()>,
+    executor: Executor,
+) -> Result<()> {
     session.peer.disconnect(session.connection_id);
     session
         .connection_pool()
@@ -658,20 +669,24 @@ async fn sign_out(session: Session, executor: Executor) -> Result<()> {
         }
     }
 
-    executor.sleep(RECONNECTION_TIMEOUT).await;
-    leave_room_for_session(&session).await.trace_err();
+    futures::select_biased! {
+        _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
+            leave_room_for_session(&session).await.trace_err();
 
-    if !session
-        .connection_pool()
-        .await
-        .is_user_online(session.user_id)
-    {
-        let db = session.db().await;
-        if let Some(room) = db.decline_call(None, session.user_id).await.trace_err() {
-            room_updated(&room, &session);
+            if !session
+                .connection_pool()
+                .await
+                .is_user_online(session.user_id)
+            {
+                let db = session.db().await;
+                if let Some(room) = db.decline_call(None, session.user_id).await.trace_err() {
+                    room_updated(&room, &session);
+                }
+            }
+            update_user_contacts(session.user_id, &session).await?;
         }
+        _ = teardown.changed().fuse() => {}
     }
-    update_user_contacts(session.user_id, &session).await?;
 
     Ok(())
 }

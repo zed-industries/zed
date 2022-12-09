@@ -550,10 +550,12 @@ impl Room {
         {
             for participant in self.remote_participants.values() {
                 assert!(self.participant_user_ids.contains(&participant.user.id));
+                assert_ne!(participant.user.id, self.client.user_id().unwrap());
             }
 
             for participant in &self.pending_participants {
                 assert!(self.participant_user_ids.contains(&participant.id));
+                assert_ne!(participant.id, self.client.user_id().unwrap());
             }
 
             assert_eq!(
