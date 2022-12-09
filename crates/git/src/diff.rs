@@ -73,16 +73,16 @@ impl BufferDiff {
 
     pub fn hunks_in_range<'a>(
         &'a self,
-        query_row_range: Range<u32>,
+        range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
         reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        let start = buffer.anchor_before(Point::new(query_row_range.start, 0));
-        let end = buffer.anchor_after(Point::new(query_row_range.end, 0));
+        // let start = buffer.anchor_before(Point::new(query_row_range.start, 0));
+        // let end = buffer.anchor_after(Point::new(query_row_range.end, 0));
 
         let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&start, buffer).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&end, buffer).is_gt();
+            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
             !before_start && !after_end
         });
 

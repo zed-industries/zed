@@ -2312,11 +2312,10 @@ impl BufferSnapshot {
 
     pub fn git_diff_hunks_in_range<'a>(
         &'a self,
-        query_row_range: Range<u32>,
+        range: Range<Anchor>,
         reversed: bool,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
-        self.git_diff
-            .hunks_in_range(query_row_range, self, reversed)
+        self.git_diff.hunks_in_range(range, self, reversed)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(

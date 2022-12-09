@@ -2635,11 +2635,71 @@ impl MultiBufferSnapshot {
         row_range: Range<u32>,
         reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        self.as_singleton()
-            .into_iter()
-            .flat_map(move |(_, _, buffer)| {
-                buffer.git_diff_hunks_in_range(row_range.clone(), reversed)
-            })
+        // dbg!(&row_range);
+        let mut lines_advance = 0;
+        let mut cursor = self.excerpts.filter::<_, ExcerptSummary>(move |summary| {
+            let filter = summary.text.lines.row + lines_advance >= row_range.start
+                && lines_advance <= row_range.end;
+            lines_advance += summary.text.lines.row;
+            filter
+        });
+
+        let mut lines_advance = 0;
+        std::iter::from_fn(move || {
+            cursor.next(&());
+            let excerpt = cursor.item()?;
+            let summary = cursor.item_summary()?;
+
+            let range = excerpt.range.context.clone();
+            let range_start_row = range.start.to_point(&excerpt.buffer).row;
+            let range_end_row = range.end.to_point(&excerpt.buffer).row;
+            // dbg!(range_start_row);
+            let a = Some(excerpt.buffer.git_diff_hunks_in_range(range, reversed).map(
+                move |mut hunk| {
+                    hunk.buffer_range.start = hunk.buffer_range.start.max(range_start_row)
+                        - range_start_row
+                        + lines_advance;
+                    hunk.buffer_range.end = hunk.buffer_range.end.max(range_start_row)
+                        - range_start_row
+                        + lines_advance;
+                    hunk
+                },
+            ));
+            lines_advance += summary.text.lines.row;
+            a
+        })
+        .flatten()
+        // let mut cursor = self.excerpts.cursor::<Point>();
+        // cursor.seek(&Point::new(row_range.start, 0), Bias::Left, &());
+
+        // let mut is_first = true;
+        // let mut advance = 0;
+        // std::iter::from_fn(move || {
+        //     if !is_first {
+        //         cursor.next(&());
+        //     }
+        //     is_first = false;
+
+        //     let (item, summary) = match (cursor.item(), cursor.item_summary()) {
+        //         (Some(item), Some(summary)) => (item, summary),
+        //         _ => return None,
+        //     };
+
+        //     // dbg!(&advance);
+        //     // if advance > row_range.end {
+        //     //     println!("returning none");
+        //     //     return None;
+        //     // }
+
+        //     // let row_range = row_range.start - advance..row_range.end - advance;
+        //     // println!("returning an iterator, {row_range:?}");
+        //     // // summary.
+        //     // advance += summary.text.lines.row;
+        //     Some(item.buffer.git_diff_hunks_in_range(row_range, reversed))
+
+        //     item.range
+        // })
+        // .flatten()
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
