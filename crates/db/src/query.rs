@@ -199,10 +199,10 @@ macro_rules! query {
             use $crate::anyhow::Context;
 
 
-            self.write(|connection| {
+            self.write(move |connection| {
                 let sql_stmt = $crate::sqlez_macros::sql!($($sql)+);
 
-                connection.select_row_bound::<($($arg_type),+), $return_type>(indoc! { $sql })?(($($arg),+))
+                connection.select_row_bound::<($($arg_type),+), $return_type>(sql_stmt)?(($($arg),+))
                     .context(::std::format!(
                         "Error in {}, select_row_bound failed to execute or parse for: {}",
                         ::std::stringify!($id),
