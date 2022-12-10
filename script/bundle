@@ -69,6 +69,7 @@ fi
 dmg_target_directory="target/release"
 dmg_source_directory="${dmg_target_directory}/dmg"
 dmg_file_path="${dmg_target_directory}/Zed.dmg"
+rm -rf ${dmg_file_path}
 
 echo "Creating DMG"
 rm -rf ${dmg_source_directory}
