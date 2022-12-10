@@ -12,7 +12,7 @@
       "x": 192,
       "y": 344,
       "type": "file",
-      "path": "../../../target/release/Zed.app"
+      "path": "../../target/release/Zed.app"
     }
   ]
 }
