@@ -71,7 +71,6 @@ dmg_source_directory="${dmg_target_directory}/dmg"
 dmg_file_path="${dmg_target_directory}/Zed.dmg"
 
 echo "Creating DMG"
-
 rm -rf ${dmg_source_directory}
 mkdir -p ${dmg_source_directory}
 mv "${app_path}" "${dmg_source_directory}"
