@@ -26,7 +26,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
 use display_map::*;
-use editor_util::{end_row_for, IteratorExtension};
+use editor_util::IteratorExtension;
 pub use element::*;
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -3194,30 +3194,6 @@ impl Editor {
         });
     }
 
-    // Behavior notes:
-    // Drag to sort within contiguous selection
-    // what about behavior across selections?
-    pub fn sort_lines(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx).snapshot(cx);
-
-        let mut edits = Vec::new();
-        let mut unfold_ranges = Vec::new();
-        let mut refold_ranges = Vec::new();
-
-        let selections = self.selections.all::<Point>(cx);
-        let mut selections = selections.iter().peekable();
-        let mut contiguous_row_selections = Vec::new();
-        let mut new_selections = Vec::new();
-
-        let contiguous_row_selections = self
-            .selections
-            .all::<Point>(cx)
-            .into_iter()
-            .by_contiguous_rows(&display_map)
-            .collect::<Vec<_>>();
-    }
-
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -3227,25 +3203,13 @@ impl Editor {
         let mut refold_ranges = Vec::new();
 
         let selections = self.selections.all::<Point>(cx);
-        let mut selections = selections.iter().peekable();
-        let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
 
-        while let Some(selection) = selections.next() {
-            // Find all the selections that span a contiguous row range
-            contiguous_row_selections.push(selection.clone());
-            let start_row = selection.start.row;
-            let end_row = editor_util::end_row_for(selection, &display_map);
-
-            while let Some(next_selection) = selections.peek() {
-                if next_selection.start.row <= end_row {
-                    end_row = end_row_for(next_selection, &display_map);
-                    contiguous_row_selections.push(selections.next().unwrap().clone());
-                } else {
-                    break;
-                }
-            }
-
+        for (range, mut selectins_in_range) in
+            selections.into_iter().by_contiguous_rows(&display_map)
+        {
+            let start_row = range.start;
+            let end_row = range.end;
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row > 0 {
                 let range_to_move = Point::new(start_row - 1, buffer.line_len(start_row - 1))
@@ -3281,13 +3245,11 @@ impl Editor {
                     let row_delta = range_to_move.start.row - insertion_point.row + 1;
 
                     // Move selections up
-                    new_selections.extend(contiguous_row_selections.drain(..).map(
-                        |mut selection| {
-                            selection.start.row -= row_delta;
-                            selection.end.row -= row_delta;
-                            selection
-                        },
-                    ));
+                    new_selections.extend(selectins_in_range.drain(..).map(|mut selection| {
+                        selection.start.row -= row_delta;
+                        selection.end.row -= row_delta;
+                        selection
+                    }));
 
                     // Move folds up
                     unfold_ranges.push(range_to_move.clone());
@@ -3305,7 +3267,7 @@ impl Editor {
             }
 
             // If we didn't move line(s), preserve the existing selections
-            new_selections.append(&mut contiguous_row_selections);
+            new_selections.append(&mut selectins_in_range);
         }
 
         self.transact(cx, |this, cx| {
@@ -3331,25 +3293,13 @@ impl Editor {
         let mut refold_ranges = Vec::new();
 
         let selections = self.selections.all::<Point>(cx);
-        let mut selections = selections.iter().peekable();
-        let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
 
-        while let Some(selection) = selections.next() {
-            // Find all the selections that span a contiguous row range
-            contiguous_row_selections.push(selection.clone());
-            let start_row = selection.start.row;
-            let end_row = editor_util::end_row_for(selection, &display_map);
-
-            while let Some(next_selection) = selections.peek() {
-                if next_selection.start.row <= end_row {
-                    end_row = editor_util::end_row_for(next_selection, &display_map);
-
-                    contiguous_row_selections.push(selections.next().unwrap().clone());
-                } else {
-                    break;
-                }
-            }
+        for (range, mut selections_in_range) in
+            selections.into_iter().by_contiguous_rows(&display_map)
+        {
+            let start_row = range.start;
+            let end_row = range.end;
 
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row <= buffer.max_point().row {
@@ -3379,13 +3329,11 @@ impl Editor {
                     let row_delta = insertion_point.row - range_to_move.end.row + 1;
 
                     // Move selections down
-                    new_selections.extend(contiguous_row_selections.drain(..).map(
-                        |mut selection| {
-                            selection.start.row += row_delta;
-                            selection.end.row += row_delta;
-                            selection
-                        },
-                    ));
+                    new_selections.extend(selections_in_range.drain(..).map(|mut selection| {
+                        selection.start.row += row_delta;
+                        selection.end.row += row_delta;
+                        selection
+                    }));
 
                     // Move folds down
                     unfold_ranges.push(range_to_move.clone());
@@ -3403,7 +3351,7 @@ impl Editor {
             }
 
             // If we didn't move line(s), preserve the existing selections
-            new_selections.append(&mut contiguous_row_selections);
+            new_selections.append(&mut selections_in_range);
         }
 
         self.transact(cx, |this, cx| {
