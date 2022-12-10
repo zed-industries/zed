@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - pretty-dmg
       - "v*"
     tags:
       - "v*"
@@ -41,10 +42,10 @@ jobs:
         with:
           clean: false
           submodules: 'recursive'
-            
+
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
-    
+
       - name: Build collab
         run: cargo build -p collab
 
@@ -56,7 +57,6 @@ jobs:
     runs-on:
       - self-hosted
       - bundle
-    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
     needs: tests
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -114,18 +114,17 @@ jobs:
 
       - name: Upload app bundle to workflow run if main branch
         uses: actions/upload-artifact@v2
-        if: ${{ github.ref == 'refs/heads/main' }}
         with:
           name: Zed.dmg
           path: target/release/Zed.dmg
 
-      - uses: softprops/action-gh-release@v1
-        name: Upload app bundle to release
-        if: ${{ env.RELEASE_CHANNEL }}
-        with:
-          draft: true
-          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
-          files: target/release/Zed.dmg
-          body: ""
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # - uses: softprops/action-gh-release@v1
+      #   name: Upload app bundle to release
+      #   if: ${{ env.RELEASE_CHANNEL }}
+      #   with:
+      #     draft: true
+      #     prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+      #     files: target/release/Zed.dmg
+      #     body: ""
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

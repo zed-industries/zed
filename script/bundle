@@ -75,11 +75,10 @@ rm -rf ${dmg_source_directory}
 mkdir -p ${dmg_source_directory}
 mv "${app_path}" "${dmg_source_directory}"
 
-ln -s /Applications ${dmg_source_directory}
-hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
-# If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
-# This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
-rm ${dmg_source_directory}/Applications
+npm install -g appdmg
+appdmg "assets/dmg/config.json" "Zed.dmg"
+
+# rm ${dmg_source_directory}/Applications
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Notarizing DMG with Apple"
