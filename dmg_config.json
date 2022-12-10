@@ -1,16 +1,18 @@
 {
   "title": "Zed Installer",
+  "background": "assets/dmg/background.png",
+  "icon-size": 125,
   "format": "UDZO",
   "contents": [
     {
-      "x": 448,
-      "y": 344,
+      "x": 560,
+      "y": 310,
       "type": "link",
       "path": "/Applications"
     },
     {
-      "x": 192,
-      "y": 344,
+      "x": 140,
+      "y": 310,
       "type": "file",
       "path": "target/release/zed"
     }
