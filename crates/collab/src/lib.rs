@@ -2,6 +2,7 @@ pub mod api;
 pub mod auth;
 pub mod db;
 pub mod env;
+mod executor;
 #[cfg(test)]
 mod integration_tests;
 pub mod rpc;
