@@ -575,6 +575,15 @@ impl Item for ProjectDiagnosticsEditor {
         unreachable!()
     }
 
+    fn git_diff_recalc(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.editor
+            .update(cx, |editor, cx| editor.git_diff_recalc(project, cx))
+    }
+
     fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         Editor::to_item_events(event)
     }
