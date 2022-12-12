@@ -64,15 +64,15 @@ impl Editor {
             return None;
         }
 
-        self.context_menu.as_mut()?;
+        if self.mouse_context_menu.read(cx).visible() {
+            return None;
+        }
 
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return None;
         }
-
         self.request_autoscroll(Autoscroll::Next, cx);
-
         Some(())
     }
 
