@@ -4983,14 +4983,23 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
         |cx| build_editor(buffer.clone(), cx),
     );
 
+    let is_still_following = Rc::new(RefCell::new(true));
     let pending_update = Rc::new(RefCell::new(None));
     follower.update(cx, {
         let update = pending_update.clone();
+        let is_still_following = is_still_following.clone();
         |_, cx| {
             cx.subscribe(&leader, move |_, leader, event, cx| {
                 leader
                     .read(cx)
                     .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+            })
+            .detach();
+
+            cx.subscribe(&follower, move |_, _, event, cx| {
+                if Editor::should_unfollow_on_event(event, cx) {
+                    *is_still_following.borrow_mut() = false;
+                }
             })
             .detach();
         }
@@ -5006,6 +5015,7 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
             .unwrap();
     });
     assert_eq!(follower.read(cx).selections.ranges(cx), vec![1..1]);
+    assert_eq!(*is_still_following.borrow(), true);
 
     // Update the scroll position only
     leader.update(cx, |leader, cx| {
@@ -5020,6 +5030,7 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
         follower.update(cx, |follower, cx| follower.scroll_position(cx)),
         vec2f(1.5, 3.5)
     );
+    assert_eq!(*is_still_following.borrow(), true);
 
     // Update the selections and scroll position
     leader.update(cx, |leader, cx| {
@@ -5036,6 +5047,7 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
         assert!(follower.scroll_manager.has_autoscroll_request());
     });
     assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..0]);
+    assert_eq!(*is_still_following.borrow(), true);
 
     // Creating a pending selection that precedes another selection
     leader.update(cx, |leader, cx| {
@@ -5048,6 +5060,7 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
             .unwrap();
     });
     assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..0, 1..1]);
+    assert_eq!(*is_still_following.borrow(), true);
 
     // Extend the pending selection so that it surrounds another selection
     leader.update(cx, |leader, cx| {
@@ -5059,6 +5072,19 @@ fn test_following(cx: &mut gpui::MutableAppContext) {
             .unwrap();
     });
     assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..2]);
+
+    // Scrolling locally breaks the follow
+    follower.update(cx, |follower, cx| {
+        let top_anchor = follower.buffer().read(cx).read(cx).anchor_after(0);
+        follower.set_scroll_anchor(
+            ScrollAnchor {
+                top_anchor,
+                offset: vec2f(0.0, 0.5),
+            },
+            cx,
+        );
+    });
+    assert_eq!(*is_still_following.borrow(), false);
 }
 
 #[test]
