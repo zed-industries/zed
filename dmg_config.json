@@ -14,7 +14,7 @@
       "x": 140,
       "y": 310,
       "type": "file",
-      "path": "target/release/zed"
+      "path": "target/release/dmg/Zed.app"
     }
   ]
 }
