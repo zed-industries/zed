@@ -172,7 +172,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewFile, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx).detach();
+                open_new(&app_state, false, cx).detach();
             }
         }
     });
@@ -180,7 +180,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx).detach();
+                open_new(&app_state, true, cx).detach();
             }
         }
     });
@@ -652,6 +652,7 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
+        blank: bool,
         cx: &mut MutableAppContext,
     ) -> Task<(
         ViewHandle<Workspace>,
@@ -666,7 +667,9 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+            let serialized_workspace = (!blank)
+                .then(|| persistence::DB.workspace_for_roots(&abs_paths.as_slice()))
+                .flatten();
 
             let paths_to_open = serialized_workspace
                 .as_ref()
@@ -804,7 +807,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(callback(self, cx)))
         } else {
-            let task = Self::new_local(Vec::new(), app_state.clone(), cx);
+            let task = Self::new_local(Vec::new(), app_state.clone(), true, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await;
                 workspace.update(&mut cx, callback)
@@ -2652,7 +2655,7 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.update(|cx| {
-                let task = Workspace::new_local(abs_paths, app_state.clone(), cx);
+                let task = Workspace::new_local(abs_paths, app_state.clone(), false, cx);
 
                 cx.spawn(|mut cx| async move {
                     let (workspace, items) = task.await;
@@ -2671,8 +2674,8 @@ pub fn open_paths(
     })
 }
 
-pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
+pub fn open_new(app_state: &Arc<AppState>, blank: bool, cx: &mut MutableAppContext) -> Task<()> {
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), blank, cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await;
 

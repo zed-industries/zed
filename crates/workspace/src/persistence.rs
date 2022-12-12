@@ -371,6 +371,15 @@ impl WorkspaceDb {
 
         Ok(())
     }
+    
+    query!{
+        fn update_timestamp(workspace_id: WorkspaceId) -> Result<()> {
+            UPDATE workspaces
+            SET timestamp = CURRENT_TIMESTAMP
+            WHERE workspace_id = ?
+        }
+    }
+    
 }
 
 #[cfg(test)]
