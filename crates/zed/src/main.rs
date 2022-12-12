@@ -169,7 +169,7 @@ fn main() {
             cx.platform().activate(true);
             let paths = collect_path_args();
             if paths.is_empty() {
-                cx.dispatch_global_action(NewFile);
+                restore_or_create_workspace(cx);
             } else {
                 cx.dispatch_global_action(OpenPaths { paths });
             }
@@ -178,7 +178,7 @@ fn main() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
             } else {
-                cx.dispatch_global_action(NewFile);
+                restore_or_create_workspace(cx);
             }
             cx.spawn(|cx| async move {
                 while let Some(connection) = cli_connections_rx.next().await {
@@ -200,6 +200,16 @@ fn main() {
         })
         .detach_and_log_err(cx);
     });
+}
+
+fn restore_or_create_workspace(cx: &mut gpui::MutableAppContext) {
+    if let Some(location) = workspace::last_opened_workspace_paths() {
+        cx.dispatch_global_action(OpenPaths {
+            paths: location.paths().as_ref().clone(),
+        })
+    } else {
+        cx.dispatch_global_action(NewFile);
+    }
 }
 
 fn init_paths() {

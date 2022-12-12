@@ -765,7 +765,7 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.update(|cx| open_new(&app_state, true, cx)).await;
+        cx.update(|cx| open_new(&app_state, cx)).await;
 
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();

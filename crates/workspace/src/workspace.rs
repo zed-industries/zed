@@ -172,15 +172,16 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewFile, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, false, cx).detach();
+                open_new(&app_state, cx).detach();
             }
         }
     });
+
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, true, cx).detach();
+                open_new(&app_state, cx).detach();
             }
         }
     });
@@ -652,7 +653,6 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
-        blank: bool,
         cx: &mut MutableAppContext,
     ) -> Task<(
         ViewHandle<Workspace>,
@@ -667,9 +667,7 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let serialized_workspace = (!blank)
-                .then(|| persistence::DB.workspace_for_roots(&abs_paths.as_slice()))
-                .flatten();
+            let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
             let paths_to_open = serialized_workspace
                 .as_ref()
@@ -807,7 +805,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(callback(self, cx)))
         } else {
-            let task = Self::new_local(Vec::new(), app_state.clone(), true, cx);
+            let task = Self::new_local(Vec::new(), app_state.clone(), cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await;
                 workspace.update(&mut cx, callback)
@@ -2184,7 +2182,11 @@ impl Workspace {
     }
 
     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active {
+        if active {
+            cx.background()
+                .spawn(persistence::DB.update_timestamp(self.database_id()))
+                .detach();
+        } else {
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
                     if let Some(item) = pane.active_item() {
@@ -2621,6 +2623,10 @@ pub fn activate_workspace_for_project(
     None
 }
 
+pub fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+    DB.last_workspace().log_err().flatten()
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -2655,7 +2661,7 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.update(|cx| {
-                let task = Workspace::new_local(abs_paths, app_state.clone(), false, cx);
+                let task = Workspace::new_local(abs_paths, app_state.clone(), cx);
 
                 cx.spawn(|mut cx| async move {
                     let (workspace, items) = task.await;
@@ -2674,8 +2680,8 @@ pub fn open_paths(
     })
 }
 
-pub fn open_new(app_state: &Arc<AppState>, blank: bool, cx: &mut MutableAppContext) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), blank, cx);
+pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await;
 
