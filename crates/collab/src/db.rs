@@ -1034,6 +1034,7 @@ impl Database {
                 user_id: ActiveValue::set(user_id),
                 answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                 answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
+                answering_connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(user_id),
                 calling_connection_id: ActiveValue::set(connection_id.0 as i32),
                 calling_connection_epoch: ActiveValue::set(self.epoch),
@@ -1060,6 +1061,7 @@ impl Database {
             room_participant::ActiveModel {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
+                answering_connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(calling_user_id),
                 calling_connection_id: ActiveValue::set(calling_connection_id.0 as i32),
                 calling_connection_epoch: ActiveValue::set(self.epoch),
@@ -1175,11 +1177,16 @@ impl Database {
                     room_participant::Column::RoomId
                         .eq(room_id)
                         .and(room_participant::Column::UserId.eq(user_id))
-                        .and(room_participant::Column::AnsweringConnectionId.is_null()),
+                        .and(
+                            room_participant::Column::AnsweringConnectionId
+                                .is_null()
+                                .or(room_participant::Column::AnsweringConnectionLost.eq(true)),
+                        ),
                 )
                 .set(room_participant::ActiveModel {
                     answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
                     answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
+                    answering_connection_lost: ActiveValue::set(false),
                     ..Default::default()
                 })
                 .exec(&*tx)
@@ -1197,7 +1204,7 @@ impl Database {
     pub async fn leave_room(&self, connection_id: ConnectionId) -> Result<RoomGuard<LeftRoom>> {
         self.room_transaction(|tx| async move {
             let leaving_participant = room_participant::Entity::find()
-                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0))
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0 as i32))
                 .one(&*tx)
                 .await?;
 
@@ -1240,7 +1247,7 @@ impl Database {
                         project_collaborator::Column::ProjectId,
                         QueryProjectIds::ProjectId,
                     )
-                    .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0))
+                    .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0 as i32))
                     .into_values::<_, QueryProjectIds>()
                     .all(&*tx)
                     .await?;
@@ -1277,7 +1284,7 @@ impl Database {
 
                 // Leave projects.
                 project_collaborator::Entity::delete_many()
-                    .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0))
+                    .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0 as i32))
                     .exec(&*tx)
                     .await?;
 
@@ -1286,7 +1293,7 @@ impl Database {
                     .filter(
                         project::Column::RoomId
                             .eq(room_id)
-                            .and(project::Column::HostConnectionId.eq(connection_id.0)),
+                            .and(project::Column::HostConnectionId.eq(connection_id.0 as i32)),
                     )
                     .exec(&*tx)
                     .await?;
@@ -1344,11 +1351,9 @@ impl Database {
             }
 
             let result = room_participant::Entity::update_many()
-                .filter(
-                    room_participant::Column::RoomId
-                        .eq(room_id)
-                        .and(room_participant::Column::AnsweringConnectionId.eq(connection_id.0)),
-                )
+                .filter(room_participant::Column::RoomId.eq(room_id).and(
+                    room_participant::Column::AnsweringConnectionId.eq(connection_id.0 as i32),
+                ))
                 .set(room_participant::ActiveModel {
                     location_kind: ActiveValue::set(Some(location_kind)),
                     location_project_id: ActiveValue::set(location_project_id),
@@ -1363,6 +1368,66 @@ impl Database {
             } else {
                 Err(anyhow!("could not update room participant location"))?
             }
+        })
+        .await
+    }
+
+    pub async fn connection_lost(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<RoomGuard<Vec<LeftProject>>> {
+        self.room_transaction(|tx| async move {
+            let participant = room_participant::Entity::find()
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0 as i32))
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("not a participant in any room"))?;
+            let room_id = participant.room_id;
+
+            room_participant::Entity::update(room_participant::ActiveModel {
+                answering_connection_lost: ActiveValue::set(true),
+                ..participant.into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+
+            let collaborator_on_projects = project_collaborator::Entity::find()
+                .find_also_related(project::Entity)
+                .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0 as i32))
+                .all(&*tx)
+                .await?;
+            project_collaborator::Entity::delete_many()
+                .filter(project_collaborator::Column::ConnectionId.eq(connection_id.0 as i32))
+                .exec(&*tx)
+                .await?;
+
+            let mut left_projects = Vec::new();
+            for (_, project) in collaborator_on_projects {
+                if let Some(project) = project {
+                    let collaborators = project
+                        .find_related(project_collaborator::Entity)
+                        .all(&*tx)
+                        .await?;
+                    let connection_ids = collaborators
+                        .into_iter()
+                        .map(|collaborator| ConnectionId(collaborator.connection_id as u32))
+                        .collect();
+
+                    left_projects.push(LeftProject {
+                        id: project.id,
+                        host_user_id: project.host_user_id,
+                        host_connection_id: ConnectionId(project.host_connection_id as u32),
+                        connection_ids,
+                    });
+                }
+            }
+
+            project::Entity::delete_many()
+                .filter(project::Column::HostConnectionId.eq(connection_id.0 as i32))
+                .exec(&*tx)
+                .await?;
+
+            Ok((room_id, left_projects))
         })
         .await
     }
@@ -1514,7 +1579,7 @@ impl Database {
     ) -> Result<RoomGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(|tx| async move {
             let participant = room_participant::Entity::find()
-                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0))
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0 as i32))
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("could not find participant"))?;
@@ -1600,7 +1665,7 @@ impl Database {
     ) -> Result<RoomGuard<(proto::Room, Vec<ConnectionId>)>> {
         self.room_transaction(|tx| async move {
             let project = project::Entity::find_by_id(project_id)
-                .filter(project::Column::HostConnectionId.eq(connection_id.0))
+                .filter(project::Column::HostConnectionId.eq(connection_id.0 as i32))
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
@@ -1654,7 +1719,7 @@ impl Database {
 
             // Ensure the update comes from the host.
             let project = project::Entity::find_by_id(project_id)
-                .filter(project::Column::HostConnectionId.eq(connection_id.0))
+                .filter(project::Column::HostConnectionId.eq(connection_id.0 as i32))
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
@@ -1837,7 +1902,7 @@ impl Database {
     ) -> Result<RoomGuard<(Project, ReplicaId)>> {
         self.room_transaction(|tx| async move {
             let participant = room_participant::Entity::find()
-                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0))
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.0 as i32))
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("must join a room first"))?;
@@ -1974,7 +2039,7 @@ impl Database {
                 .filter(
                     project_collaborator::Column::ProjectId
                         .eq(project_id)
-                        .and(project_collaborator::Column::ConnectionId.eq(connection_id.0)),
+                        .and(project_collaborator::Column::ConnectionId.eq(connection_id.0 as i32)),
                 )
                 .exec(&*tx)
                 .await?;

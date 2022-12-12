@@ -10,6 +10,7 @@ pub struct Model {
     pub user_id: UserId,
     pub answering_connection_id: Option<i32>,
     pub answering_connection_epoch: Option<Uuid>,
+    pub answering_connection_lost: bool,
     pub location_kind: Option<i32>,
     pub location_project_id: Option<ProjectId>,
     pub initial_project_id: Option<ProjectId>,
