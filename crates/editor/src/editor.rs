@@ -184,7 +184,6 @@ actions!(
         Paste,
         Undo,
         Redo,
-        NextScreen,
         MoveUp,
         PageUp,
         MoveDown,
