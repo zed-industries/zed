@@ -8,9 +8,9 @@ on:
       - "v*"
     tags:
       - "v*"
-  pull_request:
-    branches:
-      - "**"
+  # pull_request:
+  #   branches:
+  #     - "**"
 
 env:
   CARGO_TERM_COLOR: always
