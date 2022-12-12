@@ -15,7 +15,7 @@ use project::Project;
 use std::{mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt};
 
-pub const RECONNECTION_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
+pub const RECONNECT_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -262,7 +262,7 @@ impl Room {
                     });
 
                 // Wait for client to re-establish a connection to the server.
-                let mut reconnection_timeout = cx.background().timer(RECONNECTION_TIMEOUT).fuse();
+                let mut reconnection_timeout = cx.background().timer(RECONNECT_TIMEOUT).fuse();
                 let client_reconnection = async {
                     loop {
                         if let Some(status) = client_status.next().await {

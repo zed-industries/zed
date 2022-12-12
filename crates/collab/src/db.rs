@@ -21,6 +21,7 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use hyper::StatusCode;
 use rpc::{proto, ConnectionId};
+use sea_orm::Condition;
 pub use sea_orm::ConnectOptions;
 use sea_orm::{
     entity::prelude::*, ActiveValue, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
@@ -47,7 +48,7 @@ pub struct Database {
     background: Option<std::sync::Arc<gpui::executor::Background>>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
-    epoch: Uuid,
+    epoch: parking_lot::RwLock<Uuid>,
 }
 
 impl Database {
@@ -60,8 +61,18 @@ impl Database {
             background: None,
             #[cfg(test)]
             runtime: None,
-            epoch: Uuid::new_v4(),
+            epoch: parking_lot::RwLock::new(Uuid::new_v4()),
         })
+    }
+
+    #[cfg(test)]
+    pub fn reset(&self) {
+        self.rooms.clear();
+        *self.epoch.write() = Uuid::new_v4();
+    }
+
+    fn epoch(&self) -> Uuid {
+        *self.epoch.read()
     }
 
     pub async fn migrate(
@@ -105,22 +116,29 @@ impl Database {
         Ok(new_migrations)
     }
 
-    pub async fn clear_stale_data(&self) -> Result<()> {
+    pub async fn delete_stale_projects(&self) -> Result<()> {
         self.transaction(|tx| async move {
             project_collaborator::Entity::delete_many()
-                .filter(project_collaborator::Column::ConnectionEpoch.ne(self.epoch))
-                .exec(&*tx)
-                .await?;
-            room_participant::Entity::delete_many()
-                .filter(
-                    room_participant::Column::AnsweringConnectionEpoch
-                        .ne(self.epoch)
-                        .or(room_participant::Column::CallingConnectionEpoch.ne(self.epoch)),
-                )
+                .filter(project_collaborator::Column::ConnectionEpoch.ne(self.epoch()))
                 .exec(&*tx)
                 .await?;
             project::Entity::delete_many()
-                .filter(project::Column::HostConnectionEpoch.ne(self.epoch))
+                .filter(project::Column::HostConnectionEpoch.ne(self.epoch()))
+                .exec(&*tx)
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn delete_stale_rooms(&self) -> Result<()> {
+        self.transaction(|tx| async move {
+            room_participant::Entity::delete_many()
+                .filter(
+                    room_participant::Column::AnsweringConnectionEpoch
+                        .ne(self.epoch())
+                        .or(room_participant::Column::CallingConnectionEpoch.ne(self.epoch())),
+                )
                 .exec(&*tx)
                 .await?;
             room::Entity::delete_many()
@@ -1033,11 +1051,11 @@ impl Database {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(user_id),
                 answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
-                answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
+                answering_connection_epoch: ActiveValue::set(Some(self.epoch())),
                 answering_connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(user_id),
                 calling_connection_id: ActiveValue::set(connection_id.0 as i32),
-                calling_connection_epoch: ActiveValue::set(self.epoch),
+                calling_connection_epoch: ActiveValue::set(self.epoch()),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -1064,7 +1082,7 @@ impl Database {
                 answering_connection_lost: ActiveValue::set(false),
                 calling_user_id: ActiveValue::set(calling_user_id),
                 calling_connection_id: ActiveValue::set(calling_connection_id.0 as i32),
-                calling_connection_epoch: ActiveValue::set(self.epoch),
+                calling_connection_epoch: ActiveValue::set(self.epoch()),
                 initial_project_id: ActiveValue::set(initial_project_id),
                 ..Default::default()
             }
@@ -1174,18 +1192,22 @@ impl Database {
         self.room_transaction(|tx| async move {
             let result = room_participant::Entity::update_many()
                 .filter(
-                    room_participant::Column::RoomId
-                        .eq(room_id)
-                        .and(room_participant::Column::UserId.eq(user_id))
-                        .and(
-                            room_participant::Column::AnsweringConnectionId
-                                .is_null()
-                                .or(room_participant::Column::AnsweringConnectionLost.eq(true)),
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(user_id))
+                        .add(
+                            Condition::any()
+                                .add(room_participant::Column::AnsweringConnectionId.is_null())
+                                .add(room_participant::Column::AnsweringConnectionLost.eq(true))
+                                .add(
+                                    room_participant::Column::AnsweringConnectionEpoch
+                                        .ne(self.epoch()),
+                                ),
                         ),
                 )
                 .set(room_participant::ActiveModel {
                     answering_connection_id: ActiveValue::set(Some(connection_id.0 as i32)),
-                    answering_connection_epoch: ActiveValue::set(Some(self.epoch)),
+                    answering_connection_epoch: ActiveValue::set(Some(self.epoch())),
                     answering_connection_lost: ActiveValue::set(false),
                     ..Default::default()
                 })
@@ -1591,7 +1613,7 @@ impl Database {
                 room_id: ActiveValue::set(participant.room_id),
                 host_user_id: ActiveValue::set(participant.user_id),
                 host_connection_id: ActiveValue::set(connection_id.0 as i32),
-                host_connection_epoch: ActiveValue::set(self.epoch),
+                host_connection_epoch: ActiveValue::set(self.epoch()),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -1616,7 +1638,7 @@ impl Database {
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
                 connection_id: ActiveValue::set(connection_id.0 as i32),
-                connection_epoch: ActiveValue::set(self.epoch),
+                connection_epoch: ActiveValue::set(self.epoch()),
                 user_id: ActiveValue::set(participant.user_id),
                 replica_id: ActiveValue::set(ReplicaId(0)),
                 is_host: ActiveValue::set(true),
@@ -1930,7 +1952,7 @@ impl Database {
             let new_collaborator = project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project_id),
                 connection_id: ActiveValue::set(connection_id.0 as i32),
-                connection_epoch: ActiveValue::set(self.epoch),
+                connection_epoch: ActiveValue::set(self.epoch()),
                 user_id: ActiveValue::set(participant.user_id),
                 replica_id: ActiveValue::set(replica_id),
                 is_host: ActiveValue::set(false),

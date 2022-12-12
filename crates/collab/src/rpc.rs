@@ -237,7 +237,15 @@ impl Server {
         Arc::new(server)
     }
 
+    pub async fn start(&self) -> Result<()> {
+        self.app_state.db.delete_stale_projects().await?;
+        // TODO: delete stale rooms after timeout.
+        // self.app_state.db.delete_stale_rooms().await?;
+        Ok(())
+    }
+
     pub fn teardown(&self) {
+        self.peer.reset();
         let _ = self.teardown.send(());
     }
 
@@ -339,7 +347,7 @@ impl Server {
         let user_id = user.id;
         let login = user.github_login;
         let span = info_span!("handle connection", %user_id, %login, %address);
-        let teardown = self.teardown.subscribe();
+        let mut teardown = self.teardown.subscribe();
         async move {
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
@@ -409,6 +417,7 @@ impl Server {
                 let next_message = incoming_rx.next().fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
+                    _ = teardown.changed().fuse() => return Ok(()),
                     result = handle_io => {
                         if let Err(error) = result {
                             tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");

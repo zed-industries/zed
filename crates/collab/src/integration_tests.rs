@@ -4,7 +4,6 @@ use crate::{
     rpc::{Server, RECONNECT_TIMEOUT},
     AppState,
 };
-use ::rpc::Peer;
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
@@ -365,7 +364,7 @@ async fn test_room_uniqueness(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_disconnecting_from_room(
+async fn test_client_disconnecting_from_room(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -511,6 +510,75 @@ async fn test_disconnecting_from_room(
         room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_server_restarts(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // Call user B from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+
+    // User B receives the call and joins the room.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    incoming_call_b.next().await.unwrap().unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // User A automatically reconnects to the room when the server restarts.
+    server.restart().await;
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
             pending: Default::default()
         }
     );
@@ -5933,7 +6001,6 @@ async fn test_random_collaboration(
 }
 
 struct TestServer {
-    peer: Arc<Peer>,
     app_state: Arc<AppState>,
     server: Arc<Server>,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
@@ -5962,10 +6029,9 @@ impl TestServer {
         )
         .unwrap();
         let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
-        let peer = Peer::new();
         let server = Server::new(app_state.clone());
+        server.start().await.unwrap();
         Self {
-            peer,
             app_state,
             server,
             connection_killers: Default::default(),
@@ -5973,6 +6039,14 @@ impl TestServer {
             _test_db: test_db,
             test_live_kit_server: live_kit_server,
         }
+    }
+
+    async fn restart(&self) {
+        self.forbid_connections();
+        self.server.teardown();
+        self.app_state.db.reset();
+        self.server.start().await.unwrap();
+        self.allow_connections();
     }
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
@@ -6192,7 +6266,6 @@ impl Deref for TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        self.peer.reset();
         self.server.teardown();
         self.test_live_kit_server.teardown().unwrap();
     }
