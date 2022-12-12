@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::Axis;
 
-use util::{iife, unzip_option, ResultExt};
+use util::{ unzip_option, ResultExt};
 
 use crate::dock::DockPosition;
 use crate::WorkspaceId;
@@ -96,22 +96,16 @@ impl WorkspaceDb {
             WorkspaceLocation,
             bool,
             DockPosition,
-        ) = iife!({
-            if worktree_roots.len() == 0 {
-                self.select_row(sql!(
-                    SELECT workspace_id, workspace_location, left_sidebar_open, dock_visible, dock_anchor
-                    FROM workspaces
-                    ORDER BY timestamp DESC LIMIT 1))?()?
-            } else {
-                self.select_row_bound(sql!(
-                    SELECT workspace_id, workspace_location, left_sidebar_open, dock_visible, dock_anchor
-                    FROM workspaces 
-                    WHERE workspace_location = ?))?(&workspace_location)?
-            }
+        ) = 
+            self.select_row_bound(sql!{
+                SELECT workspace_id, workspace_location, left_sidebar_open, dock_visible, dock_anchor
+                FROM workspaces 
+                WHERE workspace_location = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(&workspace_location))
             .context("No workspaces found")
-        })
-        .warn_on_err()
-        .flatten()?;
+            .warn_on_err()
+            .flatten()?;
 
         Some(SerializedWorkspace {
             id: workspace_id,
@@ -202,6 +196,16 @@ impl WorkspaceDb {
             WHERE workspace_location IS NOT NULL
             ORDER BY timestamp DESC 
             LIMIT ?
+        }
+    }
+
+    query! {
+        pub fn last_workspace() -> Result<Option<WorkspaceLocation>> {
+            SELECT workspace_location
+            FROM workspaces
+            WHERE workspace_location IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 1
         }
     }
 
@@ -371,6 +375,15 @@ impl WorkspaceDb {
 
         Ok(())
     }
+
+    query!{
+        pub async fn update_timestamp(workspace_id: WorkspaceId) -> Result<()> {
+            UPDATE workspaces
+            SET timestamp = CURRENT_TIMESTAMP
+            WHERE workspace_id = ?
+        }
+    }
+    
 }
 
 #[cfg(test)]
