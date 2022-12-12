@@ -334,6 +334,15 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
+    fn git_diff_recalc(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        self.results_editor
+            .update(cx, |editor, cx| editor.git_diff_recalc(project, cx))
+    }
+
     fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         match event {
             ViewEvent::UpdateTab => vec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab],
