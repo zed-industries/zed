@@ -1,6 +1,7 @@
 use crate::{
-    db::{NewUserParams, ProjectId, SqliteTestDb as TestDb, UserId},
-    rpc::{Executor, Server},
+    db::{self, NewUserParams, TestDb, UserId},
+    executor::Executor,
+    rpc::{Server, RECONNECT_TIMEOUT},
     AppState,
 };
 use ::rpc::Peer;
@@ -16,7 +17,7 @@ use editor::{
     ToggleCodeActions, Undo,
 };
 use fs::{FakeFs, Fs as _, HomeDir, LineEnding};
-use futures::{channel::oneshot, Future, StreamExt as _};
+use futures::{channel::oneshot, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
     geometry::vector::vec2f,
@@ -30,9 +31,7 @@ use language::{
 use live_kit_client::MacOSDisplay;
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
-use project::{
-    search::SearchQuery, DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
-};
+use project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath, WorktreeId};
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Formatter, Settings};
@@ -46,12 +45,11 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
 };
 use theme::ThemeRegistry;
 use unindent::Unindent as _;
 use util::post_inc;
-use workspace::{shared_screen::SharedScreen, Item, SplitDirection, ToggleFollow, Workspace};
+use workspace::{item::Item, shared_screen::SharedScreen, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -70,8 +68,6 @@ async fn test_basic_calls(
 ) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.background()).await;
-
-    let start = std::time::Instant::now();
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -104,7 +100,7 @@ async fn test_basic_calls(
     // User B receives the call.
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b.caller.github_login, "user_a");
+    assert_eq!(call_b.calling_user.github_login, "user_a");
 
     // User B connects via another client and also receives a ring on the newly-connected client.
     let _client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -112,7 +108,7 @@ async fn test_basic_calls(
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.caller.github_login, "user_a");
+    assert_eq!(call_b2.calling_user.github_login, "user_a");
 
     // User B joins the room using the first client.
     active_call_b
@@ -165,7 +161,7 @@ async fn test_basic_calls(
 
     // User C receives the call, but declines it.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
-    assert_eq!(call_c.caller.github_login, "user_b");
+    assert_eq!(call_c.calling_user.github_login, "user_b");
     active_call_c.update(cx_c, |call, _| call.decline_incoming().unwrap());
     assert!(incoming_call_c.next().await.unwrap().is_none());
 
@@ -258,8 +254,6 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
-
-    eprintln!("finished test {:?}", start.elapsed());
 }
 
 #[gpui::test(iterations = 10)]
@@ -308,7 +302,7 @@ async fn test_room_uniqueness(
     // User B receives the call from user A.
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b1.caller.github_login, "user_a");
+    assert_eq!(call_b1.calling_user.github_login, "user_a");
 
     // Ensure calling users A and B from client C fails.
     active_call_c
@@ -367,11 +361,11 @@ async fn test_room_uniqueness(
         .unwrap();
     deterministic.run_until_parked();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.caller.github_login, "user_c");
+    assert_eq!(call_b2.calling_user.github_login, "user_c");
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_leaving_room_on_disconnection(
+async fn test_disconnecting_from_room(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -420,9 +414,29 @@ async fn test_leaving_room_on_disconnection(
         }
     );
 
-    // When user A disconnects, both client A and B clear their room on the active call.
+    // User A automatically reconnects to the room upon disconnection.
     server.disconnect_client(client_a.peer_id().unwrap());
-    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // When user A disconnects, both client A and B clear their room on the active call.
+    server.forbid_connections();
+    server.disconnect_client(client_a.peer_id().unwrap());
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
     active_call_b.read_with(cx_b, |call, _| assert!(call.room().is_none()));
     assert_eq!(
@@ -439,6 +453,10 @@ async fn test_leaving_room_on_disconnection(
             pending: Default::default()
         }
     );
+
+    // Allow user A to reconnect to the server.
+    server.allow_connections();
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
 
     // Call user B again from client A.
     active_call_a
@@ -563,7 +581,7 @@ async fn test_calls_on_multiple_connections(
 
     // User B disconnects the client that is not on the call. Everything should be fine.
     client_b1.disconnect(&cx_b1.to_async()).unwrap();
-    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
         .await
@@ -622,12 +640,15 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
     // User A disconnects, causing both connections to stop ringing.
+    server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
     // User A reconnects automatically, then calls user B again.
+    server.allow_connections();
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
     active_call_a
         .update(cx_a, |call, cx| {
             call.invite(client_b1.user_id().unwrap(), None, cx)
@@ -642,7 +663,7 @@ async fn test_calls_on_multiple_connections(
     server.forbid_connections();
     server.disconnect_client(client_b1.peer_id().unwrap());
     server.disconnect_client(client_b2.peer_id().unwrap());
-    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
 }
 
@@ -695,7 +716,7 @@ async fn test_share_project(
     let incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call = incoming_call_b.borrow().clone().unwrap();
-    assert_eq!(call.caller.github_login, "user_a");
+    assert_eq!(call.calling_user.github_login, "user_a");
     let initial_project = call.initial_project.unwrap();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
@@ -766,7 +787,7 @@ async fn test_share_project(
     let incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
     deterministic.run_until_parked();
     let call = incoming_call_c.borrow().clone().unwrap();
-    assert_eq!(call.caller.github_login, "user_b");
+    assert_eq!(call.calling_user.github_login, "user_b");
     let initial_project = call.initial_project.unwrap();
     active_call_c
         .update(cx_c, |call, cx| call.accept_incoming(cx))
@@ -905,8 +926,15 @@ async fn test_host_disconnect(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let (_, workspace_b) =
-        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
+    let (_, workspace_b) = cx_b.add_window(|cx| {
+        Workspace::new(
+            Default::default(),
+            0,
+            project_b.clone(),
+            |_, _| unimplemented!(),
+            cx,
+        )
+    });
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
@@ -925,8 +953,9 @@ async fn test_host_disconnect(
     assert!(cx_b.is_window_edited(workspace_b.window_id()));
 
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
+    server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     project_a
         .condition(cx_a, |project, _| project.collaborators().is_empty())
         .await;
@@ -949,6 +978,11 @@ async fn test_host_disconnect(
         .unwrap();
     assert!(can_close);
 
+    // Allow client A to reconnect to the server.
+    server.allow_connections();
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
+
+    // Client B calls client A again after they reconnected.
     let active_call_b = cx_b.read(ActiveCall::global);
     active_call_b
         .update(cx_b, |call, cx| {
@@ -969,7 +1003,7 @@ async fn test_host_disconnect(
 
     // Drop client A's connection again. We should still unshare it successfully.
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 }
 
@@ -2284,7 +2318,6 @@ async fn test_leaving_project(
             project_id,
             client_b.client.clone(),
             client_b.user_store.clone(),
-            client_b.project_store.clone(),
             client_b.language_registry.clone(),
             FakeFs::new(cx.background()),
             cx,
@@ -2296,7 +2329,7 @@ async fn test_leaving_project(
     // Simulate connection loss for client C and ensure client A observes client C leaving the project.
     client_c.wait_for_current_user(cx_c).await;
     server.disconnect_client(client_c.peer_id().unwrap());
-    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    cx_a.foreground().advance_clock(RECEIVE_TIMEOUT);
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 0);
@@ -2408,12 +2441,6 @@ async fn test_collaborating_with_diagnostics(
 
     // Wait for server to see the diagnostics update.
     deterministic.run_until_parked();
-    {
-        let store = server.store.lock().await;
-        let project = store.project(ProjectId::from_proto(project_id)).unwrap();
-        let worktree = project.worktrees.get(&worktree_id.to_proto()).unwrap();
-        assert!(!worktree.diagnostic_summaries.is_empty());
-    }
 
     // Ensure client B observes the new diagnostics.
     project_b.read_with(cx_b, |project, cx| {
@@ -2435,7 +2462,10 @@ async fn test_collaborating_with_diagnostics(
 
     // Join project as client C and observe the diagnostics.
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
-    let project_c_diagnostic_summaries = Rc::new(RefCell::new(Vec::new()));
+    let project_c_diagnostic_summaries =
+        Rc::new(RefCell::new(project_c.read_with(cx_c, |project, cx| {
+            project.diagnostic_summaries(cx).collect::<Vec<_>>()
+        })));
     project_c.update(cx_c, |_, cx| {
         let summaries = project_c_diagnostic_summaries.clone();
         cx.subscribe(&project_c, {
@@ -3701,8 +3731,15 @@ async fn test_collaborating_with_code_actions(
 
     // Join the project as client B.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let (_window_b, workspace_b) =
-        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
+    let (_window_b, workspace_b) = cx_b.add_window(|cx| {
+        Workspace::new(
+            Default::default(),
+            0,
+            project_b.clone(),
+            |_, _| unimplemented!(),
+            cx,
+        )
+    });
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -3922,8 +3959,15 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let (_window_b, workspace_b) =
-        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
+    let (_window_b, workspace_b) = cx_b.add_window(|cx| {
+        Workspace::new(
+            Default::default(),
+            0,
+            project_b.clone(),
+            |_, _| unimplemented!(),
+            cx,
+        )
+    });
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "one.rs"), None, true, cx)
@@ -4176,18 +4220,21 @@ async fn test_contacts(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
+    cx_d: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
+    let client_d = server.create_client(cx_d, "user_d").await;
     server
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
     let active_call_c = cx_c.read(ActiveCall::global);
+    let _active_call_d = cx_d.read(ActiveCall::global);
 
     deterministic.run_until_parked();
     assert_eq!(
@@ -4211,10 +4258,11 @@ async fn test_contacts(
             ("user_b".to_string(), "online", "free")
         ]
     );
+    assert_eq!(contacts(&client_d, cx_d), []);
 
     server.disconnect_client(client_c.peer_id().unwrap());
     server.forbid_connections();
-    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -4230,6 +4278,7 @@ async fn test_contacts(
         ]
     );
     assert_eq!(contacts(&client_c, cx_c), []);
+    assert_eq!(contacts(&client_d, cx_d), []);
 
     server.allow_connections();
     client_c
@@ -4259,6 +4308,7 @@ async fn test_contacts(
             ("user_b".to_string(), "online", "free")
         ]
     );
+    assert_eq!(contacts(&client_d, cx_d), []);
 
     active_call_a
         .update(cx_a, |call, cx| {
@@ -4288,6 +4338,39 @@ async fn test_contacts(
             ("user_b".to_string(), "online", "busy")
         ]
     );
+    assert_eq!(contacts(&client_d, cx_d), []);
+
+    // Client B and client D become contacts while client B is being called.
+    server
+        .make_contacts(&mut [(&client_b, cx_b), (&client_d, cx_d)])
+        .await;
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free"),
+            ("user_d".to_string(), "online", "free"),
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "busy")]
+    );
 
     active_call_b.update(cx_b, |call, _| call.decline_incoming().unwrap());
     deterministic.run_until_parked();
@@ -4302,7 +4385,8 @@ async fn test_contacts(
         contacts(&client_b, cx_b),
         [
             ("user_a".to_string(), "online", "free"),
-            ("user_c".to_string(), "online", "free")
+            ("user_c".to_string(), "online", "free"),
+            ("user_d".to_string(), "online", "free")
         ]
     );
     assert_eq!(
@@ -4311,6 +4395,10 @@ async fn test_contacts(
             ("user_a".to_string(), "online", "free"),
             ("user_b".to_string(), "online", "free")
         ]
+    );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "free")]
     );
 
     active_call_c
@@ -4331,7 +4419,8 @@ async fn test_contacts(
         contacts(&client_b, cx_b),
         [
             ("user_a".to_string(), "online", "busy"),
-            ("user_c".to_string(), "online", "busy")
+            ("user_c".to_string(), "online", "busy"),
+            ("user_d".to_string(), "online", "free")
         ]
     );
     assert_eq!(
@@ -4340,6 +4429,10 @@ async fn test_contacts(
             ("user_a".to_string(), "online", "busy"),
             ("user_b".to_string(), "online", "free")
         ]
+    );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "free")]
     );
 
     active_call_a
@@ -4358,7 +4451,8 @@ async fn test_contacts(
         contacts(&client_b, cx_b),
         [
             ("user_a".to_string(), "online", "busy"),
-            ("user_c".to_string(), "online", "busy")
+            ("user_c".to_string(), "online", "busy"),
+            ("user_d".to_string(), "online", "free")
         ]
     );
     assert_eq!(
@@ -4367,6 +4461,10 @@ async fn test_contacts(
             ("user_a".to_string(), "online", "busy"),
             ("user_b".to_string(), "online", "free")
         ]
+    );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "free")]
     );
 
     active_call_a
@@ -4387,7 +4485,8 @@ async fn test_contacts(
         contacts(&client_b, cx_b),
         [
             ("user_a".to_string(), "online", "busy"),
-            ("user_c".to_string(), "online", "busy")
+            ("user_c".to_string(), "online", "busy"),
+            ("user_d".to_string(), "online", "free")
         ]
     );
     assert_eq!(
@@ -4396,6 +4495,10 @@ async fn test_contacts(
             ("user_a".to_string(), "online", "busy"),
             ("user_b".to_string(), "online", "busy")
         ]
+    );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "busy")]
     );
 
     active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
@@ -4411,7 +4514,8 @@ async fn test_contacts(
         contacts(&client_b, cx_b),
         [
             ("user_a".to_string(), "online", "free"),
-            ("user_c".to_string(), "online", "free")
+            ("user_c".to_string(), "online", "free"),
+            ("user_d".to_string(), "online", "free")
         ]
     );
     assert_eq!(
@@ -4420,6 +4524,10 @@ async fn test_contacts(
             ("user_a".to_string(), "online", "free"),
             ("user_b".to_string(), "online", "free")
         ]
+    );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "free")]
     );
 
     active_call_a
@@ -4440,7 +4548,8 @@ async fn test_contacts(
         contacts(&client_b, cx_b),
         [
             ("user_a".to_string(), "online", "busy"),
-            ("user_c".to_string(), "online", "free")
+            ("user_c".to_string(), "online", "free"),
+            ("user_d".to_string(), "online", "free")
         ]
     );
     assert_eq!(
@@ -4450,16 +4559,21 @@ async fn test_contacts(
             ("user_b".to_string(), "online", "busy")
         ]
     );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "busy")]
+    );
 
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     assert_eq!(contacts(&client_a, cx_a), []);
     assert_eq!(
         contacts(&client_b, cx_b),
         [
             ("user_a".to_string(), "offline", "free"),
-            ("user_c".to_string(), "online", "free")
+            ("user_c".to_string(), "online", "free"),
+            ("user_d".to_string(), "online", "free")
         ]
     );
     assert_eq!(
@@ -4469,8 +4583,11 @@ async fn test_contacts(
             ("user_b".to_string(), "online", "free")
         ]
     );
+    assert_eq!(
+        contacts(&client_d, cx_d),
+        [("user_b".to_string(), "online", "free")]
+    );
 
-    #[allow(clippy::type_complexity)]
     fn contacts(
         client: &TestClient,
         cx: &TestAppContext,
@@ -4953,6 +5070,129 @@ async fn test_following(
     );
 }
 
+#[gpui::test]
+async fn test_following_tab_order(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let mut server = TestServer::start(cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/a",
+            json!({
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
+
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+    let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
+
+    let client_b_id = project_a.read_with(cx_a, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+
+    //Open 1, 3 in that order on client A
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "3.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    let pane_paths = |pane: &ViewHandle<workspace::Pane>, cx: &mut TestAppContext| {
+        pane.update(cx, |pane, cx| {
+            pane.items()
+                .map(|item| {
+                    item.project_path(cx)
+                        .unwrap()
+                        .path
+                        .to_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+
+    //Verify that the tabs opened in the order we expect
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt"]);
+
+    //Follow client B as client A
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace
+                .toggle_follow(&ToggleFollow(client_b_id), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    //Open just 2 on client B
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+
+    // Verify that newly opened followed file is at the end
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+
+    //Open just 1 on client B
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(&pane_paths(&pane_b, cx_b), &["2.txt", "1.txt"]);
+    deterministic.run_until_parked();
+
+    // Verify that following into 1 did not reorder
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
@@ -5422,7 +5662,6 @@ async fn test_random_collaboration(
 
     let mut clients = Vec::new();
     let mut user_ids = Vec::new();
-    let mut peer_ids = Vec::new();
     let mut op_start_signals = Vec::new();
     let mut next_entity_id = 100000;
 
@@ -5449,7 +5688,6 @@ async fn test_random_collaboration(
                 let op_start_signal = futures::channel::mpsc::unbounded();
                 let guest = server.create_client(&mut guest_cx, &guest_username).await;
                 user_ids.push(guest.current_user_id(&guest_cx));
-                peer_ids.push(guest.peer_id().unwrap());
                 op_start_signals.push(op_start_signal.0);
                 clients.push(guest_cx.foreground().spawn(guest.simulate(
                     guest_username.clone(),
@@ -5461,16 +5699,26 @@ async fn test_random_collaboration(
                 log::info!("Added connection for {}", guest_username);
                 operations += 1;
             }
-            20..=29 if clients.len() > 1 => {
+            20..=24 if clients.len() > 1 => {
                 let guest_ix = rng.lock().gen_range(1..clients.len());
-                log::info!("Removing guest {}", user_ids[guest_ix]);
+                log::info!(
+                    "Simulating full disconnection of guest {}",
+                    user_ids[guest_ix]
+                );
                 let removed_guest_id = user_ids.remove(guest_ix);
-                let removed_peer_id = peer_ids.remove(guest_ix);
+                let user_connection_ids = server
+                    .connection_pool
+                    .lock()
+                    .await
+                    .user_connection_ids(removed_guest_id)
+                    .collect::<Vec<_>>();
+                assert_eq!(user_connection_ids.len(), 1);
+                let removed_peer_id = PeerId(user_connection_ids[0].0);
                 let guest = clients.remove(guest_ix);
                 op_start_signals.remove(guest_ix);
                 server.forbid_connections();
                 server.disconnect_client(removed_peer_id);
-                deterministic.advance_clock(RECEIVE_TIMEOUT);
+                deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 deterministic.start_waiting();
                 log::info!("Waiting for guest {} to exit...", removed_guest_id);
                 let (guest, mut guest_cx) = guest.await;
@@ -5482,18 +5730,15 @@ async fn test_random_collaboration(
                 }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
-                    let contacts = server
-                        .store
-                        .lock()
-                        .await
-                        .build_initial_contacts_update(contacts)
-                        .contacts;
+                    let pool = server.connection_pool.lock().await;
                     for contact in contacts {
-                        if contact.online {
-                            assert_ne!(
-                                contact.user_id, removed_guest_id.0 as u64,
-                                "removed guest is still a contact of another peer"
-                            );
+                        if let db::Contact::Accepted { user_id, .. } = contact {
+                            if pool.is_user_online(user_id) {
+                                assert_ne!(
+                                    user_id, removed_guest_id,
+                                    "removed guest is still a contact of another peer"
+                                );
+                            }
                         }
                     }
                 }
@@ -5505,6 +5750,22 @@ async fn test_random_collaboration(
                     drop(guest);
                 });
 
+                operations += 1;
+            }
+            25..=29 if clients.len() > 1 => {
+                let guest_ix = rng.lock().gen_range(1..clients.len());
+                let user_id = user_ids[guest_ix];
+                log::info!("Simulating temporary disconnection of guest {}", user_id);
+                let user_connection_ids = server
+                    .connection_pool
+                    .lock()
+                    .await
+                    .user_connection_ids(user_id)
+                    .collect::<Vec<_>>();
+                assert_eq!(user_connection_ids.len(), 1);
+                let peer_id = PeerId(user_connection_ids[0].0);
+                server.disconnect_client(peer_id);
+                deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 operations += 1;
             }
             _ if !op_start_signals.is_empty() => {
@@ -5685,7 +5946,13 @@ impl TestServer {
     async fn start(background: Arc<executor::Background>) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
-        let test_db = TestDb::new(background.clone());
+        let use_postgres = env::var("USE_POSTGRES").ok();
+        let use_postgres = use_postgres.as_deref();
+        let test_db = if use_postgres == Some("true") || use_postgres == Some("1") {
+            TestDb::postgres(background.clone())
+        } else {
+            TestDb::sqlite(background.clone())
+        };
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
@@ -5789,7 +6056,7 @@ impl TestServer {
                                 client_name,
                                 user,
                                 Some(connection_id_tx),
-                                cx.background(),
+                                Executor::Deterministic(cx.background()),
                             ))
                             .detach();
                         let connection_id = connection_id_rx.await.unwrap();
@@ -5803,17 +6070,15 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            project_store: project_store.clone(),
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
             build_window_options: Default::default,
             initialize_workspace: |_, _, _| unimplemented!(),
-            default_item_factory: |_, _| unimplemented!(),
+            dock_default_item_factory: |_, _| unimplemented!(),
         });
 
         Project::init(&client);
@@ -5834,7 +6099,6 @@ impl TestServer {
             remote_projects: Default::default(),
             next_root_dir_id: 0,
             user_store,
-            project_store,
             fs,
             language_registry: Arc::new(LanguageRegistry::test()),
             buffers: Default::default(),
@@ -5929,6 +6193,7 @@ impl Deref for TestServer {
 impl Drop for TestServer {
     fn drop(&mut self) {
         self.peer.reset();
+        self.server.teardown();
         self.test_live_kit_server.teardown().unwrap();
     }
 }
@@ -5940,7 +6205,6 @@ struct TestClient {
     remote_projects: Vec<ModelHandle<Project>>,
     next_root_dir_id: usize,
     pub user_store: ModelHandle<UserStore>,
-    pub project_store: ModelHandle<ProjectStore>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<FakeFs>,
     buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
@@ -6010,7 +6274,6 @@ impl TestClient {
             Project::local(
                 self.client.clone(),
                 self.user_store.clone(),
-                self.project_store.clone(),
                 self.language_registry.clone(),
                 self.fs.clone(),
                 cx,
@@ -6038,7 +6301,6 @@ impl TestClient {
                 host_project_id,
                 self.client.clone(),
                 self.user_store.clone(),
-                self.project_store.clone(),
                 self.language_registry.clone(),
                 FakeFs::new(cx.background()),
                 cx,
@@ -6054,7 +6316,13 @@ impl TestClient {
     ) -> ViewHandle<Workspace> {
         let (_, root_view) = cx.add_window(|_| EmptyView);
         cx.add_view(&root_view, |cx| {
-            Workspace::new(project.clone(), |_, _| unimplemented!(), cx)
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
         })
     }
 
@@ -6168,7 +6436,6 @@ impl TestClient {
                             remote_project_id,
                             client.client.clone(),
                             client.user_store.clone(),
-                            client.project_store.clone(),
                             client.language_registry.clone(),
                             FakeFs::new(cx.background()),
                             cx.to_async(),
@@ -6187,11 +6454,14 @@ impl TestClient {
                         .clone()
                 }
             };
-            if let Err(error) = active_call
-                .update(cx, |call, cx| call.share_project(project.clone(), cx))
-                .await
-            {
-                log::error!("{}: error sharing project, {:?}", username, error);
+
+            if active_call.read_with(cx, |call, _| call.room().is_some()) {
+                if let Err(error) = active_call
+                    .update(cx, |call, cx| call.share_project(project.clone(), cx))
+                    .await
+                {
+                    log::error!("{}: error sharing project, {:?}", username, error);
+                }
             }
 
             let buffers = client.buffers.entry(project.clone()).or_default();
@@ -6418,7 +6688,7 @@ impl TestClient {
                         buffers.extend(search.await?.into_keys());
                     }
                 }
-                60..=69 => {
+                60..=79 => {
                     let worktree = project
                         .read_with(cx, |project, cx| {
                             project
@@ -6616,18 +6886,6 @@ impl TestClient {
 impl Drop for TestClient {
     fn drop(&mut self) {
         self.client.tear_down();
-    }
-}
-
-impl Executor for Arc<gpui::executor::Background> {
-    type Sleep = gpui::executor::Timer;
-
-    fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
-        self.spawn(future).detach();
-    }
-
-    fn sleep(&self, duration: Duration) -> Self::Sleep {
-        self.as_ref().timer(duration)
     }
 }
 

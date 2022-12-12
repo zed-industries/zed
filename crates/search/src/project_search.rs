@@ -4,8 +4,8 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{
-    items::active_match_index, Anchor, Autoscroll, Editor, MultiBuffer, SelectAll,
-    MAX_TAB_TITLE_LEN,
+    items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
+    SelectAll, MAX_TAB_TITLE_LEN,
 };
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
@@ -24,9 +24,9 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
+    item::{Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
-    Item, ItemEvent, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
 actions!(project_search, [SearchInNew, ToggleFocus]);
@@ -315,7 +315,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.reload(project, cx))
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(&self, _workspace_id: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
@@ -352,6 +352,20 @@ impl Item for ProjectSearchView {
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
         self.results_editor.breadcrumbs(theme, cx)
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
+
+    fn deserialize(
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<anyhow::Result<ViewHandle<Self>>> {
+        unimplemented!()
     }
 }
 
@@ -893,7 +907,7 @@ impl View for ProjectSearchBar {
 impl ToolbarItemView for ProjectSearchBar {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn workspace::ItemHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();

@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
-version = "0.2.4"
+version = "0.3.1"
 
 [[bin]]
 name = "collab"
@@ -19,12 +19,12 @@ rpc = { path = "../rpc" }
 util = { path = "../util" }
 
 anyhow = "1.0.40"
-async-trait = "0.1.50"
 async-tungstenite = "0.16"
 axum = { version = "0.5", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.3", features = ["erased-json"] }
 base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
+dashmap = "5.4"
 envy = "0.4.2"
 futures = "0.3"
 hyper = "0.14"
@@ -36,9 +36,13 @@ prometheus = "0.13"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"
+# Remove fork dependency when a version with https://github.com/SeaQL/sea-orm/pull/1283 is released.
+sea-orm = { git = "https://github.com/zed-industries/sea-orm", rev = "18f4c691085712ad014a51792af75a9044bacee6", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls"] }
+sea-query = "0.27"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 sha-1 = "0.9"
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
@@ -48,11 +52,6 @@ toml = "0.5.8"
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
-
-[dependencies.sqlx]
-git = "https://github.com/launchbadge/sqlx"
-rev = "4b7053807c705df312bcb9b6281e184bf7534eb3"
-features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid"]
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
@@ -65,6 +64,7 @@ fs = { path = "../fs", features = ["test-support"] }
 git = { path = "../git", features = ["test-support"] }
 live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
+pretty_assertions = "1.3.0"
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
@@ -76,13 +76,10 @@ env_logger = "0.9"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 util = { path = "../util" }
 lazy_static = "1.4"
+sea-orm = { git = "https://github.com/zed-industries/sea-orm", rev = "18f4c691085712ad014a51792af75a9044bacee6", features = ["sqlx-sqlite"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
+sqlx = { version = "0.6", features = ["sqlite"] }
 unindent = "0.1"
-
-[dev-dependencies.sqlx]
-git = "https://github.com/launchbadge/sqlx"
-rev = "4b7053807c705df312bcb9b6281e184bf7534eb3"
-features = ["sqlite"]
 
 [features]
 seed-support = ["clap", "lipsum", "reqwest"]

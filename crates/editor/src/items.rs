@@ -1,15 +1,16 @@
 use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, Anchor, Autoscroll, Editor, Event, ExcerptId, ExcerptRange,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
+    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
+    Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+    FORMAT_TIMEOUT,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::proto::serialize_anchor as serialize_text_anchor;
 use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
@@ -26,11 +27,11 @@ use std::{
     path::{Path, PathBuf},
 };
 use text::Selection;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{
+    item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    FollowableItem, Item, ItemEvent, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView,
-    ToolbarItemLocation,
+    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -135,10 +136,13 @@ impl FollowableItem for Editor {
                 if !selections.is_empty() {
                     editor.set_selections_from_remote(selections, cx);
                 }
+
                 if let Some(scroll_top_anchor) = scroll_top_anchor {
-                    editor.set_scroll_top_anchor(
-                        scroll_top_anchor,
-                        vec2f(state.scroll_x, state.scroll_y),
+                    editor.set_scroll_anchor(
+                        ScrollAnchor {
+                            top_anchor: scroll_top_anchor,
+                            offset: vec2f(state.scroll_x, state.scroll_y),
+                        },
                         cx,
                     );
                 }
@@ -177,6 +181,7 @@ impl FollowableItem for Editor {
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
+        let scroll_anchor = self.scroll_manager.anchor();
         let excerpts = buffer
             .read(cx)
             .excerpts()
@@ -200,9 +205,9 @@ impl FollowableItem for Editor {
             singleton: buffer.is_singleton(),
             title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
             excerpts,
-            scroll_top_anchor: Some(serialize_anchor(&self.scroll_top_anchor)),
-            scroll_x: self.scroll_position.x(),
-            scroll_y: self.scroll_position.y(),
+            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.top_anchor)),
+            scroll_x: scroll_anchor.offset.x(),
+            scroll_y: scroll_anchor.offset.y(),
             selections: self
                 .selections
                 .disjoint_anchors()
@@ -251,9 +256,10 @@ impl FollowableItem for Editor {
                     true
                 }
                 Event::ScrollPositionChanged { .. } => {
-                    update.scroll_top_anchor = Some(serialize_anchor(&self.scroll_top_anchor));
-                    update.scroll_x = self.scroll_position.x();
-                    update.scroll_y = self.scroll_position.y();
+                    let scroll_anchor = self.scroll_manager.anchor();
+                    update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.top_anchor));
+                    update.scroll_x = scroll_anchor.offset.x();
+                    update.scroll_y = scroll_anchor.offset.y();
                     true
                 }
                 Event::SelectionsChanged { .. } => {
@@ -357,7 +363,7 @@ impl FollowableItem for Editor {
                     this.set_selections_from_remote(selections, cx);
                     this.request_autoscroll_remotely(Autoscroll::newest(), cx);
                 } else if let Some(anchor) = scroll_top_anchor {
-                    this.set_scroll_top_anchor(anchor, vec2f(message.scroll_x, message.scroll_y), cx);
+                    this.set_scroll_anchor(ScrollAnchor {top_anchor: anchor, offset: vec2f(message.scroll_x, message.scroll_y) }, cx);
                 }
             });
             Ok(())
@@ -461,13 +467,12 @@ impl Item for Editor {
                 buffer.clip_point(data.cursor_position, Bias::Left)
             };
 
-            let scroll_top_anchor = if buffer.can_resolve(&data.scroll_top_anchor) {
-                data.scroll_top_anchor
-            } else {
-                buffer.anchor_before(
+            let mut scroll_anchor = data.scroll_anchor;
+            if !buffer.can_resolve(&scroll_anchor.top_anchor) {
+                scroll_anchor.top_anchor = buffer.anchor_before(
                     buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
-                )
-            };
+                );
+            }
 
             drop(buffer);
 
@@ -475,8 +480,7 @@ impl Item for Editor {
                 false
             } else {
                 let nav_history = self.nav_history.take();
-                self.scroll_position = data.scroll_position;
-                self.scroll_top_anchor = scroll_top_anchor;
+                self.set_scroll_anchor(scroll_anchor, cx);
                 self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([offset..offset])
                 });
@@ -550,7 +554,7 @@ impl Item for Editor {
         self.buffer.read(cx).is_singleton()
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(&self, _workspace_id: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
@@ -673,7 +677,7 @@ impl Item for Editor {
         Task::ready(Ok(()))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         let mut result = Vec::new();
         match event {
             Event::Closed => result.push(ItemEvent::CloseItem),
@@ -734,6 +738,87 @@ impl Item for Editor {
                 .boxed()
         }));
         Some(breadcrumbs)
+    }
+
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        let workspace_id = workspace.database_id();
+        let item_id = cx.view_id();
+
+        fn serialize(
+            buffer: ModelHandle<Buffer>,
+            workspace_id: WorkspaceId,
+            item_id: ItemId,
+            cx: &mut MutableAppContext,
+        ) {
+            if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
+                let path = file.abs_path(cx);
+
+                cx.background()
+                    .spawn(async move {
+                        DB.save_path(item_id, workspace_id, path.clone())
+                            .await
+                            .log_err()
+                    })
+                    .detach();
+            }
+        }
+
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            serialize(buffer.clone(), workspace_id, item_id, cx);
+
+            cx.subscribe(&buffer, |this, buffer, event, cx| {
+                if let Some(workspace_id) = this.workspace_id {
+                    if let language::Event::FileHandleChanged = event {
+                        serialize(buffer, workspace_id, cx.view_id(), cx);
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("Editor")
+    }
+
+    fn deserialize(
+        project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: ItemId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        let project_item: Result<_> = project.update(cx, |project, cx| {
+            // Look up the path with this key associated, create a self with that path
+            let path = DB
+                .get_path(item_id, workspace_id)?
+                .context("No path stored for this editor")?;
+
+            let (worktree, path) = project
+                .find_local_worktree(&path, cx)
+                .with_context(|| format!("No worktree for path: {path:?}"))?;
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: path.into(),
+            };
+
+            Ok(project.open_path(project_path, cx))
+        });
+
+        project_item
+            .map(|project_item| {
+                cx.spawn(|pane, mut cx| async move {
+                    let (_, project_item) = project_item.await?;
+                    let buffer = project_item
+                        .downcast::<Buffer>()
+                        .context("Project item at stored path was not a buffer")?;
+
+                    Ok(cx.update(|cx| {
+                        cx.add_view(pane, |cx| Editor::for_buffer(buffer, Some(project), cx))
+                    }))
+                })
+            })
+            .unwrap_or_else(|error| Task::ready(Err(error)))
     }
 }
 

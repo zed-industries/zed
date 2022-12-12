@@ -41,7 +41,6 @@ use std::{
     future::Future,
     mem,
     ops::{Deref, DerefMut},
-    os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
     task::Poll,
@@ -83,6 +82,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     visible: bool,
+    disconnected: bool,
 }
 
 #[derive(Clone)]
@@ -168,7 +168,7 @@ enum ScanState {
 struct ShareState {
     project_id: u64,
     snapshots_tx: watch::Sender<LocalSnapshot>,
-    _maintain_remote_snapshot: Option<Task<Option<()>>>,
+    _maintain_remote_snapshot: Task<Option<()>>,
 }
 
 pub enum Event {
@@ -222,7 +222,7 @@ impl Worktree {
         let root_name = worktree.root_name.clone();
         let visible = worktree.visible;
 
-        let abs_path = PathBuf::from(OsString::from_vec(worktree.abs_path));
+        let abs_path = PathBuf::from(worktree.abs_path);
         let snapshot = Snapshot {
             id: WorktreeId(remote_id as usize),
             abs_path: Arc::from(abs_path.deref()),
@@ -248,6 +248,7 @@ impl Worktree {
                 client: client.clone(),
                 diagnostic_summaries: Default::default(),
                 visible,
+                disconnected: false,
             })
         });
 
@@ -660,7 +661,7 @@ impl LocalWorktree {
             id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             visible: self.visible,
-            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
+            abs_path: self.abs_path().as_os_str().to_string_lossy().into(),
         }
     }
 
@@ -972,11 +973,10 @@ impl LocalWorktree {
             let _ = share_tx.send(Ok(()));
         } else {
             let (snapshots_tx, mut snapshots_rx) = watch::channel_with(self.snapshot());
-            let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
 
             for (path, summary) in self.diagnostic_summaries.iter() {
-                if let Err(e) = rpc.send(proto::UpdateDiagnosticSummary {
+                if let Err(e) = self.client.send(proto::UpdateDiagnosticSummary {
                     project_id,
                     worktree_id,
                     summary: Some(summary.to_proto(&path.0)),
@@ -986,15 +986,14 @@ impl LocalWorktree {
             }
 
             let maintain_remote_snapshot = cx.background().spawn({
-                let rpc = rpc;
-
+                let rpc = self.client.clone();
                 async move {
                     let mut prev_snapshot = match snapshots_rx.recv().await {
                         Some(snapshot) => {
                             let update = proto::UpdateWorktree {
                                 project_id,
                                 worktree_id,
-                                abs_path: snapshot.abs_path().as_os_str().as_bytes().to_vec(),
+                                abs_path: snapshot.abs_path().to_string_lossy().into(),
                                 root_name: snapshot.root_name().to_string(),
                                 updated_entries: snapshot
                                     .entries_by_path
@@ -1034,10 +1033,11 @@ impl LocalWorktree {
                 }
                 .log_err()
             });
+
             self.share = Some(ShareState {
                 project_id,
                 snapshots_tx,
-                _maintain_remote_snapshot: Some(maintain_remote_snapshot),
+                _maintain_remote_snapshot: maintain_remote_snapshot,
             });
         }
 
@@ -1055,25 +1055,6 @@ impl LocalWorktree {
     pub fn is_shared(&self) -> bool {
         self.share.is_some()
     }
-
-    pub fn send_extension_counts(&self, project_id: u64) {
-        let mut extensions = Vec::new();
-        let mut counts = Vec::new();
-
-        for (extension, count) in self.extension_counts() {
-            extensions.push(extension.to_string_lossy().to_string());
-            counts.push(*count as u32);
-        }
-
-        self.client
-            .send(proto::UpdateWorktreeExtensions {
-                project_id,
-                worktree_id: self.id().to_proto(),
-                extensions,
-                counts,
-            })
-            .log_err();
-    }
 }
 
 impl RemoteWorktree {
@@ -1090,6 +1071,7 @@ impl RemoteWorktree {
     pub fn disconnected_from_host(&mut self) {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();
+        self.disconnected = true;
     }
 
     pub fn update_from_remote(&mut self, update: proto::UpdateWorktree) {
@@ -1104,10 +1086,12 @@ impl RemoteWorktree {
         self.scan_id > scan_id || (self.scan_id == scan_id && self.is_complete)
     }
 
-    fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = ()> {
+    fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
         let (tx, rx) = oneshot::channel();
         if self.observed_snapshot(scan_id) {
             let _ = tx.send(());
+        } else if self.disconnected {
+            drop(tx);
         } else {
             match self
                 .snapshot_subscriptions
@@ -1118,7 +1102,8 @@ impl RemoteWorktree {
         }
 
         async move {
-            let _ = rx.await;
+            rx.await?;
+            Ok(())
         }
     }
 
@@ -1147,7 +1132,7 @@ impl RemoteWorktree {
     ) -> Task<Result<Entry>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
         cx.spawn(|this, mut cx| async move {
-            wait_for_snapshot.await;
+            wait_for_snapshot.await?;
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 let mut snapshot = worktree.background_snapshot.lock();
@@ -1166,7 +1151,7 @@ impl RemoteWorktree {
     ) -> Task<Result<()>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
         cx.spawn(|this, mut cx| async move {
-            wait_for_snapshot.await;
+            wait_for_snapshot.await?;
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 let mut snapshot = worktree.background_snapshot.lock();
@@ -1404,7 +1389,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id: self.id().to_proto(),
-            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
+            abs_path: self.abs_path().to_string_lossy().into(),
             root_name,
             updated_entries: self.entries_by_path.iter().map(Into::into).collect(),
             removed_entries: Default::default(),
@@ -1472,7 +1457,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: self.abs_path().as_os_str().as_bytes().to_vec(),
+            abs_path: self.abs_path().to_string_lossy().into(),
             root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries,
@@ -2951,7 +2936,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
-            path: entry.path.as_os_str().as_bytes().to_vec(),
+            path: entry.path.to_string_lossy().into(),
             inode: entry.inode,
             mtime: Some(entry.mtime.into()),
             is_symlink: entry.is_symlink,
@@ -2969,14 +2954,10 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 EntryKind::Dir
             } else {
                 let mut char_bag = *root_char_bag;
-                char_bag.extend(
-                    String::from_utf8_lossy(&entry.path)
-                        .chars()
-                        .map(|c| c.to_ascii_lowercase()),
-                );
+                char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
                 EntryKind::File(char_bag)
             };
-            let path: Arc<Path> = PathBuf::from(OsString::from_vec(entry.path)).into();
+            let path: Arc<Path> = PathBuf::from(entry.path).into();
             Ok(Entry {
                 id: ProjectEntryId::from_proto(entry.id),
                 kind,

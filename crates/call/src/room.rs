@@ -5,13 +5,17 @@ use crate::{
 use anyhow::{anyhow, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
-use futures::StreamExt;
-use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use futures::{FutureExt, StreamExt};
+use gpui::{
+    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
+};
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
 use project::Project;
-use std::{mem, os::unix::prelude::OsStrExt, sync::Arc};
+use std::{mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt};
+
+pub const RECONNECTION_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -46,6 +50,7 @@ pub struct Room {
     user_store: ModelHandle<UserStore>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
+    _maintain_connection: Task<Result<()>>,
 }
 
 impl Entity for Room {
@@ -53,7 +58,7 @@ impl Entity for Room {
 
     fn release(&mut self, _: &mut MutableAppContext) {
         if self.status.is_online() {
-            self.client.send(proto::LeaveRoom { id: self.id }).log_err();
+            self.client.send(proto::LeaveRoom {}).log_err();
         }
     }
 }
@@ -66,21 +71,6 @@ impl Room {
         user_store: ModelHandle<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let mut client_status = client.status();
-        cx.spawn_weak(|this, mut cx| async move {
-            let is_connected = client_status
-                .next()
-                .await
-                .map_or(false, |s| s.is_connected());
-            // Even if we're initially connected, any future change of the status means we momentarily disconnected.
-            if !is_connected || client_status.next().await.is_some() {
-                if let Some(this) = this.upgrade(&cx) {
-                    let _ = this.update(&mut cx, |this, cx| this.leave(cx));
-                }
-            }
-        })
-        .detach();
-
         let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
             let room = live_kit_client::Room::new();
             let mut status = room.status();
@@ -131,6 +121,9 @@ impl Room {
             None
         };
 
+        let _maintain_connection =
+            cx.spawn_weak(|this, cx| Self::maintain_connection(this, client.clone(), cx));
+
         Self {
             id,
             live_kit: live_kit_room,
@@ -145,11 +138,12 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
+            _maintain_connection,
         }
     }
 
     pub(crate) fn create(
-        recipient_user_id: u64,
+        called_user_id: u64,
         initial_project: Option<ModelHandle<Project>>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -182,7 +176,7 @@ impl Room {
             match room
                 .update(&mut cx, |room, cx| {
                     room.leave_when_empty = true;
-                    room.call(recipient_user_id, initial_project_id, cx)
+                    room.call(called_user_id, initial_project_id, cx)
                 })
                 .await
             {
@@ -241,8 +235,85 @@ impl Room {
         self.participant_user_ids.clear();
         self.subscriptions.clear();
         self.live_kit.take();
-        self.client.send(proto::LeaveRoom { id: self.id })?;
+        self.client.send(proto::LeaveRoom {})?;
         Ok(())
+    }
+
+    async fn maintain_connection(
+        this: WeakModelHandle<Self>,
+        client: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let mut client_status = client.status();
+        loop {
+            let is_connected = client_status
+                .next()
+                .await
+                .map_or(false, |s| s.is_connected());
+            // Even if we're initially connected, any future change of the status means we momentarily disconnected.
+            if !is_connected || client_status.next().await.is_some() {
+                let room_id = this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("room was dropped"))?
+                    .update(&mut cx, |this, cx| {
+                        this.status = RoomStatus::Rejoining;
+                        cx.notify();
+                        this.id
+                    });
+
+                // Wait for client to re-establish a connection to the server.
+                let mut reconnection_timeout = cx.background().timer(RECONNECTION_TIMEOUT).fuse();
+                let client_reconnection = async {
+                    loop {
+                        if let Some(status) = client_status.next().await {
+                            if status.is_connected() {
+                                return true;
+                            }
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+                .fuse();
+                futures::pin_mut!(client_reconnection);
+
+                futures::select_biased! {
+                    reconnected = client_reconnection => {
+                        if reconnected {
+                            // Client managed to reconnect to the server. Now attempt to join the room.
+                            let rejoin_room = async {
+                                let response = client.request(proto::JoinRoom { id: room_id }).await?;
+                                let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+                                this.upgrade(&cx)
+                                    .ok_or_else(|| anyhow!("room was dropped"))?
+                                    .update(&mut cx, |this, cx| {
+                                        this.status = RoomStatus::Online;
+                                        this.apply_room_update(room_proto, cx)
+                                    })?;
+                                anyhow::Ok(())
+                            };
+
+                            // If we successfully joined the room, go back around the loop
+                            // waiting for future connection status changes.
+                            if rejoin_room.await.log_err().is_some() {
+                                continue;
+                            }
+                        }
+                    }
+                    _ = reconnection_timeout => {}
+                }
+
+                // The client failed to re-establish a connection to the server
+                // or an error occurred while trying to re-join the room. Either way
+                // we leave the room and return an error.
+                if let Some(this) = this.upgrade(&cx) {
+                    let _ = this.update(&mut cx, |this, cx| this.leave(cx));
+                }
+                return Err(anyhow!(
+                    "can't reconnect to room: client failed to re-establish connection"
+                ));
+            }
+        }
     }
 
     pub fn id(&self) -> u64 {
@@ -294,6 +365,11 @@ impl Room {
             .position(|participant| Some(participant.user_id) == self.client.user_id());
         let local_participant = local_participant_ix.map(|ix| room.participants.swap_remove(ix));
 
+        let pending_participant_user_ids = room
+            .pending_participants
+            .iter()
+            .map(|p| p.user_id)
+            .collect::<Vec<_>>();
         let remote_participant_user_ids = room
             .participants
             .iter()
@@ -303,7 +379,7 @@ impl Room {
             self.user_store.update(cx, move |user_store, cx| {
                 (
                     user_store.get_users(remote_participant_user_ids, cx),
-                    user_store.get_users(room.pending_participant_user_ids, cx),
+                    user_store.get_users(pending_participant_user_ids, cx),
                 )
             });
         self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {
@@ -320,9 +396,11 @@ impl Room {
                 }
 
                 if let Some(participants) = remote_participants.log_err() {
+                    let mut participant_peer_ids = HashSet::default();
                     for (participant, user) in room.participants.into_iter().zip(participants) {
                         let peer_id = PeerId(participant.peer_id);
                         this.participant_user_ids.insert(participant.user_id);
+                        participant_peer_ids.insert(peer_id);
 
                         let old_projects = this
                             .remote_participants
@@ -389,8 +467,8 @@ impl Room {
                         }
                     }
 
-                    this.remote_participants.retain(|_, participant| {
-                        if this.participant_user_ids.contains(&participant.user.id) {
+                    this.remote_participants.retain(|peer_id, participant| {
+                        if participant_peer_ids.contains(peer_id) {
                             true
                         } else {
                             for project in &participant.projects {
@@ -472,10 +550,12 @@ impl Room {
         {
             for participant in self.remote_participants.values() {
                 assert!(self.participant_user_ids.contains(&participant.user.id));
+                assert_ne!(participant.user.id, self.client.user_id().unwrap());
             }
 
             for participant in &self.pending_participants {
                 assert!(self.participant_user_ids.contains(&participant.id));
+                assert_ne!(participant.id, self.client.user_id().unwrap());
             }
 
             assert_eq!(
@@ -487,7 +567,7 @@ impl Room {
 
     pub(crate) fn call(
         &mut self,
-        recipient_user_id: u64,
+        called_user_id: u64,
         initial_project_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -503,7 +583,7 @@ impl Room {
             let result = client
                 .request(proto::Call {
                     room_id,
-                    recipient_user_id,
+                    called_user_id,
                     initial_project_id,
                 })
                 .await;
@@ -538,7 +618,7 @@ impl Room {
                         id: worktree.id().to_proto(),
                         root_name: worktree.root_name().into(),
                         visible: worktree.is_visible(),
-                        abs_path: worktree.abs_path().as_os_str().as_bytes().to_vec(),
+                        abs_path: worktree.abs_path().to_string_lossy().into(),
                     }
                 })
                 .collect(),
@@ -746,6 +826,7 @@ impl Default for ScreenTrack {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum RoomStatus {
     Online,
+    Rejoining,
     Offline,
 }
 

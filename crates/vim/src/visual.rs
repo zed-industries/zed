@@ -1,7 +1,9 @@
 use std::borrow::Cow;
 
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, Autoscroll, Bias, ClipboardSelection};
+use editor::{
+    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
+};
 use gpui::{actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, SelectionGoal};
 use workspace::Workspace;

@@ -43,7 +43,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                     project_id,
                     app_state.client.clone(),
                     app_state.user_store.clone(),
-                    app_state.project_store.clone(),
                     app_state.languages.clone(),
                     app_state.fs.clone(),
                     cx.clone(),
@@ -51,7 +50,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 .await?;
 
                 let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-                    let mut workspace = Workspace::new(project, app_state.default_item_factory, cx);
+                    let mut workspace = Workspace::new(
+                        Default::default(),
+                        0,
+                        project,
+                        app_state.dock_default_item_factory,
+                        cx,
+                    );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                     workspace
                 });

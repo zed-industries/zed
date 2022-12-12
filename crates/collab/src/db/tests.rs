@@ -1,19 +1,22 @@
-use super::db::*;
+use super::*;
 use gpui::executor::{Background, Deterministic};
 use std::sync::Arc;
+
+#[cfg(test)]
+use pretty_assertions::{assert_eq, assert_ne};
 
 macro_rules! test_both_dbs {
     ($postgres_test_name:ident, $sqlite_test_name:ident, $db:ident, $body:block) => {
         #[gpui::test]
         async fn $postgres_test_name() {
-            let test_db = PostgresTestDb::new(Deterministic::new(0).build_background());
+            let test_db = TestDb::postgres(Deterministic::new(0).build_background());
             let $db = test_db.db();
             $body
         }
 
         #[gpui::test]
         async fn $sqlite_test_name() {
-            let test_db = SqliteTestDb::new(Deterministic::new(0).build_background());
+            let test_db = TestDb::sqlite(Deterministic::new(0).build_background());
             let $db = test_db.db();
             $body
         }
@@ -26,9 +29,10 @@ test_both_dbs!(
     db,
     {
         let mut user_ids = Vec::new();
+        let mut user_metric_ids = Vec::new();
         for i in 1..=4 {
-            user_ids.push(
-                db.create_user(
+            let user = db
+                .create_user(
                     &format!("user{i}@example.com"),
                     false,
                     NewUserParams {
@@ -38,9 +42,9 @@ test_both_dbs!(
                     },
                 )
                 .await
-                .unwrap()
-                .user_id,
-            );
+                .unwrap();
+            user_ids.push(user.user_id);
+            user_metric_ids.push(user.metrics_id);
         }
 
         assert_eq!(
@@ -52,6 +56,7 @@ test_both_dbs!(
                     github_user_id: Some(1),
                     email_address: Some("user1@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[0].parse().unwrap(),
                     ..Default::default()
                 },
                 User {
@@ -60,6 +65,7 @@ test_both_dbs!(
                     github_user_id: Some(2),
                     email_address: Some("user2@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[1].parse().unwrap(),
                     ..Default::default()
                 },
                 User {
@@ -68,6 +74,7 @@ test_both_dbs!(
                     github_user_id: Some(3),
                     email_address: Some("user3@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[2].parse().unwrap(),
                     ..Default::default()
                 },
                 User {
@@ -76,6 +83,7 @@ test_both_dbs!(
                     github_user_id: Some(4),
                     email_address: Some("user4@example.com".to_string()),
                     admin: false,
+                    metrics_id: user_metric_ids[3].parse().unwrap(),
                     ..Default::default()
                 }
             ]
@@ -258,7 +266,8 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         db.get_contacts(user_1).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_2,
-            should_notify: true
+            should_notify: true,
+            busy: false,
         }],
     );
     assert!(db.has_contact(user_1, user_2).await.unwrap());
@@ -268,6 +277,7 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         &[Contact::Accepted {
             user_id: user_1,
             should_notify: false,
+            busy: false,
         }]
     );
 
@@ -284,6 +294,7 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         &[Contact::Accepted {
             user_id: user_2,
             should_notify: true,
+            busy: false,
         }]
     );
 
@@ -296,6 +307,7 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         &[Contact::Accepted {
             user_id: user_2,
             should_notify: false,
+            busy: false,
         }]
     );
 
@@ -309,10 +321,12 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
             Contact::Accepted {
                 user_id: user_2,
                 should_notify: false,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user_3,
-                should_notify: false
+                should_notify: false,
+                busy: false,
             }
         ]
     );
@@ -320,7 +334,8 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         db.get_contacts(user_3).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }],
     );
 
@@ -335,14 +350,16 @@ test_both_dbs!(test_add_contacts_postgres, test_add_contacts_sqlite, db, {
         db.get_contacts(user_2).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
     assert_eq!(
         db.get_contacts(user_3).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }],
     );
 });
@@ -388,16 +405,81 @@ test_both_dbs!(test_metrics_id_postgres, test_metrics_id_sqlite, db, {
     assert_ne!(metrics_id1, metrics_id2);
 });
 
+test_both_dbs!(
+    test_project_count_postgres,
+    test_project_count_sqlite,
+    db,
+    {
+        let user1 = db
+            .create_user(
+                &format!("admin@example.com"),
+                true,
+                NewUserParams {
+                    github_login: "admin".into(),
+                    github_user_id: 0,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user2 = db
+            .create_user(
+                &format!("user@example.com"),
+                false,
+                NewUserParams {
+                    github_login: "user".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+
+        let room_id = RoomId::from_proto(
+            db.create_room(user1.user_id, ConnectionId(0), "")
+                .await
+                .unwrap()
+                .id,
+        );
+        db.call(room_id, user1.user_id, ConnectionId(0), user2.user_id, None)
+            .await
+            .unwrap();
+        db.join_room(room_id, user2.user_id, ConnectionId(1))
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
+
+        db.share_project(room_id, ConnectionId(1), &[])
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
+
+        db.share_project(room_id, ConnectionId(1), &[])
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
+
+        // Projects shared by admins aren't counted.
+        db.share_project(room_id, ConnectionId(0), &[])
+            .await
+            .unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
+
+        db.leave_room(ConnectionId(1)).await.unwrap();
+        assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
+    }
+);
+
 #[test]
 fn test_fuzzy_like_string() {
-    assert_eq!(DefaultDb::fuzzy_like_string("abcd"), "%a%b%c%d%");
-    assert_eq!(DefaultDb::fuzzy_like_string("x y"), "%x%y%");
-    assert_eq!(DefaultDb::fuzzy_like_string(" z  "), "%z%");
+    assert_eq!(Database::fuzzy_like_string("abcd"), "%a%b%c%d%");
+    assert_eq!(Database::fuzzy_like_string("x y"), "%x%y%");
+    assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
 }
 
 #[gpui::test]
 async fn test_fuzzy_search_users() {
-    let test_db = PostgresTestDb::new(build_background_executor());
+    let test_db = TestDb::postgres(build_background_executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -433,7 +515,7 @@ async fn test_fuzzy_search_users() {
         &["rhode-island", "colorado", "oregon"],
     );
 
-    async fn fuzzy_search_user_names(db: &Db<sqlx::Postgres>, query: &str) -> Vec<String> {
+    async fn fuzzy_search_user_names(db: &Database, query: &str) -> Vec<String> {
         db.fuzzy_search_users(query, 10)
             .await
             .unwrap()
@@ -445,7 +527,7 @@ async fn test_fuzzy_search_users() {
 
 #[gpui::test]
 async fn test_invite_codes() {
-    let test_db = PostgresTestDb::new(build_background_executor());
+    let test_db = TestDb::postgres(build_background_executor());
     let db = test_db.db();
 
     let NewUserResult { user_id: user1, .. } = db
@@ -504,16 +586,20 @@ async fn test_invite_codes() {
         db.get_contacts(user1).await.unwrap(),
         [Contact::Accepted {
             user_id: user2,
-            should_notify: true
+            should_notify: true,
+            busy: false,
         }]
     );
     assert_eq!(
         db.get_contacts(user2).await.unwrap(),
         [Contact::Accepted {
             user_id: user1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
+    assert!(db.has_contact(user1, user2).await.unwrap());
+    assert!(db.has_contact(user2, user1).await.unwrap());
     assert_eq!(
         db.get_invite_code_for_user(user2).await.unwrap().unwrap().1,
         7
@@ -550,11 +636,13 @@ async fn test_invite_codes() {
         [
             Contact::Accepted {
                 user_id: user2,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user3,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             }
         ]
     );
@@ -562,9 +650,12 @@ async fn test_invite_codes() {
         db.get_contacts(user3).await.unwrap(),
         [Contact::Accepted {
             user_id: user1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
+    assert!(db.has_contact(user1, user3).await.unwrap());
+    assert!(db.has_contact(user3, user1).await.unwrap());
     assert_eq!(
         db.get_invite_code_for_user(user3).await.unwrap().unwrap().1,
         3
@@ -607,15 +698,18 @@ async fn test_invite_codes() {
         [
             Contact::Accepted {
                 user_id: user2,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user3,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             },
             Contact::Accepted {
                 user_id: user4,
-                should_notify: true
+                should_notify: true,
+                busy: false,
             }
         ]
     );
@@ -623,9 +717,12 @@ async fn test_invite_codes() {
         db.get_contacts(user4).await.unwrap(),
         [Contact::Accepted {
             user_id: user1,
-            should_notify: false
+            should_notify: false,
+            busy: false,
         }]
     );
+    assert!(db.has_contact(user1, user4).await.unwrap());
+    assert!(db.has_contact(user4, user1).await.unwrap());
     assert_eq!(
         db.get_invite_code_for_user(user4).await.unwrap().unwrap().1,
         5
@@ -637,11 +734,162 @@ async fn test_invite_codes() {
         .unwrap_err();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 1);
+
+    // A newer user can invite an existing one via a different email address
+    // than the one they used to sign up.
+    let user5 = db
+        .create_user(
+            "user5@example.com",
+            false,
+            NewUserParams {
+                github_login: "user5".into(),
+                github_user_id: 5,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    db.set_invite_count_for_user(user5, 5).await.unwrap();
+    let (user5_invite_code, _) = db.get_invite_code_for_user(user5).await.unwrap().unwrap();
+    let user5_invite_to_user1 = db
+        .create_invite_from_code(&user5_invite_code, "user1@different.com", None)
+        .await
+        .unwrap();
+    let user1_2 = db
+        .create_user_from_invite(
+            &user5_invite_to_user1,
+            NewUserParams {
+                github_login: "user1".into(),
+                github_user_id: 1,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .user_id;
+    assert_eq!(user1_2, user1);
+    assert_eq!(
+        db.get_contacts(user1).await.unwrap(),
+        [
+            Contact::Accepted {
+                user_id: user2,
+                should_notify: true,
+                busy: false,
+            },
+            Contact::Accepted {
+                user_id: user3,
+                should_notify: true,
+                busy: false,
+            },
+            Contact::Accepted {
+                user_id: user4,
+                should_notify: true,
+                busy: false,
+            },
+            Contact::Accepted {
+                user_id: user5,
+                should_notify: false,
+                busy: false,
+            }
+        ]
+    );
+    assert_eq!(
+        db.get_contacts(user5).await.unwrap(),
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: true,
+            busy: false,
+        }]
+    );
+    assert!(db.has_contact(user1, user5).await.unwrap());
+    assert!(db.has_contact(user5, user1).await.unwrap());
+}
+
+#[gpui::test]
+async fn test_multiple_signup_overwrite() {
+    let test_db = TestDb::postgres(build_background_executor());
+    let db = test_db.db();
+
+    let email_address = "user_1@example.com".to_string();
+
+    let initial_signup_created_at_milliseconds = 0;
+
+    let initial_signup = NewSignup {
+        email_address: email_address.clone(),
+        platform_mac: false,
+        platform_linux: true,
+        platform_windows: false,
+        editor_features: vec!["speed".into()],
+        programming_languages: vec!["rust".into(), "c".into()],
+        device_id: Some(format!("device_id")),
+        added_to_mailing_list: false,
+        created_at: Some(
+            DateTime::from_timestamp_millis(initial_signup_created_at_milliseconds).unwrap(),
+        ),
+    };
+
+    db.create_signup(&initial_signup).await.unwrap();
+
+    let initial_signup_from_db = db.get_signup(&email_address).await.unwrap();
+
+    assert_eq!(
+        initial_signup_from_db.clone(),
+        signup::Model {
+            email_address: initial_signup.email_address,
+            platform_mac: initial_signup.platform_mac,
+            platform_linux: initial_signup.platform_linux,
+            platform_windows: initial_signup.platform_windows,
+            editor_features: Some(initial_signup.editor_features),
+            programming_languages: Some(initial_signup.programming_languages),
+            added_to_mailing_list: initial_signup.added_to_mailing_list,
+            ..initial_signup_from_db
+        }
+    );
+
+    let subsequent_signup = NewSignup {
+        email_address: email_address.clone(),
+        platform_mac: true,
+        platform_linux: false,
+        platform_windows: true,
+        editor_features: vec!["git integration".into(), "clean design".into()],
+        programming_languages: vec!["d".into(), "elm".into()],
+        device_id: Some(format!("different_device_id")),
+        added_to_mailing_list: true,
+        // subsequent signup happens next day
+        created_at: Some(
+            DateTime::from_timestamp_millis(
+                initial_signup_created_at_milliseconds + (1000 * 60 * 60 * 24),
+            )
+            .unwrap(),
+        ),
+    };
+
+    db.create_signup(&subsequent_signup).await.unwrap();
+
+    let subsequent_signup_from_db = db.get_signup(&email_address).await.unwrap();
+
+    assert_eq!(
+        subsequent_signup_from_db.clone(),
+        signup::Model {
+            platform_mac: subsequent_signup.platform_mac,
+            platform_linux: subsequent_signup.platform_linux,
+            platform_windows: subsequent_signup.platform_windows,
+            editor_features: Some(subsequent_signup.editor_features),
+            programming_languages: Some(subsequent_signup.programming_languages),
+            device_id: subsequent_signup.device_id,
+            added_to_mailing_list: subsequent_signup.added_to_mailing_list,
+            // shouldn't overwrite their creation Datetime - user shouldn't lose their spot in line
+            created_at: initial_signup_from_db.created_at,
+            ..subsequent_signup_from_db
+        }
+    );
 }
 
 #[gpui::test]
 async fn test_signups() {
-    let test_db = PostgresTestDb::new(build_background_executor());
+    let test_db = TestDb::postgres(build_background_executor());
     let db = test_db.db();
 
     let usernames = (0..8).map(|i| format!("person-{i}")).collect::<Vec<_>>();
@@ -649,7 +897,7 @@ async fn test_signups() {
     let all_signups = usernames
         .iter()
         .enumerate()
-        .map(|(i, username)| Signup {
+        .map(|(i, username)| NewSignup {
             email_address: format!("{username}@example.com"),
             platform_mac: true,
             platform_linux: i % 2 == 0,
@@ -657,8 +905,10 @@ async fn test_signups() {
             editor_features: vec!["speed".into()],
             programming_languages: vec!["rust".into(), "c".into()],
             device_id: Some(format!("device_id_{i}")),
+            added_to_mailing_list: i != 0, // One user failed to subscribe
+            created_at: Some(DateTime::from_timestamp_millis(i as i64).unwrap()), // Signups are consecutive
         })
-        .collect::<Vec<Signup>>();
+        .collect::<Vec<NewSignup>>();
 
     // people sign up on the waitlist
     for signup in &all_signups {

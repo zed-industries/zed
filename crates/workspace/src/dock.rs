@@ -98,14 +98,14 @@ pub fn icon_for_dock_anchor(anchor: DockAnchor) -> &'static str {
 }
 
 impl DockPosition {
-    fn is_visible(&self) -> bool {
+    pub fn is_visible(&self) -> bool {
         match self {
             DockPosition::Shown(_) => true,
             DockPosition::Hidden(_) => false,
         }
     }
 
-    fn anchor(&self) -> DockAnchor {
+    pub fn anchor(&self) -> DockAnchor {
         match self {
             DockPosition::Shown(anchor) | DockPosition::Hidden(anchor) => *anchor,
         }
@@ -126,20 +126,24 @@ impl DockPosition {
     }
 }
 
-pub type DefaultItemFactory =
-    fn(&mut Workspace, &mut ViewContext<Workspace>) -> Box<dyn ItemHandle>;
+pub type DockDefaultItemFactory =
+    fn(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<Box<dyn ItemHandle>>;
 
 pub struct Dock {
     position: DockPosition,
     panel_sizes: HashMap<DockAnchor, f32>,
     pane: ViewHandle<Pane>,
-    default_item_factory: DefaultItemFactory,
+    default_item_factory: DockDefaultItemFactory,
 }
 
 impl Dock {
-    pub fn new(cx: &mut ViewContext<Workspace>, default_item_factory: DefaultItemFactory) -> Self {
-        let anchor = cx.global::<Settings>().default_dock_anchor;
-        let pane = cx.add_view(|cx| Pane::new(Some(anchor), cx));
+    pub fn new(
+        default_item_factory: DockDefaultItemFactory,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Self {
+        let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
+
+        let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), cx));
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
@@ -152,7 +156,7 @@ impl Dock {
         Self {
             pane,
             panel_sizes: Default::default(),
-            position: DockPosition::Hidden(anchor),
+            position,
             default_item_factory,
         }
     }
@@ -169,7 +173,7 @@ impl Dock {
         self.position.is_visible() && self.position.anchor() == anchor
     }
 
-    fn set_dock_position(
+    pub(crate) fn set_dock_position(
         workspace: &mut Workspace,
         new_position: DockPosition,
         cx: &mut ViewContext<Workspace>,
@@ -191,9 +195,11 @@ impl Dock {
             // Ensure that the pane has at least one item or construct a default item to put in it
             let pane = workspace.dock.pane.clone();
             if pane.read(cx).items().next().is_none() {
-                let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
-                // Adding the item focuses the pane by default
-                Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+                if let Some(item_to_add) = (workspace.dock.default_item_factory)(workspace, cx) {
+                    Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+                } else {
+                    workspace.dock.position = workspace.dock.position.hide();
+                }
             } else {
                 cx.focus(pane);
             }
@@ -205,6 +211,7 @@ impl Dock {
             cx.focus(last_active_center_pane);
         }
         cx.emit(crate::Event::DockAnchorChanged);
+        workspace.serialize_workspace(cx);
         cx.notify();
     }
 
@@ -341,6 +348,10 @@ impl Dock {
                 }
             })
     }
+
+    pub fn position(&self) -> DockPosition {
+        self.position
+    }
 }
 
 pub struct ToggleDockButton {
@@ -447,20 +458,77 @@ impl StatusItemView for ToggleDockButton {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::{Deref, DerefMut};
+    use std::{
+        ops::{Deref, DerefMut},
+        path::PathBuf,
+    };
 
     use gpui::{AppContext, TestAppContext, UpdateView, ViewContext};
     use project::{FakeFs, Project};
     use settings::Settings;
 
     use super::*;
-    use crate::{sidebar::Sidebar, tests::TestItem, ItemHandle, Workspace};
+    use crate::{
+        dock,
+        item::test::TestItem,
+        persistence::model::{
+            SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+        },
+        register_deserializable_item,
+        sidebar::Sidebar,
+        ItemHandle, Workspace,
+    };
 
     pub fn default_item_factory(
         _workspace: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
-    ) -> Box<dyn ItemHandle> {
-        Box::new(cx.add_view(|_| TestItem::new()))
+    ) -> Option<Box<dyn ItemHandle>> {
+        Some(Box::new(cx.add_view(|_| TestItem::new())))
+    }
+
+    #[gpui::test]
+    async fn test_dock_workspace_infinite_loop(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+
+        cx.update(|cx| {
+            register_deserializable_item::<TestItem>(cx);
+        });
+
+        let serialized_workspace = SerializedWorkspace {
+            id: 0,
+            location: Vec::<PathBuf>::new().into(),
+            dock_position: dock::DockPosition::Shown(DockAnchor::Expanded),
+            center_group: SerializedPaneGroup::Pane(SerializedPane {
+                active: false,
+                children: vec![],
+            }),
+            dock_pane: SerializedPane {
+                active: true,
+                children: vec![SerializedItem {
+                    active: true,
+                    item_id: 0,
+                    kind: "test".into(),
+                }],
+            },
+            left_sidebar_open: false,
+        };
+
+        let fs = FakeFs::new(cx.background());
+        let project = Project::test(fs, [], cx).await;
+
+        let (_, _workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Some(serialized_workspace),
+                0,
+                project.clone(),
+                default_item_factory,
+                cx,
+            )
+        });
+
+        cx.foreground().run_until_parked();
+        //Should terminate
     }
 
     #[gpui::test]
@@ -568,8 +636,9 @@ mod tests {
 
             cx.update(|cx| init(cx));
             let project = Project::test(fs, [], cx).await;
-            let (window_id, workspace) =
-                cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+            let (window_id, workspace) = cx.add_window(|cx| {
+                Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            });
 
             workspace.update(cx, |workspace, cx| {
                 let left_panel = cx.add_view(|_| TestItem::new());

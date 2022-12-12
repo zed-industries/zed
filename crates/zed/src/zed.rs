@@ -1,7 +1,6 @@
 mod feedback;
 pub mod languages;
 pub mod menus;
-pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -13,7 +12,6 @@ use collab_ui::{CollabTitlebarItem, ToggleCollaborationMenu};
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
-use lazy_static::lazy_static;
 
 use gpui::{
     actions,
@@ -26,15 +24,16 @@ use gpui::{
     AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
+use lazy_static::lazy_static;
 pub use lsp;
 pub use project;
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{keymap_file_json_schema, settings_file_json_schema, ReleaseChannel, Settings};
+use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{env, path::Path, str, sync::Arc};
-use util::ResultExt;
+use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
 
@@ -82,14 +81,6 @@ lazy_static! {
         .ok()
         .as_deref()
         .and_then(parse_pixel_position_env_var);
-    pub static ref RELEASE_CHANNEL_NAME: String =
-        env::var("ZED_RELEASE_CHANNEL").unwrap_or(include_str!("../RELEASE_CHANNEL").to_string());
-    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
-        "dev" => ReleaseChannel::Dev,
-        "preview" => ReleaseChannel::Preview,
-        "stable" => ReleaseChannel::Stable,
-        _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
-    };
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
@@ -348,6 +339,9 @@ pub fn initialize_workspace(
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 
+    let window_id = cx.window_id();
+    vim::observe_keypresses(window_id, cx);
+
     cx.on_window_should_close(|workspace, cx| {
         if let Some(task) = workspace.close(&Default::default(), cx) {
             task.detach_and_log_err(cx);
@@ -406,7 +400,7 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
-    let app_name = cx.global::<ReleaseChannel>().name();
+    let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
     cx.prompt(
         gpui::PromptLevel::Info,
@@ -479,10 +473,11 @@ fn open_config_file(
 
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(cx, app_state, |workspace, cx| {
+                workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
                 })
             })
+            .await
             .await;
         Ok::<_, anyhow::Error>(())
     })
@@ -496,51 +491,55 @@ fn open_log_file(
 ) {
     const MAX_LINES: usize = 1000;
 
-    workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
-        cx.spawn_weak(|workspace, mut cx| async move {
-            let (old_log, new_log) = futures::join!(
-                app_state.fs.load(&paths::OLD_LOG),
-                app_state.fs.load(&paths::LOG)
-            );
+    workspace
+        .with_local_workspace(&app_state.clone(), cx, move |_, cx| {
+            cx.spawn_weak(|workspace, mut cx| async move {
+                let (old_log, new_log) = futures::join!(
+                    app_state.fs.load(&paths::OLD_LOG),
+                    app_state.fs.load(&paths::LOG)
+                );
 
-            if let Some(workspace) = workspace.upgrade(&cx) {
-                let mut lines = VecDeque::with_capacity(MAX_LINES);
-                for line in old_log
-                    .iter()
-                    .flat_map(|log| log.lines())
-                    .chain(new_log.iter().flat_map(|log| log.lines()))
-                {
-                    if lines.len() == MAX_LINES {
-                        lines.pop_front();
+                if let Some(workspace) = workspace.upgrade(&cx) {
+                    let mut lines = VecDeque::with_capacity(MAX_LINES);
+                    for line in old_log
+                        .iter()
+                        .flat_map(|log| log.lines())
+                        .chain(new_log.iter().flat_map(|log| log.lines()))
+                    {
+                        if lines.len() == MAX_LINES {
+                            lines.pop_front();
+                        }
+                        lines.push_back(line);
                     }
-                    lines.push_back(line);
-                }
-                let log = lines
-                    .into_iter()
-                    .flat_map(|line| [line, "\n"])
-                    .collect::<String>();
+                    let log = lines
+                        .into_iter()
+                        .flat_map(|line| [line, "\n"])
+                        .collect::<String>();
 
-                workspace.update(&mut cx, |workspace, cx| {
-                    let project = workspace.project().clone();
-                    let buffer = project
-                        .update(cx, |project, cx| project.create_buffer("", None, cx))
-                        .expect("creating buffers on a local workspace always succeeds");
-                    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+                    workspace.update(&mut cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", None, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
 
-                    let buffer = cx.add_model(|cx| {
-                        MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                        let buffer = cx.add_model(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                        });
+                        workspace.add_item(
+                            Box::new(
+                                cx.add_view(|cx| {
+                                    Editor::for_multibuffer(buffer, Some(project), cx)
+                                }),
+                            ),
+                            cx,
+                        );
                     });
-                    workspace.add_item(
-                        Box::new(
-                            cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx)),
-                        ),
-                        cx,
-                    );
-                });
-            }
+                }
+            })
+            .detach();
         })
         .detach();
-    });
 }
 
 fn open_telemetry_log_file(
@@ -548,7 +547,7 @@ fn open_telemetry_log_file(
     app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
+    workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
         cx.spawn_weak(|workspace, mut cx| async move {
             let workspace = workspace.upgrade(&cx)?;
             let path = app_state.client.telemetry_log_file_path()?;
@@ -596,31 +595,36 @@ fn open_telemetry_log_file(
             Some(())
         })
         .detach();
-    });
+    }).detach();
 }
 
 fn open_bundled_config_file(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     asset_path: &'static str,
-    title: &str,
+    title: &'static str,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.with_local_workspace(cx, app_state, |workspace, cx| {
-        let project = workspace.project().clone();
-        let buffer = project.update(cx, |project, cx| {
-            let text = Assets::get(asset_path).unwrap().data;
-            let text = str::from_utf8(text.as_ref()).unwrap();
-            project
-                .create_buffer(text, project.languages().get_language("JSON"), cx)
-                .expect("creating buffers on a local workspace always succeeds")
-        });
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
-        workspace.add_item(
-            Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), cx))),
-            cx,
-        );
-    });
+    workspace
+        .with_local_workspace(&app_state.clone(), cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let buffer = project.update(cx, |project, cx| {
+                let text = Assets::get(asset_path).unwrap().data;
+                let text = str::from_utf8(text.as_ref()).unwrap();
+                project
+                    .create_buffer(text, project.languages().get_language("JSON"), cx)
+                    .expect("creating buffers on a local workspace always succeeds")
+            });
+            let buffer =
+                cx.add_model(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
+            workspace.add_item(
+                Box::new(
+                    cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), cx)),
+                ),
+                cx,
+            );
+        })
+        .detach();
 }
 
 fn schema_file_match(path: &Path) -> &Path {
@@ -639,7 +643,7 @@ fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{Autoscroll, DisplayPoint, Editor};
+    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };
@@ -651,7 +655,8 @@ mod tests {
     };
     use theme::ThemeRegistry;
     use workspace::{
-        open_paths, pane, Item, ItemHandle, NewFile, Pane, SplitDirection, WorkspaceHandle,
+        item::{Item, ItemHandle},
+        open_new, open_paths, pane, NewFile, Pane, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -787,7 +792,8 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.dispatch_global_action(workspace::NewFile);
+        cx.update(|cx| open_new(&app_state, cx)).await;
+
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(cx, |workspace, cx| {
@@ -831,8 +837,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -951,8 +958,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1111,8 +1119,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1154,8 +1163,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -1244,8 +1254,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, NewFile);
@@ -1298,8 +1309,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1373,8 +1385,15 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1638,8 +1657,15 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));

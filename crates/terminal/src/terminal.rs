@@ -1,7 +1,5 @@
 pub mod mappings;
-pub mod terminal_container_view;
-pub mod terminal_element;
-pub mod terminal_view;
+pub use alacritty_terminal;
 
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
@@ -54,7 +52,7 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
-    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext, Task,
+    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, Task,
 };
 
 use crate::mappings::{
@@ -62,12 +60,6 @@ use crate::mappings::{
     keys::to_esc_str,
 };
 use lazy_static::lazy_static;
-
-///Initialize and register all of our action handlers
-pub fn init(cx: &mut MutableAppContext) {
-    terminal_view::init(cx);
-    terminal_container_view::init(cx);
-}
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -124,10 +116,10 @@ impl EventListener for ZedListener {
 
 #[derive(Clone, Copy, Debug)]
 pub struct TerminalSize {
-    cell_width: f32,
-    line_height: f32,
-    height: f32,
-    width: f32,
+    pub cell_width: f32,
+    pub line_height: f32,
+    pub height: f32,
+    pub width: f32,
 }
 
 impl TerminalSize {
@@ -206,7 +198,7 @@ impl Dimensions for TerminalSize {
 #[derive(Error, Debug)]
 pub struct TerminalError {
     pub directory: Option<PathBuf>,
-    pub shell: Option<Shell>,
+    pub shell: Shell,
     pub source: std::io::Error,
 }
 
@@ -234,24 +226,20 @@ impl TerminalError {
             })
     }
 
-    pub fn shell_to_string(&self) -> Option<String> {
-        self.shell.as_ref().map(|shell| match shell {
+    pub fn shell_to_string(&self) -> String {
+        match &self.shell {
             Shell::System => "<system shell>".to_string(),
             Shell::Program(p) => p.to_string(),
             Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
-        })
+        }
     }
 
     pub fn fmt_shell(&self) -> String {
-        self.shell
-            .clone()
-            .map(|shell| match shell {
-                Shell::System => "<system defined shell>".to_string(),
-
-                Shell::Program(s) => s,
-                Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
-            })
-            .unwrap_or_else(|| "<none specified, using system defined shell>".to_string())
+        match &self.shell {
+            Shell::System => "<system defined shell>".to_string(),
+            Shell::Program(s) => s.to_string(),
+            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+        }
     }
 }
 
@@ -276,18 +264,18 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        shell: Option<Shell>,
-        env: Option<HashMap<String, String>>,
+        shell: Shell,
+        mut env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
-        alternate_scroll: &AlternateScroll,
+        alternate_scroll: AlternateScroll,
         window_id: usize,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
-            let alac_shell = shell.clone().and_then(|shell| match shell {
+            let alac_shell = match shell.clone() {
                 Shell::System => None,
                 Shell::Program(program) => Some(Program::Just(program)),
                 Shell::WithArguments { program, args } => Some(Program::WithArgs { program, args }),
-            });
+            };
 
             PtyConfig {
                 shell: alac_shell,
@@ -296,10 +284,9 @@ impl TerminalBuilder {
             }
         };
 
-        let mut env = env.unwrap_or_default();
-
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
+        env.insert("ZED_TERM".to_string(), true.to_string());
 
         let alac_scrolling = Scrolling::default();
         // alac_scrolling.set_history((BACK_BUFFER_SIZE * 2) as u32);
@@ -456,9 +443,9 @@ impl TerminalBuilder {
 }
 
 #[derive(Debug, Clone)]
-struct IndexedCell {
-    point: Point,
-    cell: Cell,
+pub struct IndexedCell {
+    pub point: Point,
+    pub cell: Cell,
 }
 
 impl Deref for IndexedCell {
@@ -470,17 +457,18 @@ impl Deref for IndexedCell {
     }
 }
 
+// TODO: Un-pub
 #[derive(Clone)]
 pub struct TerminalContent {
-    cells: Vec<IndexedCell>,
-    mode: TermMode,
-    display_offset: usize,
-    selection_text: Option<String>,
-    selection: Option<SelectionRange>,
-    cursor: RenderableCursor,
-    cursor_char: char,
-    size: TerminalSize,
-    last_hovered_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
+    pub cells: Vec<IndexedCell>,
+    pub mode: TermMode,
+    pub display_offset: usize,
+    pub selection_text: Option<String>,
+    pub selection: Option<SelectionRange>,
+    pub cursor: RenderableCursor,
+    pub cursor_char: char,
+    pub size: TerminalSize,
+    pub last_hovered_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
 }
 
 impl Default for TerminalContent {
@@ -517,14 +505,14 @@ pub struct Terminal {
     /// This is only used for terminal hyperlink checking
     last_mouse_position: Option<Vector2F>,
     pub matches: Vec<RangeInclusive<Point>>,
-    last_content: TerminalContent,
+    pub last_content: TerminalContent,
     last_synced: Instant,
     sync_task: Option<Task<()>>,
-    selection_head: Option<Point>,
-    breadcrumb_text: String,
+    pub selection_head: Option<Point>,
+    pub breadcrumb_text: String,
     shell_pid: u32,
     shell_fd: u32,
-    foreground_process_info: Option<LocalProcessInfo>,
+    pub foreground_process_info: Option<LocalProcessInfo>,
     scroll_px: f32,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -567,7 +555,7 @@ impl Terminal {
                 cx.emit(Event::Wakeup);
 
                 if self.update_process_info() {
-                    cx.emit(Event::TitleChanged)
+                    cx.emit(Event::TitleChanged);
                 }
             }
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
@@ -875,10 +863,6 @@ impl Terminal {
             return;
         };
 
-        if self.update_process_info() {
-            cx.emit(Event::TitleChanged);
-        }
-
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, cx)
@@ -1176,25 +1160,11 @@ impl Terminal {
 
     pub fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        searcher: RegexSearch,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<RangeInclusive<Point>>> {
         let term = self.term.clone();
         cx.background().spawn(async move {
-            let searcher = match query {
-                project::search::SearchQuery::Text { query, .. } => {
-                    RegexSearch::new(query.as_ref())
-                }
-                project::search::SearchQuery::Regex { query, .. } => {
-                    RegexSearch::new(query.as_ref())
-                }
-            };
-
-            if searcher.is_err() {
-                return Vec::new();
-            }
-            let searcher = searcher.unwrap();
-
             let term = term.lock();
 
             all_search_matches(&term, &searcher).collect()
@@ -1291,14 +1261,14 @@ fn open_uri(uri: &str) -> Result<(), std::io::Error> {
 
 #[cfg(test)]
 mod tests {
+    use alacritty_terminal::{
+        index::{Column, Line, Point},
+        term::cell::Cell,
+    };
     use gpui::geometry::vector::vec2f;
-    use rand::{thread_rng, Rng};
+    use rand::{rngs::ThreadRng, thread_rng, Rng};
 
-    use crate::content_index_for_mouse;
-
-    use self::terminal_test_context::TerminalTestContext;
-
-    pub mod terminal_test_context;
+    use crate::{content_index_for_mouse, IndexedCell, TerminalContent, TerminalSize};
 
     #[test]
     fn test_mouse_to_cell() {
@@ -1315,7 +1285,7 @@ mod tests {
                 width: cell_size * (viewport_cells as f32),
             };
 
-            let (content, cells) = TerminalTestContext::create_terminal_content(size, &mut rng);
+            let (content, cells) = create_terminal_content(size, &mut rng);
 
             for i in 0..(viewport_cells - 1) {
                 let i = i as usize;
@@ -1351,7 +1321,7 @@ mod tests {
             width: 100.,
         };
 
-        let (content, cells) = TerminalTestContext::create_terminal_content(size, &mut rng);
+        let (content, cells) = create_terminal_content(size, &mut rng);
 
         assert_eq!(
             content.cells[content_index_for_mouse(vec2f(-10., -10.), &content)].c,
@@ -1361,5 +1331,38 @@ mod tests {
             content.cells[content_index_for_mouse(vec2f(1000., 1000.), &content)].c,
             cells[9][9]
         );
+    }
+
+    fn create_terminal_content(
+        size: TerminalSize,
+        rng: &mut ThreadRng,
+    ) -> (TerminalContent, Vec<Vec<char>>) {
+        let mut ic = Vec::new();
+        let mut cells = Vec::new();
+
+        for row in 0..((size.height() / size.line_height()) as usize) {
+            let mut row_vec = Vec::new();
+            for col in 0..((size.width() / size.cell_width()) as usize) {
+                let cell_char = rng.gen();
+                ic.push(IndexedCell {
+                    point: Point::new(Line(row as i32), Column(col)),
+                    cell: Cell {
+                        c: cell_char,
+                        ..Default::default()
+                    },
+                });
+                row_vec.push(cell_char)
+            }
+            cells.push(row_vec)
+        }
+
+        (
+            TerminalContent {
+                cells: ic,
+                size,
+                ..Default::default()
+            },
+            cells,
+        )
     }
 }

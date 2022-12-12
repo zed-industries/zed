@@ -48,9 +48,7 @@ message Envelope {
         OpenBufferForSymbolResponse open_buffer_for_symbol_response = 40;
 
         UpdateProject update_project = 41;
-        RegisterProjectActivity register_project_activity = 42;
         UpdateWorktree update_worktree = 43;
-        UpdateWorktreeExtensions update_worktree_extensions = 44;
 
         CreateProjectEntry create_project_entry = 45;
         RenameProjectEntry rename_project_entry = 46;
@@ -158,14 +156,12 @@ message JoinRoomResponse {
     optional LiveKitConnectionInfo live_kit_connection_info = 2;
 }
 
-message LeaveRoom {
-    uint64 id = 1;
-}
+message LeaveRoom {}
 
 message Room {
     uint64 id = 1;
     repeated Participant participants = 2;
-    repeated uint64 pending_participant_user_ids = 3;
+    repeated PendingParticipant pending_participants = 3;
     string live_kit_room = 4;
 }
 
@@ -174,6 +170,12 @@ message Participant {
     uint32 peer_id = 2;
     repeated ParticipantProject projects = 3;
     ParticipantLocation location = 4;
+}
+
+message PendingParticipant {
+    uint64 user_id = 1;
+    uint64 calling_user_id = 2;
+    optional uint64 initial_project_id = 3;
 }
 
 message ParticipantProject {
@@ -199,13 +201,13 @@ message ParticipantLocation {
 
 message Call {
     uint64 room_id = 1;
-    uint64 recipient_user_id = 2;
+    uint64 called_user_id = 2;
     optional uint64 initial_project_id = 3;
 }
 
 message IncomingCall {
     uint64 room_id = 1;
-    uint64 caller_user_id = 2;
+    uint64 calling_user_id = 2;
     repeated uint64 participant_user_ids = 3;
     optional ParticipantProject initial_project = 4;
 }
@@ -214,7 +216,7 @@ message CallCanceled {}
 
 message CancelCall {
     uint64 room_id = 1;
-    uint64 recipient_user_id = 2;
+    uint64 called_user_id = 2;
 }
 
 message DeclineCall {
@@ -253,10 +255,6 @@ message UpdateProject {
     repeated WorktreeMetadata worktrees = 2;
 }
 
-message RegisterProjectActivity {
-    uint64 project_id = 1;
-}
-
 message JoinProject {
     uint64 project_id = 1;
 }
@@ -280,33 +278,26 @@ message UpdateWorktree {
     repeated uint64 removed_entries = 5;
     uint64 scan_id = 6;
     bool is_last_update = 7;
-    bytes abs_path = 8;
-}
-
-message UpdateWorktreeExtensions {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    repeated string extensions = 3;
-    repeated uint32 counts = 4;
+    string abs_path = 8;
 }
 
 message CreateProjectEntry {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
-    bytes path = 3;
+    string path = 3;
     bool is_directory = 4;
 }
 
 message RenameProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
-    bytes new_path = 3;
+    string new_path = 3;
 }
 
 message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
-    bytes new_path = 3;
+    string new_path = 3;
 }
 
 message DeleteProjectEntry {
@@ -898,7 +889,7 @@ message File {
 message Entry {
     uint64 id = 1;
     bool is_dir = 2;
-    bytes path = 3;
+    string path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
     bool is_symlink = 6;
@@ -1093,7 +1084,7 @@ message WorktreeMetadata {
     uint64 id = 1;
     string root_name = 2;
     bool visible = 3;
-    bytes abs_path = 4;
+    string abs_path = 4;
 }
 
 message UpdateDiffBase {

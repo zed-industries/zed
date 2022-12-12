@@ -41,11 +41,19 @@ impl<'a> VimTestContext<'a> {
             .insert_tree("/root", json!({ "dir": { "test.txt": "" } }))
             .await;
 
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| {
+            Workspace::new(
+                Default::default(),
+                0,
+                project.clone(),
+                |_, _| unimplemented!(),
+                cx,
+            )
+        });
 
-        // Setup search toolbars
+        // Setup search toolbars and keypress hook
         workspace.update(cx, |workspace, cx| {
+            observe_keypresses(window_id, cx);
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
                     let buffer_search_bar = cx.add_view(BufferSearchBar::new);

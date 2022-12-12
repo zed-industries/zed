@@ -2,7 +2,7 @@ mod keymap_file;
 pub mod settings_file;
 pub mod watched_json;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use gpui::{
     font_cache::{FamilyId, FontCache},
     AssetSource,
@@ -14,6 +14,10 @@ use schemars::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use sqlez::{
+    bindable::{Bind, Column},
+    statement::Statement,
+};
 use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use tree_sitter::Query;
@@ -53,24 +57,6 @@ pub struct Settings {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FeatureFlags {
     pub experimental_themes: bool,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ReleaseChannel {
-    #[default]
-    Dev,
-    Preview,
-    Stable,
-}
-
-impl ReleaseChannel {
-    pub fn name(&self) -> &'static str {
-        match self {
-            ReleaseChannel::Dev => "Zed Dev",
-            ReleaseChannel::Preview => "Zed Preview",
-            ReleaseChannel::Stable => "Zed",
-        }
-    }
 }
 
 impl FeatureFlags {
@@ -213,7 +199,7 @@ impl Default for Shell {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
     On,
@@ -235,6 +221,12 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
+impl Default for WorkingDirectory {
+    fn default() -> Self {
+        Self::CurrentProjectDirectory
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DockAnchor {
@@ -242,6 +234,33 @@ pub enum DockAnchor {
     Bottom,
     Right,
     Expanded,
+}
+
+impl Bind for DockAnchor {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            DockAnchor::Bottom => "Bottom",
+            DockAnchor::Right => "Right",
+            DockAnchor::Expanded => "Expanded",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for DockAnchor {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
+            Ok((
+                match anchor_text.as_ref() {
+                    "Bottom" => DockAnchor::Bottom,
+                    "Right" => DockAnchor::Right,
+                    "Expanded" => DockAnchor::Expanded,
+                    _ => bail!("Stored dock anchor is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -458,6 +477,32 @@ impl Settings {
                 .git_gutter
                 .expect("git_gutter should be some by setting setup")
         })
+    }
+
+    fn terminal_setting<F, R: Default + Clone>(&self, f: F) -> R
+    where
+        F: Fn(&TerminalSettings) -> Option<&R>,
+    {
+        f(&self.terminal_overrides)
+            .or_else(|| f(&self.terminal_defaults))
+            .cloned()
+            .unwrap_or_else(|| R::default())
+    }
+
+    pub fn terminal_scroll(&self) -> AlternateScroll {
+        self.terminal_setting(|terminal_setting| terminal_setting.alternate_scroll.as_ref())
+    }
+
+    pub fn terminal_shell(&self) -> Shell {
+        self.terminal_setting(|terminal_setting| terminal_setting.shell.as_ref())
+    }
+
+    pub fn terminal_env(&self) -> HashMap<String, String> {
+        self.terminal_setting(|terminal_setting| terminal_setting.env.as_ref())
+    }
+
+    pub fn terminal_strategy(&self) -> WorkingDirectory {
+        self.terminal_setting(|terminal_setting| terminal_setting.working_directory.as_ref())
     }
 
     #[cfg(any(test, feature = "test-support"))]

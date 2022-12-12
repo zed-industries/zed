@@ -23,7 +23,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Fs, HomeDir, ProjectStore};
+use project::{Fs, HomeDir};
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -32,17 +32,16 @@ use settings::{
 use smol::process::Command;
 use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
-use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
+use terminal_view::{get_working_directory, TerminalView};
 
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
-use util::{ResultExt, TryFutureExt};
-use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
-use zed::{
-    self, build_window_options, initialize_workspace, languages, menus, RELEASE_CHANNEL,
-    RELEASE_CHANNEL_NAME,
+use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
+use workspace::{
+    self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
+use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();
@@ -55,10 +54,6 @@ fn main() {
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
     init_panic_hook(app_version, http.clone(), app.background());
-
-    let db = app.background().spawn(async move {
-        project::Db::open(&*zed::paths::DB_DIR, RELEASE_CHANNEL_NAME.as_str())
-    });
 
     load_embedded_fonts(&app);
 
@@ -91,11 +86,11 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
-        cx.set_global(HomeDir(zed::paths::HOME.to_path_buf()));
+        cx.set_global(HomeDir(paths::HOME.to_path_buf()));
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
-        languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
+        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let init_languages = cx
             .background()
@@ -106,7 +101,7 @@ fn main() {
 
         //Setup settings global before binding actions
         cx.set_global(SettingsFile::new(
-            &*zed::paths::SETTINGS,
+            &*paths::SETTINGS,
             settings_file_content.clone(),
             fs.clone(),
         ));
@@ -126,7 +121,7 @@ fn main() {
         diagnostics::init(cx);
         search::init(cx);
         vim::init(cx);
-        terminal::init(cx);
+        terminal_view::init(cx);
         theme_testbench::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
@@ -146,9 +141,7 @@ fn main() {
         })
         .detach();
 
-        let project_store = cx.add_model(|_| ProjectStore::new());
-        let db = cx.background().block(db);
-        client.start_telemetry(db.clone());
+        client.start_telemetry();
         client.report_event("start app", Default::default());
 
         let app_state = Arc::new(AppState {
@@ -156,14 +149,15 @@ fn main() {
             themes,
             client: client.clone(),
             user_store,
-            project_store,
             fs,
             build_window_options,
             initialize_workspace,
-            default_item_factory,
+            dock_default_item_factory,
         });
-        auto_update::init(db, http, cx);
+        auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
+
         workspace::init(app_state.clone(), cx);
+
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
@@ -209,25 +203,10 @@ fn main() {
 }
 
 fn init_paths() {
-    std::fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
-    std::fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
-    std::fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
-    std::fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
-
-    // Copy setting files from legacy locations. TODO: remove this after a few releases.
-    thread::spawn(|| {
-        if std::fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
-            && std::fs::metadata(&*zed::paths::SETTINGS).is_err()
-        {
-            std::fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
-        }
-
-        if std::fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
-            && std::fs::metadata(&*zed::paths::KEYMAP).is_err()
-        {
-            std::fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
-        }
-    });
+    std::fs::create_dir_all(&*util::paths::CONFIG_DIR).expect("could not create config path");
+    std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
+    std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
+    std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
 }
 
 fn init_logger() {
@@ -240,16 +219,15 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(&*zed::paths::LOG)
-            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(&*paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = std::fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
+            let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
         }
 
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&*zed::paths::LOG)
+            .open(&*paths::LOG)
             .expect("could not open logfile");
         simplelog::WriteLogger::init(level, simplelog::Config::default(), log_file)
             .expect("could not initialize logger");
@@ -261,7 +239,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
         .spawn({
             async move {
                 let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-                let mut children = smol::fs::read_dir(&*zed::paths::LOGS_DIR).await?;
+                let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
                 while let Some(child) = children.next().await {
                     let child = child?;
                     let child_path = child.path();
@@ -349,7 +327,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
 
         let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
         std::fs::write(
-            zed::paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
+            paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
             &message,
         )
         .context("error writing panic to disk")
@@ -483,8 +461,8 @@ fn load_config_files(
         .clone()
         .spawn(async move {
             let settings_file =
-                WatchedJsonFile::new(fs.clone(), &executor, zed::paths::SETTINGS.clone()).await;
-            let keymap_file = WatchedJsonFile::new(fs, &executor, zed::paths::KEYMAP.clone()).await;
+                WatchedJsonFile::new(fs.clone(), &executor, paths::SETTINGS.clone()).await;
+            let keymap_file = WatchedJsonFile::new(fs, &executor, paths::KEYMAP.clone()).await;
             tx.send((settings_file, keymap_file)).ok()
         })
         .detach();
@@ -605,10 +583,10 @@ async fn handle_cli_connection(
     }
 }
 
-pub fn default_item_factory(
+pub fn dock_default_item_factory(
     workspace: &mut Workspace,
     cx: &mut ViewContext<Workspace>,
-) -> Box<dyn ItemHandle> {
+) -> Option<Box<dyn ItemHandle>> {
     let strategy = cx
         .global::<Settings>()
         .terminal_overrides
@@ -618,6 +596,15 @@ pub fn default_item_factory(
 
     let working_directory = get_working_directory(workspace, cx, strategy);
 
-    let terminal_handle = cx.add_view(|cx| TerminalContainer::new(working_directory, false, cx));
-    Box::new(terminal_handle)
+    let window_id = cx.window_id();
+    let terminal = workspace
+        .project()
+        .update(cx, |project, cx| {
+            project.create_terminal(working_directory, window_id, cx)
+        })
+        .notify_err(workspace, cx)?;
+
+    let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+
+    Some(Box::new(terminal_view))
 }

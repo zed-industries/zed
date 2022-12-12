@@ -66,19 +66,30 @@ struct DeterministicState {
     rng: rand::prelude::StdRng,
     seed: u64,
     scheduled_from_foreground: collections::HashMap<usize, Vec<ForegroundRunnable>>,
-    scheduled_from_background: Vec<Runnable>,
+    scheduled_from_background: Vec<BackgroundRunnable>,
     forbid_parking: bool,
     block_on_ticks: std::ops::RangeInclusive<usize>,
     now: std::time::Instant,
     next_timer_id: usize,
     pending_timers: Vec<(usize, std::time::Instant, postage::barrier::Sender)>,
     waiting_backtrace: Option<backtrace::Backtrace>,
+    next_runnable_id: usize,
+    poll_history: Vec<usize>,
+    enable_runnable_backtraces: bool,
+    runnable_backtraces: collections::HashMap<usize, backtrace::Backtrace>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 struct ForegroundRunnable {
+    id: usize,
     runnable: Runnable,
     main: bool,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct BackgroundRunnable {
+    id: usize,
+    runnable: Runnable,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -117,9 +128,27 @@ impl Deterministic {
                 next_timer_id: Default::default(),
                 pending_timers: Default::default(),
                 waiting_backtrace: None,
+                next_runnable_id: 0,
+                poll_history: Default::default(),
+                enable_runnable_backtraces: false,
+                runnable_backtraces: Default::default(),
             })),
             parker: Default::default(),
         })
+    }
+
+    pub fn runnable_history(&self) -> Vec<usize> {
+        self.state.lock().poll_history.clone()
+    }
+
+    pub fn enable_runnable_backtrace(&self) {
+        self.state.lock().enable_runnable_backtraces = true;
+    }
+
+    pub fn runnable_backtrace(&self, runnable_id: usize) -> backtrace::Backtrace {
+        let mut backtrace = self.state.lock().runnable_backtraces[&runnable_id].clone();
+        backtrace.resolve();
+        backtrace
     }
 
     pub fn build_background(self: &Arc<Self>) -> Arc<Background> {
@@ -142,6 +171,17 @@ impl Deterministic {
         main: bool,
     ) -> AnyLocalTask {
         let state = self.state.clone();
+        let id;
+        {
+            let mut state = state.lock();
+            id = util::post_inc(&mut state.next_runnable_id);
+            if state.enable_runnable_backtraces {
+                state
+                    .runnable_backtraces
+                    .insert(id, backtrace::Backtrace::new_unresolved());
+            }
+        }
+
         let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut state = state.lock();
@@ -149,7 +189,7 @@ impl Deterministic {
                 .scheduled_from_foreground
                 .entry(cx_id)
                 .or_default()
-                .push(ForegroundRunnable { runnable, main });
+                .push(ForegroundRunnable { id, runnable, main });
             unparker.unpark();
         });
         runnable.schedule();
@@ -158,10 +198,23 @@ impl Deterministic {
 
     fn spawn(&self, future: AnyFuture) -> AnyTask {
         let state = self.state.clone();
+        let id;
+        {
+            let mut state = state.lock();
+            id = util::post_inc(&mut state.next_runnable_id);
+            if state.enable_runnable_backtraces {
+                state
+                    .runnable_backtraces
+                    .insert(id, backtrace::Backtrace::new_unresolved());
+            }
+        }
+
         let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             let mut state = state.lock();
-            state.scheduled_from_background.push(runnable);
+            state
+                .scheduled_from_background
+                .push(BackgroundRunnable { id, runnable });
             unparker.unpark();
         });
         runnable.schedule();
@@ -178,15 +231,27 @@ impl Deterministic {
         let woken = Arc::new(AtomicBool::new(false));
 
         let state = self.state.clone();
+        let id;
+        {
+            let mut state = state.lock();
+            id = util::post_inc(&mut state.next_runnable_id);
+            if state.enable_runnable_backtraces {
+                state
+                    .runnable_backtraces
+                    .insert(id, backtrace::Backtrace::new_unresolved());
+            }
+        }
+
         let unparker = self.parker.lock().unparker();
         let (runnable, mut main_task) = unsafe {
             async_task::spawn_unchecked(main_future, move |runnable| {
-                let mut state = state.lock();
+                let state = &mut *state.lock();
                 state
                     .scheduled_from_foreground
                     .entry(cx_id)
                     .or_default()
                     .push(ForegroundRunnable {
+                        id: util::post_inc(&mut state.next_runnable_id),
                         runnable,
                         main: true,
                     });
@@ -248,9 +313,10 @@ impl Deterministic {
             if !state.scheduled_from_background.is_empty() && state.rng.gen() {
                 let background_len = state.scheduled_from_background.len();
                 let ix = state.rng.gen_range(0..background_len);
-                let runnable = state.scheduled_from_background.remove(ix);
+                let background_runnable = state.scheduled_from_background.remove(ix);
+                state.poll_history.push(background_runnable.id);
                 drop(state);
-                runnable.run();
+                background_runnable.runnable.run();
             } else if !state.scheduled_from_foreground.is_empty() {
                 let available_cx_ids = state
                     .scheduled_from_foreground
@@ -266,6 +332,7 @@ impl Deterministic {
                 if scheduled_from_cx.is_empty() {
                     state.scheduled_from_foreground.remove(&cx_id_to_run);
                 }
+                state.poll_history.push(foreground_runnable.id);
 
                 drop(state);
 
@@ -298,9 +365,10 @@ impl Deterministic {
             let runnable_count = state.scheduled_from_background.len();
             let ix = state.rng.gen_range(0..=runnable_count);
             if ix < state.scheduled_from_background.len() {
-                let runnable = state.scheduled_from_background.remove(ix);
+                let background_runnable = state.scheduled_from_background.remove(ix);
+                state.poll_history.push(background_runnable.id);
                 drop(state);
-                runnable.run();
+                background_runnable.runnable.run();
             } else {
                 drop(state);
                 if let Poll::Ready(result) = future.poll(&mut cx) {

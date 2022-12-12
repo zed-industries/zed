@@ -11,6 +11,7 @@ test-support = ["serde_json", "tempdir", "git2"]
 
 [dependencies]
 anyhow = "1.0.38"
+backtrace = "0.3"
 futures = "0.3"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 lazy_static = "1.4.0"
@@ -18,6 +19,7 @@ rand = { workspace = true }
 tempdir = { version = "0.3.7", optional = true }
 serde_json = { version = "1.0", features = ["preserve_order"], optional = true }
 git2 = { version = "0.15", default-features = false, optional = true }
+dirs = "3.0"
 
 
 [dev-dependencies]

@@ -17,6 +17,7 @@ collections = { path = "../collections" }
 gpui_macros = { path = "../gpui_macros" }
 util = { path = "../util" }
 sum_tree = { path = "../sum_tree" }
+sqlez = { path = "../sqlez" }
 async-task = "4.0.3"
 backtrace = { version = "0.3", optional = true }
 ctor = "0.1"

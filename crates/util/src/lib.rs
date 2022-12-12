@@ -1,6 +1,9 @@
+pub mod channel;
+pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub use backtrace::Backtrace;
 use futures::Future;
 use rand::{seq::SliceRandom, Rng};
 use std::{
@@ -9,6 +12,18 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+#[macro_export]
+macro_rules! debug_panic {
+    ( $($fmt_arg:tt)* ) => {
+        if cfg!(debug_assertions) {
+            panic!( $($fmt_arg)* );
+        } else {
+            let backtrace = $crate::Backtrace::new();
+            log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
+        }
+    };
+}
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
@@ -191,6 +206,34 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
     }
 }
 
+// copy unstable standard feature option unzip
+// https://github.com/rust-lang/rust/issues/87800
+// Remove when this ship in Rust 1.66 or 1.67
+pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
+    match option {
+        Some((a, b)) => (Some(a), Some(b)),
+        None => (None, None),
+    }
+}
+
+/// Immediately invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result
+#[macro_export]
+macro_rules! iife {
+    ($block:block) => {
+        (|| $block)()
+    };
+}
+
+/// Async lImmediately invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result. Async version of above
+#[macro_export]
+macro_rules! async_iife {
+    ($block:block) => {
+        (|| async move { $block })()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +250,19 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
+    }
+
+    #[test]
+    fn test_iife() {
+        fn option_returning_function() -> Option<()> {
+            None
+        }
+
+        let foo = iife!({
+            option_returning_function()?;
+            Some(())
+        });
+
+        assert_eq!(foo, None);
     }
 }

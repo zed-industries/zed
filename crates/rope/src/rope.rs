@@ -12,6 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
+use util::debug_panic;
 
 pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
@@ -679,28 +680,33 @@ impl Chunk {
     fn point_to_offset(&self, target: Point) -> usize {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
+
         for ch in self.0.chars() {
             if point >= target {
                 if point > target {
-                    panic!("point {:?} is inside of character {:?}", target, ch);
+                    debug_panic!("point {target:?} is inside of character {ch:?}");
                 }
                 break;
             }
 
             if ch == '\n' {
                 point.row += 1;
-                if point.row > target.row {
-                    panic!(
-                        "point {:?} is beyond the end of a line with length {}",
-                        target, point.column
-                    );
-                }
                 point.column = 0;
+
+                if point.row > target.row {
+                    debug_panic!(
+                        "point {target:?} is beyond the end of a line with length {}",
+                        point.column
+                    );
+                    break;
+                }
             } else {
                 point.column += ch.len_utf8() as u32;
             }
+
             offset += ch.len_utf8();
         }
+
         offset
     }
 
@@ -737,26 +743,27 @@ impl Chunk {
             if ch == '\n' {
                 point.row += 1;
                 point.column = 0;
+
                 if point.row > target.row {
-                    if clip {
-                        // Return the offset of the newline
-                        return offset;
+                    if !clip {
+                        debug_panic!(
+                            "point {target:?} is beyond the end of a line with length {}",
+                            point.column
+                        );
                     }
-                    panic!(
-                        "point {:?} is beyond the end of a line with length {}",
-                        target, point.column
-                    );
+                    // Return the offset of the newline
+                    return offset;
                 }
             } else {
                 point.column += ch.len_utf16() as u32;
             }
 
             if point > target {
-                if clip {
-                    // Return the offset of the codepoint which we have landed within, bias left
-                    return offset;
+                if !clip {
+                    debug_panic!("point {target:?} is inside of codepoint {ch:?}");
                 }
-                panic!("point {:?} is inside of codepoint {:?}", target, ch);
+                // Return the offset of the codepoint which we have landed within, bias left
+                return offset;
             }
 
             offset += ch.len_utf8();

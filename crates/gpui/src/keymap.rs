@@ -112,6 +112,21 @@ impl PartialEq for MatchResult {
 
 impl Eq for MatchResult {}
 
+impl Clone for MatchResult {
+    fn clone(&self) -> Self {
+        match self {
+            MatchResult::None => MatchResult::None,
+            MatchResult::Pending => MatchResult::Pending,
+            MatchResult::Matches(matches) => MatchResult::Matches(
+                matches
+                    .iter()
+                    .map(|(view_id, action)| (*view_id, Action::boxed_clone(action.as_ref())))
+                    .collect(),
+            ),
+        }
+    }
+}
+
 impl Matcher {
     pub fn new(keymap: Keymap) -> Self {
         Self {

@@ -17,10 +17,15 @@ use crate::{
     SceneBuilder, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
     WeakViewHandle,
 };
+use anyhow::bail;
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use smallvec::SmallVec;
+use sqlez::{
+    bindable::{Bind, Column},
+    statement::Statement,
+};
 use std::{
     marker::PhantomData,
     ops::{Deref, DerefMut, Range},
@@ -863,8 +868,9 @@ pub struct DebugContext<'a> {
     pub app: &'a AppContext,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Axis {
+    #[default]
     Horizontal,
     Vertical,
 }
@@ -891,6 +897,31 @@ impl ToJson for Axis {
             Axis::Horizontal => json!("horizontal"),
             Axis::Vertical => json!("vertical"),
         }
+    }
+}
+
+impl Bind for Axis {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        match self {
+            Axis::Horizontal => "Horizontal",
+            Axis::Vertical => "Vertical",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl Column for Axis {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
+            Ok((
+                match axis_text.as_str() {
+                    "Horizontal" => Axis::Horizontal,
+                    "Vertical" => Axis::Vertical,
+                    _ => bail!("Stored serialized item kind is incorrect"),
+                },
+                next_index,
+            ))
+        })
     }
 }
 

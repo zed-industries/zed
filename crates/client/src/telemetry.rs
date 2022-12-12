@@ -1,5 +1,5 @@
 use crate::http::HttpClient;
-use db::Db;
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     executor::Background,
     serde_json::{self, value::Map, Value},
@@ -10,7 +10,6 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
-use settings::ReleaseChannel;
 use std::{
     io::Write,
     mem,
@@ -19,7 +18,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tempfile::NamedTempFile;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{channel::ReleaseChannel, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 pub struct Telemetry {
@@ -107,7 +106,7 @@ impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
         let release_channel = if cx.has_global::<ReleaseChannel>() {
-            Some(cx.global::<ReleaseChannel>().name())
+            Some(cx.global::<ReleaseChannel>().display_name())
         } else {
             None
         };
@@ -148,18 +147,21 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>, db: Db) {
+    pub fn start(self: &Arc<Self>) {
         let this = self.clone();
         self.executor
             .spawn(
                 async move {
-                    let device_id = if let Ok(Some(device_id)) = db.read_kvp("device_id") {
-                        device_id
-                    } else {
-                        let device_id = Uuid::new_v4().to_string();
-                        db.write_kvp("device_id", &device_id)?;
-                        device_id
-                    };
+                    let device_id =
+                        if let Ok(Some(device_id)) = KEY_VALUE_STORE.read_kvp("device_id") {
+                            device_id
+                        } else {
+                            let device_id = Uuid::new_v4().to_string();
+                            KEY_VALUE_STORE
+                                .write_kvp("device_id".to_string(), device_id.clone())
+                                .await?;
+                            device_id
+                        };
 
                     let device_id: Arc<str> = device_id.into();
                     let mut state = this.state.lock();

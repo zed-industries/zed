@@ -8,6 +8,7 @@ path = "src/auto_update.rs"
 doctest = false
 
 [dependencies]
+db = { path = "../db" }
 client = { path = "../client" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
