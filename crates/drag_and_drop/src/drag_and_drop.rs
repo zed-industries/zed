@@ -139,9 +139,7 @@ impl<V: View> DragAndDrop<V> {
                     region_offset,
                     region,
                 }) => {
-                    if (dbg!(event.position) - (dbg!(region.origin() + region_offset))).length()
-                        > DEAD_ZONE
-                    {
+                    if (event.position - (region.origin() + region_offset)).length() > DEAD_ZONE {
                         this.currently_dragged = Some(State::Dragging {
                             window_id,
                             region_offset,

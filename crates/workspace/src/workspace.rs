@@ -176,6 +176,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             }
         }
     });
+
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
@@ -2181,7 +2182,11 @@ impl Workspace {
     }
 
     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active {
+        if active {
+            cx.background()
+                .spawn(persistence::DB.update_timestamp(self.database_id()))
+                .detach();
+        } else {
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
                     if let Some(item) = pane.active_item() {
@@ -2616,6 +2621,10 @@ pub fn activate_workspace_for_project(
         }
     }
     None
+}
+
+pub fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+    DB.last_workspace().log_err().flatten()
 }
 
 #[allow(clippy::type_complexity)]
