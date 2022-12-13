@@ -57,7 +57,7 @@ use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
-pub const RECONNECT_TIMEOUT: Duration = rpc::RECEIVE_TIMEOUT;
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
