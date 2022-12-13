@@ -210,10 +210,10 @@ impl WorkspaceDb {
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
-        self.get_pane_group(workspace_id, None)?
+        Ok(self.get_pane_group(workspace_id, None)?
             .into_iter()
             .next()
-            .context("No center pane group")
+            .unwrap_or_else(|| SerializedPaneGroup::Pane(SerializedPane { active: true, children: vec![] })))
     }
 
     fn get_pane_group(
@@ -267,7 +267,7 @@ impl WorkspaceDb {
         // Filter out panes and pane groups which don't have any children or items
         .filter(|pane_group| match pane_group {
             Ok(SerializedPaneGroup::Group { children, .. }) => !children.is_empty(),
-            Ok(SerializedPaneGroup::Pane(pane)) => !pane.children.is_empty(),
+            Ok(SerializedPaneGroup::Pane(pane)) => !pane.children.is_empty(), 
             _ => true,
         })
         .collect::<Result<_>>()
