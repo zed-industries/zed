@@ -323,8 +323,10 @@ impl Server {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn teardown(&self) {
         self.peer.reset();
+        self.connection_pool.lock().reset();
         let _ = self.teardown.send(());
     }
 
