@@ -50,7 +50,7 @@ pub struct Room {
     user_store: ModelHandle<UserStore>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
-    _maintain_connection: Task<Result<()>>,
+    maintain_connection: Option<Task<Result<()>>>,
 }
 
 impl Entity for Room {
@@ -121,7 +121,7 @@ impl Room {
             None
         };
 
-        let _maintain_connection =
+        let maintain_connection =
             cx.spawn_weak(|this, cx| Self::maintain_connection(this, client.clone(), cx));
 
         Self {
@@ -138,7 +138,7 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
-            _maintain_connection,
+            maintain_connection: Some(maintain_connection),
         }
     }
 
@@ -235,6 +235,8 @@ impl Room {
         self.participant_user_ids.clear();
         self.subscriptions.clear();
         self.live_kit.take();
+        self.pending_room_update.take();
+        self.maintain_connection.take();
         self.client.send(proto::LeaveRoom {})?;
         Ok(())
     }

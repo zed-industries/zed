@@ -142,6 +142,7 @@ pub struct Server {
     peer: Arc<Peer>,
     pub(crate) connection_pool: Arc<Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
+    executor: Executor,
     handlers: HashMap<TypeId, MessageHandler>,
     teardown: watch::Sender<()>,
 }
@@ -168,10 +169,11 @@ where
 }
 
 impl Server {
-    pub fn new(app_state: Arc<AppState>) -> Arc<Self> {
+    pub fn new(app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
         let mut server = Self {
             peer: Peer::new(),
             app_state,
+            executor,
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(()).0,
@@ -239,8 +241,85 @@ impl Server {
 
     pub async fn start(&self) -> Result<()> {
         self.app_state.db.delete_stale_projects().await?;
-        // TODO: delete stale rooms after timeout.
-        // self.app_state.db.delete_stale_rooms().await?;
+        let db = self.app_state.db.clone();
+        let peer = self.peer.clone();
+        let timeout = self.executor.sleep(RECONNECT_TIMEOUT);
+        let pool = self.connection_pool.clone();
+        let live_kit_client = self.app_state.live_kit_client.clone();
+        self.executor.spawn_detached(async move {
+            timeout.await;
+            if let Some(room_ids) = db.outdated_room_ids().await.trace_err() {
+                for room_id in room_ids {
+                    let mut contacts_to_update = HashSet::default();
+                    let mut canceled_calls_to_user_ids = Vec::new();
+                    let mut live_kit_room = String::new();
+                    let mut delete_live_kit_room = false;
+
+                    if let Ok(mut refreshed_room) = db.refresh_room(room_id).await {
+                        room_updated(&refreshed_room.room, &peer);
+                        contacts_to_update
+                            .extend(refreshed_room.stale_participant_user_ids.iter().copied());
+                        contacts_to_update
+                            .extend(refreshed_room.canceled_calls_to_user_ids.iter().copied());
+                        canceled_calls_to_user_ids =
+                            mem::take(&mut refreshed_room.canceled_calls_to_user_ids);
+                        dbg!(&canceled_calls_to_user_ids);
+                        live_kit_room = mem::take(&mut refreshed_room.room.live_kit_room);
+                        delete_live_kit_room = refreshed_room.room.participants.is_empty();
+                    }
+
+                    {
+                        let pool = pool.lock().await;
+                        for canceled_user_id in canceled_calls_to_user_ids {
+                            for connection_id in pool.user_connection_ids(canceled_user_id) {
+                                peer.send(connection_id, proto::CallCanceled {}).trace_err();
+                            }
+                        }
+                    }
+
+                    for user_id in contacts_to_update {
+                        if let Some((busy, contacts)) = db
+                            .is_user_busy(user_id)
+                            .await
+                            .trace_err()
+                            .zip(db.get_contacts(user_id).await.trace_err())
+                        {
+                            let pool = pool.lock().await;
+                            let updated_contact = contact_for_user(user_id, false, busy, &pool);
+                            for contact in contacts {
+                                if let db::Contact::Accepted {
+                                    user_id: contact_user_id,
+                                    ..
+                                } = contact
+                                {
+                                    for contact_conn_id in pool.user_connection_ids(contact_user_id)
+                                    {
+                                        peer.send(
+                                            contact_conn_id,
+                                            proto::UpdateContacts {
+                                                contacts: vec![updated_contact.clone()],
+                                                remove_contacts: Default::default(),
+                                                incoming_requests: Default::default(),
+                                                remove_incoming_requests: Default::default(),
+                                                outgoing_requests: Default::default(),
+                                                remove_outgoing_requests: Default::default(),
+                                            },
+                                        )
+                                        .trace_err();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(live_kit) = live_kit_client.as_ref() {
+                        if delete_live_kit_room {
+                            live_kit.delete_room(live_kit_room).await.trace_err();
+                        }
+                    }
+                }
+            }
+        });
         Ok(())
     }
 
@@ -690,7 +769,7 @@ async fn sign_out(
             {
                 let db = session.db().await;
                 if let Some(room) = db.decline_call(None, session.user_id).await.trace_err() {
-                    room_updated(&room, &session);
+                    room_updated(&room, &session.peer);
                 }
             }
             update_user_contacts(session.user_id, &session).await?;
@@ -768,7 +847,7 @@ async fn join_room(
                 session.connection_id,
             )
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
         room.clone()
     };
 
@@ -843,7 +922,7 @@ async fn call(
                 initial_project_id,
             )
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
         mem::take(incoming_call)
     };
     update_user_contacts(called_user_id, &session).await?;
@@ -873,7 +952,7 @@ async fn call(
             .await
             .call_failed(room_id, called_user_id)
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
     }
     update_user_contacts(called_user_id, &session).await?;
 
@@ -893,7 +972,7 @@ async fn cancel_call(
             .await
             .cancel_call(Some(room_id), session.connection_id, called_user_id)
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
     }
 
     for connection_id in session
@@ -920,7 +999,7 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
             .await
             .decline_call(Some(room_id), session.user_id)
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
     }
 
     for connection_id in session
@@ -951,7 +1030,7 @@ async fn update_participant_location(
         .await
         .update_room_participant_location(room_id, session.connection_id, location)
         .await?;
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -973,7 +1052,7 @@ async fn share_project(
     response.send(proto::ShareProjectResponse {
         project_id: project_id.to_proto(),
     })?;
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
 
     Ok(())
 }
@@ -992,7 +1071,7 @@ async fn unshare_project(message: proto::UnshareProject, session: Session) -> Re
         guest_connection_ids.iter().copied(),
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
 
     Ok(())
 }
@@ -1151,7 +1230,7 @@ async fn update_project(
                 .forward_send(session.connection_id, connection_id, request.clone())
         },
     );
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
     response.send(proto::Ack {})?;
 
     Ok(())
@@ -1798,17 +1877,15 @@ fn contact_for_user(
     }
 }
 
-fn room_updated(room: &proto::Room, session: &Session) {
+fn room_updated(room: &proto::Room, peer: &Peer) {
     for participant in &room.participants {
-        session
-            .peer
-            .send(
-                ConnectionId(participant.peer_id),
-                proto::RoomUpdated {
-                    room: Some(room.clone()),
-                },
-            )
-            .trace_err();
+        peer.send(
+            ConnectionId(participant.peer_id),
+            proto::RoomUpdated {
+                room: Some(room.clone()),
+            },
+        )
+        .trace_err();
     }
 }
 
@@ -1860,7 +1937,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
             project_left(project, session);
         }
 
-        room_updated(&left_room.room, &session);
+        room_updated(&left_room.room, &session.peer);
         canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
         delete_live_kit_room = left_room.room.participants.is_empty();

@@ -131,29 +131,70 @@ impl Database {
         .await
     }
 
-    pub async fn delete_stale_rooms(&self) -> Result<()> {
+    pub async fn outdated_room_ids(&self) -> Result<Vec<RoomId>> {
         self.transaction(|tx| async move {
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryAs {
+                RoomId,
+            }
+
+            Ok(room_participant::Entity::find()
+                .select_only()
+                .column(room_participant::Column::RoomId)
+                .distinct()
+                .filter(room_participant::Column::AnsweringConnectionEpoch.ne(self.epoch()))
+                .into_values::<_, QueryAs>()
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
+
+    pub async fn refresh_room(&self, room_id: RoomId) -> Result<RoomGuard<RefreshedRoom>> {
+        self.room_transaction(|tx| async move {
+            let stale_participant_filter = Condition::all()
+                .add(room_participant::Column::RoomId.eq(room_id))
+                .add(room_participant::Column::AnsweringConnectionId.is_not_null())
+                .add(room_participant::Column::AnsweringConnectionEpoch.ne(self.epoch()));
+
+            let stale_participant_user_ids = room_participant::Entity::find()
+                .filter(stale_participant_filter.clone())
+                .all(&*tx)
+                .await?
+                .into_iter()
+                .map(|participant| participant.user_id)
+                .collect::<Vec<_>>();
+
+            // Delete participants who failed to reconnect.
             room_participant::Entity::delete_many()
-                .filter(
-                    room_participant::Column::AnsweringConnectionEpoch
-                        .ne(self.epoch())
-                        .or(room_participant::Column::CallingConnectionEpoch.ne(self.epoch())),
-                )
+                .filter(stale_participant_filter)
                 .exec(&*tx)
                 .await?;
-            room::Entity::delete_many()
-                .filter(
-                    room::Column::Id.not_in_subquery(
-                        Query::select()
-                            .column(room_participant::Column::RoomId)
-                            .from(room_participant::Entity)
-                            .distinct()
-                            .to_owned(),
-                    ),
-                )
-                .exec(&*tx)
-                .await?;
-            Ok(())
+
+            let room = self.get_room(room_id, &tx).await?;
+            let mut canceled_calls_to_user_ids = Vec::new();
+            // Delete the room if it becomes empty and cancel pending calls.
+            if room.participants.is_empty() {
+                canceled_calls_to_user_ids.extend(
+                    room.pending_participants
+                        .iter()
+                        .map(|pending_participant| UserId::from_proto(pending_participant.user_id)),
+                );
+                room_participant::Entity::delete_many()
+                    .filter(room_participant::Column::RoomId.eq(room_id))
+                    .exec(&*tx)
+                    .await?;
+                room::Entity::delete_by_id(room_id).exec(&*tx).await?;
+            }
+
+            Ok((
+                room_id,
+                RefreshedRoom {
+                    room,
+                    stale_participant_user_ids,
+                    canceled_calls_to_user_ids,
+                },
+            ))
         })
         .await
     }
@@ -2572,6 +2613,12 @@ id_type!(UserId);
 pub struct LeftRoom {
     pub room: proto::Room,
     pub left_projects: HashMap<ProjectId, LeftProject>,
+    pub canceled_calls_to_user_ids: Vec<UserId>,
+}
+
+pub struct RefreshedRoom {
+    pub room: proto::Room,
+    pub stale_participant_user_ids: Vec<UserId>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
 }
 
