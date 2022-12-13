@@ -88,7 +88,7 @@ impl FollowableItem for Editor {
                 }
 
                 if let Some(anchor) = state.scroll_top_anchor {
-                    editor.set_scroll_anchor_internal(
+                    editor.set_scroll_anchor_remote(
                         ScrollAnchor {
                             top_anchor: Anchor {
                                 buffer_id: Some(state.buffer_id as usize),
@@ -98,7 +98,6 @@ impl FollowableItem for Editor {
                             },
                             offset: vec2f(state.scroll_x, state.scroll_y),
                         },
-                        false,
                         cx,
                     );
                 }
@@ -213,7 +212,7 @@ impl FollowableItem for Editor {
                     self.set_selections_from_remote(selections, cx);
                     self.request_autoscroll_remotely(Autoscroll::newest(), cx);
                 } else if let Some(anchor) = message.scroll_top_anchor {
-                    self.set_scroll_anchor(
+                    self.set_scroll_anchor_remote(
                         ScrollAnchor {
                             top_anchor: Anchor {
                                 buffer_id: Some(buffer_id),
