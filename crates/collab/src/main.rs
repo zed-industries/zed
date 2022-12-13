@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use axum::{routing::get, Router};
-use collab::{db, env, AppState, Config, MigrateConfig, Result};
+use collab::{db, env, executor::Executor, AppState, Config, MigrateConfig, Result};
 use db::Database;
 use std::{
     env::args,
@@ -52,12 +52,12 @@ async fn main() -> Result<()> {
             init_tracing(&config);
 
             let state = AppState::new(config).await?;
-            state.db.clear_stale_data().await?;
 
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = collab::rpc::Server::new(state.clone());
+            let rpc_server = collab::rpc::Server::new(state.clone(), Executor::Production);
+            rpc_server.start().await?;
 
             let app = collab::api::routes(rpc_server.clone(), state.clone())
                 .merge(collab::rpc::routes(rpc_server.clone()))

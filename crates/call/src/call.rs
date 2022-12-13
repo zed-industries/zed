@@ -94,12 +94,18 @@ impl ActiveCall {
 
     async fn handle_call_canceled(
         this: ModelHandle<Self>,
-        _: TypedEnvelope<proto::CallCanceled>,
+        envelope: TypedEnvelope<proto::CallCanceled>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
-            *this.incoming_call.0.borrow_mut() = None;
+            let mut incoming_call = this.incoming_call.0.borrow_mut();
+            if incoming_call
+                .as_ref()
+                .map_or(false, |call| call.room_id == envelope.payload.room_id)
+            {
+                incoming_call.take();
+            }
         });
         Ok(())
     }

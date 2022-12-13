@@ -4,7 +4,6 @@ use crate::{
     rpc::{Server, RECONNECT_TIMEOUT},
     AppState,
 };
-use ::rpc::Peer;
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
@@ -19,10 +18,8 @@ use editor::{
 use fs::{FakeFs, Fs as _, HomeDir, LineEnding};
 use futures::{channel::oneshot, StreamExt as _};
 use gpui::{
-    executor::{self, Deterministic},
-    geometry::vector::vec2f,
-    test::EmptyView,
-    ModelHandle, Task, TestAppContext, ViewHandle,
+    executor::Deterministic, geometry::vector::vec2f, test::EmptyView, ModelHandle, Task,
+    TestAppContext, ViewHandle,
 };
 use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
@@ -37,7 +34,7 @@ use serde_json::json;
 use settings::{Formatter, Settings};
 use std::{
     cell::{Cell, RefCell},
-    env, mem,
+    env, future, mem,
     ops::Deref,
     path::{Path, PathBuf},
     rc::Rc,
@@ -67,7 +64,7 @@ async fn test_basic_calls(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -266,7 +263,7 @@ async fn test_room_uniqueness(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let _client_a2 = server.create_client(cx_a2, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -365,13 +362,13 @@ async fn test_room_uniqueness(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_disconnecting_from_room(
+async fn test_client_disconnecting_from_room(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -517,6 +514,303 @@ async fn test_disconnecting_from_room(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_server_restarts(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+    cx_d: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    let client_d = server.create_client(cx_d, "user_d").await;
+    server
+        .make_contacts(&mut [
+            (&client_a, cx_a),
+            (&client_b, cx_b),
+            (&client_c, cx_c),
+            (&client_d, cx_d),
+        ])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+    let active_call_d = cx_d.read(ActiveCall::global);
+
+    // User A calls users B, C, and D.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_c.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_d.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+
+    // User B receives the call and joins the room.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    assert!(incoming_call_b.next().await.unwrap().is_some());
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+
+    // User C receives the call and joins the room.
+    let mut incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
+    assert!(incoming_call_c.next().await.unwrap().is_some());
+    active_call_c
+        .update(cx_c, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_c = active_call_c.read_with(cx_c, |call, _| call.room().unwrap().clone());
+
+    // User D receives the call but doesn't join the room yet.
+    let mut incoming_call_d = active_call_d.read_with(cx_d, |call, _| call.incoming());
+    assert!(incoming_call_d.next().await.unwrap().is_some());
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string(), "user_c".to_string()],
+            pending: vec!["user_d".to_string()]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string(), "user_c".to_string()],
+            pending: vec!["user_d".to_string()]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_c, cx_c),
+        RoomParticipants {
+            remote: vec!["user_a".to_string(), "user_b".to_string()],
+            pending: vec!["user_d".to_string()]
+        }
+    );
+
+    // The server is torn down.
+    server.teardown();
+
+    // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
+    client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string(), "user_c".to_string()],
+            pending: vec!["user_d".to_string()]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string(), "user_c".to_string()],
+            pending: vec!["user_d".to_string()]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_c, cx_c),
+        RoomParticipants {
+            remote: vec![],
+            pending: vec![]
+        }
+    );
+
+    // User D is notified again of the incoming call and accepts it.
+    assert!(incoming_call_d.next().await.unwrap().is_some());
+    active_call_d
+        .update(cx_d, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    let room_d = active_call_d.read_with(cx_d, |call, _| call.room().unwrap().clone());
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec![
+                "user_b".to_string(),
+                "user_c".to_string(),
+                "user_d".to_string(),
+            ],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec![
+                "user_a".to_string(),
+                "user_c".to_string(),
+                "user_d".to_string(),
+            ],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_c, cx_c),
+        RoomParticipants {
+            remote: vec![],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_d, cx_d),
+        RoomParticipants {
+            remote: vec![
+                "user_a".to_string(),
+                "user_b".to_string(),
+                "user_c".to_string(),
+            ],
+            pending: vec![]
+        }
+    );
+
+    // The server finishes restarting, cleaning up stale connections.
+    server.start().await.unwrap();
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string(), "user_d".to_string()],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string(), "user_d".to_string()],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_c, cx_c),
+        RoomParticipants {
+            remote: vec![],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_d, cx_d),
+        RoomParticipants {
+            remote: vec!["user_a".to_string(), "user_b".to_string()],
+            pending: vec![]
+        }
+    );
+
+    // User D hangs up.
+    active_call_d
+        .update(cx_d, |call, cx| call.hang_up(cx))
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_c, cx_c),
+        RoomParticipants {
+            remote: vec![],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_d, cx_d),
+        RoomParticipants {
+            remote: vec![],
+            pending: vec![]
+        }
+    );
+
+    // User B calls user D again.
+    active_call_b
+        .update(cx_b, |call, cx| {
+            call.invite(client_d.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+
+    // User D receives the call but doesn't join the room yet.
+    let mut incoming_call_d = active_call_d.read_with(cx_d, |call, _| call.incoming());
+    assert!(incoming_call_d.next().await.unwrap().is_some());
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec!["user_d".to_string()]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: vec!["user_d".to_string()]
+        }
+    );
+
+    // The server is torn down.
+    server.teardown();
+
+    // Users A and B have troubles reconnecting, so they leave the room.
+    client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+    client_b.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+    client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec![],
+            pending: vec![]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec![],
+            pending: vec![]
+        }
+    );
+
+    // User D is notified again of the incoming call but doesn't accept it.
+    assert!(incoming_call_d.next().await.unwrap().is_some());
+
+    // The server finishes restarting, cleaning up stale connections and canceling the
+    // call to user D because the room has become empty.
+    server.start().await.unwrap();
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    assert!(incoming_call_d.next().await.unwrap().is_none());
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_calls_on_multiple_connections(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
@@ -524,7 +818,7 @@ async fn test_calls_on_multiple_connections(
     cx_b2: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b1 = server.create_client(cx_b1, "user_b").await;
     let client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -676,7 +970,7 @@ async fn test_share_project(
 ) {
     deterministic.forbid_parking();
     let (_, window_b) = cx_b.add_window(|_| EmptyView);
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -813,7 +1107,7 @@ async fn test_unshare_project(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -896,7 +1190,7 @@ async fn test_host_disconnect(
 ) {
     cx_b.update(editor::init);
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -1014,7 +1308,7 @@ async fn test_active_call_events(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     client_a.fs.insert_tree("/a", json!({})).await;
@@ -1103,7 +1397,7 @@ async fn test_room_location(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     client_a.fs.insert_tree("/a", json!({})).await;
@@ -1269,7 +1563,7 @@ async fn test_propagate_saves_and_fs_changes(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -1439,12 +1733,12 @@ async fn test_propagate_saves_and_fs_changes(
 
 #[gpui::test(iterations = 10)]
 async fn test_git_diff_base_change(
-    executor: Arc<Deterministic>,
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    executor.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -1513,7 +1807,7 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait for it to catch up to the new diff
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // Smoke test diffing
     buffer_local_a.read_with(cx_a, |buffer, _| {
@@ -1533,7 +1827,7 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait remote buffer to catch up to the new diff
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // Smoke test diffing
     buffer_remote_a.read_with(cx_b, |buffer, _| {
@@ -1556,7 +1850,7 @@ async fn test_git_diff_base_change(
         .await;
 
     // Wait for buffer_local_a to receive it
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // Smoke test new diffing
     buffer_local_a.read_with(cx_a, |buffer, _| {
@@ -1611,7 +1905,7 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait for it to catch up to the new diff
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // Smoke test diffing
     buffer_local_b.read_with(cx_a, |buffer, _| {
@@ -1631,7 +1925,7 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait remote buffer to catch up to the new diff
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // Smoke test diffing
     buffer_remote_b.read_with(cx_b, |buffer, _| {
@@ -1654,7 +1948,7 @@ async fn test_git_diff_base_change(
         .await;
 
     // Wait for buffer_local_b to receive it
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // Smoke test new diffing
     buffer_local_b.read_with(cx_a, |buffer, _| {
@@ -1691,12 +1985,12 @@ async fn test_git_diff_base_change(
 
 #[gpui::test(iterations = 10)]
 async fn test_fs_operations(
-    executor: Arc<Deterministic>,
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    executor.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -1960,9 +2254,13 @@ async fn test_fs_operations(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_buffer_conflict_after_save(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2014,9 +2312,13 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_buffer_reloading(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2071,11 +2373,12 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
 
 #[gpui::test(iterations = 10)]
 async fn test_editing_while_guest_opens_buffer(
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2118,11 +2421,12 @@ async fn test_editing_while_guest_opens_buffer(
 
 #[gpui::test(iterations = 10)]
 async fn test_leaving_worktree_while_opening_buffer(
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2167,7 +2471,7 @@ async fn test_canceling_buffer_opening(
 ) {
     deterministic.forbid_parking();
 
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2218,7 +2522,7 @@ async fn test_leaving_project(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -2329,7 +2633,7 @@ async fn test_leaving_project(
     // Simulate connection loss for client C and ensure client A observes client C leaving the project.
     client_c.wait_for_current_user(cx_c).await;
     server.disconnect_client(client_c.peer_id().unwrap());
-    cx_a.foreground().advance_clock(RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 0);
@@ -2350,7 +2654,7 @@ async fn test_collaborating_with_diagnostics(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -2610,9 +2914,13 @@ async fn test_collaborating_with_diagnostics(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_collaborating_with_completion(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2784,9 +3092,13 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_reloading_buffer_manually(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2876,10 +3188,14 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+async fn test_formatting_buffer(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
     use project::FormatTrigger;
 
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2978,9 +3294,13 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_definition(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3122,9 +3442,13 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_references(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3223,9 +3547,13 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_project_search(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3302,9 +3630,13 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_document_highlights(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3404,9 +3736,13 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_lsp_hover(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3507,9 +3843,13 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+async fn test_project_symbols(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3612,12 +3952,13 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
 #[gpui::test(iterations = 10)]
 async fn test_open_buffer_while_getting_definition_pointing_to_it(
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     mut rng: StdRng,
 ) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3688,12 +4029,13 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 
 #[gpui::test(iterations = 10)]
 async fn test_collaborating_with_code_actions(
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    deterministic.forbid_parking();
     cx_b.update(editor::init);
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3908,10 +4250,14 @@ async fn test_collaborating_with_code_actions(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
+async fn test_collaborating_with_renames(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
     cx_b.update(editor::init);
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4110,7 +4456,7 @@ async fn test_language_server_statuses(
     deterministic.forbid_parking();
 
     cx_b.update(editor::init);
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4222,8 +4568,8 @@ async fn test_contacts(
     cx_c: &mut TestAppContext,
     cx_d: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.background()).await;
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -4610,7 +4956,7 @@ async fn test_contacts(
 
 #[gpui::test(iterations = 10)]
 async fn test_contact_requests(
-    executor: Arc<Deterministic>,
+    deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_a2: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -4618,10 +4964,10 @@ async fn test_contact_requests(
     cx_c: &mut TestAppContext,
     cx_c2: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    deterministic.forbid_parking();
 
     // Connect to a server as 3 clients.
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_a2 = server.create_client(cx_a2, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -4648,7 +4994,7 @@ async fn test_contact_requests(
         })
         .await
         .unwrap();
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // All users see the pending request appear in all their clients.
     assert_eq!(
@@ -4680,7 +5026,7 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_a, cx_a).await;
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
-    executor.run_until_parked();
+    deterministic.run_until_parked();
     assert_eq!(
         client_a.summarize_contacts(cx_a).outgoing_requests,
         &["user_b"]
@@ -4703,7 +5049,7 @@ async fn test_contact_requests(
         .await
         .unwrap();
 
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // User B sees user A as their contact now in all client, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
@@ -4725,7 +5071,7 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_a, cx_a).await;
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
-    executor.run_until_parked();
+    deterministic.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert_eq!(
@@ -4747,7 +5093,7 @@ async fn test_contact_requests(
         .await
         .unwrap();
 
-    executor.run_until_parked();
+    deterministic.run_until_parked();
 
     // User B doesn't see user C as their contact, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
@@ -4769,7 +5115,7 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_a, cx_a).await;
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
-    executor.run_until_parked();
+    deterministic.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert!(client_b
@@ -4798,11 +5144,11 @@ async fn test_following(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    deterministic.forbid_parking();
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5079,7 +5425,7 @@ async fn test_following_tab_order(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5194,12 +5540,16 @@ async fn test_following_tab_order(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
+async fn test_peers_following_each_other(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5371,13 +5721,17 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
+async fn test_auto_unfollowing(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
     // 2 clients connect to a server.
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5551,7 +5905,7 @@ async fn test_peers_simultaneously_following_each_other(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    let mut server = TestServer::start(cx_a.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5621,7 +5975,7 @@ async fn test_random_collaboration(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut server = TestServer::start(cx.background()).await;
+    let mut server = TestServer::start(&deterministic).await;
     let db = server.app_state.db.clone();
 
     let mut available_guests = Vec::new();
@@ -5709,7 +6063,6 @@ async fn test_random_collaboration(
                 let user_connection_ids = server
                     .connection_pool
                     .lock()
-                    .await
                     .user_connection_ids(removed_guest_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
@@ -5730,7 +6083,7 @@ async fn test_random_collaboration(
                 }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
-                    let pool = server.connection_pool.lock().await;
+                    let pool = server.connection_pool.lock();
                     for contact in contacts {
                         if let db::Contact::Accepted { user_id, .. } = contact {
                             if pool.is_user_online(user_id) {
@@ -5759,7 +6112,6 @@ async fn test_random_collaboration(
                 let user_connection_ids = server
                     .connection_pool
                     .lock()
-                    .await
                     .user_connection_ids(user_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
@@ -5767,6 +6119,13 @@ async fn test_random_collaboration(
                 server.disconnect_client(peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 operations += 1;
+            }
+            30..=34 => {
+                log::info!("Simulating server restart");
+                server.teardown();
+                deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+                server.start().await.unwrap();
+                deterministic.advance_clock(RECONNECT_TIMEOUT);
             }
             _ if !op_start_signals.is_empty() => {
                 while operations < max_operations && rng.lock().gen_bool(0.7) {
@@ -5933,7 +6292,6 @@ async fn test_random_collaboration(
 }
 
 struct TestServer {
-    peer: Arc<Peer>,
     app_state: Arc<AppState>,
     server: Arc<Server>,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
@@ -5943,29 +6301,33 @@ struct TestServer {
 }
 
 impl TestServer {
-    async fn start(background: Arc<executor::Background>) -> Self {
+    async fn start(deterministic: &Arc<Deterministic>) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
         let use_postgres = env::var("USE_POSTGRES").ok();
         let use_postgres = use_postgres.as_deref();
         let test_db = if use_postgres == Some("true") || use_postgres == Some("1") {
-            TestDb::postgres(background.clone())
+            TestDb::postgres(deterministic.build_background())
         } else {
-            TestDb::sqlite(background.clone())
+            TestDb::sqlite(deterministic.build_background())
         };
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
             format!("devkey-{}", live_kit_server_id),
             format!("secret-{}", live_kit_server_id),
-            background.clone(),
+            deterministic.build_background(),
         )
         .unwrap();
         let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
-        let peer = Peer::new();
-        let server = Server::new(app_state.clone());
+        let server = Server::new(
+            app_state.clone(),
+            Executor::Deterministic(deterministic.build_background()),
+        );
+        server.start().await.unwrap();
+        // Advance clock to ensure the server's cleanup task is finished.
+        deterministic.advance_clock(RECONNECT_TIMEOUT);
         Self {
-            peer,
             app_state,
             server,
             connection_killers: Default::default(),
@@ -5973,6 +6335,11 @@ impl TestServer {
             _test_db: test_db,
             test_live_kit_server: live_kit_server,
         }
+    }
+
+    fn teardown(&self) {
+        self.server.teardown();
+        self.app_state.db.reset();
     }
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
@@ -6192,7 +6559,6 @@ impl Deref for TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        self.peer.reset();
         self.server.teardown();
         self.test_live_kit_server.teardown().unwrap();
     }
@@ -6896,16 +7262,19 @@ struct RoomParticipants {
 }
 
 fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
-    room.read_with(cx, |room, _| RoomParticipants {
-        remote: room
+    room.read_with(cx, |room, _| {
+        let mut remote = room
             .remote_participants()
             .iter()
             .map(|(_, participant)| participant.user.github_login.clone())
-            .collect(),
-        pending: room
+            .collect::<Vec<_>>();
+        let mut pending = room
             .pending_participants()
             .iter()
             .map(|user| user.github_login.clone())
-            .collect(),
+            .collect::<Vec<_>>();
+        remote.sort();
+        pending.sort();
+        RoomParticipants { remote, pending }
     })
 }
