@@ -57,7 +57,8 @@ use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
-pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(60);
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -241,12 +242,12 @@ impl Server {
         self.app_state.db.delete_stale_projects().await?;
         let db = self.app_state.db.clone();
         let peer = self.peer.clone();
-        let timeout = self.executor.sleep(RECONNECT_TIMEOUT);
+        let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
         let pool = self.connection_pool.clone();
         let live_kit_client = self.app_state.live_kit_client.clone();
         self.executor.spawn_detached(async move {
             timeout.await;
-            if let Some(room_ids) = db.outdated_room_ids().await.trace_err() {
+            if let Some(room_ids) = db.stale_room_ids().await.trace_err() {
                 for room_id in room_ids {
                     let mut contacts_to_update = HashSet::default();
                     let mut canceled_calls_to_user_ids = Vec::new();
@@ -323,7 +324,6 @@ impl Server {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn teardown(&self) {
         self.peer.reset();
         self.connection_pool.lock().reset();

@@ -65,6 +65,12 @@ async fn main() -> Result<()> {
 
             axum::Server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .with_graceful_shutdown(async move {
+                    tokio::signal::ctrl_c()
+                        .await
+                        .expect("failed to listen for interrupt signal");
+                    rpc_server.teardown();
+                })
                 .await?;
         }
         _ => {

@@ -1,7 +1,7 @@
 use crate::{
     db::{self, NewUserParams, TestDb, UserId},
     executor::Executor,
-    rpc::{Server, RECONNECT_TIMEOUT},
+    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState,
 };
 use anyhow::anyhow;
@@ -686,7 +686,7 @@ async fn test_server_restarts(
 
     // The server finishes restarting, cleaning up stale connections.
     server.start().await.unwrap();
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    deterministic.advance_clock(CLEANUP_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -806,7 +806,7 @@ async fn test_server_restarts(
     // The server finishes restarting, cleaning up stale connections and canceling the
     // call to user D because the room has become empty.
     server.start().await.unwrap();
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    deterministic.advance_clock(CLEANUP_TIMEOUT);
     assert!(incoming_call_d.next().await.unwrap().is_none());
 }
 
@@ -6125,7 +6125,7 @@ async fn test_random_collaboration(
                 server.teardown();
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 server.start().await.unwrap();
-                deterministic.advance_clock(RECONNECT_TIMEOUT);
+                deterministic.advance_clock(CLEANUP_TIMEOUT);
             }
             _ if !op_start_signals.is_empty() => {
                 while operations < max_operations && rng.lock().gen_bool(0.7) {
@@ -6326,7 +6326,7 @@ impl TestServer {
         );
         server.start().await.unwrap();
         // Advance clock to ensure the server's cleanup task is finished.
-        deterministic.advance_clock(RECONNECT_TIMEOUT);
+        deterministic.advance_clock(CLEANUP_TIMEOUT);
         Self {
             app_state,
             server,

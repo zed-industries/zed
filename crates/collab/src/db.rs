@@ -131,7 +131,7 @@ impl Database {
         .await
     }
 
-    pub async fn outdated_room_ids(&self) -> Result<Vec<RoomId>> {
+    pub async fn stale_room_ids(&self) -> Result<Vec<RoomId>> {
         self.transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryAs {
