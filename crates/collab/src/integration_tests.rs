@@ -6062,7 +6062,6 @@ async fn test_random_collaboration(
                 let user_connection_ids = server
                     .connection_pool
                     .lock()
-                    .await
                     .user_connection_ids(removed_guest_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
@@ -6083,7 +6082,7 @@ async fn test_random_collaboration(
                 }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
-                    let pool = server.connection_pool.lock().await;
+                    let pool = server.connection_pool.lock();
                     for contact in contacts {
                         if let db::Contact::Accepted { user_id, .. } = contact {
                             if pool.is_user_online(user_id) {
@@ -6112,7 +6111,6 @@ async fn test_random_collaboration(
                 let user_connection_ids = server
                     .connection_pool
                     .lock()
-                    .await
                     .user_connection_ids(user_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
