@@ -6121,6 +6121,13 @@ async fn test_random_collaboration(
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 operations += 1;
             }
+            30..=34 => {
+                log::info!("Simulating server restart");
+                server.teardown();
+                deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+                server.start().await.unwrap();
+                deterministic.advance_clock(RECONNECT_TIMEOUT);
+            }
             _ if !op_start_signals.is_empty() => {
                 while operations < max_operations && rng.lock().gen_bool(0.7) {
                     op_start_signals
