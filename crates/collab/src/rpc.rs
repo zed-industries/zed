@@ -263,7 +263,6 @@ impl Server {
                             .extend(refreshed_room.canceled_calls_to_user_ids.iter().copied());
                         canceled_calls_to_user_ids =
                             mem::take(&mut refreshed_room.canceled_calls_to_user_ids);
-                        dbg!(&canceled_calls_to_user_ids);
                         live_kit_room = mem::take(&mut refreshed_room.room.live_kit_room);
                         delete_live_kit_room = refreshed_room.room.participants.is_empty();
                     }
