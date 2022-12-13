@@ -69,6 +69,7 @@ async fn main() -> Result<()> {
                     tokio::signal::ctrl_c()
                         .await
                         .expect("failed to listen for interrupt signal");
+                    tracing::info!("Received interrupt signal");
                     rpc_server.teardown();
                 })
                 .await?;
