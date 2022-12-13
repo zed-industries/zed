@@ -106,13 +106,16 @@ impl SerializedPaneGroup {
                         .await
                     {
                         members.push(new_member);
-
                         current_active_pane = current_active_pane.or(active_pane);
                     }
                 }
 
                 if members.is_empty() {
                     return None;
+                }
+
+                if members.len() == 1 {
+                    return Some((members.remove(0), current_active_pane));
                 }
 
                 Some((
@@ -130,9 +133,10 @@ impl SerializedPaneGroup {
                     .deserialize_to(project, &pane, workspace_id, workspace, cx)
                     .await;
 
-                if pane.read_with(cx, |pane, _| pane.items().next().is_some()) {
+                if pane.read_with(cx, |pane, _| pane.items_len() != 0) {
                     Some((Member::Pane(pane.clone()), active.then(|| pane)))
                 } else {
+                    workspace.update(cx, |workspace, cx| workspace.remove_pane(pane, cx));
                     None
                 }
             }

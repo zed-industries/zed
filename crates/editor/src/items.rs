@@ -138,7 +138,7 @@ impl FollowableItem for Editor {
                 }
 
                 if let Some(scroll_top_anchor) = scroll_top_anchor {
-                    editor.set_scroll_anchor(
+                    editor.set_scroll_anchor_remote(
                         ScrollAnchor {
                             top_anchor: scroll_top_anchor,
                             offset: vec2f(state.scroll_x, state.scroll_y),
@@ -363,7 +363,10 @@ impl FollowableItem for Editor {
                     this.set_selections_from_remote(selections, cx);
                     this.request_autoscroll_remotely(Autoscroll::newest(), cx);
                 } else if let Some(anchor) = scroll_top_anchor {
-                    this.set_scroll_anchor(ScrollAnchor {top_anchor: anchor, offset: vec2f(message.scroll_x, message.scroll_y) }, cx);
+                    this.set_scroll_anchor_remote(ScrollAnchor {
+                        top_anchor: anchor,
+                        offset: vec2f(message.scroll_x, message.scroll_y)
+                    }, cx);
                 }
             });
             Ok(())

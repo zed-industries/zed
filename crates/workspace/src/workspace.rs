@@ -178,6 +178,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             }
         }
     });
+
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
@@ -2167,7 +2168,11 @@ impl Workspace {
     }
 
     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active {
+        if active {
+            cx.background()
+                .spawn(persistence::DB.update_timestamp(self.database_id()))
+                .detach();
+        } else {
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
                     if let Some(item) = pane.active_item() {
@@ -2281,6 +2286,9 @@ impl Workspace {
         }
 
         if let Some(location) = self.location(cx) {
+            // Load bearing special case:
+            //  - with_local_workspace() relies on this to not have other stuff open
+            //    when you open your log
             if !location.paths().is_empty() {
                 let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
@@ -2308,9 +2316,14 @@ impl Workspace {
     ) {
         cx.spawn(|mut cx| async move {
             if let Some(workspace) = workspace.upgrade(&cx) {
-                let (project, dock_pane_handle) = workspace.read_with(&cx, |workspace, _| {
-                    (workspace.project().clone(), workspace.dock_pane().clone())
-                });
+                let (project, dock_pane_handle, old_center_pane) =
+                    workspace.read_with(&cx, |workspace, _| {
+                        (
+                            workspace.project().clone(),
+                            workspace.dock_pane().clone(),
+                            workspace.last_active_center_pane.clone(),
+                        )
+                    });
 
                 serialized_workspace
                     .dock_pane
@@ -2346,11 +2359,14 @@ impl Workspace {
                             cx.focus(workspace.panes.last().unwrap().clone());
                         }
                     } else {
-                        cx.focus_self();
+                        let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
+                        if let Some(old_center_handle) = old_center_handle {
+                            cx.focus(old_center_handle)
+                        } else {
+                            cx.focus_self()
+                        }
                     }
 
-                    // Note, if this is moved after 'set_dock_position'
-                    // it causes an infinite loop.
                     if workspace.left_sidebar().read(cx).is_open()
                         != serialized_workspace.left_sidebar_open
                     {
@@ -2602,6 +2618,10 @@ pub fn activate_workspace_for_project(
         }
     }
     None
+}
+
+pub fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+    DB.last_workspace().log_err().flatten()
 }
 
 #[allow(clippy::type_complexity)]
