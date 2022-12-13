@@ -641,6 +641,7 @@ async fn test_server_restarts(
         .update(cx_d, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+    deterministic.run_until_parked();
     let room_d = active_call_d.read_with(cx_d, |call, _| call.room().unwrap().clone());
     assert_eq!(
         room_participants(&room_a, cx_a),
