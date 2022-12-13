@@ -7,11 +7,11 @@ export default function simpleMessageNotification(colorScheme: ColorScheme): Obj
   let layer = colorScheme.middle;
   return {
     message: {
-      ...text(layer, "sans", { size: "md" }),
+      ...text(layer, "sans", { size: "xs" }),
       margin: { left: headerPadding, right: headerPadding },
     },
     actionMessage: {
-      ...text(layer, "sans", { size: "md" }),
+      ...text(layer, "sans", { size: "xs" }),
       margin: { left: headerPadding, top: 6, bottom: 6 },
       hover: {
         color: foreground(layer, "hovered"),
