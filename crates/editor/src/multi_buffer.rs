@@ -2651,12 +2651,13 @@ impl MultiBufferSnapshot {
 
             let range = excerpt.range.context.clone();
             let range_start_row = range.start.to_point(&excerpt.buffer).row;
+            let range_end_row = range.end.to_point(&excerpt.buffer).row;
             let a = Some(excerpt.buffer.git_diff_hunks_in_range(range, reversed).map(
                 move |mut hunk| {
                     hunk.buffer_range.start = hunk.buffer_range.start.max(range_start_row)
                         - range_start_row
                         + lines_advance;
-                    hunk.buffer_range.end = hunk.buffer_range.end.max(range_start_row)
+                    hunk.buffer_range.end = hunk.buffer_range.end.min(range_end_row + 1)
                         - range_start_row
                         + lines_advance;
                     hunk
