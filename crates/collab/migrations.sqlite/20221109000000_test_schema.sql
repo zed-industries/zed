@@ -128,6 +128,7 @@ CREATE TABLE "room_participants" (
     "calling_connection_epoch" TEXT NOT NULL
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
+CREATE INDEX "index_room_participants_on_room_id" ON "room_participants" ("room_id");
 CREATE INDEX "index_room_participants_on_answering_connection_epoch" ON "room_participants" ("answering_connection_epoch");
 CREATE INDEX "index_room_participants_on_calling_connection_epoch" ON "room_participants" ("calling_connection_epoch");
 CREATE INDEX "index_room_participants_on_answering_connection_id" ON "room_participants" ("answering_connection_id");

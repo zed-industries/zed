@@ -53,7 +53,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{watch, Mutex, MutexGuard};
+use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
@@ -90,14 +90,14 @@ impl<R: RequestMessage> Response<R> {
 struct Session {
     user_id: UserId,
     connection_id: ConnectionId,
-    db: Arc<Mutex<DbHandle>>,
+    db: Arc<tokio::sync::Mutex<DbHandle>>,
     peer: Arc<Peer>,
-    connection_pool: Arc<Mutex<ConnectionPool>>,
+    connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
 }
 
 impl Session {
-    async fn db(&self) -> MutexGuard<DbHandle> {
+    async fn db(&self) -> tokio::sync::MutexGuard<DbHandle> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
@@ -109,9 +109,7 @@ impl Session {
     async fn connection_pool(&self) -> ConnectionPoolGuard<'_> {
         #[cfg(test)]
         tokio::task::yield_now().await;
-        let guard = self.connection_pool.lock().await;
-        #[cfg(test)]
-        tokio::task::yield_now().await;
+        let guard = self.connection_pool.lock();
         ConnectionPoolGuard {
             guard,
             _not_send: PhantomData,
@@ -140,14 +138,15 @@ impl Deref for DbHandle {
 
 pub struct Server {
     peer: Arc<Peer>,
-    pub(crate) connection_pool: Arc<Mutex<ConnectionPool>>,
+    pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
+    executor: Executor,
     handlers: HashMap<TypeId, MessageHandler>,
     teardown: watch::Sender<()>,
 }
 
 pub(crate) struct ConnectionPoolGuard<'a> {
-    guard: MutexGuard<'a, ConnectionPool>,
+    guard: parking_lot::MutexGuard<'a, ConnectionPool>,
     _not_send: PhantomData<Rc<()>>,
 }
 
@@ -168,10 +167,11 @@ where
 }
 
 impl Server {
-    pub fn new(app_state: Arc<AppState>) -> Arc<Self> {
+    pub fn new(app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
         let mut server = Self {
             peer: Peer::new(),
             app_state,
+            executor,
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(()).0,
@@ -237,7 +237,96 @@ impl Server {
         Arc::new(server)
     }
 
+    pub async fn start(&self) -> Result<()> {
+        self.app_state.db.delete_stale_projects().await?;
+        let db = self.app_state.db.clone();
+        let peer = self.peer.clone();
+        let timeout = self.executor.sleep(RECONNECT_TIMEOUT);
+        let pool = self.connection_pool.clone();
+        let live_kit_client = self.app_state.live_kit_client.clone();
+        self.executor.spawn_detached(async move {
+            timeout.await;
+            if let Some(room_ids) = db.outdated_room_ids().await.trace_err() {
+                for room_id in room_ids {
+                    let mut contacts_to_update = HashSet::default();
+                    let mut canceled_calls_to_user_ids = Vec::new();
+                    let mut live_kit_room = String::new();
+                    let mut delete_live_kit_room = false;
+
+                    if let Ok(mut refreshed_room) = db.refresh_room(room_id).await {
+                        room_updated(&refreshed_room.room, &peer);
+                        contacts_to_update
+                            .extend(refreshed_room.stale_participant_user_ids.iter().copied());
+                        contacts_to_update
+                            .extend(refreshed_room.canceled_calls_to_user_ids.iter().copied());
+                        canceled_calls_to_user_ids =
+                            mem::take(&mut refreshed_room.canceled_calls_to_user_ids);
+                        live_kit_room = mem::take(&mut refreshed_room.room.live_kit_room);
+                        delete_live_kit_room = refreshed_room.room.participants.is_empty();
+                    }
+
+                    {
+                        let pool = pool.lock();
+                        for canceled_user_id in canceled_calls_to_user_ids {
+                            for connection_id in pool.user_connection_ids(canceled_user_id) {
+                                peer.send(
+                                    connection_id,
+                                    proto::CallCanceled {
+                                        room_id: room_id.to_proto(),
+                                    },
+                                )
+                                .trace_err();
+                            }
+                        }
+                    }
+
+                    for user_id in contacts_to_update {
+                        let busy = db.is_user_busy(user_id).await.trace_err();
+                        let contacts = db.get_contacts(user_id).await.trace_err();
+                        if let Some((busy, contacts)) = busy.zip(contacts) {
+                            let pool = pool.lock();
+                            let updated_contact = contact_for_user(user_id, false, busy, &pool);
+                            for contact in contacts {
+                                if let db::Contact::Accepted {
+                                    user_id: contact_user_id,
+                                    ..
+                                } = contact
+                                {
+                                    for contact_conn_id in pool.user_connection_ids(contact_user_id)
+                                    {
+                                        peer.send(
+                                            contact_conn_id,
+                                            proto::UpdateContacts {
+                                                contacts: vec![updated_contact.clone()],
+                                                remove_contacts: Default::default(),
+                                                incoming_requests: Default::default(),
+                                                remove_incoming_requests: Default::default(),
+                                                outgoing_requests: Default::default(),
+                                                remove_outgoing_requests: Default::default(),
+                                            },
+                                        )
+                                        .trace_err();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(live_kit) = live_kit_client.as_ref() {
+                        if delete_live_kit_room {
+                            live_kit.delete_room(live_kit_room).await.trace_err();
+                        }
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub fn teardown(&self) {
+        self.peer.reset();
+        self.connection_pool.lock().reset();
         let _ = self.teardown.send(());
     }
 
@@ -339,7 +428,7 @@ impl Server {
         let user_id = user.id;
         let login = user.github_login;
         let span = info_span!("handle connection", %user_id, %login, %address);
-        let teardown = self.teardown.subscribe();
+        let mut teardown = self.teardown.subscribe();
         async move {
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
@@ -367,7 +456,7 @@ impl Server {
             ).await?;
 
             {
-                let mut pool = this.connection_pool.lock().await;
+                let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
 
@@ -386,7 +475,7 @@ impl Server {
             let session = Session {
                 user_id,
                 connection_id,
-                db: Arc::new(Mutex::new(DbHandle(this.app_state.db.clone()))),
+                db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone()
@@ -409,6 +498,7 @@ impl Server {
                 let next_message = incoming_rx.next().fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
+                    _ = teardown.changed().fuse() => return Ok(()),
                     result = handle_io => {
                         if let Err(error) = result {
                             tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");
@@ -460,7 +550,7 @@ impl Server {
     ) -> Result<()> {
         if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
             if let Some(code) = &user.invite_code {
-                let pool = self.connection_pool.lock().await;
+                let pool = self.connection_pool.lock();
                 let invitee_contact = contact_for_user(invitee_id, true, false, &pool);
                 for connection_id in pool.user_connection_ids(inviter_id) {
                     self.peer.send(
@@ -486,7 +576,7 @@ impl Server {
     pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
         if let Some(user) = self.app_state.db.get_user_by_id(user_id).await? {
             if let Some(invite_code) = &user.invite_code {
-                let pool = self.connection_pool.lock().await;
+                let pool = self.connection_pool.lock();
                 for connection_id in pool.user_connection_ids(user_id) {
                     self.peer.send(
                         connection_id,
@@ -507,7 +597,7 @@ impl Server {
     pub async fn snapshot<'a>(self: &'a Arc<Self>) -> ServerSnapshot<'a> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
-                guard: self.connection_pool.lock().await,
+                guard: self.connection_pool.lock(),
                 _not_send: PhantomData,
             },
             peer: &self.peer,
@@ -628,7 +718,6 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
     let connections = server
         .connection_pool
         .lock()
-        .await
         .connections()
         .filter(|connection| !connection.admin)
         .count();
@@ -681,7 +770,7 @@ async fn sign_out(
             {
                 let db = session.db().await;
                 if let Some(room) = db.decline_call(None, session.user_id).await.trace_err() {
-                    room_updated(&room, &session);
+                    room_updated(&room, &session.peer);
                 }
             }
             update_user_contacts(session.user_id, &session).await?;
@@ -749,17 +838,14 @@ async fn join_room(
     response: Response<proto::JoinRoom>,
     session: Session,
 ) -> Result<()> {
+    let room_id = RoomId::from_proto(request.id);
     let room = {
         let room = session
             .db()
             .await
-            .join_room(
-                RoomId::from_proto(request.id),
-                session.user_id,
-                session.connection_id,
-            )
+            .join_room(room_id, session.user_id, session.connection_id)
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
         room.clone()
     };
 
@@ -770,7 +856,12 @@ async fn join_room(
     {
         session
             .peer
-            .send(connection_id, proto::CallCanceled {})
+            .send(
+                connection_id,
+                proto::CallCanceled {
+                    room_id: room_id.to_proto(),
+                },
+            )
             .trace_err();
     }
 
@@ -834,7 +925,7 @@ async fn call(
                 initial_project_id,
             )
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
         mem::take(incoming_call)
     };
     update_user_contacts(called_user_id, &session).await?;
@@ -864,7 +955,7 @@ async fn call(
             .await
             .call_failed(room_id, called_user_id)
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
     }
     update_user_contacts(called_user_id, &session).await?;
 
@@ -884,7 +975,7 @@ async fn cancel_call(
             .await
             .cancel_call(Some(room_id), session.connection_id, called_user_id)
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
     }
 
     for connection_id in session
@@ -894,7 +985,12 @@ async fn cancel_call(
     {
         session
             .peer
-            .send(connection_id, proto::CallCanceled {})
+            .send(
+                connection_id,
+                proto::CallCanceled {
+                    room_id: room_id.to_proto(),
+                },
+            )
             .trace_err();
     }
     response.send(proto::Ack {})?;
@@ -911,7 +1007,7 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
             .await
             .decline_call(Some(room_id), session.user_id)
             .await?;
-        room_updated(&room, &session);
+        room_updated(&room, &session.peer);
     }
 
     for connection_id in session
@@ -921,7 +1017,12 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
     {
         session
             .peer
-            .send(connection_id, proto::CallCanceled {})
+            .send(
+                connection_id,
+                proto::CallCanceled {
+                    room_id: room_id.to_proto(),
+                },
+            )
             .trace_err();
     }
     update_user_contacts(session.user_id, &session).await?;
@@ -942,7 +1043,7 @@ async fn update_participant_location(
         .await
         .update_room_participant_location(room_id, session.connection_id, location)
         .await?;
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -964,7 +1065,7 @@ async fn share_project(
     response.send(proto::ShareProjectResponse {
         project_id: project_id.to_proto(),
     })?;
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
 
     Ok(())
 }
@@ -983,7 +1084,7 @@ async fn unshare_project(message: proto::UnshareProject, session: Session) -> Re
         guest_connection_ids.iter().copied(),
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
 
     Ok(())
 }
@@ -1142,7 +1243,7 @@ async fn update_project(
                 .forward_send(session.connection_id, connection_id, request.clone())
         },
     );
-    room_updated(&room, &session);
+    room_updated(&room, &session.peer);
     response.send(proto::Ack {})?;
 
     Ok(())
@@ -1789,17 +1890,15 @@ fn contact_for_user(
     }
 }
 
-fn room_updated(room: &proto::Room, session: &Session) {
+fn room_updated(room: &proto::Room, peer: &Peer) {
     for participant in &room.participants {
-        session
-            .peer
-            .send(
-                ConnectionId(participant.peer_id),
-                proto::RoomUpdated {
-                    room: Some(room.clone()),
-                },
-            )
-            .trace_err();
+        peer.send(
+            ConnectionId(participant.peer_id),
+            proto::RoomUpdated {
+                room: Some(room.clone()),
+            },
+        )
+        .trace_err();
     }
 }
 
@@ -1840,6 +1939,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
 async fn leave_room_for_session(session: &Session) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
+    let room_id;
     let canceled_calls_to_user_ids;
     let live_kit_room;
     let delete_live_kit_room;
@@ -1851,7 +1951,8 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
             project_left(project, session);
         }
 
-        room_updated(&left_room.room, &session);
+        room_updated(&left_room.room, &session.peer);
+        room_id = RoomId::from_proto(left_room.room.id);
         canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
         delete_live_kit_room = left_room.room.participants.is_empty();
@@ -1863,7 +1964,12 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
             for connection_id in pool.user_connection_ids(canceled_user_id) {
                 session
                     .peer
-                    .send(connection_id, proto::CallCanceled {})
+                    .send(
+                        connection_id,
+                        proto::CallCanceled {
+                            room_id: room_id.to_proto(),
+                        },
+                    )
                     .trace_err();
             }
             contacts_to_update.insert(canceled_user_id);

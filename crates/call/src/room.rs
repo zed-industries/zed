@@ -15,7 +15,7 @@ use project::Project;
 use std::{mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt};
 
-pub const RECONNECTION_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
+pub const RECONNECT_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -50,7 +50,7 @@ pub struct Room {
     user_store: ModelHandle<UserStore>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
-    _maintain_connection: Task<Result<()>>,
+    maintain_connection: Option<Task<Result<()>>>,
 }
 
 impl Entity for Room {
@@ -121,7 +121,7 @@ impl Room {
             None
         };
 
-        let _maintain_connection =
+        let maintain_connection =
             cx.spawn_weak(|this, cx| Self::maintain_connection(this, client.clone(), cx));
 
         Self {
@@ -138,7 +138,7 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
-            _maintain_connection,
+            maintain_connection: Some(maintain_connection),
         }
     }
 
@@ -235,6 +235,8 @@ impl Room {
         self.participant_user_ids.clear();
         self.subscriptions.clear();
         self.live_kit.take();
+        self.pending_room_update.take();
+        self.maintain_connection.take();
         self.client.send(proto::LeaveRoom {})?;
         Ok(())
     }
@@ -262,45 +264,52 @@ impl Room {
                     });
 
                 // Wait for client to re-establish a connection to the server.
-                let mut reconnection_timeout = cx.background().timer(RECONNECTION_TIMEOUT).fuse();
-                let client_reconnection = async {
-                    loop {
-                        if let Some(status) = client_status.next().await {
-                            if status.is_connected() {
-                                return true;
+                {
+                    let mut reconnection_timeout = cx.background().timer(RECONNECT_TIMEOUT).fuse();
+                    let client_reconnection = async {
+                        let mut remaining_attempts = 3;
+                        while remaining_attempts > 0 {
+                            if let Some(status) = client_status.next().await {
+                                if status.is_connected() {
+                                    let rejoin_room = async {
+                                        let response =
+                                            client.request(proto::JoinRoom { id: room_id }).await?;
+                                        let room_proto =
+                                            response.room.ok_or_else(|| anyhow!("invalid room"))?;
+                                        this.upgrade(&cx)
+                                            .ok_or_else(|| anyhow!("room was dropped"))?
+                                            .update(&mut cx, |this, cx| {
+                                                this.status = RoomStatus::Online;
+                                                this.apply_room_update(room_proto, cx)
+                                            })?;
+                                        anyhow::Ok(())
+                                    };
+
+                                    if rejoin_room.await.is_ok() {
+                                        return true;
+                                    } else {
+                                        remaining_attempts -= 1;
+                                    }
+                                }
+                            } else {
+                                return false;
                             }
-                        } else {
-                            return false;
                         }
+                        false
                     }
-                }
-                .fuse();
-                futures::pin_mut!(client_reconnection);
+                    .fuse();
+                    futures::pin_mut!(client_reconnection);
 
-                futures::select_biased! {
-                    reconnected = client_reconnection => {
-                        if reconnected {
-                            // Client managed to reconnect to the server. Now attempt to join the room.
-                            let rejoin_room = async {
-                                let response = client.request(proto::JoinRoom { id: room_id }).await?;
-                                let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-                                this.upgrade(&cx)
-                                    .ok_or_else(|| anyhow!("room was dropped"))?
-                                    .update(&mut cx, |this, cx| {
-                                        this.status = RoomStatus::Online;
-                                        this.apply_room_update(room_proto, cx)
-                                    })?;
-                                anyhow::Ok(())
-                            };
-
-                            // If we successfully joined the room, go back around the loop
-                            // waiting for future connection status changes.
-                            if rejoin_room.await.log_err().is_some() {
+                    futures::select_biased! {
+                        reconnected = client_reconnection => {
+                            if reconnected {
+                                // If we successfully joined the room, go back around the loop
+                                // waiting for future connection status changes.
                                 continue;
                             }
                         }
+                        _ = reconnection_timeout => {}
                     }
-                    _ = reconnection_timeout => {}
                 }
 
                 // The client failed to re-establish a connection to the server

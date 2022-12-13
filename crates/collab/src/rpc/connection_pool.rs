@@ -23,6 +23,11 @@ pub struct Connection {
 }
 
 impl ConnectionPool {
+    pub fn reset(&mut self) {
+        self.connections.clear();
+        self.connected_users.clear();
+    }
+
     #[instrument(skip(self))]
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId, admin: bool) {
         self.connections
