@@ -277,12 +277,9 @@ impl Server {
                     }
 
                     for user_id in contacts_to_update {
-                        if let Some((busy, contacts)) = db
-                            .is_user_busy(user_id)
-                            .await
-                            .trace_err()
-                            .zip(db.get_contacts(user_id).await.trace_err())
-                        {
+                        let busy = db.is_user_busy(user_id).await.trace_err();
+                        let contacts = db.get_contacts(user_id).await.trace_err();
+                        if let Some((busy, contacts)) = busy.zip(contacts) {
                             let pool = pool.lock().await;
                             let updated_contact = contact_for_user(user_id, false, busy, &pool);
                             for contact in contacts {
