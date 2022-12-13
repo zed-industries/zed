@@ -212,7 +212,9 @@ message IncomingCall {
     optional ParticipantProject initial_project = 4;
 }
 
-message CallCanceled {}
+message CallCanceled {
+    uint64 room_id = 1;
+}
 
 message CancelCall {
     uint64 room_id = 1;

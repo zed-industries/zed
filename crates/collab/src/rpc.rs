@@ -271,7 +271,13 @@ impl Server {
                         let pool = pool.lock().await;
                         for canceled_user_id in canceled_calls_to_user_ids {
                             for connection_id in pool.user_connection_ids(canceled_user_id) {
-                                peer.send(connection_id, proto::CallCanceled {}).trace_err();
+                                peer.send(
+                                    connection_id,
+                                    proto::CallCanceled {
+                                        room_id: room_id.to_proto(),
+                                    },
+                                )
+                                .trace_err();
                             }
                         }
                     }
@@ -833,15 +839,12 @@ async fn join_room(
     response: Response<proto::JoinRoom>,
     session: Session,
 ) -> Result<()> {
+    let room_id = RoomId::from_proto(request.id);
     let room = {
         let room = session
             .db()
             .await
-            .join_room(
-                RoomId::from_proto(request.id),
-                session.user_id,
-                session.connection_id,
-            )
+            .join_room(room_id, session.user_id, session.connection_id)
             .await?;
         room_updated(&room, &session.peer);
         room.clone()
@@ -854,7 +857,12 @@ async fn join_room(
     {
         session
             .peer
-            .send(connection_id, proto::CallCanceled {})
+            .send(
+                connection_id,
+                proto::CallCanceled {
+                    room_id: room_id.to_proto(),
+                },
+            )
             .trace_err();
     }
 
@@ -978,7 +986,12 @@ async fn cancel_call(
     {
         session
             .peer
-            .send(connection_id, proto::CallCanceled {})
+            .send(
+                connection_id,
+                proto::CallCanceled {
+                    room_id: room_id.to_proto(),
+                },
+            )
             .trace_err();
     }
     response.send(proto::Ack {})?;
@@ -1005,7 +1018,12 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
     {
         session
             .peer
-            .send(connection_id, proto::CallCanceled {})
+            .send(
+                connection_id,
+                proto::CallCanceled {
+                    room_id: room_id.to_proto(),
+                },
+            )
             .trace_err();
     }
     update_user_contacts(session.user_id, &session).await?;
@@ -1922,6 +1940,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
 async fn leave_room_for_session(session: &Session) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
+    let room_id;
     let canceled_calls_to_user_ids;
     let live_kit_room;
     let delete_live_kit_room;
@@ -1934,6 +1953,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
         }
 
         room_updated(&left_room.room, &session.peer);
+        room_id = RoomId::from_proto(left_room.room.id);
         canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
         delete_live_kit_room = left_room.room.participants.is_empty();
@@ -1945,7 +1965,12 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
             for connection_id in pool.user_connection_ids(canceled_user_id) {
                 session
                     .peer
-                    .send(connection_id, proto::CallCanceled {})
+                    .send(
+                        connection_id,
+                        proto::CallCanceled {
+                            room_id: room_id.to_proto(),
+                        },
+                    )
                     .trace_err();
             }
             contacts_to_update.insert(canceled_user_id);
