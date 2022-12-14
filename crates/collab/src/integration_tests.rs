@@ -685,7 +685,7 @@ async fn test_server_restarts(
     );
 
     // The server finishes restarting, cleaning up stale connections.
-    server.start().await.unwrap();
+    server.start();
     deterministic.advance_clock(CLEANUP_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -805,7 +805,7 @@ async fn test_server_restarts(
 
     // The server finishes restarting, cleaning up stale connections and canceling the
     // call to user D because the room has become empty.
-    server.start().await.unwrap();
+    server.start();
     deterministic.advance_clock(CLEANUP_TIMEOUT);
     assert!(incoming_call_d.next().await.unwrap().is_none());
 }
@@ -6124,7 +6124,7 @@ async fn test_random_collaboration(
                 log::info!("Simulating server restart");
                 server.teardown();
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-                server.start().await.unwrap();
+                server.start();
                 deterministic.advance_clock(CLEANUP_TIMEOUT);
             }
             _ if !op_start_signals.is_empty() => {
@@ -6324,7 +6324,7 @@ impl TestServer {
             app_state.clone(),
             Executor::Deterministic(deterministic.build_background()),
         );
-        server.start().await.unwrap();
+        server.start();
         // Advance clock to ensure the server's cleanup task is finished.
         deterministic.advance_clock(CLEANUP_TIMEOUT);
         Self {

@@ -238,14 +238,14 @@ impl Server {
         Arc::new(server)
     }
 
-    pub async fn start(&self) -> Result<()> {
-        self.app_state.db.delete_stale_projects().await?;
+    pub fn start(&self) {
         let db = self.app_state.db.clone();
         let peer = self.peer.clone();
-        let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
         let pool = self.connection_pool.clone();
         let live_kit_client = self.app_state.live_kit_client.clone();
+        let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
         self.executor.spawn_detached(async move {
+            db.delete_stale_projects().await.trace_err();
             timeout.await;
             if let Some(room_ids) = db.stale_room_ids().await.trace_err() {
                 for room_id in room_ids {
@@ -321,7 +321,6 @@ impl Server {
                 }
             }
         });
-        Ok(())
     }
 
     pub fn teardown(&self) {
