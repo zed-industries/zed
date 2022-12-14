@@ -43,15 +43,8 @@ impl FollowableItem for Editor {
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>> {
-        let state = if matches!(state, Some(proto::view::Variant::Editor(_))) {
-            if let Some(proto::view::Variant::Editor(state)) = state.take() {
-                state
-            } else {
-                unreachable!()
-            }
-        } else {
-            return None;
-        };
+        let Some(proto::view::Variant::Editor(_)) = state else { return None };
+        let Some(proto::view::Variant::Editor(state)) = state.take() else { unreachable!() };
 
         let replica_id = project.read(cx).replica_id();
         let buffer_ids = state
