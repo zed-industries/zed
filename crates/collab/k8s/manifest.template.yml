@@ -63,8 +63,8 @@ spec:
             httpGet:
               path: /
               port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            initialDelaySeconds: 1
+            periodSeconds: 1
           env:
             - name: HTTP_PORT
               value: "8080"
