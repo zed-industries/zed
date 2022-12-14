@@ -13,8 +13,8 @@ use client::{
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
-    self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToOffset,
-    ToggleCodeActions, Undo,
+    self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, ExcerptRange, MultiBuffer,
+    Redo, Rename, ToOffset, ToggleCodeActions, Undo,
 };
 use fs::{FakeFs, Fs as _, HomeDir, LineEnding};
 use futures::{channel::oneshot, StreamExt as _};
@@ -4813,9 +4813,9 @@ async fn test_following(
         .insert_tree(
             "/a",
             json!({
-                "1.txt": "one",
-                "2.txt": "two",
-                "3.txt": "three",
+                "1.txt": "one\none\none",
+                "2.txt": "two\ntwo\ntwo",
+                "3.txt": "three\nthree\nthree",
             }),
         )
         .await;
@@ -4919,7 +4919,67 @@ async fn test_following(
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
     });
 
+    // When client A opens a multibuffer, client B does so as well.
+    let multibuffer_a = cx_a.add_model(|cx| {
+        let buffer_a1 = project_a.update(cx, |project, cx| {
+            project
+                .get_open_buffer(&(worktree_id, "1.txt").into(), cx)
+                .unwrap()
+        });
+        let buffer_a2 = project_a.update(cx, |project, cx| {
+            project
+                .get_open_buffer(&(worktree_id, "2.txt").into(), cx)
+                .unwrap()
+        });
+        let mut result = MultiBuffer::new(0);
+        result.push_excerpts(
+            buffer_a1,
+            [ExcerptRange {
+                context: 0..3,
+                primary: None,
+            }],
+            cx,
+        );
+        result.push_excerpts(
+            buffer_a2,
+            [ExcerptRange {
+                context: 4..7,
+                primary: None,
+            }],
+            cx,
+        );
+        result
+    });
+    let multibuffer_editor_a = workspace_a.update(cx_a, |workspace, cx| {
+        let editor =
+            cx.add_view(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), cx));
+        workspace.add_item(Box::new(editor.clone()), cx);
+        editor
+    });
+    deterministic.run_until_parked();
+    let multibuffer_editor_b = workspace_b.read_with(cx_b, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+    assert_eq!(
+        multibuffer_editor_a.read_with(cx_a, |editor, cx| editor.text(cx)),
+        multibuffer_editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+    );
+
     // When client A navigates back and forth, client B does so as well.
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace::Pane::go_back(workspace, None, cx)
+        })
+        .await;
+    deterministic.run_until_parked();
+    workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
+    });
+
     workspace_a
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_back(workspace, None, cx)
@@ -5029,13 +5089,21 @@ async fn test_following(
         .await
         .unwrap();
     deterministic.run_until_parked();
-    assert_eq!(
-        workspace_a.read_with(cx_a, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .id()),
-        editor_a1.id()
-    );
+    workspace_a.read_with(cx_a, |workspace, cx| {
+        assert_eq!(workspace.active_item(cx).unwrap().id(), editor_a1.id())
+    });
+
+    // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_item(&multibuffer_editor_b, cx)
+    });
+    deterministic.run_until_parked();
+    workspace_a.read_with(cx_a, |workspace, cx| {
+        assert_eq!(
+            workspace.active_item(cx).unwrap().id(),
+            multibuffer_editor_a.id()
+        )
+    });
 
     // Client B activates an external window again, and the previously-opened screen-sharing item
     // gets activated.
