@@ -351,6 +351,12 @@ impl Server {
                         }
                     }
                 }
+
+                app_state
+                    .db
+                    .delete_stale_servers(epoch, &app_state.config.zed_environment)
+                    .await
+                    .trace_err();
             }
             .instrument(span),
         );

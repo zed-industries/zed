@@ -231,9 +231,23 @@ impl Database {
         .await
     }
 
-    fn delete_stale_servers(&self, environment: &str, new_epoch: ServerEpoch) -> Result<()> {
-        self.transaction(|tx| async {
-            server::Entity::delete_many().filter(Condition::all().add())
+    pub async fn delete_stale_servers(
+        &self,
+        new_epoch: ServerEpoch,
+        environment: &str,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            server::Entity::delete_many()
+                .filter(
+                    Condition::all().add(
+                        server::Column::Environment
+                            .eq(environment)
+                            .add(server::Column::Epoch.ne(new_epoch)),
+                    ),
+                )
+                .exec(&*tx)
+                .await?;
+            Ok(())
         })
         .await
     }
