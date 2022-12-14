@@ -798,7 +798,7 @@ message Follow {
 }
 
 message FollowResponse {
-    optional uint64 active_view_id = 1;
+    optional ViewId active_view_id = 1;
     repeated View views = 2;
 }
 
@@ -826,13 +826,18 @@ message GetPrivateUserInfoResponse {
 
 // Entities
 
+message ViewId {
+    uint32 creator = 1;
+    uint64 id = 2;
+}
+
 message UpdateActiveView {
-    optional uint64 id = 1;
+    optional ViewId id = 1;
     optional uint32 leader_id = 2;
 }
 
 message UpdateView {
-    uint64 id = 1;
+    ViewId id = 1;
     optional uint32 leader_id = 2;
 
     oneof variant {
@@ -840,15 +845,17 @@ message UpdateView {
     }
 
     message Editor {
-        repeated Selection selections = 1;
-        Anchor scroll_top_anchor = 2;
-        float scroll_x = 3;
-        float scroll_y = 4;
+        repeated ExcerptInsertion inserted_excerpts = 1;
+        repeated uint64 deleted_excerpts = 2;
+        repeated Selection selections = 3;
+        EditorAnchor scroll_top_anchor = 4;
+        float scroll_x = 5;
+        float scroll_y = 6;
     }
 }
 
 message View {
-    uint64 id = 1;
+    ViewId id = 1;
     optional uint32 leader_id = 2;
 
     oneof variant {
@@ -856,11 +863,13 @@ message View {
     }
 
     message Editor {
-        uint64 buffer_id = 1;
-        repeated Selection selections = 2;
-        Anchor scroll_top_anchor = 3;
-        float scroll_x = 4;
-        float scroll_y = 5;
+        bool singleton = 1;
+        optional string title = 2;
+        repeated Excerpt excerpts = 3;
+        repeated Selection selections = 4;
+        EditorAnchor scroll_top_anchor = 5;
+        float scroll_x = 6;
+        float scroll_y = 7;
     }
 }
 
@@ -913,19 +922,16 @@ enum LineEnding {
     Windows = 1;
 }
 
-message SelectionSet {
-    uint32 replica_id = 1;
-    repeated Selection selections = 2;
-    uint32 lamport_timestamp = 3;
-    bool line_mode = 4;
-    CursorShape cursor_shape = 5;
-}
-
 message Selection {
     uint64 id = 1;
-    Anchor start = 2;
-    Anchor end = 3;
+    EditorAnchor start = 2;
+    EditorAnchor end = 3;
     bool reversed = 4;
+}
+
+message EditorAnchor {
+    uint64 excerpt_id = 1;
+    Anchor anchor = 2;
 }
 
 enum CursorShape {
@@ -933,6 +939,20 @@ enum CursorShape {
     CursorBlock = 1;
     CursorUnderscore = 2;
     CursorHollow = 3;
+}
+
+message ExcerptInsertion {
+    Excerpt excerpt = 1;
+    optional uint64 previous_excerpt_id = 2;
+}
+
+message Excerpt {
+    uint64 id = 1;
+    uint64 buffer_id = 2;
+    Anchor context_start = 3;
+    Anchor context_end = 4;
+    Anchor primary_start = 5;
+    Anchor primary_end = 6;
 }
 
 message Anchor {

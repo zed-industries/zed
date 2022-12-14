@@ -9,7 +9,7 @@ use rpc::proto;
 use std::{ops::Range, sync::Arc};
 use text::*;
 
-pub use proto::{BufferState, Operation, SelectionSet};
+pub use proto::{BufferState, Operation};
 
 pub fn deserialize_line_ending(message: proto::LineEnding) -> fs::LineEnding {
     match message {
@@ -122,8 +122,14 @@ pub fn serialize_selections(selections: &Arc<[Selection<Anchor>]>) -> Vec<proto:
 pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
-        start: Some(serialize_anchor(&selection.start)),
-        end: Some(serialize_anchor(&selection.end)),
+        start: Some(proto::EditorAnchor {
+            anchor: Some(serialize_anchor(&selection.start)),
+            excerpt_id: 0,
+        }),
+        end: Some(proto::EditorAnchor {
+            anchor: Some(serialize_anchor(&selection.end)),
+            excerpt_id: 0,
+        }),
         reversed: selection.reversed,
     }
 }
@@ -229,8 +235,8 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     .filter_map(|selection| {
                         Some(Selection {
                             id: selection.id as usize,
-                            start: deserialize_anchor(selection.start?)?,
-                            end: deserialize_anchor(selection.end?)?,
+                            start: deserialize_anchor(selection.start?.anchor?)?,
+                            end: deserialize_anchor(selection.end?.anchor?)?,
                             reversed: selection.reversed,
                             goal: SelectionGoal::None,
                         })
@@ -321,8 +327,8 @@ pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selecti
 pub fn deserialize_selection(selection: proto::Selection) -> Option<Selection<Anchor>> {
     Some(Selection {
         id: selection.id as usize,
-        start: deserialize_anchor(selection.start?)?,
-        end: deserialize_anchor(selection.end?)?,
+        start: deserialize_anchor(selection.start?.anchor?)?,
+        end: deserialize_anchor(selection.end?.anchor?)?,
         reversed: selection.reversed,
         goal: SelectionGoal::None,
     })

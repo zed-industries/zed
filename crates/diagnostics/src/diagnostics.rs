@@ -164,7 +164,7 @@ impl ProjectDiagnosticsEditor {
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
-        cx.subscribe(&editor, |_, _, event, cx| cx.emit(*event))
+        cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()))
             .detach();
 
         let project = project_handle.read(cx);

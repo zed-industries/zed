@@ -12,8 +12,16 @@ function isStyleSet(key: any): key is StyleSets {
     "negative",
   ].includes(key);
 }
+
 function isStyle(key: any): key is Styles {
-  return ["default", "active", "disabled", "hovered", "pressed", "inverted"].includes(key);
+  return [
+    "default",
+    "active",
+    "disabled",
+    "hovered",
+    "pressed",
+    "inverted",
+  ].includes(key);
 }
 function getStyle(
   layer: Layer,

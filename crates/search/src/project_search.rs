@@ -402,7 +402,7 @@ impl ProjectSearchView {
         });
         // Subcribe to query_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&query_editor, |_, _, event, cx| {
-            cx.emit(ViewEvent::EditorEvent(*event))
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
         .detach();
 
@@ -419,7 +419,7 @@ impl ProjectSearchView {
                 this.update_match_index(cx);
             }
             // Reraise editor events for workspace item activation purposes
-            cx.emit(ViewEvent::EditorEvent(*event));
+            cx.emit(ViewEvent::EditorEvent(event.clone()));
         })
         .detach();
 
