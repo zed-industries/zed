@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 use drag_and_drop::DragAndDrop;
 use futures::StreamExt;
 use indoc::indoc;
+use rpc::PeerId;
 use unindent::Unindent;
 
 use super::*;
@@ -24,7 +25,7 @@ use util::{
 };
 use workspace::{
     item::{FollowableItem, ItemHandle},
-    NavigationEntry, Pane,
+    NavigationEntry, Pane, ViewId,
 };
 
 #[gpui::test]
@@ -5123,7 +5124,16 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
     let follower_1 = cx
         .update(|cx| {
-            Editor::from_state_proto(pane.clone(), project.clone(), &mut state_message, cx)
+            Editor::from_state_proto(
+                pane.clone(),
+                project.clone(),
+                ViewId {
+                    creator: PeerId(0),
+                    id: 0,
+                },
+                &mut state_message,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -5209,7 +5219,16 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
     let follower_2 = cx
         .update(|cx| {
-            Editor::from_state_proto(pane.clone(), project.clone(), &mut state_message, cx)
+            Editor::from_state_proto(
+                pane.clone(),
+                project.clone(),
+                ViewId {
+                    creator: PeerId(0),
+                    id: 0,
+                },
+                &mut state_message,
+                cx,
+            )
         })
         .unwrap()
         .await

@@ -84,7 +84,7 @@ use std::{
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, Workspace, WorkspaceId};
+use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
 
@@ -467,6 +467,7 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
+    remote_id: Option<ViewId>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
     _subscriptions: Vec<Subscription>,
@@ -1108,6 +1109,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,
+            remote_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             _subscriptions: vec![

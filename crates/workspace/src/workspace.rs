@@ -318,6 +318,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
 type FollowableItemBuilder = fn(
     ViewHandle<Pane>,
     ModelHandle<Project>,
+    ViewId,
     &mut Option<proto::view::Variant>,
     &mut MutableAppContext,
 ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
@@ -333,8 +334,8 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
         builders.insert(
             TypeId::of::<I>(),
             (
-                |pane, project, state, cx| {
-                    I::from_state_proto(pane, project, state, cx).map(|task| {
+                |pane, project, id, state, cx| {
+                    I::from_state_proto(pane, project, id, state, cx).map(|task| {
                         cx.foreground()
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
@@ -496,6 +497,12 @@ pub struct Workspace {
     _observe_current_user: Task<()>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ViewId {
+    pub creator: PeerId,
+    pub id: u64,
+}
+
 #[derive(Default)]
 struct LeaderState {
     followers: HashSet<PeerId>,
@@ -505,8 +512,8 @@ type FollowerStatesByLeader = HashMap<PeerId, HashMap<ViewHandle<Pane>, Follower
 
 #[derive(Default)]
 struct FollowerState {
-    active_view_id: Option<u64>,
-    items_by_leader_view_id: HashMap<u64, Box<dyn FollowableItemHandle>>,
+    active_view_id: Option<ViewId>,
+    items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
 
 impl Workspace {
@@ -1454,7 +1461,11 @@ impl Workspace {
 
         self.update_followers(
             proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
-                id: self.active_item(cx).map(|item| item.id() as u64),
+                id: self.active_item(cx).and_then(|item| {
+                    item.to_followable_item_handle(cx)?
+                        .remote_id(&self.client, cx)
+                        .map(|id| id.to_proto())
+                }),
                 leader_id: self.leader_for_pane(&pane).map(|id| id.0),
             }),
             cx,
@@ -1643,7 +1654,7 @@ impl Workspace {
                         .get_mut(&leader_id)
                         .and_then(|states_by_pane| states_by_pane.get_mut(&pane))
                         .ok_or_else(|| anyhow!("following interrupted"))?;
-                    state.active_view_id = response.active_view_id;
+                    state.active_view_id = response.active_view_id.map(ViewId::from_proto);
                     Ok::<_, anyhow::Error>(())
                 })?;
                 Self::add_views_from_leader(
@@ -1891,14 +1902,18 @@ impl Workspace {
         mut cx: AsyncAppContext,
     ) -> Result<proto::FollowResponse> {
         this.update(&mut cx, |this, cx| {
+            let client = &this.client;
             this.leader_state
                 .followers
                 .insert(envelope.original_sender_id()?);
 
-            let active_view_id = this
-                .active_item(cx)
-                .and_then(|i| i.to_followable_item_handle(cx))
-                .map(|i| i.id() as u64);
+            let active_view_id = this.active_item(cx).and_then(|i| {
+                Some(
+                    i.to_followable_item_handle(cx)?
+                        .remote_id(client, cx)?
+                        .to_proto(),
+                )
+            });
             Ok(proto::FollowResponse {
                 active_view_id,
                 views: this
@@ -1909,11 +1924,11 @@ impl Workspace {
                         pane.read(cx).items().filter_map({
                             let cx = &cx;
                             move |item| {
-                                let id = item.id() as u64;
                                 let item = item.to_followable_item_handle(cx)?;
+                                let id = item.remote_id(client, cx)?.to_proto();
                                 let variant = item.to_state_proto(cx)?;
                                 Some(proto::View {
-                                    id,
+                                    id: Some(id),
                                     leader_id,
                                     variant: Some(variant),
                                 })
@@ -1964,7 +1979,8 @@ impl Workspace {
                 this.update(cx, |this, _| {
                     if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
                         for state in state.values_mut() {
-                            state.active_view_id = update_active_view.id;
+                            state.active_view_id =
+                                update_active_view.id.clone().map(ViewId::from_proto);
                         }
                     }
                 });
@@ -1973,12 +1989,18 @@ impl Workspace {
                 let variant = update_view
                     .variant
                     .ok_or_else(|| anyhow!("missing update view variant"))?;
+                let id = update_view
+                    .id
+                    .ok_or_else(|| anyhow!("missing update view id"))?;
                 let mut tasks = Vec::new();
                 this.update(cx, |this, cx| {
                     let project = this.project.clone();
                     if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
                         for state in state.values_mut() {
-                            if let Some(item) = state.items_by_leader_view_id.get(&update_view.id) {
+                            if let Some(item) = state
+                                .items_by_leader_view_id
+                                .get(&ViewId::from_proto(id.clone()))
+                            {
                                 tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
                             }
                         }
@@ -2031,16 +2053,19 @@ impl Workspace {
             let mut item_tasks = Vec::new();
             let mut leader_view_ids = Vec::new();
             for view in &views {
+                let Some(id) = &view.id else { continue };
+                let id = ViewId::from_proto(id.clone());
                 let mut variant = view.variant.clone();
                 if variant.is_none() {
                     Err(anyhow!("missing variant"))?;
                 }
                 for build_item in &item_builders {
-                    let task =
-                        cx.update(|cx| build_item(pane.clone(), project.clone(), &mut variant, cx));
+                    let task = cx.update(|cx| {
+                        build_item(pane.clone(), project.clone(), id, &mut variant, cx)
+                    });
                     if let Some(task) = task {
                         item_tasks.push(task);
-                        leader_view_ids.push(view.id);
+                        leader_view_ids.push(id);
                         break;
                     } else {
                         assert!(variant.is_some());
@@ -2558,6 +2583,22 @@ impl View for Workspace {
             keymap.set.insert("Dock".into());
         }
         keymap
+    }
+}
+
+impl ViewId {
+    pub(crate) fn from_proto(message: proto::ViewId) -> Self {
+        Self {
+            creator: PeerId(message.creator),
+            id: message.id,
+        }
+    }
+
+    pub(crate) fn to_proto(&self) -> proto::ViewId {
+        proto::ViewId {
+            creator: self.creator.0,
+            id: self.id,
+        }
     }
 }
 

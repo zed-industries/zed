@@ -796,7 +796,7 @@ message Follow {
 }
 
 message FollowResponse {
-    optional uint64 active_view_id = 1;
+    optional ViewId active_view_id = 1;
     repeated View views = 2;
 }
 
@@ -824,13 +824,18 @@ message GetPrivateUserInfoResponse {
 
 // Entities
 
+message ViewId {
+    uint32 creator = 1;
+    uint64 id = 2;
+}
+
 message UpdateActiveView {
-    optional uint64 id = 1;
+    optional ViewId id = 1;
     optional uint32 leader_id = 2;
 }
 
 message UpdateView {
-    uint64 id = 1;
+    ViewId id = 1;
     optional uint32 leader_id = 2;
 
     oneof variant {
@@ -848,7 +853,7 @@ message UpdateView {
 }
 
 message View {
-    uint64 id = 1;
+    ViewId id = 1;
     optional uint32 leader_id = 2;
 
     oneof variant {

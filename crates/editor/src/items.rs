@@ -28,24 +28,32 @@ use std::{
 };
 use text::Selection;
 use util::{ResultExt, TryFutureExt};
+use workspace::item::FollowableItemHandle;
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, Workspace, WorkspaceId,
+    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, ViewId, Workspace,
+    WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
+    fn remote_id(&self) -> Option<ViewId> {
+        self.remote_id
+    }
+
     fn from_state_proto(
         pane: ViewHandle<workspace::Pane>,
         project: ModelHandle<Project>,
+        remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>> {
         let Some(proto::view::Variant::Editor(_)) = state else { return None };
         let Some(proto::view::Variant::Editor(state)) = state.take() else { unreachable!() };
 
+        let client = project.read(cx).client();
         let replica_id = project.read(cx).replica_id();
         let buffer_ids = state
             .excerpts
@@ -63,13 +71,13 @@ impl FollowableItem for Editor {
             let mut buffers = futures::future::try_join_all(buffers).await?;
             let editor = pane.read_with(&cx, |pane, cx| {
                 let mut editors = pane.items_of_type::<Self>();
-                if state.singleton && buffers.len() == 1 {
-                    editors.find(|editor| {
-                        editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffers[0])
-                    })
-                } else {
-                    None
-                }
+                editors.find(|editor| {
+                    editor.remote_id(&client, cx) == Some(remote_id)
+                        || state.singleton
+                            && buffers.len() == 1
+                            && editor.read(cx).buffer.read(cx).as_singleton().as_ref()
+                                == Some(&buffers[0])
+                })
             });
 
             let editor = editor.unwrap_or_else(|| {
@@ -112,6 +120,7 @@ impl FollowableItem for Editor {
             });
 
             editor.update(&mut cx, |editor, cx| {
+                editor.remote_id = Some(remote_id);
                 let buffer = editor.buffer.read(cx).read(cx);
                 let selections = state
                     .selections
