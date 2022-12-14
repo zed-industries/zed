@@ -50,7 +50,7 @@ pub use pane_group::*;
 use persistence::{model::SerializedItem, DB};
 pub use persistence::{
     model::{ItemId, WorkspaceLocation},
-    WorkspaceDb,
+    WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};

@@ -62,11 +62,12 @@ impl View for FileFinder {
 
 impl FileFinder {
     fn labels_for_match(&self, path_match: &PathMatch) -> (String, Vec<usize>, String, Vec<usize>) {
-        let path_string = path_match.path.to_string_lossy();
+        let path = &path_match.path;
+        let path_string = path.to_string_lossy();
         let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
         let path_positions = path_match.positions.clone();
 
-        let file_name = path_match.path.file_name().map_or_else(
+        let file_name = path.file_name().map_or_else(
             || path_match.path_prefix.to_string(),
             |file_name| file_name.to_string_lossy().to_string(),
         );
@@ -161,7 +162,7 @@ impl FileFinder {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
         cx.spawn(|this, mut cx| async move {
-            let matches = fuzzy::match_paths(
+            let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 &query,
                 false,
