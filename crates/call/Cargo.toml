@@ -21,6 +21,7 @@ test-support = [
 client = { path = "../client" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
+log = "0.4"
 live_kit_client = { path = "../live_kit_client" }
 media = { path = "../media" }
 project = { path = "../project" }

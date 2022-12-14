@@ -823,6 +823,7 @@ dependencies = [
  "futures 0.3.25",
  "gpui",
  "live_kit_client",
+ "log",
  "media",
  "postage",
  "project",
