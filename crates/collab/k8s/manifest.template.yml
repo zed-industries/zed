@@ -59,6 +59,11 @@ spec:
           ports:
             - containerPort: 8080
               protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              initialDelaySeconds: 5
+              periodSeconds: 5
           env:
             - name: HTTP_PORT
               value: "8080"

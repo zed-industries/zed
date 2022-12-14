@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
                 .expect("failed to bind TCP listener");
 
             let rpc_server = collab::rpc::Server::new(state.clone(), Executor::Production);
-            rpc_server.start();
+            rpc_server.start().await?;
 
             let app = collab::api::routes(rpc_server.clone(), state.clone())
                 .merge(collab::rpc::routes(rpc_server.clone()))
