@@ -5,6 +5,7 @@ mod project;
 mod project_collaborator;
 mod room;
 mod room_participant;
+mod server;
 mod signup;
 #[cfg(test)]
 mod tests;
@@ -48,7 +49,6 @@ pub struct Database {
     background: Option<std::sync::Arc<gpui::executor::Background>>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
-    epoch: parking_lot::RwLock<Uuid>,
 }
 
 impl Database {
@@ -61,18 +61,12 @@ impl Database {
             background: None,
             #[cfg(test)]
             runtime: None,
-            epoch: parking_lot::RwLock::new(Uuid::new_v4()),
         })
     }
 
     #[cfg(test)]
     pub fn reset(&self) {
         self.rooms.clear();
-        *self.epoch.write() = Uuid::new_v4();
-    }
-
-    fn epoch(&self) -> Uuid {
-        *self.epoch.read()
     }
 
     pub async fn migrate(
@@ -116,14 +110,39 @@ impl Database {
         Ok(new_migrations)
     }
 
-    pub async fn delete_stale_projects(&self) -> Result<()> {
+    pub async fn create_server(&self, environment: &str) -> Result<ServerEpoch> {
         self.transaction(|tx| async move {
+            let server = server::ActiveModel {
+                environment: ActiveValue::set(environment.into()),
+                ..Default::default()
+            }
+            .insert(&*tx)
+            .await?;
+            Ok(server.epoch)
+        })
+        .await
+    }
+
+    pub async fn delete_stale_projects(
+        &self,
+        new_epoch: ServerEpoch,
+        environment: &str,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            let stale_server_epochs = self
+                .stale_server_epochs(environment, new_epoch, &tx)
+                .await?;
             project_collaborator::Entity::delete_many()
-                .filter(project_collaborator::Column::ConnectionEpoch.ne(self.epoch()))
+                .filter(
+                    project_collaborator::Column::ConnectionEpoch
+                        .is_in(stale_server_epochs.iter().copied()),
+                )
                 .exec(&*tx)
                 .await?;
             project::Entity::delete_many()
-                .filter(project::Column::HostConnectionEpoch.ne(self.epoch()))
+                .filter(
+                    project::Column::HostConnectionEpoch.is_in(stale_server_epochs.iter().copied()),
+                )
                 .exec(&*tx)
                 .await?;
             Ok(())
@@ -131,18 +150,27 @@ impl Database {
         .await
     }
 
-    pub async fn stale_room_ids(&self) -> Result<Vec<RoomId>> {
+    pub async fn stale_room_ids(
+        &self,
+        new_epoch: ServerEpoch,
+        environment: &str,
+    ) -> Result<Vec<RoomId>> {
         self.transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryAs {
                 RoomId,
             }
 
+            let stale_server_epochs = self
+                .stale_server_epochs(environment, new_epoch, &tx)
+                .await?;
             Ok(room_participant::Entity::find()
                 .select_only()
                 .column(room_participant::Column::RoomId)
                 .distinct()
-                .filter(room_participant::Column::AnsweringConnectionEpoch.ne(self.epoch()))
+                .filter(
+                    room_participant::Column::AnsweringConnectionEpoch.is_in(stale_server_epochs),
+                )
                 .into_values::<_, QueryAs>()
                 .all(&*tx)
                 .await?)
@@ -150,12 +178,16 @@ impl Database {
         .await
     }
 
-    pub async fn refresh_room(&self, room_id: RoomId) -> Result<RoomGuard<RefreshedRoom>> {
+    pub async fn refresh_room(
+        &self,
+        room_id: RoomId,
+        new_epoch: ServerEpoch,
+    ) -> Result<RoomGuard<RefreshedRoom>> {
         self.room_transaction(|tx| async move {
             let stale_participant_filter = Condition::all()
                 .add(room_participant::Column::RoomId.eq(room_id))
                 .add(room_participant::Column::AnsweringConnectionId.is_not_null())
-                .add(room_participant::Column::AnsweringConnectionEpoch.ne(self.epoch()));
+                .add(room_participant::Column::AnsweringConnectionEpoch.ne(new_epoch));
 
             let stale_participant_user_ids = room_participant::Entity::find()
                 .filter(stale_participant_filter.clone())
@@ -197,6 +229,35 @@ impl Database {
             ))
         })
         .await
+    }
+
+    fn delete_stale_servers(&self, environment: &str, new_epoch: ServerEpoch) -> Result<()> {
+        self.transaction(|tx| async {
+            server::Entity::delete_many().filter(Condition::all().add())
+        })
+        .await
+    }
+
+    async fn stale_server_epochs(
+        &self,
+        environment: &str,
+        new_epoch: ServerEpoch,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<ServerEpoch>> {
+        let stale_servers = server::Entity::find()
+            .filter(
+                Condition::all().add(
+                    server::Column::Environment
+                        .eq(environment)
+                        .add(server::Column::Epoch.ne(new_epoch)),
+                ),
+            )
+            .all(&*tx)
+            .await?;
+        Ok(stale_servers
+            .into_iter()
+            .map(|server| server.epoch)
+            .collect())
     }
 
     // users
@@ -1643,14 +1704,16 @@ impl Database {
                         Default::default(),
                     )),
                 };
+
+                let answering_connection = ConnectionId {
+                    epoch: answering_connection_epoch as u32,
+                    id: answering_connection_id as u32,
+                };
                 participants.insert(
-                    answering_connection_id,
+                    answering_connection,
                     proto::Participant {
                         user_id: db_participant.user_id.to_proto(),
-                        peer_id: Some(proto::PeerId {
-                            epoch: answering_connection_epoch as u32,
-                            id: answering_connection_id as u32,
-                        }),
+                        peer_id: Some(answering_connection.into()),
                         projects: Default::default(),
                         location: Some(proto::ParticipantLocation { variant: location }),
                     },
@@ -1673,7 +1736,11 @@ impl Database {
 
         while let Some(row) = db_projects.next().await {
             let (db_project, db_worktree) = row?;
-            if let Some(participant) = participants.get_mut(&db_project.host_connection_id) {
+            let host_connection = ConnectionId {
+                epoch: db_project.host_connection_epoch as u32,
+                id: db_project.host_connection_id as u32,
+            };
+            if let Some(participant) = participants.get_mut(&host_connection) {
                 let project = if let Some(project) = participant
                     .projects
                     .iter_mut()
@@ -2309,41 +2376,22 @@ impl Database {
         project_id: ProjectId,
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<HashSet<ConnectionId>>> {
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-        enum QueryAs {
-            Epoch,
-            Id,
-        }
-
-        #[derive(Debug, FromQueryResult)]
-        struct ProjectConnection {
-            epoch: i32,
-            id: i32,
-        }
-
         self.room_transaction(|tx| async move {
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            let mut db_connections = project_collaborator::Entity::find()
-                .select_only()
-                .column_as(project_collaborator::Column::ConnectionId, QueryAs::Id)
-                .column_as(
-                    project_collaborator::Column::ConnectionEpoch,
-                    QueryAs::Epoch,
-                )
+            let mut participants = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
-                .into_model::<ProjectConnection>()
                 .stream(&*tx)
                 .await?;
 
             let mut connection_ids = HashSet::default();
-            while let Some(connection) = db_connections.next().await {
-                let connection = connection?;
+            while let Some(participant) = participants.next().await {
+                let participant = participant?;
                 connection_ids.insert(ConnectionId {
-                    epoch: connection.epoch as u32,
-                    id: connection.id as u32,
+                    epoch: participant.connection_epoch as u32,
+                    id: participant.connection_id as u32,
                 });
             }
 
@@ -2361,40 +2409,21 @@ impl Database {
         project_id: ProjectId,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<ConnectionId>> {
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-        enum QueryAs {
-            Epoch,
-            Id,
-        }
-
-        #[derive(Debug, FromQueryResult)]
-        struct ProjectConnection {
-            epoch: i32,
-            id: i32,
-        }
-
-        let mut db_guest_connections = project_collaborator::Entity::find()
-            .select_only()
-            .column_as(project_collaborator::Column::ConnectionId, QueryAs::Id)
-            .column_as(
-                project_collaborator::Column::ConnectionEpoch,
-                QueryAs::Epoch,
-            )
+        let mut participants = project_collaborator::Entity::find()
             .filter(
                 project_collaborator::Column::ProjectId
                     .eq(project_id)
                     .and(project_collaborator::Column::IsHost.eq(false)),
             )
-            .into_model::<ProjectConnection>()
             .stream(tx)
             .await?;
 
         let mut guest_connection_ids = Vec::new();
-        while let Some(connection) = db_guest_connections.next().await {
-            let connection = connection?;
+        while let Some(participant) = participants.next().await {
+            let participant = participant?;
             guest_connection_ids.push(ConnectionId {
-                epoch: connection.epoch as u32,
-                id: connection.id as u32,
+                epoch: participant.connection_epoch as u32,
+                id: participant.connection_id as u32,
             });
         }
         Ok(guest_connection_ids)
@@ -2774,6 +2803,7 @@ id_type!(RoomParticipantId);
 id_type!(ProjectId);
 id_type!(ProjectCollaboratorId);
 id_type!(ReplicaId);
+id_type!(ServerEpoch);
 id_type!(SignupId);
 id_type!(UserId);
 

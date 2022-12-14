@@ -99,6 +99,8 @@ spec:
               value: ${RUST_LOG}
             - name: LOG_JSON
               value: "true"
+            - name: ZED_ENVIRONMENT
+              value: ${ZED_ENVIRONMENT}
           securityContext:
             capabilities:
               # FIXME - Switch to the more restrictive `PERFMON` capability.

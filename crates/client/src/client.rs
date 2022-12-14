@@ -333,14 +333,14 @@ impl Client {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn tear_down(&self) {
+    pub fn teardown(&self) {
         let mut state = self.state.write();
         state._reconnect_task.take();
         state.message_handlers.clear();
         state.models_by_message_type.clear();
         state.entities_by_type_and_remote_id.clear();
         state.entity_id_extractors.clear();
-        self.peer.reset();
+        self.peer.teardown();
     }
 
     #[cfg(any(test, feature = "test-support"))]

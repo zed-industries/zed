@@ -97,7 +97,7 @@ impl<T: RequestMessage> TypedEnvelope<T> {
 }
 
 pub struct Peer {
-    epoch: u32,
+    epoch: AtomicU32,
     pub connections: RwLock<HashMap<ConnectionId, ConnectionState>>,
     next_connection_id: AtomicU32,
 }
@@ -120,10 +120,14 @@ pub const RECEIVE_TIMEOUT: Duration = Duration::from_secs(5);
 impl Peer {
     pub fn new(epoch: u32) -> Arc<Self> {
         Arc::new(Self {
-            epoch,
+            epoch: AtomicU32::new(epoch),
             connections: Default::default(),
             next_connection_id: Default::default(),
         })
+    }
+
+    pub fn epoch(&self) -> u32 {
+        self.epoch.load(SeqCst)
     }
 
     #[instrument(skip_all)]
@@ -153,7 +157,7 @@ impl Peer {
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
 
         let connection_id = ConnectionId {
-            epoch: self.epoch,
+            epoch: self.epoch.load(SeqCst),
             id: self.next_connection_id.fetch_add(1, SeqCst),
         };
         let connection_state = ConnectionState {
@@ -352,9 +356,14 @@ impl Peer {
         self.connections.write().remove(&connection_id);
     }
 
-    pub fn reset(&self) {
-        self.connections.write().clear();
+    pub fn reset(&self, epoch: u32) {
+        self.teardown();
         self.next_connection_id.store(0, SeqCst);
+        self.epoch.store(epoch, SeqCst);
+    }
+
+    pub fn teardown(&self) {
+        self.connections.write().clear();
     }
 
     pub fn request<T: RequestMessage>(

@@ -608,7 +608,7 @@ async fn test_server_restarts(
     );
 
     // The server is torn down.
-    server.teardown();
+    server.reset().await;
 
     // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
@@ -778,7 +778,7 @@ async fn test_server_restarts(
     );
 
     // The server is torn down.
-    server.teardown();
+    server.reset().await;
 
     // Users A and B have troubles reconnecting, so they leave the room.
     client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
@@ -6122,7 +6122,7 @@ async fn test_random_collaboration(
             }
             30..=34 => {
                 log::info!("Simulating server restart");
-                server.teardown();
+                server.reset().await;
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 server.start().await.unwrap();
                 deterministic.advance_clock(CLEANUP_TIMEOUT);
@@ -6320,7 +6320,13 @@ impl TestServer {
         )
         .unwrap();
         let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
+        let epoch = app_state
+            .db
+            .create_server(&app_state.config.zed_environment)
+            .await
+            .unwrap();
         let server = Server::new(
+            epoch,
             app_state.clone(),
             Executor::Deterministic(deterministic.build_background()),
         );
@@ -6337,9 +6343,15 @@ impl TestServer {
         }
     }
 
-    fn teardown(&self) {
-        self.server.teardown();
+    async fn reset(&self) {
         self.app_state.db.reset();
+        let epoch = self
+            .app_state
+            .db
+            .create_server(&self.app_state.config.zed_environment)
+            .await
+            .unwrap();
+        self.server.reset(epoch);
     }
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
@@ -7251,7 +7263,7 @@ impl TestClient {
 
 impl Drop for TestClient {
     fn drop(&mut self) {
-        self.client.tear_down();
+        self.client.teardown();
     }
 }
 

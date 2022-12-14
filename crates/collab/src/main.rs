@@ -57,7 +57,11 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = collab::rpc::Server::new(state.clone(), Executor::Production);
+            let epoch = state
+                .db
+                .create_server(&state.config.zed_environment)
+                .await?;
+            let rpc_server = collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
             rpc_server.start().await?;
 
             let app = collab::api::routes(rpc_server.clone(), state.clone())

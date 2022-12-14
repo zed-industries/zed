@@ -134,3 +134,8 @@ CREATE INDEX "index_room_participants_on_answering_connection_epoch" ON "room_pa
 CREATE INDEX "index_room_participants_on_calling_connection_epoch" ON "room_participants" ("calling_connection_epoch");
 CREATE INDEX "index_room_participants_on_answering_connection_id" ON "room_participants" ("answering_connection_id");
 CREATE UNIQUE INDEX "index_room_participants_on_answering_connection_id_and_answering_connection_epoch" ON "room_participants" ("answering_connection_id", "answering_connection_epoch");
+
+CREATE TABLE "servers" (
+    "epoch" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "environment" VARCHAR NOT NULL
+);

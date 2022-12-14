@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, Database, ProjectId, RoomId, User, UserId},
+    db::{self, Database, ProjectId, RoomId, ServerEpoch, User, UserId},
     executor::Executor,
     AppState, Result,
 };
@@ -138,6 +138,7 @@ impl Deref for DbHandle {
 }
 
 pub struct Server {
+    epoch: parking_lot::Mutex<ServerEpoch>,
     peer: Arc<Peer>,
     pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
@@ -168,9 +169,10 @@ where
 }
 
 impl Server {
-    pub fn new(app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
+    pub fn new(epoch: ServerEpoch, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
         let mut server = Self {
-            peer: Peer::new(0),
+            epoch: parking_lot::Mutex::new(epoch),
+            peer: Peer::new(epoch.0 as u32),
             app_state,
             executor,
             connection_pool: Default::default(),
@@ -239,7 +241,8 @@ impl Server {
     }
 
     pub async fn start(&self) -> Result<()> {
-        let db = self.app_state.db.clone();
+        let epoch = *self.epoch.lock();
+        let app_state = self.app_state.clone();
         let peer = self.peer.clone();
         let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
         let pool = self.connection_pool.clone();
@@ -249,7 +252,10 @@ impl Server {
         let span_enter = span.enter();
 
         tracing::info!("begin deleting stale projects");
-        self.app_state.db.delete_stale_projects().await?;
+        app_state
+            .db
+            .delete_stale_projects(epoch, &app_state.config.zed_environment)
+            .await?;
         tracing::info!("finish deleting stale projects");
 
         drop(span_enter);
@@ -258,7 +264,12 @@ impl Server {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
-                if let Some(room_ids) = db.stale_room_ids().await.trace_err() {
+                if let Some(room_ids) = app_state
+                    .db
+                    .stale_room_ids(epoch, &app_state.config.zed_environment)
+                    .await
+                    .trace_err()
+                {
                     tracing::info!(stale_room_count = room_ids.len(), "retrieved stale rooms");
                     for room_id in room_ids {
                         let mut contacts_to_update = HashSet::default();
@@ -266,7 +277,9 @@ impl Server {
                         let mut live_kit_room = String::new();
                         let mut delete_live_kit_room = false;
 
-                        if let Ok(mut refreshed_room) = db.refresh_room(room_id).await {
+                        if let Ok(mut refreshed_room) =
+                            app_state.db.refresh_room(room_id, epoch).await
+                        {
                             tracing::info!(
                                 room_id = room_id.0,
                                 new_participant_count = refreshed_room.room.participants.len(),
@@ -299,8 +312,8 @@ impl Server {
                         }
 
                         for user_id in contacts_to_update {
-                            let busy = db.is_user_busy(user_id).await.trace_err();
-                            let contacts = db.get_contacts(user_id).await.trace_err();
+                            let busy = app_state.db.is_user_busy(user_id).await.trace_err();
+                            let contacts = app_state.db.get_contacts(user_id).await.trace_err();
                             if let Some((busy, contacts)) = busy.zip(contacts) {
                                 let pool = pool.lock();
                                 let updated_contact = contact_for_user(user_id, false, busy, &pool);
@@ -345,9 +358,16 @@ impl Server {
     }
 
     pub fn teardown(&self) {
-        self.peer.reset();
+        self.peer.teardown();
         self.connection_pool.lock().reset();
         let _ = self.teardown.send(());
+    }
+
+    #[cfg(test)]
+    pub fn reset(&self, epoch: ServerEpoch) {
+        self.teardown();
+        *self.epoch.lock() = epoch;
+        self.peer.reset(epoch.0 as u32);
     }
 
     fn add_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
@@ -1474,6 +1494,7 @@ async fn update_buffer(
         .project_connection_ids(project_id, session.connection_id)
         .await?;
 
+    dbg!(session.connection_id, &*project_connection_ids);
     broadcast(
         session.connection_id,
         project_connection_ids.iter().copied(),
