@@ -5129,9 +5129,9 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let follower_1_update = Rc::new(RefCell::new(None));
+    let update_message = Rc::new(RefCell::new(None));
     follower_1.update(cx, {
-        let update = follower_1_update.clone();
+        let update = update_message.clone();
         |_, cx| {
             cx.subscribe(&leader, move |_, leader, event, cx| {
                 leader
@@ -5192,6 +5192,19 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         });
     });
 
+    // Apply the update of adding the excerpts.
+    follower_1
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        follower_1.read_with(cx, Editor::text),
+        leader.read_with(cx, Editor::text)
+    );
+    update_message.borrow_mut().take();
+
     // Start following separately after it already has excerpts.
     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
     let follower_2 = cx
@@ -5203,22 +5216,6 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         .unwrap();
     assert_eq!(
         follower_2.read_with(cx, Editor::text),
-        leader.read_with(cx, Editor::text)
-    );
-
-    // Apply the update of adding the excerpts.
-    follower_1
-        .update(cx, |follower, cx| {
-            follower.apply_update_proto(
-                &project,
-                follower_1_update.borrow_mut().take().unwrap(),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        follower_1.read_with(cx, Editor::text),
         leader.read_with(cx, Editor::text)
     );
 
@@ -5234,14 +5231,17 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Apply the update of removing the excerpts.
     follower_1
         .update(cx, |follower, cx| {
-            follower.apply_update_proto(
-                &project,
-                follower_1_update.borrow_mut().take().unwrap(),
-                cx,
-            )
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
         })
         .await
         .unwrap();
+    follower_2
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    update_message.borrow_mut().take();
     assert_eq!(
         follower_1.read_with(cx, Editor::text),
         leader.read_with(cx, Editor::text)
