@@ -62,8 +62,9 @@ spec:
           readinessProbe:
             httpGet:
               path: /
-              initialDelaySeconds: 5
-              periodSeconds: 5
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
           env:
             - name: HTTP_PORT
               value: "8080"
