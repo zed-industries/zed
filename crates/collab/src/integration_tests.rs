@@ -7,8 +7,8 @@ use crate::{
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
-    self, test::FakeHttpClient, Client, Connection, Credentials, EstablishConnectionError, PeerId,
-    User, UserStore, RECEIVE_TIMEOUT,
+    self, proto::PeerId, test::FakeHttpClient, Client, Connection, Credentials,
+    EstablishConnectionError, User, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
@@ -6066,7 +6066,7 @@ async fn test_random_collaboration(
                     .user_connection_ids(removed_guest_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
-                let removed_peer_id = PeerId(user_connection_ids[0].0);
+                let removed_peer_id = user_connection_ids[0].into();
                 let guest = clients.remove(guest_ix);
                 op_start_signals.remove(guest_ix);
                 server.forbid_connections();
@@ -6115,7 +6115,7 @@ async fn test_random_collaboration(
                     .user_connection_ids(user_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
-                let peer_id = PeerId(user_connection_ids[0].0);
+                let peer_id = user_connection_ids[0].into();
                 server.disconnect_client(peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 operations += 1;
@@ -6429,7 +6429,7 @@ impl TestServer {
                         let connection_id = connection_id_rx.await.unwrap();
                         connection_killers
                             .lock()
-                            .insert(PeerId(connection_id.0), killed);
+                            .insert(connection_id.into(), killed);
                         Ok(client_conn)
                     }
                 })

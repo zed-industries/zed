@@ -3,7 +3,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use client::{proto, PeerId};
+use client::proto::{self, PeerId};
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
     point_from_lsp, point_to_lsp,

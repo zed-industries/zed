@@ -3,7 +3,7 @@ use crate::{
     IncomingCall,
 };
 use anyhow::{anyhow, Result};
-use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
+use client::{proto, Client, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
 use futures::{FutureExt, StreamExt};
 use gpui::{
@@ -20,10 +20,10 @@ pub const RECONNECT_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ParticipantLocationChanged {
-        participant_id: PeerId,
+        participant_id: proto::PeerId,
     },
     RemoteVideoTracksChanged {
-        participant_id: PeerId,
+        participant_id: proto::PeerId,
     },
     RemoteProjectShared {
         owner: Arc<User>,
@@ -41,7 +41,7 @@ pub struct Room {
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     local_participant: LocalParticipant,
-    remote_participants: BTreeMap<PeerId, RemoteParticipant>,
+    remote_participants: BTreeMap<proto::PeerId, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
     participant_user_ids: HashSet<u64>,
     pending_call_count: usize,
@@ -349,7 +349,7 @@ impl Room {
         &self.local_participant
     }
 
-    pub fn remote_participants(&self) -> &BTreeMap<PeerId, RemoteParticipant> {
+    pub fn remote_participants(&self) -> &BTreeMap<proto::PeerId, RemoteParticipant> {
         &self.remote_participants
     }
 
@@ -419,7 +419,7 @@ impl Room {
                 if let Some(participants) = remote_participants.log_err() {
                     let mut participant_peer_ids = HashSet::default();
                     for (participant, user) in room.participants.into_iter().zip(participants) {
-                        let peer_id = PeerId(participant.peer_id);
+                        let Some(peer_id) = participant.peer_id else { continue };
                         this.participant_user_ids.insert(participant.user_id);
                         participant_peer_ids.insert(peer_id);
 
@@ -476,7 +476,7 @@ impl Room {
 
                             if let Some(live_kit) = this.live_kit.as_ref() {
                                 let tracks =
-                                    live_kit.room.remote_video_tracks(&peer_id.0.to_string());
+                                    live_kit.room.remote_video_tracks(&peer_id.to_string());
                                 for track in tracks {
                                     this.remote_video_track_updated(
                                         RemoteVideoTrackUpdate::Subscribed(track),
@@ -531,7 +531,7 @@ impl Room {
     ) -> Result<()> {
         match change {
             RemoteVideoTrackUpdate::Subscribed(track) => {
-                let peer_id = PeerId(track.publisher_id().parse()?);
+                let peer_id = track.publisher_id().parse()?;
                 let track_id = track.sid().to_string();
                 let participant = self
                     .remote_participants
@@ -551,7 +551,7 @@ impl Room {
                 publisher_id,
                 track_id,
             } => {
-                let peer_id = PeerId(publisher_id.parse()?);
+                let peer_id = publisher_id.parse()?;
                 let participant = self
                     .remote_participants
                     .get_mut(&peer_id)

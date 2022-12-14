@@ -8,7 +8,7 @@ pub struct Model {
     pub id: ProjectCollaboratorId,
     pub project_id: ProjectId,
     pub connection_id: i32,
-    pub connection_epoch: Uuid,
+    pub connection_epoch: i32,
     pub user_id: UserId,
     pub replica_id: ReplicaId,
     pub is_host: bool,

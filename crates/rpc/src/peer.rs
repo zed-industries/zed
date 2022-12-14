@@ -1,5 +1,5 @@
 use super::{
-    proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage},
+    proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, RequestMessage},
     Connection,
 };
 use anyhow::{anyhow, Context, Result};
@@ -11,9 +11,8 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use serde::{ser::SerializeStruct, Serialize};
-use std::sync::atomic::Ordering::SeqCst;
+use std::{fmt, sync::atomic::Ordering::SeqCst};
 use std::{
-    fmt,
     future::Future,
     marker::PhantomData,
     sync::{
@@ -25,20 +24,32 @@ use std::{
 use tracing::instrument;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
-pub struct ConnectionId(pub u32);
+pub struct ConnectionId {
+    pub epoch: u32,
+    pub id: u32,
+}
 
-impl fmt::Display for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+impl Into<PeerId> for ConnectionId {
+    fn into(self) -> PeerId {
+        PeerId {
+            epoch: self.epoch,
+            id: self.id,
+        }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct PeerId(pub u32);
+impl From<PeerId> for ConnectionId {
+    fn from(peer_id: PeerId) -> Self {
+        Self {
+            epoch: peer_id.epoch,
+            id: peer_id.id,
+        }
+    }
+}
 
-impl fmt::Display for PeerId {
+impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}/{}", self.epoch, self.id)
     }
 }
 
@@ -70,6 +81,7 @@ pub struct TypedEnvelope<T> {
 impl<T> TypedEnvelope<T> {
     pub fn original_sender_id(&self) -> Result<PeerId> {
         self.original_sender_id
+            .clone()
             .ok_or_else(|| anyhow!("missing original_sender_id"))
     }
 }
@@ -85,6 +97,7 @@ impl<T: RequestMessage> TypedEnvelope<T> {
 }
 
 pub struct Peer {
+    epoch: u32,
     pub connections: RwLock<HashMap<ConnectionId, ConnectionState>>,
     next_connection_id: AtomicU32,
 }
@@ -105,8 +118,9 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 pub const RECEIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Peer {
-    pub fn new() -> Arc<Self> {
+    pub fn new(epoch: u32) -> Arc<Self> {
         Arc::new(Self {
+            epoch,
             connections: Default::default(),
             next_connection_id: Default::default(),
         })
@@ -138,7 +152,10 @@ impl Peer {
         let (mut incoming_tx, incoming_rx) = mpsc::channel(INCOMING_BUFFER_SIZE);
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
 
-        let connection_id = ConnectionId(self.next_connection_id.fetch_add(1, SeqCst));
+        let connection_id = ConnectionId {
+            epoch: self.epoch,
+            id: self.next_connection_id.fetch_add(1, SeqCst),
+        };
         let connection_state = ConnectionState {
             outgoing_tx,
             next_message_id: Default::default(),
@@ -150,12 +167,12 @@ impl Peer {
         let this = self.clone();
         let response_channels = connection_state.response_channels.clone();
         let handle_io = async move {
-            tracing::debug!(%connection_id, "handle io future: start");
+            tracing::debug!(?connection_id, "handle io future: start");
 
             let _end_connection = util::defer(|| {
                 response_channels.lock().take();
                 this.connections.write().remove(&connection_id);
-                tracing::debug!(%connection_id, "handle io future: end");
+                tracing::debug!(?connection_id, "handle io future: end");
             });
 
             // Send messages on this frequency so the connection isn't closed.
@@ -167,68 +184,68 @@ impl Peer {
             futures::pin_mut!(receive_timeout);
 
             loop {
-                tracing::debug!(%connection_id, "outer loop iteration start");
+                tracing::debug!(?connection_id, "outer loop iteration start");
                 let read_message = reader.read().fuse();
                 futures::pin_mut!(read_message);
 
                 loop {
-                    tracing::debug!(%connection_id, "inner loop iteration start");
+                    tracing::debug!(?connection_id, "inner loop iteration start");
                     futures::select_biased! {
                         outgoing = outgoing_rx.next().fuse() => match outgoing {
                             Some(outgoing) => {
-                                tracing::debug!(%connection_id, "outgoing rpc message: writing");
+                                tracing::debug!(?connection_id, "outgoing rpc message: writing");
                                 futures::select_biased! {
                                     result = writer.write(outgoing).fuse() => {
-                                        tracing::debug!(%connection_id, "outgoing rpc message: done writing");
+                                        tracing::debug!(?connection_id, "outgoing rpc message: done writing");
                                         result.context("failed to write RPC message")?;
-                                        tracing::debug!(%connection_id, "keepalive interval: resetting after sending message");
+                                        tracing::debug!(?connection_id, "keepalive interval: resetting after sending message");
                                         keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
                                     }
                                     _ = create_timer(WRITE_TIMEOUT).fuse() => {
-                                        tracing::debug!(%connection_id, "outgoing rpc message: writing timed out");
+                                        tracing::debug!(?connection_id, "outgoing rpc message: writing timed out");
                                         Err(anyhow!("timed out writing message"))?;
                                     }
                                 }
                             }
                             None => {
-                                tracing::debug!(%connection_id, "outgoing rpc message: channel closed");
+                                tracing::debug!(?connection_id, "outgoing rpc message: channel closed");
                                 return Ok(())
                             },
                         },
                         _ = keepalive_timer => {
-                            tracing::debug!(%connection_id, "keepalive interval: pinging");
+                            tracing::debug!(?connection_id, "keepalive interval: pinging");
                             futures::select_biased! {
                                 result = writer.write(proto::Message::Ping).fuse() => {
-                                    tracing::debug!(%connection_id, "keepalive interval: done pinging");
+                                    tracing::debug!(?connection_id, "keepalive interval: done pinging");
                                     result.context("failed to send keepalive")?;
-                                    tracing::debug!(%connection_id, "keepalive interval: resetting after pinging");
+                                    tracing::debug!(?connection_id, "keepalive interval: resetting after pinging");
                                     keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
                                 }
                                 _ = create_timer(WRITE_TIMEOUT).fuse() => {
-                                    tracing::debug!(%connection_id, "keepalive interval: pinging timed out");
+                                    tracing::debug!(?connection_id, "keepalive interval: pinging timed out");
                                     Err(anyhow!("timed out sending keepalive"))?;
                                 }
                             }
                         }
                         incoming = read_message => {
                             let incoming = incoming.context("error reading rpc message from socket")?;
-                            tracing::debug!(%connection_id, "incoming rpc message: received");
-                            tracing::debug!(%connection_id, "receive timeout: resetting");
+                            tracing::debug!(?connection_id, "incoming rpc message: received");
+                            tracing::debug!(?connection_id, "receive timeout: resetting");
                             receive_timeout.set(create_timer(RECEIVE_TIMEOUT).fuse());
                             if let proto::Message::Envelope(incoming) = incoming {
-                                tracing::debug!(%connection_id, "incoming rpc message: processing");
+                                tracing::debug!(?connection_id, "incoming rpc message: processing");
                                 futures::select_biased! {
                                     result = incoming_tx.send(incoming).fuse() => match result {
                                         Ok(_) => {
-                                            tracing::debug!(%connection_id, "incoming rpc message: processed");
+                                            tracing::debug!(?connection_id, "incoming rpc message: processed");
                                         }
                                         Err(_) => {
-                                            tracing::debug!(%connection_id, "incoming rpc message: channel closed");
+                                            tracing::debug!(?connection_id, "incoming rpc message: channel closed");
                                             return Ok(())
                                         }
                                     },
                                     _ = create_timer(WRITE_TIMEOUT).fuse() => {
-                                        tracing::debug!(%connection_id, "incoming rpc message: processing timed out");
+                                        tracing::debug!(?connection_id, "incoming rpc message: processing timed out");
                                         Err(anyhow!("timed out processing incoming message"))?
                                     }
                                 }
@@ -236,7 +253,7 @@ impl Peer {
                             break;
                         },
                         _ = receive_timeout => {
-                            tracing::debug!(%connection_id, "receive timeout: delay between messages too long");
+                            tracing::debug!(?connection_id, "receive timeout: delay between messages too long");
                             Err(anyhow!("delay between messages too long"))?
                         }
                     }
@@ -255,16 +272,12 @@ impl Peer {
                 let message_id = incoming.id;
                 tracing::debug!(?incoming, "incoming message future: start");
                 let _end = util::defer(move || {
-                    tracing::debug!(
-                        %connection_id,
-                        message_id,
-                        "incoming message future: end"
-                    );
+                    tracing::debug!(?connection_id, message_id, "incoming message future: end");
                 });
 
                 if let Some(responding_to) = incoming.responding_to {
                     tracing::debug!(
-                        %connection_id,
+                        ?connection_id,
                         message_id,
                         responding_to,
                         "incoming response: received"
@@ -274,7 +287,7 @@ impl Peer {
                         let requester_resumed = oneshot::channel();
                         if let Err(error) = tx.send((incoming, requester_resumed.0)) {
                             tracing::debug!(
-                                %connection_id,
+                                ?connection_id,
                                 message_id,
                                 responding_to = responding_to,
                                 ?error,
@@ -283,21 +296,21 @@ impl Peer {
                         }
 
                         tracing::debug!(
-                            %connection_id,
+                            ?connection_id,
                             message_id,
                             responding_to,
                             "incoming response: waiting to resume requester"
                         );
                         let _ = requester_resumed.1.await;
                         tracing::debug!(
-                            %connection_id,
+                            ?connection_id,
                             message_id,
                             responding_to,
                             "incoming response: requester resumed"
                         );
                     } else {
                         tracing::warn!(
-                            %connection_id,
+                            ?connection_id,
                             message_id,
                             responding_to,
                             "incoming response: unknown request"
@@ -306,14 +319,10 @@ impl Peer {
 
                     None
                 } else {
-                    tracing::debug!(
-                        %connection_id,
-                        message_id,
-                        "incoming message: received"
-                    );
+                    tracing::debug!(?connection_id, message_id, "incoming message: received");
                     proto::build_typed_envelope(connection_id, incoming).or_else(|| {
                         tracing::error!(
-                            %connection_id,
+                            ?connection_id,
                             message_id,
                             "unable to construct a typed envelope"
                         );
@@ -345,6 +354,7 @@ impl Peer {
 
     pub fn reset(&self) {
         self.connections.write().clear();
+        self.next_connection_id.store(0, SeqCst);
     }
 
     pub fn request<T: RequestMessage>(
@@ -384,7 +394,7 @@ impl Peer {
                 .unbounded_send(proto::Message::Envelope(request.into_envelope(
                     message_id,
                     None,
-                    original_sender_id.map(|id| id.0),
+                    original_sender_id.map(Into::into),
                 )))
                 .map_err(|_| anyhow!("connection was closed"))?;
             Ok(())
@@ -433,7 +443,7 @@ impl Peer {
             .unbounded_send(proto::Message::Envelope(message.into_envelope(
                 message_id,
                 None,
-                Some(sender_id.0),
+                Some(sender_id.into()),
             )))?;
         Ok(())
     }
@@ -480,7 +490,7 @@ impl Peer {
         let connections = self.connections.read();
         let connection = connections
             .get(&connection_id)
-            .ok_or_else(|| anyhow!("no such connection: {}", connection_id))?;
+            .ok_or_else(|| anyhow!("no such connection: {:?}", connection_id))?;
         Ok(connection.clone())
     }
 }
@@ -515,9 +525,9 @@ mod tests {
         let executor = cx.foreground();
 
         // create 2 clients connected to 1 server
-        let server = Peer::new();
-        let client1 = Peer::new();
-        let client2 = Peer::new();
+        let server = Peer::new(0);
+        let client1 = Peer::new(0);
+        let client2 = Peer::new(0);
 
         let (client1_to_server_conn, server_to_client_1_conn, _kill) =
             Connection::in_memory(cx.background());
@@ -609,8 +619,8 @@ mod tests {
     #[gpui::test(iterations = 50)]
     async fn test_order_of_response_and_incoming(cx: &mut TestAppContext) {
         let executor = cx.foreground();
-        let server = Peer::new();
-        let client = Peer::new();
+        let server = Peer::new(0);
+        let client = Peer::new(0);
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
@@ -707,8 +717,8 @@ mod tests {
     #[gpui::test(iterations = 50)]
     async fn test_dropping_request_before_completion(cx: &mut TestAppContext) {
         let executor = cx.foreground();
-        let server = Peer::new();
-        let client = Peer::new();
+        let server = Peer::new(0);
+        let client = Peer::new(0);
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
@@ -822,7 +832,7 @@ mod tests {
 
         let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
-        let client = Peer::new();
+        let client = Peer::new(0);
         let (connection_id, io_handler, mut incoming) =
             client.add_test_connection(client_conn, cx.background());
 
@@ -857,7 +867,7 @@ mod tests {
         let executor = cx.foreground();
         let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
-        let client = Peer::new();
+        let client = Peer::new(0);
         let (connection_id, io_handler, mut incoming) =
             client.add_test_connection(client_conn, cx.background());
         executor.spawn(io_handler).detach();

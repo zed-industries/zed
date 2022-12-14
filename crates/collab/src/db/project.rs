@@ -9,7 +9,7 @@ pub struct Model {
     pub room_id: RoomId,
     pub host_user_id: UserId,
     pub host_connection_id: i32,
-    pub host_connection_epoch: Uuid,
+    pub host_connection_epoch: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

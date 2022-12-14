@@ -25,7 +25,10 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
-use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
+use client::{
+    proto::{self, PeerId},
+    Client, TypedEnvelope, UserStore,
+};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockDefaultItemFactory, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
@@ -1441,7 +1444,7 @@ impl Workspace {
         self.update_followers(
             proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
                 id: self.active_item(cx).map(|item| item.id() as u64),
-                leader_id: self.leader_for_pane(&pane).map(|id| id.0),
+                leader_id: self.leader_for_pane(&pane),
             }),
             cx,
         );
@@ -1620,7 +1623,7 @@ impl Workspace {
         let project_id = self.project.read(cx).remote_id()?;
         let request = self.client.request(proto::Follow {
             project_id,
-            leader_id: leader_id.0,
+            leader_id: Some(leader_id),
         });
         Some(cx.spawn_weak(|this, mut cx| async move {
             let response = request.await?;
@@ -1692,7 +1695,7 @@ impl Workspace {
                         self.client
                             .send(proto::Unfollow {
                                 project_id,
-                                leader_id: leader_id.0,
+                                leader_id: Some(leader_id),
                             })
                             .log_err();
                     }
@@ -1888,7 +1891,7 @@ impl Workspace {
                     .panes()
                     .iter()
                     .flat_map(|pane| {
-                        let leader_id = this.leader_for_pane(pane).map(|id| id.0);
+                        let leader_id = this.leader_for_pane(pane);
                         pane.read(cx).items().filter_map({
                             let cx = &cx;
                             move |item| {
@@ -1997,7 +2000,7 @@ impl Workspace {
                     .get(&leader_id)
                     .map(|c| c.replica_id)
             })
-            .ok_or_else(|| anyhow!("no such collaborator {}", leader_id))?;
+            .ok_or_else(|| anyhow!("no such collaborator {:?}", leader_id))?;
 
         let item_builders = cx.update(|cx| {
             cx.default_global::<FollowableItemBuilders>()
@@ -2077,7 +2080,7 @@ impl Workspace {
             self.client
                 .send(proto::UpdateFollowers {
                     project_id,
-                    follower_ids: self.leader_state.followers.iter().map(|f| f.0).collect(),
+                    follower_ids: self.leader_state.followers.iter().copied().collect(),
                     variant: Some(update),
                 })
                 .log_err();

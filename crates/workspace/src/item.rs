@@ -280,7 +280,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     proto::update_followers::Variant::CreateView(proto::View {
                         id: followed_item.id() as u64,
                         variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
+                        leader_id: workspace.leader_for_pane(&pane),
                     }),
                     cx,
                 );
@@ -334,7 +334,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                             proto::UpdateView {
                                                 id: item.id() as u64,
                                                 variant: pending_update.borrow_mut().take(),
-                                                leader_id: leader_id.map(|id| id.0),
+                                                leader_id,
                                             },
                                         ),
                                         cx,

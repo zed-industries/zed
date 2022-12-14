@@ -170,7 +170,7 @@ where
 impl Server {
     pub fn new(app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
         let mut server = Self {
-            peer: Peer::new(),
+            peer: Peer::new(0),
             app_state,
             executor,
             connection_pool: Default::default(),
@@ -457,9 +457,9 @@ impl Server {
                     move |duration| executor.sleep(duration)
                 });
 
-            tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
-            this.peer.send(connection_id, proto::Hello { peer_id: connection_id.0 })?;
-            tracing::info!(%user_id, %login, %connection_id, %address, "sent hello message");
+            tracing::info!(%user_id, %login, ?connection_id, %address, "connection opened");
+            this.peer.send(connection_id, proto::Hello { peer_id: Some(connection_id.into()) })?;
+            tracing::info!(%user_id, %login, ?connection_id, %address, "sent hello message");
 
             if let Some(send_connection_id) = send_connection_id.take() {
                 let _ = send_connection_id.send(connection_id);
@@ -521,7 +521,7 @@ impl Server {
                     _ = teardown.changed().fuse() => return Ok(()),
                     result = handle_io => {
                         if let Err(error) = result {
-                            tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");
+                            tracing::error!(?error, %user_id, %login, ?connection_id, %address, "error handling I/O");
                         }
                         break;
                     }
@@ -529,7 +529,7 @@ impl Server {
                     message = next_message => {
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
-                            let span = tracing::info_span!("receive message", %user_id, %login, %connection_id, %address, type_name);
+                            let span = tracing::info_span!("receive message", %user_id, %login, ?connection_id, %address, type_name);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
                                 let is_background = message.is_background();
@@ -543,10 +543,10 @@ impl Server {
                                     foreground_message_handlers.push(handle_message);
                                 }
                             } else {
-                                tracing::error!(%user_id, %login, %connection_id, %address, "no message handler");
+                                tracing::error!(%user_id, %login, ?connection_id, %address, "no message handler");
                             }
                         } else {
-                            tracing::info!(%user_id, %login, %connection_id, %address, "connection closed");
+                            tracing::info!(%user_id, %login, ?connection_id, %address, "connection closed");
                             break;
                         }
                     }
@@ -554,9 +554,9 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
+            tracing::info!(%user_id, %login, ?connection_id, %address, "signing out");
             if let Err(error) = sign_out(session, teardown, executor).await {
-                tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
+                tracing::error!(%user_id, %login, ?connection_id, %address, ?error, "error signing out");
             }
 
             Ok(())
@@ -1128,12 +1128,18 @@ async fn join_project(
     let collaborators = project
         .collaborators
         .iter()
-        .filter(|collaborator| collaborator.connection_id != session.connection_id.0 as i32)
-        .map(|collaborator| proto::Collaborator {
-            peer_id: collaborator.connection_id as u32,
-            replica_id: collaborator.replica_id.0 as u32,
-            user_id: collaborator.user_id.to_proto(),
+        .map(|collaborator| {
+            let peer_id = proto::PeerId {
+                epoch: collaborator.connection_epoch as u32,
+                id: collaborator.connection_id as u32,
+            };
+            proto::Collaborator {
+                peer_id: Some(peer_id),
+                replica_id: collaborator.replica_id.0 as u32,
+                user_id: collaborator.user_id.to_proto(),
+            }
         })
+        .filter(|collaborator| collaborator.peer_id != Some(session.connection_id.into()))
         .collect::<Vec<_>>();
     let worktrees = project
         .worktrees
@@ -1150,11 +1156,11 @@ async fn join_project(
         session
             .peer
             .send(
-                ConnectionId(collaborator.peer_id),
+                collaborator.peer_id.unwrap().into(),
                 proto::AddProjectCollaborator {
                     project_id: project_id.to_proto(),
                     collaborator: Some(proto::Collaborator {
-                        peer_id: session.connection_id.0,
+                        peer_id: Some(session.connection_id.into()),
                         replica_id: replica_id.0 as u32,
                         user_id: guest_user_id.to_proto(),
                     }),
@@ -1375,13 +1381,14 @@ where
             .await
             .project_collaborators(project_id, session.connection_id)
             .await?;
-        ConnectionId(
-            collaborators
-                .iter()
-                .find(|collaborator| collaborator.is_host)
-                .ok_or_else(|| anyhow!("host not found"))?
-                .connection_id as u32,
-        )
+        let host = collaborators
+            .iter()
+            .find(|collaborator| collaborator.is_host)
+            .ok_or_else(|| anyhow!("host not found"))?;
+        ConnectionId {
+            epoch: host.connection_epoch as u32,
+            id: host.connection_id as u32,
+        }
     };
 
     let payload = session
@@ -1409,7 +1416,10 @@ async fn save_buffer(
             .iter()
             .find(|collaborator| collaborator.is_host)
             .ok_or_else(|| anyhow!("host not found"))?;
-        ConnectionId(host.connection_id as u32)
+        ConnectionId {
+            epoch: host.connection_epoch as u32,
+            id: host.connection_id as u32,
+        }
     };
     let response_payload = session
         .peer
@@ -1421,11 +1431,17 @@ async fn save_buffer(
         .await
         .project_collaborators(project_id, session.connection_id)
         .await?;
-    collaborators
-        .retain(|collaborator| collaborator.connection_id != session.connection_id.0 as i32);
-    let project_connection_ids = collaborators
-        .iter()
-        .map(|collaborator| ConnectionId(collaborator.connection_id as u32));
+    collaborators.retain(|collaborator| {
+        let collaborator_connection = ConnectionId {
+            epoch: collaborator.connection_epoch as u32,
+            id: collaborator.connection_id as u32,
+        };
+        collaborator_connection != session.connection_id
+    });
+    let project_connection_ids = collaborators.iter().map(|collaborator| ConnectionId {
+        epoch: collaborator.connection_epoch as u32,
+        id: collaborator.connection_id as u32,
+    });
     broadcast(host_connection_id, project_connection_ids, |conn_id| {
         session
             .peer
@@ -1439,11 +1455,10 @@ async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
     session: Session,
 ) -> Result<()> {
-    session.peer.forward_send(
-        session.connection_id,
-        ConnectionId(request.peer_id),
-        request,
-    )?;
+    let peer_id = request.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?;
+    session
+        .peer
+        .forward_send(session.connection_id, peer_id.into(), request)?;
     Ok(())
 }
 
@@ -1536,7 +1551,10 @@ async fn follow(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let leader_id = ConnectionId(request.leader_id);
+    let leader_id = request
+        .leader_id
+        .ok_or_else(|| anyhow!("invalid leader id"))?
+        .into();
     let follower_id = session.connection_id;
     {
         let project_connection_ids = session
@@ -1556,14 +1574,17 @@ async fn follow(
         .await?;
     response_payload
         .views
-        .retain(|view| view.leader_id != Some(follower_id.0));
+        .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
     Ok(())
 }
 
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let leader_id = ConnectionId(request.leader_id);
+    let leader_id = request
+        .leader_id
+        .ok_or_else(|| anyhow!("invalid leader id"))?
+        .into();
     let project_connection_ids = session
         .db()
         .await
@@ -1592,12 +1613,16 @@ async fn update_followers(request: proto::UpdateFollowers, session: Session) -> 
         proto::update_followers::Variant::UpdateView(payload) => payload.leader_id,
         proto::update_followers::Variant::UpdateActiveView(payload) => payload.leader_id,
     });
-    for follower_id in &request.follower_ids {
-        let follower_id = ConnectionId(*follower_id);
-        if project_connection_ids.contains(&follower_id) && Some(follower_id.0) != leader_id {
-            session
-                .peer
-                .forward_send(session.connection_id, follower_id, request.clone())?;
+    for follower_peer_id in request.follower_ids.iter().copied() {
+        let follower_connection_id = follower_peer_id.into();
+        if project_connection_ids.contains(&follower_connection_id)
+            && Some(follower_peer_id) != leader_id
+        {
+            session.peer.forward_send(
+                session.connection_id,
+                follower_connection_id,
+                request.clone(),
+            )?;
         }
     }
     Ok(())
@@ -1912,13 +1937,19 @@ fn contact_for_user(
 
 fn room_updated(room: &proto::Room, peer: &Peer) {
     for participant in &room.participants {
-        peer.send(
-            ConnectionId(participant.peer_id),
-            proto::RoomUpdated {
-                room: Some(room.clone()),
-            },
-        )
-        .trace_err();
+        if let Some(peer_id) = participant
+            .peer_id
+            .ok_or_else(|| anyhow!("invalid participant peer id"))
+            .trace_err()
+        {
+            peer.send(
+                peer_id.into(),
+                proto::RoomUpdated {
+                    room: Some(room.clone()),
+                },
+            )
+            .trace_err();
+        }
     }
 }
 
@@ -2033,7 +2064,7 @@ fn project_left(project: &db::LeftProject, session: &Session) {
                     *connection_id,
                     proto::RemoveProjectCollaborator {
                         project_id: project.id.to_proto(),
-                        peer_id: session.connection_id.0,
+                        peer_id: Some(session.connection_id.into()),
                     },
                 )
                 .trace_err();
