@@ -71,6 +71,17 @@ impl BufferDiff {
         }
     }
 
+    pub fn hunks_in_row_range<'a>(
+        &'a self,
+        range: Range<u32>,
+        buffer: &'a BufferSnapshot,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        let start = buffer.anchor_before(Point::new(range.start, 0));
+        let end = buffer.anchor_after(Point::new(range.end, 0));
+        self.hunks_in_range(start..end, buffer, reversed)
+    }
+
     pub fn hunks_in_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -138,7 +149,9 @@ impl BufferDiff {
 
     #[cfg(test)]
     fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        self.hunks_in_range(0..u32::MAX, text, false)
+        let start = text.anchor_before(Point::new(0, 0));
+        let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
+        self.hunks_in_range(start..end, text, false)
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
@@ -352,7 +365,7 @@ mod tests {
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(
-            diff.hunks_in_range(7..12, &buffer, false),
+            diff.hunks_in_row_range(7..12, &buffer, false),
             &buffer,
             &diff_base,
             &[
