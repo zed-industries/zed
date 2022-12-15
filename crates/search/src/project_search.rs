@@ -1,5 +1,5 @@
 use crate::{
-    search_ui::{nav_button, option_button},
+    elements::{nav_button, option_button},
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };

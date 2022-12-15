@@ -4,24 +4,31 @@ use workspace::searchable::Direction;
 
 use crate::{SearchOption, SelectNextMatch, SelectPrevMatch};
 
-pub fn nav_button<V: View>(direction: Direction, cx: &mut RenderContext<V>) -> ElementBox {
-    let action: Box<dyn Action>;
-    match direction {
-        Direction::Prev => {
-            action = Box::new(SelectPrevMatch);
-        }
-        Direction::Next => {
-            action = Box::new(SelectNextMatch);
-        }
-    };
+trait SearchActionThemeExt {
+    fn to_action(&self) -> Box<dyn Action>;
+}
 
+impl SearchActionThemeExt for Direction {
+    fn to_action(&self) -> Box<dyn Action> {
+        match self {
+            Direction::Prev => Box::new(SelectPrevMatch) as Box<dyn Action>,
+            Direction::Next => Box::new(SelectNextMatch) as Box<dyn Action>,
+        }
+    }
+}
+
+pub fn nav_button<V: View>(direction: Direction, cx: &mut RenderContext<V>) -> ElementBox {
     enum NavButton {}
-    DesignSystem::<NavButton>::label_button(direction as usize, false, action, cx, |theme| {
-        match direction {
+    DesignSystem::<NavButton>::label_button(
+        direction as usize,
+        false,
+        direction.to_action(),
+        cx,
+        |theme| match direction {
             Direction::Prev => &theme.search.previous,
             Direction::Next => &theme.search.next,
-        }
-    })
+        },
+    )
 }
 
 pub fn option_button<V: View>(
@@ -29,7 +36,8 @@ pub fn option_button<V: View>(
     enabled: bool,
     cx: &mut RenderContext<V>,
 ) -> ElementBox {
-    DesignSystem::<V>::label_button(
+    enum OptionButton {}
+    DesignSystem::<OptionButton>::label_button(
         option as usize,
         enabled,
         option.to_toggle_action(),

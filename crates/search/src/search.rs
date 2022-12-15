@@ -3,8 +3,8 @@ use gpui::{actions, Action, MutableAppContext};
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
 
 pub mod buffer_search;
+mod elements;
 pub mod project_search;
-mod search_ui;
 
 pub fn init(cx: &mut MutableAppContext) {
     buffer_search::init(cx);
