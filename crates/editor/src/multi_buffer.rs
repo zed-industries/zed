@@ -2635,38 +2635,58 @@ impl MultiBufferSnapshot {
         row_range: Range<u32>,
         reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        let mut lines_advance = 0;
-        let mut cursor = self.excerpts.filter::<_, ExcerptSummary>(move |summary| {
-            let filter = summary.text.lines.row + lines_advance >= row_range.start
-                && lines_advance <= row_range.end;
-            lines_advance += summary.text.lines.row;
-            filter
-        });
+        let mut cursor = self.excerpts.cursor::<Point>();
+        cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
 
-        let mut lines_advance = 0;
         std::iter::from_fn(move || {
-            cursor.next(&());
             let excerpt = cursor.item()?;
-            let summary = cursor.item_summary()?;
+            let multibuffer_start = *cursor.start();
+            let multibuffer_end = multibuffer_start + excerpt.text_summary.lines;
+            if multibuffer_start.row >= row_range.end {
+                return None;
+            }
 
-            let range = excerpt.range.context.clone();
-            let range_start_row = range.start.to_point(&excerpt.buffer).row;
-            let range_end_row = range.end.to_point(&excerpt.buffer).row;
+            let mut buffer_start = excerpt.range.context.start;
+            let mut buffer_end = excerpt.range.context.end;
+            let excerpt_start_point = buffer_start.to_point(&excerpt.buffer);
+            let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
 
-            let hunks = excerpt.buffer.git_diff_hunks_in_range(range, reversed).map(
-                move |mut hunk| {
-                    hunk.buffer_range.start = hunk.buffer_range.start.max(range_start_row)
-                        - range_start_row
-                        + lines_advance;
-                    hunk.buffer_range.end = hunk.buffer_range.end.min(range_end_row + 1)
-                        - range_start_row
-                        + lines_advance;
-                    hunk
-                },
-            );
+            if row_range.start > multibuffer_start.row {
+                let buffer_start_point =
+                    excerpt_start_point + Point::new(row_range.start - multibuffer_start.row, 0);
+                buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
+            }
 
-            lines_advance += summary.text.lines.row;
-            Some(hunks)
+            if row_range.end < multibuffer_end.row {
+                let buffer_end_point =
+                    excerpt_start_point + Point::new(row_range.end - multibuffer_start.row, 0);
+                buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
+            }
+
+            let buffer_hunks = excerpt
+                .buffer
+                .git_diff_hunks_intersecting_range(buffer_start..buffer_end, reversed)
+                .filter_map(move |hunk| {
+                    let start = multibuffer_start.row
+                        + hunk
+                            .buffer_range
+                            .start
+                            .saturating_sub(excerpt_start_point.row);
+                    let end = multibuffer_start.row
+                        + hunk
+                            .buffer_range
+                            .end
+                            .min(excerpt_end_point.row + 1)
+                            .saturating_sub(excerpt_start_point.row);
+
+                    Some(DiffHunk {
+                        buffer_range: start..end,
+                        diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                    })
+                });
+
+            cursor.next(&());
+            Some(buffer_hunks)
         })
         .flatten()
     }
@@ -3488,11 +3508,12 @@ impl ToPointUtf16 for PointUtf16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::MutableAppContext;
+    use gpui::{MutableAppContext, TestAppContext};
     use language::{Buffer, Rope};
     use rand::prelude::*;
     use settings::Settings;
     use std::{env, rc::Rc};
+    use unindent::Unindent;
 
     use util::test::sample_text;
 
@@ -4030,6 +4051,163 @@ mod tests {
         assert_eq!(
             snapshot_3.summaries_for_anchors::<usize, _>(new_anchors.iter().map(|a| &a.1)),
             &[0, 2, 7, 13]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
+        use git::diff::DiffHunkStatus;
+
+        // buffer has two modified hunks with two rows each
+        let buffer_1 = cx.add_model(|cx| {
+            let mut buffer = Buffer::new(
+                0,
+                "
+                1.zero
+                1.ONE
+                1.TWO
+                1.three
+                1.FOUR
+                1.FIVE
+                1.six
+            "
+                .unindent(),
+                cx,
+            );
+            buffer.set_diff_base(
+                Some(
+                    "
+                1.zero
+                1.one
+                1.two
+                1.three
+                1.four
+                1.five
+                1.six
+            "
+                    .unindent(),
+                ),
+                cx,
+            );
+            buffer
+        });
+
+        // buffer has a deletion hunk and an insertion hunk
+        let buffer_2 = cx.add_model(|cx| {
+            let mut buffer = Buffer::new(
+                0,
+                "
+                2.zero
+                2.one
+                2.two
+                2.three
+                2.four
+                2.five
+                2.six
+            "
+                .unindent(),
+                cx,
+            );
+            buffer.set_diff_base(
+                Some(
+                    "
+                2.zero
+                2.one
+                2.one-and-a-half
+                2.two
+                2.three
+                2.four
+                2.six
+            "
+                    .unindent(),
+                ),
+                cx,
+            );
+            buffer
+        });
+
+        cx.foreground().run_until_parked();
+
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    // excerpt ends in the middle of a modified hunk
+                    ExcerptRange {
+                        context: Point::new(0, 0)..Point::new(1, 5),
+                        primary: Default::default(),
+                    },
+                    // excerpt begins in the middle of a modified hunk
+                    ExcerptRange {
+                        context: Point::new(5, 0)..Point::new(6, 5),
+                        primary: Default::default(),
+                    },
+                ],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [
+                    // excerpt ends at a deletion
+                    ExcerptRange {
+                        context: Point::new(0, 0)..Point::new(1, 5),
+                        primary: Default::default(),
+                    },
+                    // excerpt starts at a deletion
+                    ExcerptRange {
+                        context: Point::new(2, 0)..Point::new(2, 5),
+                        primary: Default::default(),
+                    },
+                    // excerpt fully contains a deletion hunk
+                    ExcerptRange {
+                        context: Point::new(1, 0)..Point::new(2, 5),
+                        primary: Default::default(),
+                    },
+                    // excerpt fully contains an insertion hunk
+                    ExcerptRange {
+                        context: Point::new(4, 0)..Point::new(6, 5),
+                        primary: Default::default(),
+                    },
+                ],
+                cx,
+            );
+            multibuffer
+        });
+
+        let snapshot = multibuffer.read_with(cx, |b, cx| b.snapshot(cx));
+
+        assert_eq!(
+            snapshot.text(),
+            "
+                1.zero
+                1.ONE
+                1.FIVE
+                1.six
+                2.zero
+                2.one
+                2.two
+                2.one
+                2.two
+                2.four
+                2.five
+                2.six"
+                .unindent()
+        );
+
+        assert_eq!(
+            snapshot
+                .git_diff_hunks_in_range(0..12, false)
+                .map(|hunk| (hunk.status(), hunk.buffer_range))
+                .collect::<Vec<_>>(),
+            &[
+                (DiffHunkStatus::Modified, 1..2),
+                (DiffHunkStatus::Modified, 2..3),
+                //TODO: Define better when and where removed hunks show up at range extremities
+                (DiffHunkStatus::Removed, 6..6),
+                (DiffHunkStatus::Removed, 8..8),
+                (DiffHunkStatus::Added, 10..11),
+            ]
         );
     }
 

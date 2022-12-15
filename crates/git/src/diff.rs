@@ -79,10 +79,10 @@ impl BufferDiff {
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let start = buffer.anchor_before(Point::new(range.start, 0));
         let end = buffer.anchor_after(Point::new(range.end, 0));
-        self.hunks_in_range(start..end, buffer, reversed)
+        self.hunks_intersecting_range(start..end, buffer, reversed)
     }
 
-    pub fn hunks_in_range<'a>(
+    pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
@@ -151,7 +151,7 @@ impl BufferDiff {
     fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let start = text.anchor_before(Point::new(0, 0));
         let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
-        self.hunks_in_range(start..end, text, false)
+        self.hunks_intersecting_range(start..end, text, false)
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
