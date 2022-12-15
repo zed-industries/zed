@@ -1643,10 +1643,7 @@ impl Database {
                     left_projects.push(LeftProject {
                         id: project.id,
                         host_user_id: project.host_user_id,
-                        host_connection_id: ConnectionId {
-                            id: project.host_connection_id as u32,
-                            owner_id: project.host_connection_server_id.0 as u32,
-                        },
+                        host_connection_id: project.host_connection()?,
                         connection_ids,
                     });
                 }
@@ -1764,10 +1761,7 @@ impl Database {
 
         while let Some(row) = db_projects.next().await {
             let (db_project, db_worktree) = row?;
-            let host_connection = ConnectionId {
-                owner_id: db_project.host_connection_server_id.0 as u32,
-                id: db_project.host_connection_id as u32,
-            };
+            let host_connection = db_project.host_connection()?;
             if let Some(participant) = participants.get_mut(&host_connection) {
                 let project = if let Some(project) = participant
                     .projects
@@ -1848,8 +1842,10 @@ impl Database {
             let project = project::ActiveModel {
                 room_id: ActiveValue::set(participant.room_id),
                 host_user_id: ActiveValue::set(participant.user_id),
-                host_connection_id: ActiveValue::set(connection.id as i32),
-                host_connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
+                host_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                host_connection_server_id: ActiveValue::set(Some(ServerId(
+                    connection.owner_id as i32,
+                ))),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -1901,11 +1897,7 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("project not found"))?;
-            let host_connection = ConnectionId {
-                owner_id: project.host_connection_server_id.0 as u32,
-                id: project.host_connection_id as u32,
-            };
-            if host_connection == connection {
+            if project.host_connection()? == connection {
                 let room_id = project.room_id;
                 project::Entity::delete(project.into_active_model())
                     .exec(&*tx)
@@ -2088,11 +2080,7 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            let host_connection = ConnectionId {
-                owner_id: project.host_connection_server_id.0 as u32,
-                id: project.host_connection_id as u32,
-            };
-            if host_connection != connection {
+            if project.host_connection()? != connection {
                 return Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
@@ -2145,11 +2133,7 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            let host_connection = ConnectionId {
-                owner_id: project.host_connection_server_id.0 as u32,
-                id: project.host_connection_id as u32,
-            };
-            if host_connection != connection {
+            if project.host_connection()? != connection {
                 return Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
@@ -2362,10 +2346,7 @@ impl Database {
             let left_project = LeftProject {
                 id: project_id,
                 host_user_id: project.host_user_id,
-                host_connection_id: ConnectionId {
-                    owner_id: project.host_connection_server_id.0 as u32,
-                    id: project.host_connection_id as u32,
-                },
+                host_connection_id: project.host_connection()?,
                 connection_ids,
             };
             Ok((project.room_id, left_project))

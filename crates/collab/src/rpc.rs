@@ -1506,7 +1506,6 @@ async fn update_buffer(
         .project_connection_ids(project_id, session.connection_id)
         .await?;
 
-    dbg!(session.connection_id, &*project_connection_ids);
     broadcast(
         session.connection_id,
         project_connection_ids.iter().copied(),

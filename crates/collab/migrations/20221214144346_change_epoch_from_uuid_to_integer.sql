@@ -3,10 +3,14 @@ CREATE TABLE servers (
     environment VARCHAR NOT NULL
 );
 
-DELETE FROM projects;
+DROP TABLE worktree_extensions;
+DROP TABLE project_activity_periods;
+DELETE from projects;
 ALTER TABLE projects
     DROP COLUMN host_connection_epoch,
-    ADD COLUMN host_connection_server_id INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE;
+    ADD COLUMN host_connection_server_id INTEGER REFERENCES servers (id) ON DELETE CASCADE;
+CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
+CREATE INDEX "index_projects_on_host_connection_id_and_host_connection_server_id" ON "projects" ("host_connection_id", "host_connection_server_id");
 
 DELETE FROM project_collaborators;
 ALTER TABLE project_collaborators

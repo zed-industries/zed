@@ -43,11 +43,12 @@ CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "room_id" INTEGER REFERENCES rooms (id) NOT NULL,
     "host_user_id" INTEGER REFERENCES users (id) NOT NULL,
-    "host_connection_id" INTEGER NOT NULL,
-    "host_connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
+    "host_connection_id" INTEGER,
+    "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "unregistered" BOOLEAN NOT NULL DEFAULT FALSE
 );
-CREATE INDEX "index_projects_on_host_connection_epoch" ON "projects" ("host_connection_epoch");
+CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
+CREATE INDEX "index_projects_on_host_connection_id_and_host_connection_server_id" ON "projects" ("host_connection_id", "host_connection_server_id");
 
 CREATE TABLE "worktrees" (
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
