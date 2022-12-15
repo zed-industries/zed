@@ -77,8 +77,7 @@ async fn main() -> Result<()> {
                         .expect("failed to listen for interrupt signal");
                     let sigterm = sigterm.recv();
                     let sigint = sigint.recv();
-                    futures::pin_mut!(sigterm);
-                    futures::pin_mut!(sigint);
+                    futures::pin_mut!(sigterm, sigint);
                     futures::future::select(sigterm, sigint).await;
                     tracing::info!("Received interrupt signal");
                     rpc_server.teardown();
