@@ -3,6 +3,7 @@ use crate::{
     ToggleWholeWord,
 };
 use collections::HashMap;
+use design_system::button;
 use editor::Editor;
 use gpui::{
     actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
@@ -351,12 +352,7 @@ impl BufferSearchBar {
         )
     }
 
-    fn render_nav_button(
-        &self,
-        icon: &str,
-        direction: Direction,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+    fn render_nav_button(&self, direction: Direction, cx: &mut RenderContext<Self>) -> ElementBox {
         let action: Box<dyn Action>;
         let tooltip;
         match direction {
@@ -369,34 +365,11 @@ impl BufferSearchBar {
                 tooltip = "Select Next Match";
             }
         };
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         enum NavButton {}
-        MouseEventHandler::<NavButton>::new(direction as usize, cx, |state, cx| {
-            let style = &cx
-                .global::<Settings>()
-                .theme
-                .search
-                .option_button
-                .style_for(state, false);
-            Label::new(icon.to_string(), style.text.clone())
-                .contained()
-                .with_style(style.container)
-                .boxed()
+        button::<NavButton, _, _>(direction as usize, action, tooltip, cx, |theme| {
+            unimplemented!();
         })
-        .on_click(MouseButton::Left, {
-            let action = action.boxed_clone();
-            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton, _>(
-            direction as usize,
-            tooltip.to_string(),
-            Some(action),
-            tooltip_style,
-            cx,
-        )
-        .boxed()
     }
 
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {

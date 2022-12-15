@@ -1,0 +1,14 @@
+[package]
+name = "design_system"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/design_system.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+util = { path = "../util" }

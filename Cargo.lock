@@ -1696,6 +1696,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "design_system"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "theme",
+ "util",
+]
+
+[[package]]
 name = "dhat"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5475,6 +5485,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "design_system",
  "editor",
  "gpui",
  "language",

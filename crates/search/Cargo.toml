@@ -9,6 +9,7 @@ doctest = false
 
 [dependencies]
 collections = { path = "../collections" }
+design_system = { path = "../design_system" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
