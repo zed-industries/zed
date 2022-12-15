@@ -51,13 +51,13 @@ cp -R target/x86_64-apple-darwin/release/WebRTC.framework "${app_path}/Contents/
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
-    security create-keychain -p $MACOS_CERTIFICATE_PASSWORD zed.keychain || echo ""
+    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
     security default-keychain -s zed.keychain
-    security unlock-keychain -p $MACOS_CERTIFICATE_PASSWORD zed.keychain
-    echo $MACOS_CERTIFICATE | base64 --decode > /tmp/zed-certificate.p12
-    security import /tmp/zed-certificate.p12 -k zed.keychain -P $MACOS_CERTIFICATE_PASSWORD -T /usr/bin/codesign
+    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
+    echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
+    security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
     /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}" -v
     security default-keychain -s login.keychain
 else
@@ -66,22 +66,31 @@ else
     codesign --force --deep --sign - "${app_path}" -v
 fi
 
+dmg_target_directory="target/release"
+dmg_source_directory="${dmg_target_directory}/dmg"
+dmg_file_path="${dmg_target_directory}/Zed.dmg"
+
 echo "Creating DMG"
-mkdir -p target/release/dmg
-rm -rf  target/release/dmg/*
-mv "${app_path}" target/release/dmg/
-hdiutil create -volname Zed -srcfolder target/release/dmg -ov -format UDZO target/release/Zed.dmg
+rm -rf ${dmg_source_directory}
+mkdir -p ${dmg_source_directory}
+mv "${app_path}" "${dmg_source_directory}"
+
+ln -s /Applications ${dmg_source_directory}
+hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+# If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
+# This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
+rm ${dmg_source_directory}/Applications
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Notarizing DMG with Apple"
     npm install -g notarize-cli
-    npx notarize-cli --file target/release/Zed.dmg --bundle-id dev.zed.Zed --username $APPLE_NOTARIZATION_USERNAME --password $APPLE_NOTARIZATION_PASSWORD
+    npx notarize-cli --file ${dmg_file_path} --bundle-id dev.zed.Zed --username "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD"
 fi
 
-# If -o option is specified, open the target/release directory in Finder to reveal the DMG
+# If -o option is specified, open the $dmg_target_directory directory in Finder to reveal the DMG
 while getopts o flag
 do
     case "${flag}" in
-        o) open target/release;;
+        o) open $dmg_target_directory;;
     esac
 done
