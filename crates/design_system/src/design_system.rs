@@ -26,7 +26,12 @@ impl<Tag: 'static> DesignSystem<Tag> {
             _PD(PhantomData<*const T>),
         }
 
-        let style = style_for(&cx.global::<Settings>().theme).to_owned();
+        let (tooltip_style, style) = {
+            let theme = &cx.global::<Settings>().theme;
+            let tooltip_style = theme.tooltip.to_owned();
+            let style = style_for(theme).to_owned();
+            (tooltip_style, style)
+        };
 
         MouseEventHandler::<LabelButton<Tag>>::new(region_id as usize, cx, |state, _cx| {
             style.interactions.style_for(state, active);
@@ -44,7 +49,7 @@ impl<Tag: 'static> DesignSystem<Tag> {
             region_id,
             style.tooltip_text,
             Some(click_action),
-            style.tooltip_style,
+            tooltip_style,
             cx,
         )
         .boxed()

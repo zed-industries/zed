@@ -1,7 +1,4 @@
-use gpui::{
-    elements::{ContainerStyle, TooltipStyle},
-    fonts::TextStyle,
-};
+use gpui::{elements::ContainerStyle, fonts::TextStyle};
 use serde::Deserialize;
 
 use crate::{ContainedText, Interactive};
@@ -10,7 +7,6 @@ use crate::{ContainedText, Interactive};
 pub struct LabelButton {
     pub label: String, // < or >
     pub tooltip_text: String,
-    pub tooltip_style: TooltipStyle, //TODO: Make optional
     pub interactions: Interactive<ContainedText>,
     pub text: TextStyle,
     pub container: ContainerStyle,
