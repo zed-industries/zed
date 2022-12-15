@@ -1,14 +1,14 @@
 use crate::{
+    search_ui::{nav_button, option_button},
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use collections::HashMap;
-use design_system::button;
+
 use editor::Editor;
 use gpui::{
-    actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
-    Entity, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
-    ViewHandle,
+    actions, elements::*, impl_actions, Action, AnyViewHandle, AppContext, Entity,
+    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -144,31 +144,34 @@ impl View for BufferSearchBar {
             )
             .with_child(
                 Flex::row()
-                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                    .with_child(nav_button(Direction::Prev, cx))
+                    .with_child(nav_button(Direction::Next, cx))
                     .aligned()
                     .boxed(),
             )
             .with_child(
                 Flex::row()
-                    .with_children(self.render_search_option(
-                        supported_options.case,
-                        "Case",
-                        SearchOption::CaseSensitive,
-                        cx,
-                    ))
-                    .with_children(self.render_search_option(
-                        supported_options.word,
-                        "Word",
-                        SearchOption::WholeWord,
-                        cx,
-                    ))
-                    .with_children(self.render_search_option(
-                        supported_options.regex,
-                        "Regex",
-                        SearchOption::Regex,
-                        cx,
-                    ))
+                    .with_children(supported_options.case.then(|| {
+                        option_button(
+                            SearchOption::CaseSensitive,
+                            self.is_search_option_enabled(SearchOption::CaseSensitive),
+                            cx,
+                        )
+                    }))
+                    .with_children(supported_options.word.then(|| {
+                        option_button(
+                            SearchOption::WholeWord,
+                            self.is_search_option_enabled(SearchOption::WholeWord),
+                            cx,
+                        )
+                    }))
+                    .with_children(supported_options.regex.then(|| {
+                        option_button(
+                            SearchOption::Regex,
+                            self.is_search_option_enabled(SearchOption::Regex),
+                            cx,
+                        )
+                    }))
                     .contained()
                     .with_style(theme.search.option_button_group)
                     .aligned()
@@ -309,67 +312,6 @@ impl BufferSearchBar {
                 query_buffer.edit([(0..len, query)], None, cx);
             });
         });
-    }
-
-    fn render_search_option(
-        &self,
-        option_supported: bool,
-        icon: &str,
-        option: SearchOption,
-        cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
-        if !option_supported {
-            return None;
-        }
-
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
-        let is_active = self.is_search_option_enabled(option);
-        Some(
-            MouseEventHandler::<Self>::new(option as usize, cx, |state, cx| {
-                let style = &cx
-                    .global::<Settings>()
-                    .theme
-                    .search
-                    .option_button
-                    .style_for(state, is_active);
-                Label::new(icon.to_string(), style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-                    .boxed()
-            })
-            .on_click(MouseButton::Left, move |_, cx| {
-                cx.dispatch_any_action(option.to_toggle_action())
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .with_tooltip::<Self, _>(
-                option as usize,
-                format!("Toggle {}", option.label()),
-                Some(option.to_toggle_action()),
-                tooltip_style,
-                cx,
-            )
-            .boxed(),
-        )
-    }
-
-    fn render_nav_button(&self, direction: Direction, cx: &mut RenderContext<Self>) -> ElementBox {
-        let action: Box<dyn Action>;
-        let tooltip;
-        match direction {
-            Direction::Prev => {
-                action = Box::new(SelectPrevMatch);
-                tooltip = "Select Previous Match";
-            }
-            Direction::Next => {
-                action = Box::new(SelectNextMatch);
-                tooltip = "Select Next Match";
-            }
-        };
-
-        enum NavButton {}
-        button::<NavButton, _, _>(direction as usize, action, tooltip, cx, |theme| {
-            unimplemented!();
-        })
     }
 
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {

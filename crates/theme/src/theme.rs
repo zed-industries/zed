@@ -1,5 +1,7 @@
+pub mod design_system;
 mod theme_registry;
 
+use design_system::LabelButton;
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
@@ -247,6 +249,12 @@ pub struct Search {
     pub results_status: TextStyle,
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
+    // Design System:
+    pub previous: LabelButton,
+    pub next: LabelButton,
+    pub whole_word: LabelButton,
+    pub case_sensitive: LabelButton,
+    pub regex: LabelButton,
 }
 
 #[derive(Clone, Deserialize, Default)]

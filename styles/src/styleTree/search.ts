@@ -80,5 +80,7 @@ export default function search(colorScheme: ColorScheme) {
       ...text(layer, "mono", "on"),
       size: 18,
     },
+    previous: "ZDS_BUTTON",
+    next: "ZDS_BUTTON"
   };
 }

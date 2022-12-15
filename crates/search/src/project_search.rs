@@ -1,4 +1,5 @@
 use crate::{
+    search_ui::{nav_button, option_button},
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
@@ -8,9 +9,9 @@ use editor::{
     SelectAll, MAX_TAB_TITLE_LEN,
 };
 use gpui::{
-    actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
-    Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, Action, AnyViewHandle, AppContext, ElementBox, Entity, ModelContext,
+    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -725,88 +726,6 @@ impl ProjectSearchBar {
         }
     }
 
-    fn render_nav_button(
-        &self,
-        icon: &str,
-        direction: Direction,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let action: Box<dyn Action>;
-        let tooltip;
-        match direction {
-            Direction::Prev => {
-                action = Box::new(SelectPrevMatch);
-                tooltip = "Select Previous Match";
-            }
-            Direction::Next => {
-                action = Box::new(SelectNextMatch);
-                tooltip = "Select Next Match";
-            }
-        };
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
-
-        enum NavButton {}
-        MouseEventHandler::<NavButton>::new(direction as usize, cx, |state, cx| {
-            let style = &cx
-                .global::<Settings>()
-                .theme
-                .search
-                .option_button
-                .style_for(state, false);
-            Label::new(icon.to_string(), style.text.clone())
-                .contained()
-                .with_style(style.container)
-                .boxed()
-        })
-        .on_click(MouseButton::Left, {
-            let action = action.boxed_clone();
-            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton, _>(
-            direction as usize,
-            tooltip.to_string(),
-            Some(action),
-            tooltip_style,
-            cx,
-        )
-        .boxed()
-    }
-
-    fn render_option_button(
-        &self,
-        icon: &str,
-        option: SearchOption,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
-        let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::<Self>::new(option as usize, cx, |state, cx| {
-            let style = &cx
-                .global::<Settings>()
-                .theme
-                .search
-                .option_button
-                .style_for(state, is_active);
-            Label::new(icon.to_string(), style.text.clone())
-                .contained()
-                .with_style(style.container)
-                .boxed()
-        })
-        .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_any_action(option.to_toggle_action())
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<Self, _>(
-            option as usize,
-            format!("Toggle {}", option.label()),
-            Some(option.to_toggle_action()),
-            tooltip_style,
-            cx,
-        )
-        .boxed()
-    }
-
     fn is_option_enabled(&self, option: SearchOption, cx: &AppContext) -> bool {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
@@ -874,20 +793,28 @@ impl View for ProjectSearchBar {
                 )
                 .with_child(
                     Flex::row()
-                        .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                        .with_child(self.render_nav_button(">", Direction::Next, cx))
+                        .with_child(nav_button(Direction::Prev, cx))
+                        .with_child(nav_button(Direction::Next, cx))
                         .aligned()
                         .boxed(),
                 )
                 .with_child(
                     Flex::row()
-                        .with_child(self.render_option_button(
-                            "Case",
+                        .with_child(option_button(
                             SearchOption::CaseSensitive,
+                            self.is_option_enabled(SearchOption::CaseSensitive, cx),
                             cx,
                         ))
-                        .with_child(self.render_option_button("Word", SearchOption::WholeWord, cx))
-                        .with_child(self.render_option_button("Regex", SearchOption::Regex, cx))
+                        .with_child(option_button(
+                            SearchOption::CaseSensitive,
+                            self.is_option_enabled(SearchOption::CaseSensitive, cx),
+                            cx,
+                        ))
+                        .with_child(option_button(
+                            SearchOption::CaseSensitive,
+                            self.is_option_enabled(SearchOption::CaseSensitive, cx),
+                            cx,
+                        ))
                         .contained()
                         .with_style(theme.search.option_button_group)
                         .aligned()
