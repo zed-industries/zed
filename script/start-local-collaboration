@@ -1,0 +1,50 @@
+#!/bin/bash
+
+set -e
+
+if [[ -z "$GITHUB_TOKEN" ]]; then
+  cat <<-MESSAGE
+Missing \`GITHUB_TOKEN\` environment variable. This token is needed
+for fetching your GitHub identity from the command-line.
+
+Create an access token here: https://github.com/settings/tokens
+Then edit your \`~/.zshrc\` (or other shell initialization script),
+adding a line like this:
+
+    export GITHUB_TOKEN="(the token)"
+
+MESSAGE
+  exit 1
+fi
+
+# Start one Zed instance as the current user and a second instance with a different user.
+username_1=$(curl -sH "Authorization: bearer $GITHUB_TOKEN" https://api.github.com/user | jq -r .login)
+username_2=nathansobo
+if [[ $username_1 == $username_2 ]]; then
+  username_2=as-cii
+fi
+
+# Make each Zed instance take up half of the screen.
+resolution_line=$(system_profiler SPDisplaysDataType | grep Resolution | head -n1)
+screen_size=($(echo $resolution_line | egrep -o '[0-9]+'))
+scale_factor=1
+if [[ $resolution_line =~ Retina ]]; then scale_factor=2; fi
+width=$(expr ${screen_size[0]} / 2 / $scale_factor)
+height=${screen_size[1] / $scale_factor}
+
+position_1=0,0
+position_2=${width},0
+
+# Authenticate using the collab server's admin secret.
+export ZED_ADMIN_API_TOKEN=secret
+export ZED_SERVER_URL=http://localhost:8080
+export ZED_WINDOW_SIZE=${width},${height}
+
+cargo build
+sleep 0.5
+
+# Start the two Zed child processes. Open the given paths with the first instance.
+trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
+ZED_IMPERSONATE=${username_1} ZED_WINDOW_POSITION=${position_1} target/debug/Zed $@ &
+ZED_IMPERSONATE=${username_2} ZED_WINDOW_POSITION=${position_2} target/debug/Zed &
+wait

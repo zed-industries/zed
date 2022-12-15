@@ -23,7 +23,7 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
-use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage};
+use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use serde::Deserialize;
 use std::{
     any::TypeId,
@@ -140,7 +140,7 @@ impl EstablishConnectionError {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Status {
     SignedOut,
     UpgradeRequired,
@@ -306,7 +306,7 @@ impl Client {
     pub fn new(http: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         Arc::new(Self {
             id: 0,
-            peer: Peer::new(),
+            peer: Peer::new(0),
             telemetry: Telemetry::new(http.clone(), cx),
             http,
             state: Default::default(),
@@ -333,14 +333,14 @@ impl Client {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn tear_down(&self) {
+    pub fn teardown(&self) {
         let mut state = self.state.write();
         state._reconnect_task.take();
         state.message_handlers.clear();
         state.models_by_message_type.clear();
         state.entities_by_type_and_remote_id.clear();
         state.entity_id_extractors.clear();
-        self.peer.reset();
+        self.peer.teardown();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -810,7 +810,11 @@ impl Client {
                         hello_message_type_name
                     )
                 })?;
-            Ok(PeerId(hello.payload.peer_id))
+            let peer_id = hello
+                .payload
+                .peer_id
+                .ok_or_else(|| anyhow!("invalid peer id"))?;
+            Ok(peer_id)
         };
 
         let peer_id = match peer_id.await {
@@ -822,7 +826,7 @@ impl Client {
         };
 
         log::info!(
-            "set status to connected (connection id: {}, peer id: {})",
+            "set status to connected (connection id: {:?}, peer id: {:?})",
             connection_id,
             peer_id
         );
@@ -853,7 +857,7 @@ impl Client {
             .spawn(async move {
                 match handle_io.await {
                     Ok(()) => {
-                        if *this.status().borrow()
+                        if this.status().borrow().clone()
                             == (Status::Connected {
                                 connection_id,
                                 peer_id,
@@ -1194,7 +1198,7 @@ impl Client {
         let mut state = self.state.write();
         let type_name = message.payload_type_name();
         let payload_type_id = message.payload_type_id();
-        let sender_id = message.original_sender_id().map(|id| id.0);
+        let sender_id = message.original_sender_id();
 
         let mut subscriber = None;
 

@@ -126,18 +126,21 @@ impl DockPosition {
     }
 }
 
-pub type DefaultItemFactory =
-    fn(&mut Workspace, &mut ViewContext<Workspace>) -> Box<dyn ItemHandle>;
+pub type DockDefaultItemFactory =
+    fn(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<Box<dyn ItemHandle>>;
 
 pub struct Dock {
     position: DockPosition,
     panel_sizes: HashMap<DockAnchor, f32>,
     pane: ViewHandle<Pane>,
-    default_item_factory: DefaultItemFactory,
+    default_item_factory: DockDefaultItemFactory,
 }
 
 impl Dock {
-    pub fn new(default_item_factory: DefaultItemFactory, cx: &mut ViewContext<Workspace>) -> Self {
+    pub fn new(
+        default_item_factory: DockDefaultItemFactory,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Self {
         let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
 
         let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), cx));
@@ -192,9 +195,11 @@ impl Dock {
             // Ensure that the pane has at least one item or construct a default item to put in it
             let pane = workspace.dock.pane.clone();
             if pane.read(cx).items().next().is_none() {
-                let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
-                // Adding the item focuses the pane by default
-                Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+                if let Some(item_to_add) = (workspace.dock.default_item_factory)(workspace, cx) {
+                    Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+                } else {
+                    workspace.dock.position = workspace.dock.position.hide();
+                }
             } else {
                 cx.focus(pane);
             }
@@ -477,8 +482,8 @@ mod tests {
     pub fn default_item_factory(
         _workspace: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
-    ) -> Box<dyn ItemHandle> {
-        Box::new(cx.add_view(|_| TestItem::new()))
+    ) -> Option<Box<dyn ItemHandle>> {
+        Some(Box::new(cx.add_view(|_| TestItem::new())))
     }
 
     #[gpui::test]

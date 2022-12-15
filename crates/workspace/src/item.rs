@@ -5,12 +5,15 @@ use std::{
     fmt,
     path::PathBuf,
     rc::Rc,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
 use anyhow::Result;
-use client::proto;
+use client::{proto, Client};
 use gpui::{
     AnyViewHandle, AppContext, ElementBox, ModelHandle, MutableAppContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
@@ -23,7 +26,8 @@ use util::ResultExt;
 
 use crate::{
     pane, persistence::model::ItemId, searchable::SearchableItemHandle, DelayedDebouncedEditAction,
-    FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace,
+    WorkspaceId,
 };
 
 #[derive(Eq, PartialEq, Hash)]
@@ -278,9 +282,11 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             if let Some(message) = followed_item.to_state_proto(cx) {
                 workspace.update_followers(
                     proto::update_followers::Variant::CreateView(proto::View {
-                        id: followed_item.id() as u64,
+                        id: followed_item
+                            .remote_id(&workspace.client, cx)
+                            .map(|id| id.to_proto()),
                         variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
+                        leader_id: workspace.leader_for_pane(&pane),
                     }),
                     cx,
                 );
@@ -332,9 +338,11 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                     this.update_followers(
                                         proto::update_followers::Variant::UpdateView(
                                             proto::UpdateView {
-                                                id: item.id() as u64,
+                                                id: item
+                                                    .remote_id(&this.client, cx)
+                                                    .map(|id| id.to_proto()),
                                                 variant: pending_update.borrow_mut().take(),
-                                                leader_id: leader_id.map(|id| id.0),
+                                                leader_id,
                                             },
                                         ),
                                         cx,
@@ -584,10 +592,12 @@ pub trait ProjectItem: Item {
 }
 
 pub trait FollowableItem: Item {
+    fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
         pane: ViewHandle<Pane>,
         project: ModelHandle<Project>,
+        id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>>;
@@ -599,15 +609,17 @@ pub trait FollowableItem: Item {
     ) -> bool;
     fn apply_update_proto(
         &mut self,
+        project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
-    ) -> Result<()>;
+    ) -> Task<Result<()>>;
 
     fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
+    fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
     fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext);
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
@@ -618,13 +630,23 @@ pub trait FollowableItemHandle: ItemHandle {
     ) -> bool;
     fn apply_update_proto(
         &self,
+        project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
-    ) -> Result<()>;
+    ) -> Task<Result<()>>;
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
+    fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId> {
+        self.read(cx).remote_id().or_else(|| {
+            client.peer_id().map(|creator| ViewId {
+                creator,
+                id: self.id() as u64,
+            })
+        })
+    }
+
     fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext) {
         self.update(cx, |this, cx| {
             this.set_leader_replica_id(leader_replica_id, cx)
@@ -650,10 +672,11 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 
     fn apply_update_proto(
         &self,
+        project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
-    ) -> Result<()> {
-        self.update(cx, |this, cx| this.apply_update_proto(message, cx))
+    ) -> Task<Result<()>> {
+        self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
     }
 
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {

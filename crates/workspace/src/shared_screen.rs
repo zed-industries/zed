@@ -3,7 +3,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use call::participant::{Frame, RemoteVideoTrack};
-use client::{PeerId, User};
+use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
     elements::*,

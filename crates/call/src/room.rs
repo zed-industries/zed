@@ -3,7 +3,7 @@ use crate::{
     IncomingCall,
 };
 use anyhow::{anyhow, Result};
-use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
+use client::{proto, Client, TypedEnvelope, User, UserStore};
 use collections::{BTreeMap, HashSet};
 use futures::{FutureExt, StreamExt};
 use gpui::{
@@ -13,17 +13,17 @@ use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUp
 use postage::stream::Stream;
 use project::Project;
 use std::{mem, sync::Arc, time::Duration};
-use util::{post_inc, ResultExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ParticipantLocationChanged {
-        participant_id: PeerId,
+        participant_id: proto::PeerId,
     },
     RemoteVideoTracksChanged {
-        participant_id: PeerId,
+        participant_id: proto::PeerId,
     },
     RemoteProjectShared {
         owner: Arc<User>,
@@ -41,7 +41,7 @@ pub struct Room {
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     local_participant: LocalParticipant,
-    remote_participants: BTreeMap<PeerId, RemoteParticipant>,
+    remote_participants: BTreeMap<proto::PeerId, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
     participant_user_ids: HashSet<u64>,
     pending_call_count: usize,
@@ -50,7 +50,7 @@ pub struct Room {
     user_store: ModelHandle<UserStore>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
-    maintain_connection: Option<Task<Result<()>>>,
+    maintain_connection: Option<Task<Option<()>>>,
 }
 
 impl Entity for Room {
@@ -58,6 +58,7 @@ impl Entity for Room {
 
     fn release(&mut self, _: &mut MutableAppContext) {
         if self.status.is_online() {
+            log::info!("room was released, sending leave message");
             self.client.send(proto::LeaveRoom {}).log_err();
         }
     }
@@ -122,7 +123,7 @@ impl Room {
         };
 
         let maintain_connection =
-            cx.spawn_weak(|this, cx| Self::maintain_connection(this, client.clone(), cx));
+            cx.spawn_weak(|this, cx| Self::maintain_connection(this, client.clone(), cx).log_err());
 
         Self {
             id,
@@ -229,6 +230,7 @@ impl Room {
 
         cx.notify();
         cx.emit(Event::Left);
+        log::info!("leaving room");
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
         self.pending_participants.clear();
@@ -254,6 +256,7 @@ impl Room {
                 .map_or(false, |s| s.is_connected());
             // Even if we're initially connected, any future change of the status means we momentarily disconnected.
             if !is_connected || client_status.next().await.is_some() {
+                log::info!("detected client disconnection");
                 let room_id = this
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("room was dropped"))?
@@ -269,8 +272,13 @@ impl Room {
                     let client_reconnection = async {
                         let mut remaining_attempts = 3;
                         while remaining_attempts > 0 {
+                            log::info!(
+                                "waiting for client status change, remaining attempts {}",
+                                remaining_attempts
+                            );
                             if let Some(status) = client_status.next().await {
                                 if status.is_connected() {
+                                    log::info!("client reconnected, attempting to rejoin room");
                                     let rejoin_room = async {
                                         let response =
                                             client.request(proto::JoinRoom { id: room_id }).await?;
@@ -285,7 +293,7 @@ impl Room {
                                         anyhow::Ok(())
                                     };
 
-                                    if rejoin_room.await.is_ok() {
+                                    if rejoin_room.await.log_err().is_some() {
                                         return true;
                                     } else {
                                         remaining_attempts -= 1;
@@ -303,12 +311,15 @@ impl Room {
                     futures::select_biased! {
                         reconnected = client_reconnection => {
                             if reconnected {
+                                log::info!("successfully reconnected to room");
                                 // If we successfully joined the room, go back around the loop
                                 // waiting for future connection status changes.
                                 continue;
                             }
                         }
-                        _ = reconnection_timeout => {}
+                        _ = reconnection_timeout => {
+                            log::info!("room reconnection timeout expired");
+                        }
                     }
                 }
 
@@ -316,6 +327,7 @@ impl Room {
                 // or an error occurred while trying to re-join the room. Either way
                 // we leave the room and return an error.
                 if let Some(this) = this.upgrade(&cx) {
+                    log::info!("reconnection failed, leaving room");
                     let _ = this.update(&mut cx, |this, cx| this.leave(cx));
                 }
                 return Err(anyhow!(
@@ -337,7 +349,7 @@ impl Room {
         &self.local_participant
     }
 
-    pub fn remote_participants(&self) -> &BTreeMap<PeerId, RemoteParticipant> {
+    pub fn remote_participants(&self) -> &BTreeMap<proto::PeerId, RemoteParticipant> {
         &self.remote_participants
     }
 
@@ -407,7 +419,7 @@ impl Room {
                 if let Some(participants) = remote_participants.log_err() {
                     let mut participant_peer_ids = HashSet::default();
                     for (participant, user) in room.participants.into_iter().zip(participants) {
-                        let peer_id = PeerId(participant.peer_id);
+                        let Some(peer_id) = participant.peer_id else { continue };
                         this.participant_user_ids.insert(participant.user_id);
                         participant_peer_ids.insert(peer_id);
 
@@ -464,7 +476,7 @@ impl Room {
 
                             if let Some(live_kit) = this.live_kit.as_ref() {
                                 let tracks =
-                                    live_kit.room.remote_video_tracks(&peer_id.0.to_string());
+                                    live_kit.room.remote_video_tracks(&peer_id.to_string());
                                 for track in tracks {
                                     this.remote_video_track_updated(
                                         RemoteVideoTrackUpdate::Subscribed(track),
@@ -499,6 +511,7 @@ impl Room {
 
                 this.pending_room_update.take();
                 if this.should_leave() {
+                    log::info!("room is empty, leaving");
                     let _ = this.leave(cx);
                 }
 
@@ -518,7 +531,7 @@ impl Room {
     ) -> Result<()> {
         match change {
             RemoteVideoTrackUpdate::Subscribed(track) => {
-                let peer_id = PeerId(track.publisher_id().parse()?);
+                let peer_id = track.publisher_id().parse()?;
                 let track_id = track.sid().to_string();
                 let participant = self
                     .remote_participants
@@ -538,7 +551,7 @@ impl Room {
                 publisher_id,
                 track_id,
             } => {
-                let peer_id = PeerId(publisher_id.parse()?);
+                let peer_id = publisher_id.parse()?;
                 let participant = self
                     .remote_participants
                     .get_mut(&peer_id)

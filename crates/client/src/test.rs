@@ -35,7 +35,7 @@ impl FakeServer {
         cx: &TestAppContext,
     ) -> Self {
         let server = Self {
-            peer: Peer::new(),
+            peer: Peer::new(0),
             state: Default::default(),
             user_id: client_user_id,
             executor: cx.foreground(),
@@ -92,7 +92,7 @@ impl FakeServer {
                         peer.send(
                             connection_id,
                             proto::Hello {
-                                peer_id: connection_id.0,
+                                peer_id: Some(connection_id.into()),
                             },
                         )
                         .unwrap();

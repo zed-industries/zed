@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
 use db::{define_connection, query, sqlez_macros::sql};
-
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 define_connection! {
-    pub static ref TERMINAL_CONNECTION: TerminalDb<WorkspaceDb> =
+    pub static ref TERMINAL_DB: TerminalDb<WorkspaceDb> =
         &[sql!(
             CREATE TABLE terminals (
                 workspace_id INTEGER,
@@ -13,7 +12,7 @@ define_connection! {
                 working_directory BLOB,
                 PRIMARY KEY(workspace_id, item_id),
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
+                ON DELETE CASCADE
             ) STRICT;
         )];
 }
@@ -43,10 +42,10 @@ impl TerminalDb {
     }
 
     query! {
-        pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
-            SELECT working_directory
-            FROM terminals
+        pub async fn take_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
+            DELETE FROM terminals
             WHERE item_id = ? AND workspace_id = ?
+            RETURNING working_directory
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::{
-    proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage},
+    proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, RequestMessage},
     Connection,
 };
 use anyhow::{anyhow, Context, Result};
@@ -11,9 +11,8 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use serde::{ser::SerializeStruct, Serialize};
-use std::sync::atomic::Ordering::SeqCst;
+use std::{fmt, sync::atomic::Ordering::SeqCst};
 use std::{
-    fmt,
     future::Future,
     marker::PhantomData,
     sync::{
@@ -25,20 +24,32 @@ use std::{
 use tracing::instrument;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
-pub struct ConnectionId(pub u32);
+pub struct ConnectionId {
+    pub owner_id: u32,
+    pub id: u32,
+}
 
-impl fmt::Display for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+impl Into<PeerId> for ConnectionId {
+    fn into(self) -> PeerId {
+        PeerId {
+            owner_id: self.owner_id,
+            id: self.id,
+        }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct PeerId(pub u32);
+impl From<PeerId> for ConnectionId {
+    fn from(peer_id: PeerId) -> Self {
+        Self {
+            owner_id: peer_id.owner_id,
+            id: peer_id.id,
+        }
+    }
+}
 
-impl fmt::Display for PeerId {
+impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}/{}", self.owner_id, self.id)
     }
 }
 
@@ -85,6 +96,7 @@ impl<T: RequestMessage> TypedEnvelope<T> {
 }
 
 pub struct Peer {
+    epoch: AtomicU32,
     pub connections: RwLock<HashMap<ConnectionId, ConnectionState>>,
     next_connection_id: AtomicU32,
 }
@@ -105,11 +117,16 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 pub const RECEIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Peer {
-    pub fn new() -> Arc<Self> {
+    pub fn new(epoch: u32) -> Arc<Self> {
         Arc::new(Self {
+            epoch: AtomicU32::new(epoch),
             connections: Default::default(),
             next_connection_id: Default::default(),
         })
+    }
+
+    pub fn epoch(&self) -> u32 {
+        self.epoch.load(SeqCst)
     }
 
     #[instrument(skip_all)]
@@ -138,7 +155,10 @@ impl Peer {
         let (mut incoming_tx, incoming_rx) = mpsc::channel(INCOMING_BUFFER_SIZE);
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
 
-        let connection_id = ConnectionId(self.next_connection_id.fetch_add(1, SeqCst));
+        let connection_id = ConnectionId {
+            owner_id: self.epoch.load(SeqCst),
+            id: self.next_connection_id.fetch_add(1, SeqCst),
+        };
         let connection_state = ConnectionState {
             outgoing_tx,
             next_message_id: Default::default(),
@@ -255,11 +275,7 @@ impl Peer {
                 let message_id = incoming.id;
                 tracing::debug!(?incoming, "incoming message future: start");
                 let _end = util::defer(move || {
-                    tracing::debug!(
-                        %connection_id,
-                        message_id,
-                        "incoming message future: end"
-                    );
+                    tracing::debug!(%connection_id, message_id, "incoming message future: end");
                 });
 
                 if let Some(responding_to) = incoming.responding_to {
@@ -306,11 +322,7 @@ impl Peer {
 
                     None
                 } else {
-                    tracing::debug!(
-                        %connection_id,
-                        message_id,
-                        "incoming message: received"
-                    );
+                    tracing::debug!(%connection_id, message_id, "incoming message: received");
                     proto::build_typed_envelope(connection_id, incoming).or_else(|| {
                         tracing::error!(
                             %connection_id,
@@ -343,7 +355,13 @@ impl Peer {
         self.connections.write().remove(&connection_id);
     }
 
-    pub fn reset(&self) {
+    pub fn reset(&self, epoch: u32) {
+        self.teardown();
+        self.next_connection_id.store(0, SeqCst);
+        self.epoch.store(epoch, SeqCst);
+    }
+
+    pub fn teardown(&self) {
         self.connections.write().clear();
     }
 
@@ -384,7 +402,7 @@ impl Peer {
                 .unbounded_send(proto::Message::Envelope(request.into_envelope(
                     message_id,
                     None,
-                    original_sender_id.map(|id| id.0),
+                    original_sender_id.map(Into::into),
                 )))
                 .map_err(|_| anyhow!("connection was closed"))?;
             Ok(())
@@ -433,7 +451,7 @@ impl Peer {
             .unbounded_send(proto::Message::Envelope(message.into_envelope(
                 message_id,
                 None,
-                Some(sender_id.0),
+                Some(sender_id.into()),
             )))?;
         Ok(())
     }
@@ -515,9 +533,9 @@ mod tests {
         let executor = cx.foreground();
 
         // create 2 clients connected to 1 server
-        let server = Peer::new();
-        let client1 = Peer::new();
-        let client2 = Peer::new();
+        let server = Peer::new(0);
+        let client1 = Peer::new(0);
+        let client2 = Peer::new(0);
 
         let (client1_to_server_conn, server_to_client_1_conn, _kill) =
             Connection::in_memory(cx.background());
@@ -609,8 +627,8 @@ mod tests {
     #[gpui::test(iterations = 50)]
     async fn test_order_of_response_and_incoming(cx: &mut TestAppContext) {
         let executor = cx.foreground();
-        let server = Peer::new();
-        let client = Peer::new();
+        let server = Peer::new(0);
+        let client = Peer::new(0);
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
@@ -707,8 +725,8 @@ mod tests {
     #[gpui::test(iterations = 50)]
     async fn test_dropping_request_before_completion(cx: &mut TestAppContext) {
         let executor = cx.foreground();
-        let server = Peer::new();
-        let client = Peer::new();
+        let server = Peer::new(0);
+        let client = Peer::new(0);
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
@@ -822,7 +840,7 @@ mod tests {
 
         let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
-        let client = Peer::new();
+        let client = Peer::new(0);
         let (connection_id, io_handler, mut incoming) =
             client.add_test_connection(client_conn, cx.background());
 
@@ -857,7 +875,7 @@ mod tests {
         let executor = cx.foreground();
         let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
-        let client = Peer::new();
+        let client = Peer::new(0);
         let (connection_id, io_handler, mut incoming) =
             client.add_test_connection(client_conn, cx.background());
         executor.spawn(io_handler).detach();

@@ -1,14 +1,16 @@
-use super::{entity_messages, messages, request_messages, ConnectionId, PeerId, TypedEnvelope};
+use super::{entity_messages, messages, request_messages, ConnectionId, TypedEnvelope};
 use anyhow::{anyhow, Result};
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message as _;
 use serde::Serialize;
 use std::any::{Any, TypeId};
-use std::{cmp, iter, mem};
+use std::fmt;
+use std::str::FromStr;
 use std::{
+    cmp,
     fmt::Debug,
-    io,
+    io, iter, mem,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -21,7 +23,7 @@ pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 's
         self,
         id: u32,
         responding_to: Option<u32>,
-        original_sender_id: Option<u32>,
+        original_sender_id: Option<PeerId>,
     ) -> Envelope;
     fn from_envelope(envelope: Envelope) -> Option<Self>;
 }
@@ -71,6 +73,66 @@ impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
 
     fn original_sender_id(&self) -> Option<PeerId> {
         self.original_sender_id
+    }
+}
+
+impl PeerId {
+    pub fn from_u64(peer_id: u64) -> Self {
+        let owner_id = (peer_id >> 32) as u32;
+        let id = peer_id as u32;
+        Self { owner_id, id }
+    }
+
+    pub fn as_u64(self) -> u64 {
+        ((self.owner_id as u64) << 32) | (self.id as u64)
+    }
+}
+
+impl Copy for PeerId {}
+
+impl Eq for PeerId {}
+
+impl Ord for PeerId {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.owner_id
+            .cmp(&other.owner_id)
+            .then_with(|| self.id.cmp(&other.id))
+    }
+}
+
+impl PartialOrd for PeerId {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::hash::Hash for PeerId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.owner_id.hash(state);
+        self.id.hash(state);
+    }
+}
+
+impl fmt::Display for PeerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.owner_id, self.id)
+    }
+}
+
+impl FromStr for PeerId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut components = s.split('/');
+        let owner_id = components
+            .next()
+            .ok_or_else(|| anyhow!("invalid peer id {:?}", s))?
+            .parse()?;
+        let id = components
+            .next()
+            .ok_or_else(|| anyhow!("invalid peer id {:?}", s))?
+            .parse()?;
+        Ok(PeerId { owner_id, id })
     }
 }
 
@@ -476,5 +538,29 @@ mod tests {
         assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
         stream.read().await.unwrap();
         assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
+    }
+
+    #[gpui::test]
+    fn test_converting_peer_id_from_and_to_u64() {
+        let peer_id = PeerId {
+            owner_id: 10,
+            id: 3,
+        };
+        assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
+        let peer_id = PeerId {
+            owner_id: u32::MAX,
+            id: 3,
+        };
+        assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
+        let peer_id = PeerId {
+            owner_id: 10,
+            id: u32::MAX,
+        };
+        assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
+        let peer_id = PeerId {
+            owner_id: u32::MAX,
+            id: u32::MAX,
+        };
+        assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
     }
 }

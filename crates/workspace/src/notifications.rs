@@ -161,8 +161,8 @@ pub mod simple_message_notification {
 
     pub struct MessageNotification {
         message: String,
-        click_action: Box<dyn Action>,
-        click_message: String,
+        click_action: Option<Box<dyn Action>>,
+        click_message: Option<String>,
     }
 
     pub enum MessageNotificationEvent {
@@ -174,6 +174,14 @@ pub mod simple_message_notification {
     }
 
     impl MessageNotification {
+        pub fn new_messsage<S: AsRef<str>>(message: S) -> MessageNotification {
+            Self {
+                message: message.as_ref().to_string(),
+                click_action: None,
+                click_message: None,
+            }
+        }
+
         pub fn new<S1: AsRef<str>, A: Action, S2: AsRef<str>>(
             message: S1,
             click_action: A,
@@ -181,8 +189,8 @@ pub mod simple_message_notification {
         ) -> Self {
             Self {
                 message: message.as_ref().to_string(),
-                click_action: Box::new(click_action) as Box<dyn Action>,
-                click_message: click_message.as_ref().to_string(),
+                click_action: Some(Box::new(click_action) as Box<dyn Action>),
+                click_message: Some(click_message.as_ref().to_string()),
             }
         }
 
@@ -198,12 +206,15 @@ pub mod simple_message_notification {
 
         fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
             let theme = cx.global::<Settings>().theme.clone();
-            let theme = &theme.update_notification;
+            let theme = &theme.simple_message_notification;
 
             enum MessageNotificationTag {}
 
-            let click_action = self.click_action.boxed_clone();
-            let click_message = self.click_message.clone();
+            let click_action = self
+                .click_action
+                .as_ref()
+                .map(|action| action.boxed_clone());
+            let click_message = self.click_message.as_ref().map(|message| message.clone());
             let message = self.message.clone();
 
             MouseEventHandler::<MessageNotificationTag>::new(0, cx, |state, cx| {
@@ -251,20 +262,28 @@ pub mod simple_message_notification {
                             )
                             .boxed(),
                     )
-                    .with_child({
+                    .with_children({
                         let style = theme.action_message.style_for(state, false);
-
-                        Text::new(click_message, style.text.clone())
-                            .contained()
-                            .with_style(style.container)
-                            .boxed()
+                        if let Some(click_message) = click_message {
+                            Some(
+                                Text::new(click_message, style.text.clone())
+                                    .contained()
+                                    .with_style(style.container)
+                                    .boxed(),
+                            )
+                        } else {
+                            None
+                        }
+                        .into_iter()
                     })
                     .contained()
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, move |_, cx| {
-                cx.dispatch_any_action(click_action.boxed_clone())
+                if let Some(click_action) = click_action.as_ref() {
+                    cx.dispatch_any_action(click_action.boxed_clone())
+                }
             })
             .boxed()
         }
@@ -274,6 +293,41 @@ pub mod simple_message_notification {
         fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool {
             match event {
                 MessageNotificationEvent::Dismiss => true,
+            }
+        }
+    }
+}
+
+pub trait NotifyResultExt {
+    type Ok;
+
+    fn notify_err(
+        self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Self::Ok>;
+}
+
+impl<T, E> NotifyResultExt for Result<T, E>
+where
+    E: std::fmt::Debug,
+{
+    type Ok = T;
+
+    fn notify_err(self, workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(err) => {
+                workspace.show_notification(0, cx, |cx| {
+                    cx.add_view(|_cx| {
+                        simple_message_notification::MessageNotification::new_messsage(format!(
+                            "Error: {:?}",
+                            err,
+                        ))
+                    })
+                });
+
+                None
             }
         }
     }

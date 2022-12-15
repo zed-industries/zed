@@ -7,6 +7,7 @@ use std::{
     net::{SocketAddr, TcpListener},
     path::Path,
 };
+use tokio::signal::unix::SignalKind;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
@@ -56,7 +57,11 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let rpc_server = collab::rpc::Server::new(state.clone(), Executor::Production);
+            let epoch = state
+                .db
+                .create_server(&state.config.zed_environment)
+                .await?;
+            let rpc_server = collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
             rpc_server.start().await?;
 
             let app = collab::api::routes(rpc_server.clone(), state.clone())
@@ -65,6 +70,18 @@ async fn main() -> Result<()> {
 
             axum::Server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .with_graceful_shutdown(async move {
+                    let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
+                        .expect("failed to listen for interrupt signal");
+                    let mut sigint = tokio::signal::unix::signal(SignalKind::interrupt())
+                        .expect("failed to listen for interrupt signal");
+                    let sigterm = sigterm.recv();
+                    let sigint = sigint.recv();
+                    futures::pin_mut!(sigterm, sigint);
+                    futures::future::select(sigterm, sigint).await;
+                    tracing::info!("Received interrupt signal");
+                    rpc_server.teardown();
+                })
                 .await?;
         }
         _ => {

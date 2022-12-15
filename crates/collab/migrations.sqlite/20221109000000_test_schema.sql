@@ -43,10 +43,12 @@ CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "room_id" INTEGER REFERENCES rooms (id) NOT NULL,
     "host_user_id" INTEGER REFERENCES users (id) NOT NULL,
-    "host_connection_id" INTEGER NOT NULL,
-    "host_connection_epoch" TEXT NOT NULL
+    "host_connection_id" INTEGER,
+    "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
+    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE
 );
-CREATE INDEX "index_projects_on_host_connection_epoch" ON "projects" ("host_connection_epoch");
+CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
+CREATE INDEX "index_projects_on_host_connection_id_and_host_connection_server_id" ON "projects" ("host_connection_id", "host_connection_server_id");
 
 CREATE TABLE "worktrees" (
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -102,34 +104,39 @@ CREATE TABLE "project_collaborators" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "connection_id" INTEGER NOT NULL,
-    "connection_epoch" TEXT NOT NULL,
+    "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
     "is_host" BOOLEAN NOT NULL
 );
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
 CREATE UNIQUE INDEX "index_project_collaborators_on_project_id_and_replica_id" ON "project_collaborators" ("project_id", "replica_id");
-CREATE INDEX "index_project_collaborators_on_connection_epoch" ON "project_collaborators" ("connection_epoch");
+CREATE INDEX "index_project_collaborators_on_connection_server_id" ON "project_collaborators" ("connection_server_id");
 CREATE INDEX "index_project_collaborators_on_connection_id" ON "project_collaborators" ("connection_id");
-CREATE UNIQUE INDEX "index_project_collaborators_on_project_id_connection_id_and_epoch" ON "project_collaborators" ("project_id", "connection_id", "connection_epoch");
+CREATE UNIQUE INDEX "index_project_collaborators_on_project_id_connection_id_and_server_id" ON "project_collaborators" ("project_id", "connection_id", "connection_server_id");
 
 CREATE TABLE "room_participants" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "room_id" INTEGER NOT NULL REFERENCES rooms (id),
     "user_id" INTEGER NOT NULL REFERENCES users (id),
     "answering_connection_id" INTEGER,
-    "answering_connection_epoch" TEXT,
+    "answering_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "answering_connection_lost" BOOLEAN NOT NULL,
     "location_kind" INTEGER,
     "location_project_id" INTEGER,
     "initial_project_id" INTEGER,
     "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
     "calling_connection_id" INTEGER NOT NULL,
-    "calling_connection_epoch" TEXT NOT NULL
+    "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
 CREATE INDEX "index_room_participants_on_room_id" ON "room_participants" ("room_id");
-CREATE INDEX "index_room_participants_on_answering_connection_epoch" ON "room_participants" ("answering_connection_epoch");
-CREATE INDEX "index_room_participants_on_calling_connection_epoch" ON "room_participants" ("calling_connection_epoch");
+CREATE INDEX "index_room_participants_on_answering_connection_server_id" ON "room_participants" ("answering_connection_server_id");
+CREATE INDEX "index_room_participants_on_calling_connection_server_id" ON "room_participants" ("calling_connection_server_id");
 CREATE INDEX "index_room_participants_on_answering_connection_id" ON "room_participants" ("answering_connection_id");
-CREATE UNIQUE INDEX "index_room_participants_on_answering_connection_id_and_answering_connection_epoch" ON "room_participants" ("answering_connection_id", "answering_connection_epoch");
+CREATE UNIQUE INDEX "index_room_participants_on_answering_connection_id_and_answering_connection_server_id" ON "room_participants" ("answering_connection_id", "answering_connection_server_id");
+
+CREATE TABLE "servers" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "environment" VARCHAR NOT NULL
+);

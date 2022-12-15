@@ -7,7 +7,7 @@ pub mod worktree;
 mod project_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
+use client::{proto, Client, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{
@@ -15,7 +15,6 @@ use futures::{
     future::Shared,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
-
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
@@ -62,6 +61,7 @@ use std::{
     },
     time::Instant,
 };
+use terminal::{Terminal, TerminalBuilder};
 use thiserror::Error;
 use util::{defer, post_inc, ResultExt, TryFutureExt as _};
 
@@ -102,11 +102,11 @@ pub struct Project {
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
     client_state: Option<ProjectClientState>,
-    collaborators: HashMap<PeerId, Collaborator>,
+    collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
     opened_buffer: (watch::Sender<()>, watch::Receiver<()>),
-    shared_buffers: HashMap<PeerId, HashSet<u64>>,
+    shared_buffers: HashMap<proto::PeerId, HashSet<u64>>,
     #[allow(clippy::type_complexity)]
     loading_buffers: HashMap<
         ProjectPath,
@@ -163,7 +163,7 @@ enum ProjectClientState {
 
 #[derive(Clone, Debug)]
 pub struct Collaborator {
-    pub peer_id: PeerId,
+    pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
 }
 
@@ -184,7 +184,7 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    CollaboratorLeft(PeerId),
+    CollaboratorLeft(proto::PeerId),
 }
 
 pub enum LanguageServerState {
@@ -554,7 +554,7 @@ impl Project {
             .await?;
         let mut collaborators = HashMap::default();
         for message in response.collaborators {
-            let collaborator = Collaborator::from_proto(message);
+            let collaborator = Collaborator::from_proto(message)?;
             collaborators.insert(collaborator.peer_id, collaborator);
         }
 
@@ -753,7 +753,7 @@ impl Project {
         }
     }
 
-    pub fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
+    pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
         &self.collaborators
     }
 
@@ -1191,6 +1191,34 @@ impl Project {
 
     pub fn is_remote(&self) -> bool {
         !self.is_local()
+    }
+
+    pub fn create_terminal(
+        &mut self,
+        working_directory: Option<PathBuf>,
+        window_id: usize,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<ModelHandle<Terminal>> {
+        if self.is_remote() {
+            return Err(anyhow!(
+                "creating terminals as a guest is not supported yet"
+            ));
+        } else {
+            let settings = cx.global::<Settings>();
+            let shell = settings.terminal_shell();
+            let envs = settings.terminal_env();
+            let scroll = settings.terminal_scroll();
+
+            TerminalBuilder::new(
+                working_directory.clone(),
+                shell,
+                envs,
+                settings.terminal_overrides.blinking.clone(),
+                scroll,
+                window_id,
+            )
+            .map(|builder| cx.add_model(|cx| builder.subscribe(cx)))
+        }
     }
 
     pub fn create_buffer(
@@ -4576,7 +4604,7 @@ impl Project {
             .take()
             .ok_or_else(|| anyhow!("empty collaborator"))?;
 
-        let collaborator = Collaborator::from_proto(collaborator);
+        let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
@@ -4593,7 +4621,10 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let peer_id = PeerId(envelope.payload.peer_id);
+            let peer_id = envelope
+                .payload
+                .peer_id
+                .ok_or_else(|| anyhow!("invalid peer id"))?;
             let replica_id = this
                 .collaborators
                 .remove(&peer_id)
@@ -5460,7 +5491,7 @@ impl Project {
     fn serialize_project_transaction_for_peer(
         &mut self,
         project_transaction: ProjectTransaction,
-        peer_id: PeerId,
+        peer_id: proto::PeerId,
         cx: &AppContext,
     ) -> proto::ProjectTransaction {
         let mut serialized_transaction = proto::ProjectTransaction {
@@ -5516,7 +5547,7 @@ impl Project {
     fn create_buffer_for_peer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        peer_id: PeerId,
+        peer_id: proto::PeerId,
         cx: &AppContext,
     ) -> u64 {
         let buffer_id = buffer.read(cx).remote_id();
@@ -5534,7 +5565,7 @@ impl Project {
 
                             client.send(proto::CreateBufferForPeer {
                                 project_id,
-                                peer_id: peer_id.0,
+                                peer_id: Some(peer_id),
                                 variant: Some(proto::create_buffer_for_peer::Variant::State(state)),
                             })?;
 
@@ -5551,7 +5582,7 @@ impl Project {
                                 let is_last = operations.is_empty();
                                 client.send(proto::CreateBufferForPeer {
                                     project_id,
-                                    peer_id: peer_id.0,
+                                    peer_id: Some(peer_id),
                                     variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
                                         proto::BufferChunk {
                                             buffer_id,
@@ -6007,11 +6038,11 @@ impl Entity for Project {
 }
 
 impl Collaborator {
-    fn from_proto(message: proto::Collaborator) -> Self {
-        Self {
-            peer_id: PeerId(message.peer_id),
+    fn from_proto(message: proto::Collaborator) -> Result<Self> {
+        Ok(Self {
+            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
             replica_id: message.replica_id as ReplicaId,
-        }
+        })
     }
 }
 

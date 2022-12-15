@@ -1,19 +1,19 @@
 use crate::{
     db::{self, NewUserParams, TestDb, UserId},
     executor::Executor,
-    rpc::{Server, RECONNECT_TIMEOUT},
+    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState,
 };
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
-    self, test::FakeHttpClient, Client, Connection, Credentials, EstablishConnectionError, PeerId,
-    User, UserStore, RECEIVE_TIMEOUT,
+    self, proto::PeerId, test::FakeHttpClient, Client, Connection, Credentials,
+    EstablishConnectionError, User, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
-    self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToOffset,
-    ToggleCodeActions, Undo,
+    self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, ExcerptRange, MultiBuffer,
+    Redo, Rename, ToOffset, ToggleCodeActions, Undo,
 };
 use fs::{FakeFs, Fs as _, HomeDir, LineEnding};
 use futures::{channel::oneshot, StreamExt as _};
@@ -22,7 +22,7 @@ use gpui::{
     TestAppContext, ViewHandle,
 };
 use language::{
-    range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
+    range_to_lsp, tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, LanguageRegistry, OffsetRangeExt, Point, PointUtf16, Rope,
 };
 use live_kit_client::MacOSDisplay;
@@ -608,7 +608,7 @@ async fn test_server_restarts(
     );
 
     // The server is torn down.
-    server.teardown();
+    server.reset().await;
 
     // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
@@ -686,7 +686,7 @@ async fn test_server_restarts(
 
     // The server finishes restarting, cleaning up stale connections.
     server.start().await.unwrap();
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    deterministic.advance_clock(CLEANUP_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -778,7 +778,7 @@ async fn test_server_restarts(
     );
 
     // The server is torn down.
-    server.teardown();
+    server.reset().await;
 
     // Users A and B have troubles reconnecting, so they leave the room.
     client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
@@ -806,7 +806,7 @@ async fn test_server_restarts(
     // The server finishes restarting, cleaning up stale connections and canceling the
     // call to user D because the room has become empty.
     server.start().await.unwrap();
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    deterministic.advance_clock(CLEANUP_TIMEOUT);
     assert!(incoming_call_d.next().await.unwrap().is_none());
 }
 
@@ -1058,17 +1058,22 @@ async fn test_share_project(
 
     let editor_b = cx_b.add_view(&window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
 
-    // TODO
-    // // Create a selection set as client B and see that selection set as client A.
-    // buffer_a
-    //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 1)
-    //     .await;
+    // Client A sees client B's selection
+    deterministic.run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        buffer
+            .snapshot()
+            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
+            .count()
+            == 1
+    });
 
     // Edit the buffer as client B and see that edit as client A.
     editor_b.update(cx_b, |editor, cx| editor.handle_input("ok, ", cx));
-    buffer_a
-        .condition(cx_a, |buffer, _| buffer.text() == "ok, b-contents")
-        .await;
+    deterministic.run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.text(), "ok, b-contents")
+    });
 
     // Client B can invite client C on a project shared by client A.
     active_call_b
@@ -1091,12 +1096,16 @@ async fn test_share_project(
         .build_remote_project(initial_project.id, cx_c)
         .await;
 
-    // TODO
-    // // Remove the selection set as client B, see those selections disappear as client A.
+    // Client B closes the editor, and client A sees client B's selections removed.
     cx_b.update(move |_| drop(editor_b));
-    // buffer_a
-    //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
-    //     .await;
+    deterministic.run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        buffer
+            .snapshot()
+            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
+            .count()
+            == 0
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -1250,13 +1259,9 @@ async fn test_host_disconnect(
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    project_a
-        .condition(cx_a, |project, _| project.collaborators().is_empty())
-        .await;
+    project_a.read_with(cx_a, |project, _| project.collaborators().is_empty());
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
-    project_b
-        .condition(cx_b, |project, _| project.is_read_only())
-        .await;
+    project_b.read_with(cx_b, |project, _| project.is_read_only());
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
@@ -1641,9 +1646,8 @@ async fn test_propagate_saves_and_fs_changes(
         .await
         .unwrap();
 
-    buffer_a
-        .condition(cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
-        .await;
+    deterministic.run_until_parked();
+    buffer_a.read_with(cx_a, |buf, _| assert_eq!(buf.text(), "i-am-c, i-am-b, "));
     buffer_a.update(cx_a, |buf, cx| {
         buf.edit([(buf.len()..buf.len(), "i-am-a")], None, cx)
     });
@@ -2297,9 +2301,8 @@ async fn test_buffer_conflict_after_save(
     });
 
     buffer_b.update(cx_b, |buf, cx| buf.save(cx)).await.unwrap();
-    buffer_b
-        .condition(cx_b, |buffer_b, _| !buffer_b.is_dirty())
-        .await;
+    cx_a.foreground().forbid_parking();
+    buffer_b.read_with(cx_b, |buffer_b, _| assert!(!buffer_b.is_dirty()));
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(!buf.has_conflict());
     });
@@ -2359,12 +2362,9 @@ async fn test_buffer_reloading(
         .save("/dir/a.txt".as_ref(), &new_contents, LineEnding::Windows)
         .await
         .unwrap();
-    buffer_b
-        .condition(cx_b, |buf, _| {
-            buf.text() == new_contents.to_string() && !buf.is_dirty()
-        })
-        .await;
+    cx_a.foreground().run_until_parked();
     buffer_b.read_with(cx_b, |buf, _| {
+        assert_eq!(buf.text(), new_contents.to_string());
         assert!(!buf.is_dirty());
         assert!(!buf.has_conflict());
         assert_eq!(buf.line_ending(), LineEnding::Windows);
@@ -2416,7 +2416,8 @@ async fn test_editing_while_guest_opens_buffer(
 
     let text = buffer_a.read_with(cx_a, |buf, _| buf.text());
     let buffer_b = buffer_b.await.unwrap();
-    buffer_b.condition(cx_b, |buf, _| buf.text() == text).await;
+    cx_a.foreground().run_until_parked();
+    buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), text));
 }
 
 #[gpui::test(iterations = 10)]
@@ -2446,9 +2447,8 @@ async fn test_leaving_worktree_while_opening_buffer(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // See that a guest has joined as client A.
-    project_a
-        .condition(cx_a, |p, _| p.collaborators().len() == 1)
-        .await;
+    cx_a.foreground().run_until_parked();
+    project_a.read_with(cx_a, |p, _| assert_eq!(p.collaborators().len(), 1));
 
     // Begin opening a buffer as client B, but leave the project before the open completes.
     let buffer_b = cx_b
@@ -2458,9 +2458,8 @@ async fn test_leaving_worktree_while_opening_buffer(
     drop(buffer_b);
 
     // See that the guest has left.
-    project_a
-        .condition(cx_a, |p, _| p.collaborators().is_empty())
-        .await;
+    cx_a.foreground().run_until_parked();
+    project_a.read_with(cx_a, |p, _| assert!(p.collaborators().is_empty()));
 }
 
 #[gpui::test(iterations = 10)]
@@ -2979,9 +2978,10 @@ async fn test_collaborating_with_completion(
     });
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    buffer_b
-        .condition(cx_b, |buffer, _| !buffer.completion_triggers().is_empty())
-        .await;
+    cx_a.foreground().run_until_parked();
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert!(!buffer.completion_triggers().is_empty())
+    });
 
     // Type a completion trigger character as the guest.
     editor_b.update(cx_b, |editor, cx| {
@@ -3043,14 +3043,13 @@ async fn test_collaborating_with_completion(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    buffer_a
-        .condition(cx_a, |buffer, _| buffer.text() == "fn main() { a. }")
-        .await;
+    cx_a.foreground().run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.text(), "fn main() { a. }")
+    });
 
     // Confirm a completion on the guest.
-    editor_b
-        .condition(cx_b, |editor, _| editor.context_menu_visible())
-        .await;
+    editor_b.read_with(cx_b, |editor, _| assert!(editor.context_menu_visible()));
     editor_b.update(cx_b, |editor, cx| {
         editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
         assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
@@ -3079,16 +3078,19 @@ async fn test_collaborating_with_completion(
     );
 
     // The additional edit is applied.
-    buffer_a
-        .condition(cx_a, |buffer, _| {
-            buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
-        })
-        .await;
-    buffer_b
-        .condition(cx_b, |buffer, _| {
-            buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
-        })
-        .await;
+    cx_a.foreground().run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "use d::SomeTrait;\nfn main() { a.first_method() }"
+        );
+    });
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "use d::SomeTrait;\nfn main() { a.first_method() }"
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -3134,9 +3136,8 @@ async fn test_reloading_buffer_manually(
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
-    buffer_a
-        .condition(cx_a, |buffer, _| buffer.text() == "let six = 6;")
-        .await;
+    cx_a.foreground().run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "let six = 6;"));
 
     client_a
         .fs
@@ -3147,12 +3148,9 @@ async fn test_reloading_buffer_manually(
         )
         .await
         .unwrap();
-    buffer_a
-        .condition(cx_a, |buffer, _| buffer.has_conflict())
-        .await;
-    buffer_b
-        .condition(cx_b, |buffer, _| buffer.has_conflict())
-        .await;
+    cx_a.foreground().run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| assert!(buffer.has_conflict()));
+    buffer_b.read_with(cx_b, |buffer, _| assert!(buffer.has_conflict()));
 
     project_b
         .update(cx_b, |project, cx| {
@@ -4178,9 +4176,8 @@ async fn test_collaborating_with_code_actions(
             cx,
         );
     });
-    editor_b
-        .condition(cx_b, |editor, _| editor.context_menu_visible())
-        .await;
+    cx_a.foreground().run_until_parked();
+    editor_b.read_with(cx_b, |editor, _| assert!(editor.context_menu_visible()));
 
     fake_language_server.remove_request_handler::<lsp::request::CodeActionRequest>();
 
@@ -5162,9 +5159,9 @@ async fn test_following(
         .insert_tree(
             "/a",
             json!({
-                "1.txt": "one",
-                "2.txt": "two",
-                "3.txt": "three",
+                "1.txt": "one\none\none",
+                "2.txt": "two\ntwo\ntwo",
+                "3.txt": "three\nthree\nthree",
             }),
         )
         .await;
@@ -5263,11 +5260,60 @@ async fn test_following(
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.activate_item(&editor_a1, cx)
     });
-    workspace_b
-        .condition(cx_b, |workspace, cx| {
-            workspace.active_item(cx).unwrap().id() == editor_b1.id()
-        })
-        .await;
+    deterministic.run_until_parked();
+    workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
+    });
+
+    // When client A opens a multibuffer, client B does so as well.
+    let multibuffer_a = cx_a.add_model(|cx| {
+        let buffer_a1 = project_a.update(cx, |project, cx| {
+            project
+                .get_open_buffer(&(worktree_id, "1.txt").into(), cx)
+                .unwrap()
+        });
+        let buffer_a2 = project_a.update(cx, |project, cx| {
+            project
+                .get_open_buffer(&(worktree_id, "2.txt").into(), cx)
+                .unwrap()
+        });
+        let mut result = MultiBuffer::new(0);
+        result.push_excerpts(
+            buffer_a1,
+            [ExcerptRange {
+                context: 0..3,
+                primary: None,
+            }],
+            cx,
+        );
+        result.push_excerpts(
+            buffer_a2,
+            [ExcerptRange {
+                context: 4..7,
+                primary: None,
+            }],
+            cx,
+        );
+        result
+    });
+    let multibuffer_editor_a = workspace_a.update(cx_a, |workspace, cx| {
+        let editor =
+            cx.add_view(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), cx));
+        workspace.add_item(Box::new(editor.clone()), cx);
+        editor
+    });
+    deterministic.run_until_parked();
+    let multibuffer_editor_b = workspace_b.read_with(cx_b, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+    assert_eq!(
+        multibuffer_editor_a.read_with(cx_a, |editor, cx| editor.text(cx)),
+        multibuffer_editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+    );
 
     // When client A navigates back and forth, client B does so as well.
     workspace_a
@@ -5275,47 +5321,52 @@ async fn test_following(
             workspace::Pane::go_back(workspace, None, cx)
         })
         .await;
-    workspace_b
-        .condition(cx_b, |workspace, cx| {
-            workspace.active_item(cx).unwrap().id() == editor_b2.id()
+    deterministic.run_until_parked();
+    workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
+    });
+
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace::Pane::go_back(workspace, None, cx)
         })
         .await;
+    deterministic.run_until_parked();
+    workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b2.id());
+    });
 
     workspace_a
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_forward(workspace, None, cx)
         })
         .await;
-    workspace_b
-        .condition(cx_b, |workspace, cx| {
-            workspace.active_item(cx).unwrap().id() == editor_b1.id()
-        })
-        .await;
+    deterministic.run_until_parked();
+    workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
+    });
 
     // Changes to client A's editor are reflected on client B.
     editor_a1.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2]));
     });
-    editor_b1
-        .condition(cx_b, |editor, cx| {
-            editor.selections.ranges(cx) == vec![1..1, 2..2]
-        })
-        .await;
+    deterministic.run_until_parked();
+    editor_b1.read_with(cx_b, |editor, cx| {
+        assert_eq!(editor.selections.ranges(cx), &[1..1, 2..2]);
+    });
 
     editor_a1.update(cx_a, |editor, cx| editor.set_text("TWO", cx));
-    editor_b1
-        .condition(cx_b, |editor, cx| editor.text(cx) == "TWO")
-        .await;
+    deterministic.run_until_parked();
+    editor_b1.read_with(cx_b, |editor, cx| assert_eq!(editor.text(cx), "TWO"));
 
     editor_a1.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
         editor.set_scroll_position(vec2f(0., 100.), cx);
     });
-    editor_b1
-        .condition(cx_b, |editor, cx| {
-            editor.selections.ranges(cx) == vec![3..3]
-        })
-        .await;
+    deterministic.run_until_parked();
+    editor_b1.read_with(cx_b, |editor, cx| {
+        assert_eq!(editor.selections.ranges(cx), &[3..3]);
+    });
 
     // After unfollowing, client B stops receiving updates from client A.
     workspace_b.update(cx_b, |workspace, cx| {
@@ -5384,13 +5435,21 @@ async fn test_following(
         .await
         .unwrap();
     deterministic.run_until_parked();
-    assert_eq!(
-        workspace_a.read_with(cx_a, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .id()),
-        editor_a1.id()
-    );
+    workspace_a.read_with(cx_a, |workspace, cx| {
+        assert_eq!(workspace.active_item(cx).unwrap().id(), editor_a1.id())
+    });
+
+    // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_item(&multibuffer_editor_b, cx)
+    });
+    deterministic.run_until_parked();
+    workspace_a.read_with(cx_a, |workspace, cx| {
+        assert_eq!(
+            workspace.active_item(cx).unwrap().id(),
+            multibuffer_editor_a.id()
+        )
+    });
 
     // Client B activates an external window again, and the previously-opened screen-sharing item
     // gets activated.
@@ -6066,7 +6125,7 @@ async fn test_random_collaboration(
                     .user_connection_ids(removed_guest_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
-                let removed_peer_id = PeerId(user_connection_ids[0].0);
+                let removed_peer_id = user_connection_ids[0].into();
                 let guest = clients.remove(guest_ix);
                 op_start_signals.remove(guest_ix);
                 server.forbid_connections();
@@ -6115,17 +6174,25 @@ async fn test_random_collaboration(
                     .user_connection_ids(user_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
-                let peer_id = PeerId(user_connection_ids[0].0);
+                let peer_id = user_connection_ids[0].into();
                 server.disconnect_client(peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 operations += 1;
             }
             30..=34 => {
                 log::info!("Simulating server restart");
-                server.teardown();
-                deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+                server.reset().await;
+                deterministic.advance_clock(RECEIVE_TIMEOUT);
                 server.start().await.unwrap();
-                deterministic.advance_clock(RECONNECT_TIMEOUT);
+                deterministic.advance_clock(CLEANUP_TIMEOUT);
+                let environment = &server.app_state.config.zed_environment;
+                let stale_room_ids = server
+                    .app_state
+                    .db
+                    .stale_room_ids(environment, server.id())
+                    .await
+                    .unwrap();
+                assert_eq!(stale_room_ids, vec![]);
             }
             _ if !op_start_signals.is_empty() => {
                 while operations < max_operations && rng.lock().gen_bool(0.7) {
@@ -6320,13 +6387,19 @@ impl TestServer {
         )
         .unwrap();
         let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
+        let epoch = app_state
+            .db
+            .create_server(&app_state.config.zed_environment)
+            .await
+            .unwrap();
         let server = Server::new(
+            epoch,
             app_state.clone(),
             Executor::Deterministic(deterministic.build_background()),
         );
         server.start().await.unwrap();
         // Advance clock to ensure the server's cleanup task is finished.
-        deterministic.advance_clock(RECONNECT_TIMEOUT);
+        deterministic.advance_clock(CLEANUP_TIMEOUT);
         Self {
             app_state,
             server,
@@ -6337,9 +6410,15 @@ impl TestServer {
         }
     }
 
-    fn teardown(&self) {
-        self.server.teardown();
+    async fn reset(&self) {
         self.app_state.db.reset();
+        let epoch = self
+            .app_state
+            .db
+            .create_server(&self.app_state.config.zed_environment)
+            .await
+            .unwrap();
+        self.server.reset(epoch);
     }
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
@@ -6429,7 +6508,7 @@ impl TestServer {
                         let connection_id = connection_id_rx.await.unwrap();
                         connection_killers
                             .lock()
-                            .insert(PeerId(connection_id.0), killed);
+                            .insert(connection_id.into(), killed);
                         Ok(client_conn)
                     }
                 })
@@ -6445,7 +6524,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: Default::default,
             initialize_workspace: |_, _, _| unimplemented!(),
-            default_item_factory: |_, _| unimplemented!(),
+            dock_default_item_factory: |_, _| unimplemented!(),
         });
 
         Project::init(&client);
@@ -7251,7 +7330,7 @@ impl TestClient {
 
 impl Drop for TestClient {
     fn drop(&mut self) {
-        self.client.tear_down();
+        self.client.teardown();
     }
 }
 

@@ -84,7 +84,7 @@ use std::{
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, Workspace, WorkspaceId};
+use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
 
@@ -467,6 +467,7 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
+    remote_id: Option<ViewId>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
     _subscriptions: Vec<Subscription>,
@@ -1108,6 +1109,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,
+            remote_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             _subscriptions: vec![
@@ -2421,7 +2423,7 @@ impl Editor {
                         let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
                             let excerpt_range = excerpt_range.to_offset(buffer);
                             buffer
-                                .edited_ranges_for_transaction(transaction)
+                                .edited_ranges_for_transaction::<usize>(transaction)
                                 .all(|range| {
                                     excerpt_range.start <= range.start
                                         && excerpt_range.end >= range.end
@@ -5883,25 +5885,36 @@ impl Editor {
     fn on_buffer_event(
         &mut self,
         _: ModelHandle<MultiBuffer>,
-        event: &language::Event,
+        event: &multi_buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited => {
+            multi_buffer::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 cx.emit(Event::BufferEdited);
             }
-            language::Event::Reparsed => cx.emit(Event::Reparsed),
-            language::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
-            language::Event::Saved => cx.emit(Event::Saved),
-            language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
-            language::Event::Reloaded => cx.emit(Event::TitleChanged),
-            language::Event::Closed => cx.emit(Event::Closed),
-            language::Event::DiagnosticsUpdated => {
+            multi_buffer::Event::ExcerptsAdded {
+                buffer,
+                predecessor,
+                excerpts,
+            } => cx.emit(Event::ExcerptsAdded {
+                buffer: buffer.clone(),
+                predecessor: *predecessor,
+                excerpts: excerpts.clone(),
+            }),
+            multi_buffer::Event::ExcerptsRemoved { ids } => {
+                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
+            }
+            multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
+            multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
+            multi_buffer::Event::Saved => cx.emit(Event::Saved),
+            multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::Closed => cx.emit(Event::Closed),
+            multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
-            _ => {}
         }
     }
 
@@ -6084,8 +6097,16 @@ impl Deref for EditorSnapshot {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    ExcerptsAdded {
+        buffer: ModelHandle<Buffer>,
+        predecessor: ExcerptId,
+        excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
+    },
+    ExcerptsRemoved {
+        ids: Vec<ExcerptId>,
+    },
     BufferEdited,
     Edited,
     Reparsed,
@@ -6093,8 +6114,12 @@ pub enum Event {
     DirtyChanged,
     Saved,
     TitleChanged,
-    SelectionsChanged { local: bool },
-    ScrollPositionChanged { local: bool },
+    SelectionsChanged {
+        local: bool,
+    },
+    ScrollPositionChanged {
+        local: bool,
+    },
     Closed,
 }
 

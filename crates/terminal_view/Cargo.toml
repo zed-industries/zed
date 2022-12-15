@@ -1,21 +1,25 @@
 [package]
-name = "terminal"
+name = "terminal_view"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/terminal.rs"
+path = "src/terminal_view.rs"
 doctest = false
 
-
 [dependencies]
+context_menu = { path = "../context_menu" }
+editor = { path = "../editor" }
+language = { path = "../language" }
 gpui = { path = "../gpui" }
+project = { path = "../project" }
 settings = { path = "../settings" }
-db = { path = "../db" }
 theme = { path = "../theme" }
 util = { path = "../util" }
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "a51dbe25d67e84d6ed4261e640d3954fbdd9be45" }
+workspace = { path = "../workspace" }
+db = { path = "../db" }
 procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "5cd757e5f2eb039ed0c6bb6512223e69d5efc64d", default-features = false }
+terminal = { path = "../terminal" }
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2.5"
 mio-extras = "2.0.6"
@@ -30,5 +34,11 @@ thiserror = "1.0"
 lazy_static = "1.4.0"
 serde = { version = "1.0", features = ["derive"] }
 
+
+
 [dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+client = { path = "../client", features = ["test-support"]}
+project = { path = "../project", features = ["test-support"]}
+workspace = { path = "../workspace", features = ["test-support"] }
 rand = "0.8.5"

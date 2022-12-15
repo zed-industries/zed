@@ -32,13 +32,15 @@ use settings::{
 use smol::process::Command;
 use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
-use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
+use terminal_view::{get_working_directory, TerminalView};
 
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::{self, item::ItemHandle, AppState, NewFile, OpenPaths, Workspace};
+use workspace::{
+    self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
+};
 use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
@@ -119,7 +121,7 @@ fn main() {
         diagnostics::init(cx);
         search::init(cx);
         vim::init(cx);
-        terminal::init(cx);
+        terminal_view::init(cx);
         theme_testbench::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
@@ -150,7 +152,7 @@ fn main() {
             fs,
             build_window_options,
             initialize_workspace,
-            default_item_factory,
+            dock_default_item_factory,
         });
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
@@ -591,10 +593,10 @@ async fn handle_cli_connection(
     }
 }
 
-pub fn default_item_factory(
+pub fn dock_default_item_factory(
     workspace: &mut Workspace,
     cx: &mut ViewContext<Workspace>,
-) -> Box<dyn ItemHandle> {
+) -> Option<Box<dyn ItemHandle>> {
     let strategy = cx
         .global::<Settings>()
         .terminal_overrides
@@ -604,8 +606,15 @@ pub fn default_item_factory(
 
     let working_directory = get_working_directory(workspace, cx, strategy);
 
-    let terminal_handle = cx.add_view(|cx| {
-        TerminalContainer::new(working_directory, false, workspace.database_id(), cx)
-    });
-    Box::new(terminal_handle)
+    let window_id = cx.window_id();
+    let terminal = workspace
+        .project()
+        .update(cx, |project, cx| {
+            project.create_terminal(working_directory, window_id, cx)
+        })
+        .notify_err(workspace, cx)?;
+
+    let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
+
+    Some(Box::new(terminal_view))
 }

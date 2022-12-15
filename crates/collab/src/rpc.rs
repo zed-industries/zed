@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, Database, ProjectId, RoomId, User, UserId},
+    db::{self, Database, ProjectId, RoomId, ServerId, User, UserId},
     executor::Executor,
     AppState, Result,
 };
@@ -57,7 +57,8 @@ use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
-pub const RECONNECT_TIMEOUT: Duration = rpc::RECEIVE_TIMEOUT;
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -137,6 +138,7 @@ impl Deref for DbHandle {
 }
 
 pub struct Server {
+    id: parking_lot::Mutex<ServerId>,
     peer: Arc<Peer>,
     pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
@@ -167,9 +169,10 @@ where
 }
 
 impl Server {
-    pub fn new(app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
+    pub fn new(id: ServerId, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
         let mut server = Self {
-            peer: Peer::new(),
+            id: parking_lot::Mutex::new(id),
+            peer: Peer::new(id.0 as u32),
             app_state,
             executor,
             connection_pool: Default::default(),
@@ -238,96 +241,144 @@ impl Server {
     }
 
     pub async fn start(&self) -> Result<()> {
-        self.app_state.db.delete_stale_projects().await?;
-        let db = self.app_state.db.clone();
+        let server_id = *self.id.lock();
+        let app_state = self.app_state.clone();
         let peer = self.peer.clone();
-        let timeout = self.executor.sleep(RECONNECT_TIMEOUT);
+        let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
         let pool = self.connection_pool.clone();
         let live_kit_client = self.app_state.live_kit_client.clone();
-        self.executor.spawn_detached(async move {
-            timeout.await;
-            if let Some(room_ids) = db.outdated_room_ids().await.trace_err() {
-                for room_id in room_ids {
-                    let mut contacts_to_update = HashSet::default();
-                    let mut canceled_calls_to_user_ids = Vec::new();
-                    let mut live_kit_room = String::new();
-                    let mut delete_live_kit_room = false;
 
-                    if let Ok(mut refreshed_room) = db.refresh_room(room_id).await {
-                        room_updated(&refreshed_room.room, &peer);
-                        contacts_to_update
-                            .extend(refreshed_room.stale_participant_user_ids.iter().copied());
-                        contacts_to_update
-                            .extend(refreshed_room.canceled_calls_to_user_ids.iter().copied());
-                        canceled_calls_to_user_ids =
-                            mem::take(&mut refreshed_room.canceled_calls_to_user_ids);
-                        live_kit_room = mem::take(&mut refreshed_room.room.live_kit_room);
-                        delete_live_kit_room = refreshed_room.room.participants.is_empty();
-                    }
+        let span = info_span!("start server");
+        let span_enter = span.enter();
 
-                    {
-                        let pool = pool.lock();
-                        for canceled_user_id in canceled_calls_to_user_ids {
-                            for connection_id in pool.user_connection_ids(canceled_user_id) {
-                                peer.send(
-                                    connection_id,
-                                    proto::CallCanceled {
-                                        room_id: room_id.to_proto(),
-                                    },
-                                )
-                                .trace_err();
+        tracing::info!("begin deleting stale projects");
+        app_state
+            .db
+            .delete_stale_projects(&app_state.config.zed_environment, server_id)
+            .await?;
+        tracing::info!("finish deleting stale projects");
+
+        drop(span_enter);
+        self.executor.spawn_detached(
+            async move {
+                tracing::info!("waiting for cleanup timeout");
+                timeout.await;
+                tracing::info!("cleanup timeout expired, retrieving stale rooms");
+                if let Some(room_ids) = app_state
+                    .db
+                    .stale_room_ids(&app_state.config.zed_environment, server_id)
+                    .await
+                    .trace_err()
+                {
+                    tracing::info!(stale_room_count = room_ids.len(), "retrieved stale rooms");
+                    for room_id in room_ids {
+                        let mut contacts_to_update = HashSet::default();
+                        let mut canceled_calls_to_user_ids = Vec::new();
+                        let mut live_kit_room = String::new();
+                        let mut delete_live_kit_room = false;
+
+                        if let Ok(mut refreshed_room) =
+                            app_state.db.refresh_room(room_id, server_id).await
+                        {
+                            tracing::info!(
+                                room_id = room_id.0,
+                                new_participant_count = refreshed_room.room.participants.len(),
+                                "refreshed room"
+                            );
+                            room_updated(&refreshed_room.room, &peer);
+                            contacts_to_update
+                                .extend(refreshed_room.stale_participant_user_ids.iter().copied());
+                            contacts_to_update
+                                .extend(refreshed_room.canceled_calls_to_user_ids.iter().copied());
+                            canceled_calls_to_user_ids =
+                                mem::take(&mut refreshed_room.canceled_calls_to_user_ids);
+                            live_kit_room = mem::take(&mut refreshed_room.room.live_kit_room);
+                            delete_live_kit_room = refreshed_room.room.participants.is_empty();
+                        }
+
+                        {
+                            let pool = pool.lock();
+                            for canceled_user_id in canceled_calls_to_user_ids {
+                                for connection_id in pool.user_connection_ids(canceled_user_id) {
+                                    peer.send(
+                                        connection_id,
+                                        proto::CallCanceled {
+                                            room_id: room_id.to_proto(),
+                                        },
+                                    )
+                                    .trace_err();
+                                }
                             }
                         }
-                    }
 
-                    for user_id in contacts_to_update {
-                        let busy = db.is_user_busy(user_id).await.trace_err();
-                        let contacts = db.get_contacts(user_id).await.trace_err();
-                        if let Some((busy, contacts)) = busy.zip(contacts) {
-                            let pool = pool.lock();
-                            let updated_contact = contact_for_user(user_id, false, busy, &pool);
-                            for contact in contacts {
-                                if let db::Contact::Accepted {
-                                    user_id: contact_user_id,
-                                    ..
-                                } = contact
-                                {
-                                    for contact_conn_id in pool.user_connection_ids(contact_user_id)
+                        for user_id in contacts_to_update {
+                            let busy = app_state.db.is_user_busy(user_id).await.trace_err();
+                            let contacts = app_state.db.get_contacts(user_id).await.trace_err();
+                            if let Some((busy, contacts)) = busy.zip(contacts) {
+                                let pool = pool.lock();
+                                let updated_contact = contact_for_user(user_id, false, busy, &pool);
+                                for contact in contacts {
+                                    if let db::Contact::Accepted {
+                                        user_id: contact_user_id,
+                                        ..
+                                    } = contact
                                     {
-                                        peer.send(
-                                            contact_conn_id,
-                                            proto::UpdateContacts {
-                                                contacts: vec![updated_contact.clone()],
-                                                remove_contacts: Default::default(),
-                                                incoming_requests: Default::default(),
-                                                remove_incoming_requests: Default::default(),
-                                                outgoing_requests: Default::default(),
-                                                remove_outgoing_requests: Default::default(),
-                                            },
-                                        )
-                                        .trace_err();
+                                        for contact_conn_id in
+                                            pool.user_connection_ids(contact_user_id)
+                                        {
+                                            peer.send(
+                                                contact_conn_id,
+                                                proto::UpdateContacts {
+                                                    contacts: vec![updated_contact.clone()],
+                                                    remove_contacts: Default::default(),
+                                                    incoming_requests: Default::default(),
+                                                    remove_incoming_requests: Default::default(),
+                                                    outgoing_requests: Default::default(),
+                                                    remove_outgoing_requests: Default::default(),
+                                                },
+                                            )
+                                            .trace_err();
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    if let Some(live_kit) = live_kit_client.as_ref() {
-                        if delete_live_kit_room {
-                            live_kit.delete_room(live_kit_room).await.trace_err();
+                        if let Some(live_kit) = live_kit_client.as_ref() {
+                            if delete_live_kit_room {
+                                live_kit.delete_room(live_kit_room).await.trace_err();
+                            }
                         }
                     }
                 }
+
+                app_state
+                    .db
+                    .delete_stale_servers(server_id, &app_state.config.zed_environment)
+                    .await
+                    .trace_err();
             }
-        });
+            .instrument(span),
+        );
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn teardown(&self) {
-        self.peer.reset();
+        self.peer.teardown();
         self.connection_pool.lock().reset();
         let _ = self.teardown.send(());
+    }
+
+    #[cfg(test)]
+    pub fn reset(&self, id: ServerId) {
+        self.teardown();
+        *self.id.lock() = id;
+        self.peer.reset(id.0 as u32);
+    }
+
+    #[cfg(test)]
+    pub fn id(&self) -> ServerId {
+        *self.id.lock()
     }
 
     fn add_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
@@ -438,7 +489,7 @@ impl Server {
                 });
 
             tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
-            this.peer.send(connection_id, proto::Hello { peer_id: connection_id.0 })?;
+            this.peer.send(connection_id, proto::Hello { peer_id: Some(connection_id.into()) })?;
             tracing::info!(%user_id, %login, %connection_id, %address, "sent hello message");
 
             if let Some(send_connection_id) = send_connection_id.take() {
@@ -769,7 +820,7 @@ async fn sign_out(
                 .is_user_online(session.user_id)
             {
                 let db = session.db().await;
-                if let Some(room) = db.decline_call(None, session.user_id).await.trace_err() {
+                if let Some(room) = db.decline_call(None, session.user_id).await.trace_err().flatten() {
                     room_updated(&room, &session.peer);
                 }
             }
@@ -973,7 +1024,7 @@ async fn cancel_call(
         let room = session
             .db()
             .await
-            .cancel_call(Some(room_id), session.connection_id, called_user_id)
+            .cancel_call(room_id, session.connection_id, called_user_id)
             .await?;
         room_updated(&room, &session.peer);
     }
@@ -1006,7 +1057,8 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
             .db()
             .await
             .decline_call(Some(room_id), session.user_id)
-            .await?;
+            .await?
+            .ok_or_else(|| anyhow!("failed to decline call"))?;
         room_updated(&room, &session.peer);
     }
 
@@ -1108,12 +1160,18 @@ async fn join_project(
     let collaborators = project
         .collaborators
         .iter()
-        .filter(|collaborator| collaborator.connection_id != session.connection_id.0 as i32)
-        .map(|collaborator| proto::Collaborator {
-            peer_id: collaborator.connection_id as u32,
-            replica_id: collaborator.replica_id.0 as u32,
-            user_id: collaborator.user_id.to_proto(),
+        .map(|collaborator| {
+            let peer_id = proto::PeerId {
+                owner_id: collaborator.connection_server_id.0 as u32,
+                id: collaborator.connection_id as u32,
+            };
+            proto::Collaborator {
+                peer_id: Some(peer_id),
+                replica_id: collaborator.replica_id.0 as u32,
+                user_id: collaborator.user_id.to_proto(),
+            }
         })
+        .filter(|collaborator| collaborator.peer_id != Some(session.connection_id.into()))
         .collect::<Vec<_>>();
     let worktrees = project
         .worktrees
@@ -1130,11 +1188,11 @@ async fn join_project(
         session
             .peer
             .send(
-                ConnectionId(collaborator.peer_id),
+                collaborator.peer_id.unwrap().into(),
                 proto::AddProjectCollaborator {
                     project_id: project_id.to_proto(),
                     collaborator: Some(proto::Collaborator {
-                        peer_id: session.connection_id.0,
+                        peer_id: Some(session.connection_id.into()),
                         replica_id: replica_id.0 as u32,
                         user_id: guest_user_id.to_proto(),
                     }),
@@ -1355,13 +1413,14 @@ where
             .await
             .project_collaborators(project_id, session.connection_id)
             .await?;
-        ConnectionId(
-            collaborators
-                .iter()
-                .find(|collaborator| collaborator.is_host)
-                .ok_or_else(|| anyhow!("host not found"))?
-                .connection_id as u32,
-        )
+        let host = collaborators
+            .iter()
+            .find(|collaborator| collaborator.is_host)
+            .ok_or_else(|| anyhow!("host not found"))?;
+        ConnectionId {
+            owner_id: host.connection_server_id.0 as u32,
+            id: host.connection_id as u32,
+        }
     };
 
     let payload = session
@@ -1389,7 +1448,10 @@ async fn save_buffer(
             .iter()
             .find(|collaborator| collaborator.is_host)
             .ok_or_else(|| anyhow!("host not found"))?;
-        ConnectionId(host.connection_id as u32)
+        ConnectionId {
+            owner_id: host.connection_server_id.0 as u32,
+            id: host.connection_id as u32,
+        }
     };
     let response_payload = session
         .peer
@@ -1401,11 +1463,17 @@ async fn save_buffer(
         .await
         .project_collaborators(project_id, session.connection_id)
         .await?;
-    collaborators
-        .retain(|collaborator| collaborator.connection_id != session.connection_id.0 as i32);
-    let project_connection_ids = collaborators
-        .iter()
-        .map(|collaborator| ConnectionId(collaborator.connection_id as u32));
+    collaborators.retain(|collaborator| {
+        let collaborator_connection = ConnectionId {
+            owner_id: collaborator.connection_server_id.0 as u32,
+            id: collaborator.connection_id as u32,
+        };
+        collaborator_connection != session.connection_id
+    });
+    let project_connection_ids = collaborators.iter().map(|collaborator| ConnectionId {
+        owner_id: collaborator.connection_server_id.0 as u32,
+        id: collaborator.connection_id as u32,
+    });
     broadcast(host_connection_id, project_connection_ids, |conn_id| {
         session
             .peer
@@ -1419,11 +1487,10 @@ async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
     session: Session,
 ) -> Result<()> {
-    session.peer.forward_send(
-        session.connection_id,
-        ConnectionId(request.peer_id),
-        request,
-    )?;
+    let peer_id = request.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?;
+    session
+        .peer
+        .forward_send(session.connection_id, peer_id.into(), request)?;
     Ok(())
 }
 
@@ -1516,7 +1583,10 @@ async fn follow(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let leader_id = ConnectionId(request.leader_id);
+    let leader_id = request
+        .leader_id
+        .ok_or_else(|| anyhow!("invalid leader id"))?
+        .into();
     let follower_id = session.connection_id;
     {
         let project_connection_ids = session
@@ -1536,14 +1606,17 @@ async fn follow(
         .await?;
     response_payload
         .views
-        .retain(|view| view.leader_id != Some(follower_id.0));
+        .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
     Ok(())
 }
 
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let leader_id = ConnectionId(request.leader_id);
+    let leader_id = request
+        .leader_id
+        .ok_or_else(|| anyhow!("invalid leader id"))?
+        .into();
     let project_connection_ids = session
         .db()
         .await
@@ -1572,12 +1645,16 @@ async fn update_followers(request: proto::UpdateFollowers, session: Session) -> 
         proto::update_followers::Variant::UpdateView(payload) => payload.leader_id,
         proto::update_followers::Variant::UpdateActiveView(payload) => payload.leader_id,
     });
-    for follower_id in &request.follower_ids {
-        let follower_id = ConnectionId(*follower_id);
-        if project_connection_ids.contains(&follower_id) && Some(follower_id.0) != leader_id {
-            session
-                .peer
-                .forward_send(session.connection_id, follower_id, request.clone())?;
+    for follower_peer_id in request.follower_ids.iter().copied() {
+        let follower_connection_id = follower_peer_id.into();
+        if project_connection_ids.contains(&follower_connection_id)
+            && Some(follower_peer_id) != leader_id
+        {
+            session.peer.forward_send(
+                session.connection_id,
+                follower_connection_id,
+                request.clone(),
+            )?;
         }
     }
     Ok(())
@@ -1892,13 +1969,19 @@ fn contact_for_user(
 
 fn room_updated(room: &proto::Room, peer: &Peer) {
     for participant in &room.participants {
-        peer.send(
-            ConnectionId(participant.peer_id),
-            proto::RoomUpdated {
-                room: Some(room.clone()),
-            },
-        )
-        .trace_err();
+        if let Some(peer_id) = participant
+            .peer_id
+            .ok_or_else(|| anyhow!("invalid participant peer id"))
+            .trace_err()
+        {
+            peer.send(
+                peer_id.into(),
+                proto::RoomUpdated {
+                    room: Some(room.clone()),
+                },
+            )
+            .trace_err();
+        }
     }
 }
 
@@ -1943,8 +2026,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     let canceled_calls_to_user_ids;
     let live_kit_room;
     let delete_live_kit_room;
-    {
-        let mut left_room = session.db().await.leave_room(session.connection_id).await?;
+    if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
         contacts_to_update.insert(session.user_id);
 
         for project in left_room.left_projects.values() {
@@ -1956,6 +2038,8 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
         canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
         delete_live_kit_room = left_room.room.participants.is_empty();
+    } else {
+        return Ok(());
     }
 
     {
@@ -2013,7 +2097,7 @@ fn project_left(project: &db::LeftProject, session: &Session) {
                     *connection_id,
                     proto::RemoveProjectCollaborator {
                         project_id: project.id.to_proto(),
-                        peer_id: session.connection_id.0,
+                        peer_id: Some(session.connection_id.into()),
                     },
                 )
                 .trace_err();

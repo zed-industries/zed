@@ -410,6 +410,8 @@ test_both_dbs!(
     test_project_count_sqlite,
     db,
     {
+        let owner_id = db.create_server("test").await.unwrap().0 as u32;
+
         let user1 = db
             .create_user(
                 &format!("admin@example.com"),
@@ -436,36 +438,44 @@ test_both_dbs!(
             .unwrap();
 
         let room_id = RoomId::from_proto(
-            db.create_room(user1.user_id, ConnectionId(0), "")
+            db.create_room(user1.user_id, ConnectionId { owner_id, id: 0 }, "")
                 .await
                 .unwrap()
                 .id,
         );
-        db.call(room_id, user1.user_id, ConnectionId(0), user2.user_id, None)
-            .await
-            .unwrap();
-        db.join_room(room_id, user2.user_id, ConnectionId(1))
+        db.call(
+            room_id,
+            user1.user_id,
+            ConnectionId { owner_id, id: 0 },
+            user2.user_id,
+            None,
+        )
+        .await
+        .unwrap();
+        db.join_room(room_id, user2.user_id, ConnectionId { owner_id, id: 1 })
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
-        db.share_project(room_id, ConnectionId(1), &[])
+        db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[])
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
 
-        db.share_project(room_id, ConnectionId(1), &[])
+        db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[])
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
         // Projects shared by admins aren't counted.
-        db.share_project(room_id, ConnectionId(0), &[])
+        db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[])
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
-        db.leave_room(ConnectionId(1)).await.unwrap();
+        db.leave_room(ConnectionId { owner_id, id: 1 })
+            .await
+            .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
     }
 );

@@ -2,7 +2,7 @@ use std::{mem, sync::Arc};
 
 use crate::contacts_popover;
 use call::ActiveCall;
-use client::{Contact, PeerId, User, UserStore};
+use client::{proto::PeerId, Contact, User, UserStore};
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -465,7 +465,7 @@ impl ContactList {
                     room.remote_participants()
                         .iter()
                         .map(|(peer_id, participant)| StringMatchCandidate {
-                            id: peer_id.0 as usize,
+                            id: peer_id.as_u64() as usize,
                             string: participant.user.github_login.clone(),
                             char_bag: participant.user.github_login.chars().collect(),
                         }),
@@ -479,7 +479,7 @@ impl ContactList {
                 executor.clone(),
             ));
             for mat in matches {
-                let peer_id = PeerId(mat.candidate_id as u32);
+                let peer_id = PeerId::from_u64(mat.candidate_id as u64);
                 let participant = &room.remote_participants()[&peer_id];
                 participant_entries.push(ContactEntry::CallParticipant {
                     user: participant.user.clone(),
@@ -881,75 +881,80 @@ impl ContactList {
         let baseline_offset =
             row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
-        MouseEventHandler::<OpenSharedScreen>::new(peer_id.0 as usize, cx, |mouse_state, _| {
-            let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
-            let row = theme.project_row.style_for(mouse_state, is_selected);
+        MouseEventHandler::<OpenSharedScreen>::new(
+            peer_id.as_u64() as usize,
+            cx,
+            |mouse_state, _| {
+                let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
+                let row = theme.project_row.style_for(mouse_state, is_selected);
 
-            Flex::row()
-                .with_child(
-                    Stack::new()
-                        .with_child(
-                            Canvas::new(move |bounds, _, cx| {
-                                let start_x = bounds.min_x() + (bounds.width() / 2.)
-                                    - (tree_branch.width / 2.);
-                                let end_x = bounds.max_x();
-                                let start_y = bounds.min_y();
-                                let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+                Flex::row()
+                    .with_child(
+                        Stack::new()
+                            .with_child(
+                                Canvas::new(move |bounds, _, cx| {
+                                    let start_x = bounds.min_x() + (bounds.width() / 2.)
+                                        - (tree_branch.width / 2.);
+                                    let end_x = bounds.max_x();
+                                    let start_y = bounds.min_y();
+                                    let end_y =
+                                        bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                                cx.scene.push_quad(gpui::Quad {
-                                    bounds: RectF::from_points(
-                                        vec2f(start_x, start_y),
-                                        vec2f(
-                                            start_x + tree_branch.width,
-                                            if is_last { end_y } else { bounds.max_y() },
+                                    cx.scene.push_quad(gpui::Quad {
+                                        bounds: RectF::from_points(
+                                            vec2f(start_x, start_y),
+                                            vec2f(
+                                                start_x + tree_branch.width,
+                                                if is_last { end_y } else { bounds.max_y() },
+                                            ),
                                         ),
-                                    ),
-                                    background: Some(tree_branch.color),
-                                    border: gpui::Border::default(),
-                                    corner_radius: 0.,
-                                });
-                                cx.scene.push_quad(gpui::Quad {
-                                    bounds: RectF::from_points(
-                                        vec2f(start_x, end_y),
-                                        vec2f(end_x, end_y + tree_branch.width),
-                                    ),
-                                    background: Some(tree_branch.color),
-                                    border: gpui::Border::default(),
-                                    corner_radius: 0.,
-                                });
-                            })
+                                        background: Some(tree_branch.color),
+                                        border: gpui::Border::default(),
+                                        corner_radius: 0.,
+                                    });
+                                    cx.scene.push_quad(gpui::Quad {
+                                        bounds: RectF::from_points(
+                                            vec2f(start_x, end_y),
+                                            vec2f(end_x, end_y + tree_branch.width),
+                                        ),
+                                        background: Some(tree_branch.color),
+                                        border: gpui::Border::default(),
+                                        corner_radius: 0.,
+                                    });
+                                })
+                                .boxed(),
+                            )
+                            .constrained()
+                            .with_width(host_avatar_height)
                             .boxed(),
-                        )
-                        .constrained()
-                        .with_width(host_avatar_height)
-                        .boxed(),
-                )
-                .with_child(
-                    Svg::new("icons/disable_screen_sharing_12.svg")
-                        .with_color(row.icon.color)
-                        .constrained()
-                        .with_width(row.icon.width)
-                        .aligned()
-                        .left()
-                        .contained()
-                        .with_style(row.icon.container)
-                        .boxed(),
-                )
-                .with_child(
-                    Label::new("Screen".into(), row.name.text.clone())
-                        .aligned()
-                        .left()
-                        .contained()
-                        .with_style(row.name.container)
-                        .flex(1., false)
-                        .boxed(),
-                )
-                .constrained()
-                .with_height(theme.row_height)
-                .contained()
-                .with_style(row.container)
-                .boxed()
-        })
+                    )
+                    .with_child(
+                        Svg::new("icons/disable_screen_sharing_12.svg")
+                            .with_color(row.icon.color)
+                            .constrained()
+                            .with_width(row.icon.width)
+                            .aligned()
+                            .left()
+                            .contained()
+                            .with_style(row.icon.container)
+                            .boxed(),
+                    )
+                    .with_child(
+                        Label::new("Screen".into(), row.name.text.clone())
+                            .aligned()
+                            .left()
+                            .contained()
+                            .with_style(row.name.container)
+                            .flex(1., false)
+                            .boxed(),
+                    )
+                    .constrained()
+                    .with_height(theme.row_height)
+                    .contained()
+                    .with_style(row.container)
+                    .boxed()
+            },
+        )
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, cx| {
             cx.dispatch_action(OpenSharedScreen { peer_id });

@@ -6,7 +6,10 @@ macro_rules! messages {
                 $(Some(envelope::Payload::$name(payload)) => {
                     Some(Box::new(TypedEnvelope {
                         sender_id,
-                        original_sender_id: envelope.original_sender_id.map(PeerId),
+                        original_sender_id: envelope.original_sender_id.map(|original_sender| PeerId {
+                            owner_id: original_sender.owner_id,
+                            id: original_sender.id
+                        }),
                         message_id: envelope.id,
                         payload,
                     }))
@@ -24,7 +27,7 @@ macro_rules! messages {
                     self,
                     id: u32,
                     responding_to: Option<u32>,
-                    original_sender_id: Option<u32>,
+                    original_sender_id: Option<PeerId>,
                 ) -> Envelope {
                     Envelope {
                         id,

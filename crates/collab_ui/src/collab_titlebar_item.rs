@@ -1,6 +1,6 @@
 use crate::{contact_notification::ContactNotification, contacts_popover};
 use call::{ActiveCall, ParticipantLocation};
-use client::{Authenticate, ContactEventKind, PeerId, User, UserStore};
+use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
 use gpui::{
@@ -474,7 +474,7 @@ impl CollabTitlebarItem {
                         cx.dispatch_action(ToggleFollow(peer_id))
                     })
                     .with_tooltip::<ToggleFollow, _>(
-                        peer_id.0 as usize,
+                        peer_id.as_u64() as usize,
                         if is_followed {
                             format!("Unfollow {}", peer_github_login)
                         } else {
@@ -487,22 +487,24 @@ impl CollabTitlebarItem {
                     .boxed()
             } else if let ParticipantLocation::SharedProject { project_id } = location {
                 let user_id = user.id;
-                MouseEventHandler::<JoinProject>::new(peer_id.0 as usize, cx, move |_, _| content)
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, cx| {
-                        cx.dispatch_action(JoinProject {
-                            project_id,
-                            follow_user_id: user_id,
-                        })
+                MouseEventHandler::<JoinProject>::new(peer_id.as_u64() as usize, cx, move |_, _| {
+                    content
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(JoinProject {
+                        project_id,
+                        follow_user_id: user_id,
                     })
-                    .with_tooltip::<JoinProject, _>(
-                        peer_id.0 as usize,
-                        format!("Follow {} into external project", peer_github_login),
-                        Some(Box::new(FollowNextCollaborator)),
-                        theme.tooltip.clone(),
-                        cx,
-                    )
-                    .boxed()
+                })
+                .with_tooltip::<JoinProject, _>(
+                    peer_id.as_u64() as usize,
+                    format!("Follow {} into external project", peer_github_login),
+                    Some(Box::new(FollowNextCollaborator)),
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .boxed()
             } else {
                 content
             }

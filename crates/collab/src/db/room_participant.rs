@@ -1,4 +1,4 @@
-use super::{ProjectId, RoomId, RoomParticipantId, UserId};
+use super::{ProjectId, RoomId, RoomParticipantId, ServerId, UserId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -9,14 +9,14 @@ pub struct Model {
     pub room_id: RoomId,
     pub user_id: UserId,
     pub answering_connection_id: Option<i32>,
-    pub answering_connection_epoch: Option<Uuid>,
+    pub answering_connection_server_id: Option<ServerId>,
     pub answering_connection_lost: bool,
     pub location_kind: Option<i32>,
     pub location_project_id: Option<ProjectId>,
     pub initial_project_id: Option<ProjectId>,
     pub calling_user_id: UserId,
     pub calling_connection_id: i32,
-    pub calling_connection_epoch: Uuid,
+    pub calling_connection_server_id: Option<ServerId>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

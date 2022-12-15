@@ -823,6 +823,7 @@ dependencies = [
  "futures 0.3.25",
  "gpui",
  "live_kit_client",
+ "log",
  "media",
  "postage",
  "project",
@@ -1130,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -4463,6 +4464,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
+ "terminal",
  "text",
  "thiserror",
  "toml",
@@ -6260,6 +6262,32 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "db",
+ "dirs 4.0.0",
+ "futures 0.3.25",
+ "gpui",
+ "itertools",
+ "lazy_static",
+ "libc",
+ "mio-extras",
+ "ordered-float",
+ "procinfo",
+ "rand 0.8.5",
+ "serde",
+ "settings",
+ "shellexpand",
+ "smallvec",
+ "smol",
+ "theme",
+ "thiserror",
+ "util",
+]
+
+[[package]]
+name = "terminal_view"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "client",
  "context_menu",
  "db",
@@ -6281,6 +6309,7 @@ dependencies = [
  "shellexpand",
  "smallvec",
  "smol",
+ "terminal",
  "theme",
  "thiserror",
  "util",
@@ -8166,7 +8195,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
- "terminal",
+ "terminal_view",
  "text",
  "theme",
  "theme_selector",

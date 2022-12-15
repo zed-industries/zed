@@ -1,9 +1,18 @@
+use crate::{
+    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
+    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
+    Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+    FORMAT_TIMEOUT,
+};
 use anyhow::{anyhow, Context, Result};
+use collections::HashSet;
+use futures::future::try_join_all;
 use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
+use language::proto::serialize_anchor as serialize_text_anchor;
 use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
 use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
@@ -13,97 +22,136 @@ use std::{
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
+    iter,
     ops::Range,
     path::{Path, PathBuf},
 };
 use text::Selection;
 use util::{ResultExt, TryFutureExt};
+use workspace::item::FollowableItemHandle;
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, Workspace, WorkspaceId,
-};
-
-use crate::{
-    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
-    Event, ExcerptId, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
-    FORMAT_TIMEOUT,
+    ItemId, ItemNavHistory, Pane, StatusItemView, ToolbarItemLocation, ViewId, Workspace,
+    WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
+    fn remote_id(&self) -> Option<ViewId> {
+        self.remote_id
+    }
+
     fn from_state_proto(
         pane: ViewHandle<workspace::Pane>,
         project: ModelHandle<Project>,
+        remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>> {
-        let state = if matches!(state, Some(proto::view::Variant::Editor(_))) {
-            if let Some(proto::view::Variant::Editor(state)) = state.take() {
-                state
-            } else {
-                unreachable!()
-            }
-        } else {
-            return None;
-        };
+        let Some(proto::view::Variant::Editor(_)) = state else { return None };
+        let Some(proto::view::Variant::Editor(state)) = state.take() else { unreachable!() };
 
-        let buffer = project.update(cx, |project, cx| {
-            project.open_buffer_by_id(state.buffer_id, cx)
+        let client = project.read(cx).client();
+        let replica_id = project.read(cx).replica_id();
+        let buffer_ids = state
+            .excerpts
+            .iter()
+            .map(|excerpt| excerpt.buffer_id)
+            .collect::<HashSet<_>>();
+        let buffers = project.update(cx, |project, cx| {
+            buffer_ids
+                .iter()
+                .map(|id| project.open_buffer_by_id(*id, cx))
+                .collect::<Vec<_>>()
         });
+
         Some(cx.spawn(|mut cx| async move {
-            let buffer = buffer.await?;
-            let editor = pane
-                .read_with(&cx, |pane, cx| {
-                    pane.items_of_type::<Self>().find(|editor| {
-                        editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffer)
-                    })
+            let mut buffers = futures::future::try_join_all(buffers).await?;
+            let editor = pane.read_with(&cx, |pane, cx| {
+                let mut editors = pane.items_of_type::<Self>();
+                editors.find(|editor| {
+                    editor.remote_id(&client, cx) == Some(remote_id)
+                        || state.singleton
+                            && buffers.len() == 1
+                            && editor.read(cx).buffer.read(cx).as_singleton().as_ref()
+                                == Some(&buffers[0])
                 })
-                .unwrap_or_else(|| {
-                    pane.update(&mut cx, |_, cx| {
-                        cx.add_view(|cx| Editor::for_buffer(buffer, Some(project), cx))
-                    })
-                });
+            });
+
+            let editor = editor.unwrap_or_else(|| {
+                pane.update(&mut cx, |_, cx| {
+                    let multibuffer = cx.add_model(|cx| {
+                        let mut multibuffer;
+                        if state.singleton && buffers.len() == 1 {
+                            multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
+                        } else {
+                            multibuffer = MultiBuffer::new(replica_id);
+                            let mut excerpts = state.excerpts.into_iter().peekable();
+                            while let Some(excerpt) = excerpts.peek() {
+                                let buffer_id = excerpt.buffer_id;
+                                let buffer_excerpts = iter::from_fn(|| {
+                                    let excerpt = excerpts.peek()?;
+                                    (excerpt.buffer_id == buffer_id)
+                                        .then(|| excerpts.next().unwrap())
+                                });
+                                let buffer =
+                                    buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id);
+                                if let Some(buffer) = buffer {
+                                    multibuffer.push_excerpts(
+                                        buffer.clone(),
+                                        buffer_excerpts.filter_map(deserialize_excerpt_range),
+                                        cx,
+                                    );
+                                }
+                            }
+                        };
+
+                        if let Some(title) = &state.title {
+                            multibuffer = multibuffer.with_title(title.clone())
+                        }
+
+                        multibuffer
+                    });
+
+                    cx.add_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), cx))
+                })
+            });
+
             editor.update(&mut cx, |editor, cx| {
-                let excerpt_id;
-                let buffer_id;
-                {
-                    let buffer = editor.buffer.read(cx).read(cx);
-                    let singleton = buffer.as_singleton().unwrap();
-                    excerpt_id = singleton.0.clone();
-                    buffer_id = singleton.1;
-                }
+                editor.remote_id = Some(remote_id);
+                let buffer = editor.buffer.read(cx).read(cx);
                 let selections = state
                     .selections
                     .into_iter()
                     .map(|selection| {
-                        deserialize_selection(&excerpt_id, buffer_id, selection)
+                        deserialize_selection(&buffer, selection)
                             .ok_or_else(|| anyhow!("invalid selection"))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let scroll_top_anchor = state
+                    .scroll_top_anchor
+                    .and_then(|anchor| deserialize_anchor(&buffer, anchor));
+                drop(buffer);
+
                 if !selections.is_empty() {
                     editor.set_selections_from_remote(selections, cx);
                 }
 
-                if let Some(anchor) = state.scroll_top_anchor {
+                if let Some(scroll_top_anchor) = scroll_top_anchor {
                     editor.set_scroll_anchor_remote(
                         ScrollAnchor {
-                            top_anchor: Anchor {
-                                buffer_id: Some(state.buffer_id as usize),
-                                excerpt_id,
-                                text_anchor: language::proto::deserialize_anchor(anchor)
-                                    .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                            },
+                            top_anchor: scroll_top_anchor,
                             offset: vec2f(state.scroll_x, state.scroll_y),
                         },
                         cx,
                     );
                 }
 
-                Ok::<_, anyhow::Error>(())
+                anyhow::Ok(())
             })?;
+
             Ok(editor)
         }))
     }
@@ -134,13 +182,32 @@ impl FollowableItem for Editor {
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
+        let buffer = self.buffer.read(cx);
         let scroll_anchor = self.scroll_manager.anchor();
+        let excerpts = buffer
+            .read(cx)
+            .excerpts()
+            .map(|(id, buffer, range)| proto::Excerpt {
+                id: id.to_proto(),
+                buffer_id: buffer.remote_id(),
+                context_start: Some(serialize_text_anchor(&range.context.start)),
+                context_end: Some(serialize_text_anchor(&range.context.end)),
+                primary_start: range
+                    .primary
+                    .as_ref()
+                    .map(|range| serialize_text_anchor(&range.start)),
+                primary_end: range
+                    .primary
+                    .as_ref()
+                    .map(|range| serialize_text_anchor(&range.end)),
+            })
+            .collect();
+
         Some(proto::view::Variant::Editor(proto::view::Editor {
-            buffer_id,
-            scroll_top_anchor: Some(language::proto::serialize_anchor(
-                &scroll_anchor.top_anchor.text_anchor,
-            )),
+            singleton: buffer.is_singleton(),
+            title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
+            excerpts,
+            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.top_anchor)),
             scroll_x: scroll_anchor.offset.x(),
             scroll_y: scroll_anchor.offset.y(),
             selections: self
@@ -156,18 +223,43 @@ impl FollowableItem for Editor {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        _: &AppContext,
+        cx: &AppContext,
     ) -> bool {
         let update =
             update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
 
         match update {
             proto::update_view::Variant::Editor(update) => match event {
+                Event::ExcerptsAdded {
+                    buffer,
+                    predecessor,
+                    excerpts,
+                } => {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let mut excerpts = excerpts.iter();
+                    if let Some((id, range)) = excerpts.next() {
+                        update.inserted_excerpts.push(proto::ExcerptInsertion {
+                            previous_excerpt_id: Some(predecessor.to_proto()),
+                            excerpt: serialize_excerpt(buffer_id, id, range),
+                        });
+                        update.inserted_excerpts.extend(excerpts.map(|(id, range)| {
+                            proto::ExcerptInsertion {
+                                previous_excerpt_id: None,
+                                excerpt: serialize_excerpt(buffer_id, id, range),
+                            }
+                        }))
+                    }
+                    true
+                }
+                Event::ExcerptsRemoved { ids } => {
+                    update
+                        .deleted_excerpts
+                        .extend(ids.iter().map(ExcerptId::to_proto));
+                    true
+                }
                 Event::ScrollPositionChanged { .. } => {
                     let scroll_anchor = self.scroll_manager.anchor();
-                    update.scroll_top_anchor = Some(language::proto::serialize_anchor(
-                        &scroll_anchor.top_anchor.text_anchor,
-                    ));
+                    update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.top_anchor));
                     update.scroll_x = scroll_anchor.offset.x();
                     update.scroll_y = scroll_anchor.offset.y();
                     true
@@ -189,45 +281,98 @@ impl FollowableItem for Editor {
 
     fn apply_update_proto(
         &mut self,
+        project: &ModelHandle<Project>,
         message: update_view::Variant,
         cx: &mut ViewContext<Self>,
-    ) -> Result<()> {
-        match message {
-            update_view::Variant::Editor(message) => {
-                let buffer = self.buffer.read(cx);
-                let buffer = buffer.read(cx);
-                let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
-                let excerpt_id = excerpt_id.clone();
-                drop(buffer);
+    ) -> Task<Result<()>> {
+        let update_view::Variant::Editor(message) = message;
+        let multibuffer = self.buffer.read(cx);
+        let multibuffer = multibuffer.read(cx);
 
-                let selections = message
-                    .selections
-                    .into_iter()
-                    .filter_map(|selection| {
-                        deserialize_selection(&excerpt_id, buffer_id, selection)
-                    })
-                    .collect::<Vec<_>>();
+        let buffer_ids = message
+            .inserted_excerpts
+            .iter()
+            .filter_map(|insertion| Some(insertion.excerpt.as_ref()?.buffer_id))
+            .collect::<HashSet<_>>();
+
+        let mut removals = message
+            .deleted_excerpts
+            .into_iter()
+            .map(ExcerptId::from_proto)
+            .collect::<Vec<_>>();
+        removals.sort_by(|a, b| a.cmp(&b, &multibuffer));
+
+        let selections = message
+            .selections
+            .into_iter()
+            .filter_map(|selection| deserialize_selection(&multibuffer, selection))
+            .collect::<Vec<_>>();
+        let scroll_top_anchor = message
+            .scroll_top_anchor
+            .and_then(|anchor| deserialize_anchor(&multibuffer, anchor));
+        drop(multibuffer);
+
+        let buffers = project.update(cx, |project, cx| {
+            buffer_ids
+                .into_iter()
+                .map(|id| project.open_buffer_by_id(id, cx))
+                .collect::<Vec<_>>()
+        });
+
+        let project = project.clone();
+        cx.spawn(|this, mut cx| async move {
+            let _buffers = try_join_all(buffers).await?;
+            this.update(&mut cx, |this, cx| {
+                this.buffer.update(cx, |multibuffer, cx| {
+                    let mut insertions = message.inserted_excerpts.into_iter().peekable();
+                    while let Some(insertion) = insertions.next() {
+                        let Some(excerpt) = insertion.excerpt else { continue };
+                        let Some(previous_excerpt_id) = insertion.previous_excerpt_id else { continue };
+                        let buffer_id = excerpt.buffer_id;
+                        let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else { continue };
+
+                        let adjacent_excerpts = iter::from_fn(|| {
+                            let insertion = insertions.peek()?;
+                            if insertion.previous_excerpt_id.is_none()
+                                && insertion.excerpt.as_ref()?.buffer_id == buffer_id
+                            {
+                                insertions.next()?.excerpt
+                            } else {
+                                None
+                            }
+                        });
+
+                        multibuffer.insert_excerpts_with_ids_after(
+                            ExcerptId::from_proto(previous_excerpt_id),
+                            buffer,
+                            [excerpt]
+                                .into_iter()
+                                .chain(adjacent_excerpts)
+                                .filter_map(|excerpt| {
+                                    Some((
+                                        ExcerptId::from_proto(excerpt.id),
+                                        deserialize_excerpt_range(excerpt)?,
+                                    ))
+                                }),
+                            cx,
+                        );
+                    }
+
+                    multibuffer.remove_excerpts(removals, cx);
+                });
 
                 if !selections.is_empty() {
-                    self.set_selections_from_remote(selections, cx);
-                    self.request_autoscroll_remotely(Autoscroll::newest(), cx);
-                } else if let Some(anchor) = message.scroll_top_anchor {
-                    self.set_scroll_anchor_remote(
-                        ScrollAnchor {
-                            top_anchor: Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id,
-                                text_anchor: language::proto::deserialize_anchor(anchor)
-                                    .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                            },
-                            offset: vec2f(message.scroll_x, message.scroll_y),
-                        },
-                        cx,
-                    );
+                    this.set_selections_from_remote(selections, cx);
+                    this.request_autoscroll_remotely(Autoscroll::newest(), cx);
+                } else if let Some(anchor) = scroll_top_anchor {
+                    this.set_scroll_anchor_remote(ScrollAnchor {
+                        top_anchor: anchor,
+                        offset: vec2f(message.scroll_x, message.scroll_y)
+                    }, cx);
                 }
-            }
-        }
-        Ok(())
+            });
+            Ok(())
+        })
     }
 
     fn should_unfollow_on_event(event: &Self::Event, _: &AppContext) -> bool {
@@ -240,38 +385,79 @@ impl FollowableItem for Editor {
     }
 }
 
+fn serialize_excerpt(
+    buffer_id: u64,
+    id: &ExcerptId,
+    range: &ExcerptRange<language::Anchor>,
+) -> Option<proto::Excerpt> {
+    Some(proto::Excerpt {
+        id: id.to_proto(),
+        buffer_id,
+        context_start: Some(serialize_text_anchor(&range.context.start)),
+        context_end: Some(serialize_text_anchor(&range.context.end)),
+        primary_start: range
+            .primary
+            .as_ref()
+            .map(|r| serialize_text_anchor(&r.start)),
+        primary_end: range
+            .primary
+            .as_ref()
+            .map(|r| serialize_text_anchor(&r.end)),
+    })
+}
+
 fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
-        start: Some(language::proto::serialize_anchor(
-            &selection.start.text_anchor,
-        )),
-        end: Some(language::proto::serialize_anchor(
-            &selection.end.text_anchor,
-        )),
+        start: Some(serialize_anchor(&selection.start)),
+        end: Some(serialize_anchor(&selection.end)),
         reversed: selection.reversed,
     }
 }
 
+fn serialize_anchor(anchor: &Anchor) -> proto::EditorAnchor {
+    proto::EditorAnchor {
+        excerpt_id: anchor.excerpt_id.to_proto(),
+        anchor: Some(serialize_text_anchor(&anchor.text_anchor)),
+    }
+}
+
+fn deserialize_excerpt_range(excerpt: proto::Excerpt) -> Option<ExcerptRange<language::Anchor>> {
+    let context = {
+        let start = language::proto::deserialize_anchor(excerpt.context_start?)?;
+        let end = language::proto::deserialize_anchor(excerpt.context_end?)?;
+        start..end
+    };
+    let primary = excerpt
+        .primary_start
+        .zip(excerpt.primary_end)
+        .and_then(|(start, end)| {
+            let start = language::proto::deserialize_anchor(start)?;
+            let end = language::proto::deserialize_anchor(end)?;
+            Some(start..end)
+        });
+    Some(ExcerptRange { context, primary })
+}
+
 fn deserialize_selection(
-    excerpt_id: &ExcerptId,
-    buffer_id: usize,
+    buffer: &MultiBufferSnapshot,
     selection: proto::Selection,
 ) -> Option<Selection<Anchor>> {
     Some(Selection {
         id: selection.id as usize,
-        start: Anchor {
-            buffer_id: Some(buffer_id),
-            excerpt_id: excerpt_id.clone(),
-            text_anchor: language::proto::deserialize_anchor(selection.start?)?,
-        },
-        end: Anchor {
-            buffer_id: Some(buffer_id),
-            excerpt_id: excerpt_id.clone(),
-            text_anchor: language::proto::deserialize_anchor(selection.end?)?,
-        },
+        start: deserialize_anchor(buffer, selection.start?)?,
+        end: deserialize_anchor(buffer, selection.end?)?,
         reversed: selection.reversed,
         goal: SelectionGoal::None,
+    })
+}
+
+fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
+    let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
+    Some(Anchor {
+        excerpt_id,
+        text_anchor: language::proto::deserialize_anchor(anchor.anchor?)?,
+        buffer_id: buffer.buffer_id_for_excerpt(excerpt_id),
     })
 }
 

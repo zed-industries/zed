@@ -1,9 +1,3 @@
-use alacritty_terminal::{
-    ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
-    grid::Dimensions,
-    index::Point,
-    term::{cell::Flags, TermMode},
-};
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
@@ -22,17 +16,23 @@ use itertools::Itertools;
 use language::CursorShape;
 use ordered_float::OrderedFloat;
 use settings::Settings;
+use terminal::{
+    alacritty_terminal::{
+        ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
+        grid::Dimensions,
+        index::Point,
+        term::{cell::Flags, TermMode},
+    },
+    mappings::colors::convert_color,
+    IndexedCell, Terminal, TerminalContent, TerminalSize,
+};
 use theme::TerminalStyle;
 use util::ResultExt;
 
 use std::{fmt::Debug, ops::RangeInclusive};
 use std::{mem, ops::Range};
 
-use crate::{
-    mappings::colors::convert_color,
-    terminal_view::{DeployContextMenu, TerminalView},
-    IndexedCell, Terminal, TerminalContent, TerminalSize,
-};
+use crate::{DeployContextMenu, TerminalView};
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
@@ -299,7 +299,7 @@ impl TerminalElement {
     ///Convert the Alacritty cell styles to GPUI text styles and background color
     fn cell_style(
         indexed: &IndexedCell,
-        fg: AnsiColor,
+        fg: terminal::alacritty_terminal::ansi::Color,
         style: &TerminalStyle,
         text_style: &TextStyle,
         font_cache: &FontCache,
