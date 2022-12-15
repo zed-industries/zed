@@ -1,10 +1,15 @@
 syntax = "proto3";
 package zed.messages;
 
+message PeerId {
+    uint32 owner_id = 1;
+    uint32 id = 2;
+}
+
 message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
-    optional uint32 original_sender_id = 3;
+    optional PeerId original_sender_id = 3;
     oneof payload {
         Hello hello = 4;
         Ack ack = 5;
@@ -125,7 +130,7 @@ message Envelope {
 // Messages
 
 message Hello {
-    uint32 peer_id = 1;
+    PeerId peer_id = 1;
 }
 
 message Ping {}
@@ -167,7 +172,7 @@ message Room {
 
 message Participant {
     uint64 user_id = 1;
-    uint32 peer_id = 2;
+    PeerId peer_id = 2;
     repeated ParticipantProject projects = 3;
     ParticipantLocation location = 4;
 }
@@ -319,7 +324,7 @@ message AddProjectCollaborator {
 
 message RemoveProjectCollaborator {
     uint64 project_id = 1;
-    uint32 peer_id = 2;
+    PeerId peer_id = 2;
 }
 
 message GetDefinition {
@@ -438,7 +443,7 @@ message OpenBufferResponse {
 
 message CreateBufferForPeer {
     uint64 project_id = 1;
-    uint32 peer_id = 2;
+    PeerId peer_id = 2;
     oneof variant {
         BufferState state = 3;
         BufferChunk chunk = 4;
@@ -794,7 +799,7 @@ message UpdateDiagnostics {
 
 message Follow {
     uint64 project_id = 1;
-    uint32 leader_id = 2;
+    PeerId leader_id = 2;
 }
 
 message FollowResponse {
@@ -804,7 +809,7 @@ message FollowResponse {
 
 message UpdateFollowers {
     uint64 project_id = 1;
-    repeated uint32 follower_ids = 2;
+    repeated PeerId follower_ids = 2;
     oneof variant {
         UpdateActiveView update_active_view = 3;
         View create_view = 4;
@@ -814,7 +819,7 @@ message UpdateFollowers {
 
 message Unfollow {
     uint64 project_id = 1;
-    uint32 leader_id = 2;
+    PeerId leader_id = 2;
 }
 
 message GetPrivateUserInfo {}
@@ -827,18 +832,18 @@ message GetPrivateUserInfoResponse {
 // Entities
 
 message ViewId {
-    uint32 creator = 1;
+    PeerId creator = 1;
     uint64 id = 2;
 }
 
 message UpdateActiveView {
     optional ViewId id = 1;
-    optional uint32 leader_id = 2;
+    optional PeerId leader_id = 2;
 }
 
 message UpdateView {
     ViewId id = 1;
-    optional uint32 leader_id = 2;
+    optional PeerId leader_id = 2;
 
     oneof variant {
         Editor editor = 3;
@@ -856,7 +861,7 @@ message UpdateView {
 
 message View {
     ViewId id = 1;
-    optional uint32 leader_id = 2;
+    optional PeerId leader_id = 2;
 
     oneof variant {
         Editor editor = 3;
@@ -874,7 +879,7 @@ message View {
 }
 
 message Collaborator {
-    uint32 peer_id = 1;
+    PeerId peer_id = 1;
     uint32 replica_id = 2;
     uint64 user_id = 3;
 }

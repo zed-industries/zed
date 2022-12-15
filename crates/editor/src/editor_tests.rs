@@ -1,9 +1,7 @@
-use std::{cell::RefCell, rc::Rc, time::Instant};
-
 use drag_and_drop::DragAndDrop;
 use futures::StreamExt;
 use indoc::indoc;
-use rpc::PeerId;
+use std::{cell::RefCell, rc::Rc, time::Instant};
 use unindent::Unindent;
 
 use super::*;
@@ -5128,7 +5126,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
                 pane.clone(),
                 project.clone(),
                 ViewId {
-                    creator: PeerId(0),
+                    creator: Default::default(),
                     id: 0,
                 },
                 &mut state_message,
@@ -5223,7 +5221,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
                 pane.clone(),
                 project.clone(),
                 ViewId {
-                    creator: PeerId(0),
+                    creator: Default::default(),
                     id: 0,
                 },
                 &mut state_message,

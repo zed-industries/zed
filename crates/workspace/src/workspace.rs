@@ -16,7 +16,10 @@ mod toolbar;
 
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
-use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
+use client::{
+    proto::{self, PeerId},
+    Client, TypedEnvelope, UserStore,
+};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockDefaultItemFactory, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
@@ -1466,7 +1469,7 @@ impl Workspace {
                         .remote_id(&self.client, cx)
                         .map(|id| id.to_proto())
                 }),
-                leader_id: self.leader_for_pane(&pane).map(|id| id.0),
+                leader_id: self.leader_for_pane(&pane),
             }),
             cx,
         );
@@ -1643,7 +1646,7 @@ impl Workspace {
         let project_id = self.project.read(cx).remote_id()?;
         let request = self.client.request(proto::Follow {
             project_id,
-            leader_id: leader_id.0,
+            leader_id: Some(leader_id),
         });
         Some(cx.spawn_weak(|this, mut cx| async move {
             let response = request.await?;
@@ -1654,7 +1657,11 @@ impl Workspace {
                         .get_mut(&leader_id)
                         .and_then(|states_by_pane| states_by_pane.get_mut(&pane))
                         .ok_or_else(|| anyhow!("following interrupted"))?;
-                    state.active_view_id = response.active_view_id.map(ViewId::from_proto);
+                    state.active_view_id = if let Some(active_view_id) = response.active_view_id {
+                        Some(ViewId::from_proto(active_view_id)?)
+                    } else {
+                        None
+                    };
                     Ok::<_, anyhow::Error>(())
                 })?;
                 Self::add_views_from_leader(
@@ -1720,7 +1727,7 @@ impl Workspace {
                         self.client
                             .send(proto::Unfollow {
                                 project_id,
-                                leader_id: leader_id.0,
+                                leader_id: Some(leader_id),
                             })
                             .log_err();
                     }
@@ -1920,7 +1927,7 @@ impl Workspace {
                     .panes()
                     .iter()
                     .flat_map(|pane| {
-                        let leader_id = this.leader_for_pane(pane).map(|id| id.0);
+                        let leader_id = this.leader_for_pane(pane);
                         pane.read(cx).items().filter_map({
                             let cx = &cx;
                             move |item| {
@@ -1980,10 +1987,15 @@ impl Workspace {
                     if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
                         for state in state.values_mut() {
                             state.active_view_id =
-                                update_active_view.id.clone().map(ViewId::from_proto);
+                                if let Some(active_view_id) = update_active_view.id.clone() {
+                                    Some(ViewId::from_proto(active_view_id)?)
+                                } else {
+                                    None
+                                };
                         }
                     }
-                });
+                    anyhow::Ok(())
+                })?;
             }
             proto::update_followers::Variant::UpdateView(update_view) => {
                 let variant = update_view
@@ -1997,15 +2009,14 @@ impl Workspace {
                     let project = this.project.clone();
                     if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
                         for state in state.values_mut() {
-                            if let Some(item) = state
-                                .items_by_leader_view_id
-                                .get(&ViewId::from_proto(id.clone()))
-                            {
+                            let view_id = ViewId::from_proto(id.clone())?;
+                            if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
                                 tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
                             }
                         }
                     }
-                });
+                    anyhow::Ok(())
+                })?;
                 try_join_all(tasks).await.log_err();
             }
             proto::update_followers::Variant::CreateView(view) => {
@@ -2054,7 +2065,7 @@ impl Workspace {
             let mut leader_view_ids = Vec::new();
             for view in &views {
                 let Some(id) = &view.id else { continue };
-                let id = ViewId::from_proto(id.clone());
+                let id = ViewId::from_proto(id.clone())?;
                 let mut variant = view.variant.clone();
                 if variant.is_none() {
                     Err(anyhow!("missing variant"))?;
@@ -2105,7 +2116,7 @@ impl Workspace {
             self.client
                 .send(proto::UpdateFollowers {
                     project_id,
-                    follower_ids: self.leader_state.followers.iter().map(|f| f.0).collect(),
+                    follower_ids: self.leader_state.followers.iter().copied().collect(),
                     variant: Some(update),
                 })
                 .log_err();
@@ -2587,16 +2598,18 @@ impl View for Workspace {
 }
 
 impl ViewId {
-    pub(crate) fn from_proto(message: proto::ViewId) -> Self {
-        Self {
-            creator: PeerId(message.creator),
+    pub(crate) fn from_proto(message: proto::ViewId) -> Result<Self> {
+        Ok(Self {
+            creator: message
+                .creator
+                .ok_or_else(|| anyhow!("creator is missing"))?,
             id: message.id,
-        }
+        })
     }
 
     pub(crate) fn to_proto(&self) -> proto::ViewId {
         proto::ViewId {
-            creator: self.creator.0,
+            creator: Some(self.creator),
             id: self.id,
         }
     }

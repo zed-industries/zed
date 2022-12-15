@@ -286,7 +286,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                             .remote_id(&workspace.client, cx)
                             .map(|id| id.to_proto()),
                         variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
+                        leader_id: workspace.leader_for_pane(&pane),
                     }),
                     cx,
                 );
@@ -342,7 +342,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                                     .remote_id(&this.client, cx)
                                                     .map(|id| id.to_proto()),
                                                 variant: pending_update.borrow_mut().take(),
-                                                leader_id: leader_id.map(|id| id.0),
+                                                leader_id,
                                             },
                                         ),
                                         cx,

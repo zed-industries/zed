@@ -59,6 +59,12 @@ spec:
           ports:
             - containerPort: 8080
               protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 1
           env:
             - name: HTTP_PORT
               value: "8080"
@@ -93,6 +99,8 @@ spec:
               value: ${RUST_LOG}
             - name: LOG_JSON
               value: "true"
+            - name: ZED_ENVIRONMENT
+              value: ${ZED_ENVIRONMENT}
           securityContext:
             capabilities:
               # FIXME - Switch to the more restrictive `PERFMON` capability.

@@ -1,4 +1,6 @@
-use super::{ProjectId, RoomId, UserId};
+use super::{ProjectId, Result, RoomId, ServerId, UserId};
+use anyhow::anyhow;
+use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -8,8 +10,23 @@ pub struct Model {
     pub id: ProjectId,
     pub room_id: RoomId,
     pub host_user_id: UserId,
-    pub host_connection_id: i32,
-    pub host_connection_epoch: Uuid,
+    pub host_connection_id: Option<i32>,
+    pub host_connection_server_id: Option<ServerId>,
+}
+
+impl Model {
+    pub fn host_connection(&self) -> Result<ConnectionId> {
+        let host_connection_server_id = self
+            .host_connection_server_id
+            .ok_or_else(|| anyhow!("empty host_connection_server_id"))?;
+        let host_connection_id = self
+            .host_connection_id
+            .ok_or_else(|| anyhow!("empty host_connection_id"))?;
+        Ok(ConnectionId {
+            owner_id: host_connection_server_id.0 as u32,
+            id: host_connection_id as u32,
+        })
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

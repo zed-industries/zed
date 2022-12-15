@@ -823,6 +823,7 @@ dependencies = [
  "futures 0.3.25",
  "gpui",
  "live_kit_client",
+ "log",
  "media",
  "postage",
  "project",
@@ -1130,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.3.4"
+version = "0.3.14"
 dependencies = [
  "anyhow",
  "async-tungstenite",

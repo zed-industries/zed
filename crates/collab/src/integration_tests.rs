@@ -7,8 +7,8 @@ use crate::{
 use anyhow::anyhow;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
-    self, test::FakeHttpClient, Client, Connection, Credentials, EstablishConnectionError, PeerId,
-    User, UserStore, RECEIVE_TIMEOUT,
+    self, proto::PeerId, test::FakeHttpClient, Client, Connection, Credentials,
+    EstablishConnectionError, User, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
@@ -608,7 +608,7 @@ async fn test_server_restarts(
     );
 
     // The server is torn down.
-    server.teardown();
+    server.reset().await;
 
     // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
@@ -778,7 +778,7 @@ async fn test_server_restarts(
     );
 
     // The server is torn down.
-    server.teardown();
+    server.reset().await;
 
     // Users A and B have troubles reconnecting, so they leave the room.
     client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
@@ -6125,7 +6125,7 @@ async fn test_random_collaboration(
                     .user_connection_ids(removed_guest_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
-                let removed_peer_id = PeerId(user_connection_ids[0].0);
+                let removed_peer_id = user_connection_ids[0].into();
                 let guest = clients.remove(guest_ix);
                 op_start_signals.remove(guest_ix);
                 server.forbid_connections();
@@ -6174,17 +6174,25 @@ async fn test_random_collaboration(
                     .user_connection_ids(user_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
-                let peer_id = PeerId(user_connection_ids[0].0);
+                let peer_id = user_connection_ids[0].into();
                 server.disconnect_client(peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 operations += 1;
             }
             30..=34 => {
                 log::info!("Simulating server restart");
-                server.teardown();
-                deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+                server.reset().await;
+                deterministic.advance_clock(RECEIVE_TIMEOUT);
                 server.start().await.unwrap();
                 deterministic.advance_clock(CLEANUP_TIMEOUT);
+                let environment = &server.app_state.config.zed_environment;
+                let stale_room_ids = server
+                    .app_state
+                    .db
+                    .stale_room_ids(environment, server.id())
+                    .await
+                    .unwrap();
+                assert_eq!(stale_room_ids, vec![]);
             }
             _ if !op_start_signals.is_empty() => {
                 while operations < max_operations && rng.lock().gen_bool(0.7) {
@@ -6379,7 +6387,13 @@ impl TestServer {
         )
         .unwrap();
         let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
+        let epoch = app_state
+            .db
+            .create_server(&app_state.config.zed_environment)
+            .await
+            .unwrap();
         let server = Server::new(
+            epoch,
             app_state.clone(),
             Executor::Deterministic(deterministic.build_background()),
         );
@@ -6396,9 +6410,15 @@ impl TestServer {
         }
     }
 
-    fn teardown(&self) {
-        self.server.teardown();
+    async fn reset(&self) {
         self.app_state.db.reset();
+        let epoch = self
+            .app_state
+            .db
+            .create_server(&self.app_state.config.zed_environment)
+            .await
+            .unwrap();
+        self.server.reset(epoch);
     }
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
@@ -6488,7 +6508,7 @@ impl TestServer {
                         let connection_id = connection_id_rx.await.unwrap();
                         connection_killers
                             .lock()
-                            .insert(PeerId(connection_id.0), killed);
+                            .insert(connection_id.into(), killed);
                         Ok(client_conn)
                     }
                 })
@@ -7310,7 +7330,7 @@ impl TestClient {
 
 impl Drop for TestClient {
     fn drop(&mut self) {
-        self.client.tear_down();
+        self.client.teardown();
     }
 }
 

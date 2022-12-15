@@ -97,6 +97,7 @@ pub struct Config {
     pub live_kit_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
+    pub zed_environment: String,
 }
 
 #[derive(Default, Deserialize)]
