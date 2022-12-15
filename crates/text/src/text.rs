@@ -1496,6 +1496,10 @@ impl BufferSnapshot {
         &self.visible_text
     }
 
+    pub fn remote_id(&self) -> u64 {
+        self.remote_id
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         self.replica_id
     }
