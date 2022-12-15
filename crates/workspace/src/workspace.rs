@@ -2050,7 +2050,7 @@ impl Workspace {
                     .get(&leader_id)
                     .map(|c| c.replica_id)
             })
-            .ok_or_else(|| anyhow!("no such collaborator {:?}", leader_id))?;
+            .ok_or_else(|| anyhow!("no such collaborator {}", leader_id))?;
 
         let item_builders = cx.update(|cx| {
             cx.default_global::<FollowableItemBuilders>()

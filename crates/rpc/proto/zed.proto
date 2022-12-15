@@ -9,7 +9,7 @@ message PeerId {
 message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
-    PeerId original_sender_id = 3;
+    optional PeerId original_sender_id = 3;
     oneof payload {
         Hello hello = 4;
         Ack ack = 5;

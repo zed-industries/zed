@@ -72,7 +72,7 @@ impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
     }
 
     fn original_sender_id(&self) -> Option<PeerId> {
-        self.original_sender_id.clone()
+        self.original_sender_id
     }
 }
 

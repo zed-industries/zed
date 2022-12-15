@@ -488,9 +488,9 @@ impl Server {
                     move |duration| executor.sleep(duration)
                 });
 
-            tracing::info!(%user_id, %login, ?connection_id, %address, "connection opened");
+            tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
             this.peer.send(connection_id, proto::Hello { peer_id: Some(connection_id.into()) })?;
-            tracing::info!(%user_id, %login, ?connection_id, %address, "sent hello message");
+            tracing::info!(%user_id, %login, %connection_id, %address, "sent hello message");
 
             if let Some(send_connection_id) = send_connection_id.take() {
                 let _ = send_connection_id.send(connection_id);
@@ -552,7 +552,7 @@ impl Server {
                     _ = teardown.changed().fuse() => return Ok(()),
                     result = handle_io => {
                         if let Err(error) = result {
-                            tracing::error!(?error, %user_id, %login, ?connection_id, %address, "error handling I/O");
+                            tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");
                         }
                         break;
                     }
@@ -560,7 +560,7 @@ impl Server {
                     message = next_message => {
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
-                            let span = tracing::info_span!("receive message", %user_id, %login, ?connection_id, %address, type_name);
+                            let span = tracing::info_span!("receive message", %user_id, %login, %connection_id, %address, type_name);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
                                 let is_background = message.is_background();
@@ -574,10 +574,10 @@ impl Server {
                                     foreground_message_handlers.push(handle_message);
                                 }
                             } else {
-                                tracing::error!(%user_id, %login, ?connection_id, %address, "no message handler");
+                                tracing::error!(%user_id, %login, %connection_id, %address, "no message handler");
                             }
                         } else {
-                            tracing::info!(%user_id, %login, ?connection_id, %address, "connection closed");
+                            tracing::info!(%user_id, %login, %connection_id, %address, "connection closed");
                             break;
                         }
                     }
@@ -585,9 +585,9 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!(%user_id, %login, ?connection_id, %address, "signing out");
+            tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
             if let Err(error) = sign_out(session, teardown, executor).await {
-                tracing::error!(%user_id, %login, ?connection_id, %address, ?error, "error signing out");
+                tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
             Ok(())
