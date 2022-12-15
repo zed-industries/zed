@@ -7,7 +7,7 @@ macro_rules! messages {
                     Some(Box::new(TypedEnvelope {
                         sender_id,
                         original_sender_id: envelope.original_sender_id.map(|original_sender| PeerId {
-                            epoch: original_sender.epoch,
+                            owner_id: original_sender.owner_id,
                             id: original_sender.id
                         }),
                         message_id: envelope.id,

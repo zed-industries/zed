@@ -25,14 +25,14 @@ use tracing::instrument;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
 pub struct ConnectionId {
-    pub epoch: u32,
+    pub owner_id: u32,
     pub id: u32,
 }
 
 impl Into<PeerId> for ConnectionId {
     fn into(self) -> PeerId {
         PeerId {
-            epoch: self.epoch,
+            owner_id: self.owner_id,
             id: self.id,
         }
     }
@@ -41,7 +41,7 @@ impl Into<PeerId> for ConnectionId {
 impl From<PeerId> for ConnectionId {
     fn from(peer_id: PeerId) -> Self {
         Self {
-            epoch: peer_id.epoch,
+            owner_id: peer_id.owner_id,
             id: peer_id.id,
         }
     }
@@ -49,7 +49,7 @@ impl From<PeerId> for ConnectionId {
 
 impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}", self.epoch, self.id)
+        write!(f, "{}/{}", self.owner_id, self.id)
     }
 }
 
@@ -157,7 +157,7 @@ impl Peer {
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
 
         let connection_id = ConnectionId {
-            epoch: self.epoch.load(SeqCst),
+            owner_id: self.epoch.load(SeqCst),
             id: self.next_connection_id.fetch_add(1, SeqCst),
         };
         let connection_state = ConnectionState {

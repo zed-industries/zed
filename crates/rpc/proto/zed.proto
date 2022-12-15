@@ -2,7 +2,7 @@ syntax = "proto3";
 package zed.messages;
 
 message PeerId {
-    uint32 epoch = 1;
+    uint32 owner_id = 1;
     uint32 id = 2;
 }
 

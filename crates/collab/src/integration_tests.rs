@@ -6123,9 +6123,17 @@ async fn test_random_collaboration(
             30..=34 => {
                 log::info!("Simulating server restart");
                 server.reset().await;
-                deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+                deterministic.advance_clock(RECEIVE_TIMEOUT);
                 server.start().await.unwrap();
                 deterministic.advance_clock(CLEANUP_TIMEOUT);
+                let environment = &server.app_state.config.zed_environment;
+                let stale_room_ids = server
+                    .app_state
+                    .db
+                    .stale_room_ids(environment, server.id())
+                    .await
+                    .unwrap();
+                assert_eq!(stale_room_ids, vec![]);
             }
             _ if !op_start_signals.is_empty() => {
                 while operations < max_operations && rng.lock().gen_bool(0.7) {

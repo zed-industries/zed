@@ -138,7 +138,7 @@ impl Deref for DbHandle {
 }
 
 pub struct Server {
-    epoch: parking_lot::Mutex<ServerId>,
+    id: parking_lot::Mutex<ServerId>,
     peer: Arc<Peer>,
     pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
@@ -169,10 +169,10 @@ where
 }
 
 impl Server {
-    pub fn new(epoch: ServerId, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
+    pub fn new(id: ServerId, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
         let mut server = Self {
-            epoch: parking_lot::Mutex::new(epoch),
-            peer: Peer::new(epoch.0 as u32),
+            id: parking_lot::Mutex::new(id),
+            peer: Peer::new(id.0 as u32),
             app_state,
             executor,
             connection_pool: Default::default(),
@@ -241,7 +241,7 @@ impl Server {
     }
 
     pub async fn start(&self) -> Result<()> {
-        let epoch = *self.epoch.lock();
+        let server_id = *self.id.lock();
         let app_state = self.app_state.clone();
         let peer = self.peer.clone();
         let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
@@ -254,7 +254,7 @@ impl Server {
         tracing::info!("begin deleting stale projects");
         app_state
             .db
-            .delete_stale_projects(epoch, &app_state.config.zed_environment)
+            .delete_stale_projects(&app_state.config.zed_environment, server_id)
             .await?;
         tracing::info!("finish deleting stale projects");
 
@@ -266,7 +266,7 @@ impl Server {
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
                 if let Some(room_ids) = app_state
                     .db
-                    .stale_room_ids(epoch, &app_state.config.zed_environment)
+                    .stale_room_ids(&app_state.config.zed_environment, server_id)
                     .await
                     .trace_err()
                 {
@@ -278,7 +278,7 @@ impl Server {
                         let mut delete_live_kit_room = false;
 
                         if let Ok(mut refreshed_room) =
-                            app_state.db.refresh_room(room_id, epoch).await
+                            app_state.db.refresh_room(room_id, server_id).await
                         {
                             tracing::info!(
                                 room_id = room_id.0,
@@ -354,7 +354,7 @@ impl Server {
 
                 app_state
                     .db
-                    .delete_stale_servers(epoch, &app_state.config.zed_environment)
+                    .delete_stale_servers(server_id, &app_state.config.zed_environment)
                     .await
                     .trace_err();
             }
@@ -370,10 +370,15 @@ impl Server {
     }
 
     #[cfg(test)]
-    pub fn reset(&self, epoch: ServerId) {
+    pub fn reset(&self, id: ServerId) {
         self.teardown();
-        *self.epoch.lock() = epoch;
-        self.peer.reset(epoch.0 as u32);
+        *self.id.lock() = id;
+        self.peer.reset(id.0 as u32);
+    }
+
+    #[cfg(test)]
+    pub fn id(&self) -> ServerId {
+        *self.id.lock()
     }
 
     fn add_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
@@ -1156,7 +1161,7 @@ async fn join_project(
         .iter()
         .map(|collaborator| {
             let peer_id = proto::PeerId {
-                epoch: collaborator.connection_server_id.0 as u32,
+                owner_id: collaborator.connection_server_id.0 as u32,
                 id: collaborator.connection_id as u32,
             };
             proto::Collaborator {
@@ -1412,7 +1417,7 @@ where
             .find(|collaborator| collaborator.is_host)
             .ok_or_else(|| anyhow!("host not found"))?;
         ConnectionId {
-            epoch: host.connection_server_id.0 as u32,
+            owner_id: host.connection_server_id.0 as u32,
             id: host.connection_id as u32,
         }
     };
@@ -1443,7 +1448,7 @@ async fn save_buffer(
             .find(|collaborator| collaborator.is_host)
             .ok_or_else(|| anyhow!("host not found"))?;
         ConnectionId {
-            epoch: host.connection_server_id.0 as u32,
+            owner_id: host.connection_server_id.0 as u32,
             id: host.connection_id as u32,
         }
     };
@@ -1459,13 +1464,13 @@ async fn save_buffer(
         .await?;
     collaborators.retain(|collaborator| {
         let collaborator_connection = ConnectionId {
-            epoch: collaborator.connection_server_id.0 as u32,
+            owner_id: collaborator.connection_server_id.0 as u32,
             id: collaborator.connection_id as u32,
         };
         collaborator_connection != session.connection_id
     });
     let project_connection_ids = collaborators.iter().map(|collaborator| ConnectionId {
-        epoch: collaborator.connection_server_id.0 as u32,
+        owner_id: collaborator.connection_server_id.0 as u32,
         id: collaborator.connection_id as u32,
     });
     broadcast(host_connection_id, project_connection_ids, |conn_id| {
