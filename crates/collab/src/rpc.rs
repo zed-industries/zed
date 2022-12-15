@@ -820,7 +820,7 @@ async fn sign_out(
                 .is_user_online(session.user_id)
             {
                 let db = session.db().await;
-                if let Some(room) = db.decline_call(None, session.user_id).await.trace_err() {
+                if let Some(room) = db.decline_call(None, session.user_id).await.trace_err().flatten() {
                     room_updated(&room, &session.peer);
                 }
             }
@@ -1024,7 +1024,7 @@ async fn cancel_call(
         let room = session
             .db()
             .await
-            .cancel_call(Some(room_id), session.connection_id, called_user_id)
+            .cancel_call(room_id, session.connection_id, called_user_id)
             .await?;
         room_updated(&room, &session.peer);
     }
@@ -1057,7 +1057,8 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
             .db()
             .await
             .decline_call(Some(room_id), session.user_id)
-            .await?;
+            .await?
+            .ok_or_else(|| anyhow!("failed to decline call"))?;
         room_updated(&room, &session.peer);
     }
 
@@ -2026,8 +2027,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     let canceled_calls_to_user_ids;
     let live_kit_room;
     let delete_live_kit_room;
-    {
-        let mut left_room = session.db().await.leave_room(session.connection_id).await?;
+    if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
         contacts_to_update.insert(session.user_id);
 
         for project in left_room.left_projects.values() {
@@ -2039,6 +2039,8 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
         canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
         delete_live_kit_room = left_room.room.participants.is_empty();
+    } else {
+        return Ok(());
     }
 
     {
