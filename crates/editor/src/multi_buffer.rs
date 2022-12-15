@@ -2636,7 +2636,15 @@ impl MultiBufferSnapshot {
         reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let mut cursor = self.excerpts.cursor::<Point>();
-        cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
+
+        if reversed {
+            cursor.seek(&Point::new(row_range.end, 0), Bias::Left, &());
+            if cursor.item().is_none() {
+                cursor.prev(&());
+            }
+        } else {
+            cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
+        }
 
         std::iter::from_fn(move || {
             let excerpt = cursor.item()?;
@@ -2685,7 +2693,12 @@ impl MultiBufferSnapshot {
                     })
                 });
 
-            cursor.next(&());
+            if reversed {
+                cursor.prev(&());
+            } else {
+                cursor.next(&());
+            }
+
             Some(buffer_hunks)
         })
         .flatten()
@@ -4195,19 +4208,34 @@ mod tests {
                 .unindent()
         );
 
+        let expected = [
+            (DiffHunkStatus::Modified, 1..2),
+            (DiffHunkStatus::Modified, 2..3),
+            //TODO: Define better when and where removed hunks show up at range extremities
+            (DiffHunkStatus::Removed, 6..6),
+            (DiffHunkStatus::Removed, 8..8),
+            (DiffHunkStatus::Added, 10..11),
+        ];
+
         assert_eq!(
             snapshot
                 .git_diff_hunks_in_range(0..12, false)
                 .map(|hunk| (hunk.status(), hunk.buffer_range))
                 .collect::<Vec<_>>(),
-            &[
-                (DiffHunkStatus::Modified, 1..2),
-                (DiffHunkStatus::Modified, 2..3),
-                //TODO: Define better when and where removed hunks show up at range extremities
-                (DiffHunkStatus::Removed, 6..6),
-                (DiffHunkStatus::Removed, 8..8),
-                (DiffHunkStatus::Added, 10..11),
-            ]
+            &expected,
+        );
+
+        assert_eq!(
+            snapshot
+                .git_diff_hunks_in_range(0..12, true)
+                .map(|hunk| (hunk.status(), hunk.buffer_range))
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .as_slice(),
         );
     }
 
