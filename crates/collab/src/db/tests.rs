@@ -410,6 +410,8 @@ test_both_dbs!(
     test_project_count_sqlite,
     db,
     {
+        let epoch = db.create_server("test").await.unwrap().0 as u32;
+
         let user1 = db
             .create_user(
                 &format!("admin@example.com"),
@@ -436,7 +438,7 @@ test_both_dbs!(
             .unwrap();
 
         let room_id = RoomId::from_proto(
-            db.create_room(user1.user_id, ConnectionId { epoch: 0, id: 0 }, "")
+            db.create_room(user1.user_id, ConnectionId { epoch, id: 0 }, "")
                 .await
                 .unwrap()
                 .id,
@@ -444,36 +446,34 @@ test_both_dbs!(
         db.call(
             room_id,
             user1.user_id,
-            ConnectionId { epoch: 0, id: 0 },
+            ConnectionId { epoch, id: 0 },
             user2.user_id,
             None,
         )
         .await
         .unwrap();
-        db.join_room(room_id, user2.user_id, ConnectionId { epoch: 0, id: 1 })
+        db.join_room(room_id, user2.user_id, ConnectionId { epoch, id: 1 })
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
-        db.share_project(room_id, ConnectionId { epoch: 0, id: 1 }, &[])
+        db.share_project(room_id, ConnectionId { epoch, id: 1 }, &[])
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
 
-        db.share_project(room_id, ConnectionId { epoch: 0, id: 1 }, &[])
+        db.share_project(room_id, ConnectionId { epoch, id: 1 }, &[])
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
         // Projects shared by admins aren't counted.
-        db.share_project(room_id, ConnectionId { epoch: 0, id: 0 }, &[])
+        db.share_project(room_id, ConnectionId { epoch, id: 0 }, &[])
             .await
             .unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
-        db.leave_room(ConnectionId { epoch: 0, id: 1 })
-            .await
-            .unwrap();
+        db.leave_room(ConnectionId { epoch, id: 1 }).await.unwrap();
         assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
     }
 );

@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, Database, ProjectId, RoomId, ServerEpoch, User, UserId},
+    db::{self, Database, ProjectId, RoomId, ServerId, User, UserId},
     executor::Executor,
     AppState, Result,
 };
@@ -138,7 +138,7 @@ impl Deref for DbHandle {
 }
 
 pub struct Server {
-    epoch: parking_lot::Mutex<ServerEpoch>,
+    epoch: parking_lot::Mutex<ServerId>,
     peer: Arc<Peer>,
     pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
@@ -169,7 +169,7 @@ where
 }
 
 impl Server {
-    pub fn new(epoch: ServerEpoch, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
+    pub fn new(epoch: ServerId, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
         let mut server = Self {
             epoch: parking_lot::Mutex::new(epoch),
             peer: Peer::new(epoch.0 as u32),
@@ -370,7 +370,7 @@ impl Server {
     }
 
     #[cfg(test)]
-    pub fn reset(&self, epoch: ServerEpoch) {
+    pub fn reset(&self, epoch: ServerId) {
         self.teardown();
         *self.epoch.lock() = epoch;
         self.peer.reset(epoch.0 as u32);
@@ -1156,7 +1156,7 @@ async fn join_project(
         .iter()
         .map(|collaborator| {
             let peer_id = proto::PeerId {
-                epoch: collaborator.connection_epoch as u32,
+                epoch: collaborator.connection_server_id.0 as u32,
                 id: collaborator.connection_id as u32,
             };
             proto::Collaborator {
@@ -1412,7 +1412,7 @@ where
             .find(|collaborator| collaborator.is_host)
             .ok_or_else(|| anyhow!("host not found"))?;
         ConnectionId {
-            epoch: host.connection_epoch as u32,
+            epoch: host.connection_server_id.0 as u32,
             id: host.connection_id as u32,
         }
     };
@@ -1443,7 +1443,7 @@ async fn save_buffer(
             .find(|collaborator| collaborator.is_host)
             .ok_or_else(|| anyhow!("host not found"))?;
         ConnectionId {
-            epoch: host.connection_epoch as u32,
+            epoch: host.connection_server_id.0 as u32,
             id: host.connection_id as u32,
         }
     };
@@ -1459,13 +1459,13 @@ async fn save_buffer(
         .await?;
     collaborators.retain(|collaborator| {
         let collaborator_connection = ConnectionId {
-            epoch: collaborator.connection_epoch as u32,
+            epoch: collaborator.connection_server_id.0 as u32,
             id: collaborator.connection_id as u32,
         };
         collaborator_connection != session.connection_id
     });
     let project_connection_ids = collaborators.iter().map(|collaborator| ConnectionId {
-        epoch: collaborator.connection_epoch as u32,
+        epoch: collaborator.connection_server_id.0 as u32,
         id: collaborator.connection_id as u32,
     });
     broadcast(host_connection_id, project_connection_ids, |conn_id| {
