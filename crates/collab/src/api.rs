@@ -353,6 +353,7 @@ pub struct CreateInviteFromCodeParams {
     invite_code: String,
     email_address: String,
     device_id: Option<String>,
+    added_to_mailing_list: bool,
 }
 
 async fn create_invite_from_code(
@@ -365,6 +366,7 @@ async fn create_invite_from_code(
                 &params.invite_code,
                 &params.email_address,
                 params.device_id.as_deref(),
+                params.added_to_mailing_list,
             )
             .await?,
     ))
