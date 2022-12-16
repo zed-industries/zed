@@ -11,9 +11,7 @@ use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use workspace::{OpenPaths, Workspace, WorkspaceLocation};
-
-const RECENT_LIMIT: usize = 100;
+use workspace::{OpenPaths, Workspace, WorkspaceLocation, WORKSPACE_DB};
 
 actions!(recent_projects, [Toggle]);
 
@@ -30,14 +28,8 @@ struct RecentProjectsView {
 }
 
 impl RecentProjectsView {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    fn new(workspace_locations: Vec<WorkspaceLocation>, cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
-        let workspace_locations: Vec<WorkspaceLocation> = workspace::WORKSPACE_DB
-            .recent_workspaces(RECENT_LIMIT)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(_, location)| location)
-            .collect();
         Self {
             picker: cx.add_view(|cx| {
                 Picker::new("Recent Projects...", handle, cx).with_max_size(800., 1200.)
@@ -48,12 +40,30 @@ impl RecentProjectsView {
         }
     }
 
-    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        workspace.toggle_modal(cx, |_, cx| {
-            let view = cx.add_view(|cx| Self::new(cx));
-            cx.subscribe(&view, Self::on_event).detach();
-            view
-        });
+    fn toggle(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+        cx.spawn(|workspace, mut cx| async move {
+            let workspace_locations = cx
+                .background()
+                .spawn(async {
+                    WORKSPACE_DB
+                        .recent_workspaces_on_disk()
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(_, location)| location)
+                        .collect()
+                })
+                .await;
+
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |_, cx| {
+                    let view = cx.add_view(|cx| Self::new(workspace_locations, cx));
+                    cx.subscribe(&view, Self::on_event).detach();
+                    view
+                });
+            })
+        })
+        .detach();
     }
 
     fn on_event(

@@ -196,13 +196,36 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub fn recent_workspaces(limit: usize) -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
             SELECT workspace_id, workspace_location 
             FROM workspaces
             WHERE workspace_location IS NOT NULL
             ORDER BY timestamp DESC 
-            LIMIT ?
         }
+    }
+    
+    query! {
+        async fn delete_stale_workspace(id: WorkspaceId) -> Result<()> {
+            DELETE FROM workspaces
+            WHERE workspace_id IS ?
+        }
+    }
+    
+    // Returns the recent locations which are still valid on disk and deletes ones which no longer
+    // exist.
+    pub async fn recent_workspaces_on_disk(&self) -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
+        let mut result = Vec::new();
+        let mut delete_tasks = Vec::new();
+        for (id, location) in self.recent_workspaces()? {
+            if location.paths().iter().all(|path| dbg!(path).exists()) {
+                result.push((id, location));
+            } else {
+                delete_tasks.push(self.delete_stale_workspace(id));
+            }
+        }
+        
+        futures::future::join_all(delete_tasks).await;
+        Ok(result)
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {

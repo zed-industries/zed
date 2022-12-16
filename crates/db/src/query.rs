@@ -80,7 +80,7 @@ macro_rules! query {
 
             let sql_stmt = $crate::sqlez_macros::sql!($($sql)+);
 
-            self.select::<$return_type>(sql_stmt)?(())
+            self.select::<$return_type>(sql_stmt)?()
                 .context(::std::format!(
                     "Error in {}, select_row failed to execute or parse for: {}",
                     ::std::stringify!($id),
@@ -95,7 +95,7 @@ macro_rules! query {
             self.write(|connection| {
                 let sql_stmt = $crate::sqlez_macros::sql!($($sql)+);
 
-                connection.select::<$return_type>(sql_stmt)?(())
+                connection.select::<$return_type>(sql_stmt)?()
                     .context(::std::format!(
                         "Error in {}, select_row failed to execute or parse for: {}",
                         ::std::stringify!($id),
