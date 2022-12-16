@@ -850,7 +850,7 @@ async fn create_room(
             .trace_err()
         {
             if let Some(token) = live_kit
-                .room_token(&live_kit_room, &session.connection_id.to_string())
+                .room_token(&live_kit_room, &session.user_id.to_string())
                 .trace_err()
             {
                 Some(proto::LiveKitConnectionInfo {
@@ -918,7 +918,7 @@ async fn join_room(
 
     let live_kit_connection_info = if let Some(live_kit) = session.live_kit_client.as_ref() {
         if let Some(token) = live_kit
-            .room_token(&room.live_kit_room, &session.connection_id.to_string())
+            .room_token(&room.live_kit_room, &session.user_id.to_string())
             .trace_err()
         {
             Some(proto::LiveKitConnectionInfo {
@@ -2066,7 +2066,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
 
     if let Some(live_kit) = session.live_kit_client.as_ref() {
         live_kit
-            .remove_participant(live_kit_room.clone(), session.connection_id.to_string())
+            .remove_participant(live_kit_room.clone(), session.user_id.to_string())
             .await
             .trace_err();
 
