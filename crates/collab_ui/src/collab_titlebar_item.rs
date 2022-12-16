@@ -342,24 +342,27 @@ impl CollabTitlebarItem {
             let mut participants = room
                 .read(cx)
                 .remote_participants()
-                .iter()
-                .map(|(peer_id, collaborator)| (*peer_id, collaborator.clone()))
+                .values()
+                .cloned()
                 .collect::<Vec<_>>();
-            participants
-                .sort_by_key(|(peer_id, _)| Some(project.collaborators().get(peer_id)?.replica_id));
+            participants.sort_by_key(|p| Some(project.collaborators().get(&p.peer_id)?.replica_id));
             participants
                 .into_iter()
-                .filter_map(|(peer_id, participant)| {
+                .filter_map(|participant| {
                     let project = workspace.read(cx).project().read(cx);
                     let replica_id = project
                         .collaborators()
-                        .get(&peer_id)
+                        .get(&participant.peer_id)
                         .map(|collaborator| collaborator.replica_id);
                     let user = participant.user.clone();
                     Some(self.render_avatar(
                         &user,
                         replica_id,
-                        Some((peer_id, &user.github_login, participant.location)),
+                        Some((
+                            participant.peer_id,
+                            &user.github_login,
+                            participant.location,
+                        )),
                         workspace,
                         theme,
                         cx,

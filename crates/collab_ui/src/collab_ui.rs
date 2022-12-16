@@ -73,7 +73,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                         .remote_participants()
                         .iter()
                         .find(|(_, participant)| participant.user.id == follow_user_id)
-                        .map(|(peer_id, _)| *peer_id)
+                        .map(|(_, p)| p.peer_id)
                         .or_else(|| {
                             // If we couldn't follow the given user, follow the host instead.
                             let collaborator = workspace

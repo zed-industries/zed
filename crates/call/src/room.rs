@@ -3,7 +3,10 @@ use crate::{
     IncomingCall,
 };
 use anyhow::{anyhow, Result};
-use client::{proto, Client, TypedEnvelope, User, UserStore};
+use client::{
+    proto::{self, PeerId},
+    Client, TypedEnvelope, User, UserStore,
+};
 use collections::{BTreeMap, HashSet};
 use futures::{FutureExt, StreamExt};
 use gpui::{
@@ -41,7 +44,7 @@ pub struct Room {
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     local_participant: LocalParticipant,
-    remote_participants: BTreeMap<proto::PeerId, RemoteParticipant>,
+    remote_participants: BTreeMap<u64, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
     participant_user_ids: HashSet<u64>,
     pending_call_count: usize,
@@ -349,8 +352,14 @@ impl Room {
         &self.local_participant
     }
 
-    pub fn remote_participants(&self) -> &BTreeMap<proto::PeerId, RemoteParticipant> {
+    pub fn remote_participants(&self) -> &BTreeMap<u64, RemoteParticipant> {
         &self.remote_participants
+    }
+
+    pub fn remote_participant_for_peer_id(&self, peer_id: PeerId) -> Option<&RemoteParticipant> {
+        self.remote_participants
+            .values()
+            .find(|p| p.peer_id == peer_id)
     }
 
     pub fn pending_participants(&self) -> &[Arc<User>] {
@@ -417,15 +426,13 @@ impl Room {
                 }
 
                 if let Some(participants) = remote_participants.log_err() {
-                    let mut participant_peer_ids = HashSet::default();
                     for (participant, user) in room.participants.into_iter().zip(participants) {
                         let Some(peer_id) = participant.peer_id else { continue };
                         this.participant_user_ids.insert(participant.user_id);
-                        participant_peer_ids.insert(peer_id);
 
                         let old_projects = this
                             .remote_participants
-                            .get(&peer_id)
+                            .get(&participant.user_id)
                             .into_iter()
                             .flat_map(|existing| &existing.projects)
                             .map(|project| project.id)
@@ -454,9 +461,11 @@ impl Room {
 
                         let location = ParticipantLocation::from_proto(participant.location)
                             .unwrap_or(ParticipantLocation::External);
-                        if let Some(remote_participant) = this.remote_participants.get_mut(&peer_id)
+                        if let Some(remote_participant) =
+                            this.remote_participants.get_mut(&participant.user_id)
                         {
                             remote_participant.projects = participant.projects;
+                            remote_participant.peer_id = peer_id;
                             if location != remote_participant.location {
                                 remote_participant.location = location;
                                 cx.emit(Event::ParticipantLocationChanged {
@@ -465,9 +474,10 @@ impl Room {
                             }
                         } else {
                             this.remote_participants.insert(
-                                peer_id,
+                                participant.user_id,
                                 RemoteParticipant {
                                     user: user.clone(),
+                                    peer_id,
                                     projects: participant.projects,
                                     location,
                                     tracks: Default::default(),
@@ -488,8 +498,8 @@ impl Room {
                         }
                     }
 
-                    this.remote_participants.retain(|peer_id, participant| {
-                        if participant_peer_ids.contains(peer_id) {
+                    this.remote_participants.retain(|user_id, participant| {
+                        if this.participant_user_ids.contains(user_id) {
                             true
                         } else {
                             for project in &participant.projects {
@@ -531,11 +541,11 @@ impl Room {
     ) -> Result<()> {
         match change {
             RemoteVideoTrackUpdate::Subscribed(track) => {
-                let peer_id = track.publisher_id().parse()?;
+                let user_id = track.publisher_id().parse()?;
                 let track_id = track.sid().to_string();
                 let participant = self
                     .remote_participants
-                    .get_mut(&peer_id)
+                    .get_mut(&user_id)
                     .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
                 participant.tracks.insert(
                     track_id.clone(),
@@ -544,21 +554,21 @@ impl Room {
                     }),
                 );
                 cx.emit(Event::RemoteVideoTracksChanged {
-                    participant_id: peer_id,
+                    participant_id: participant.peer_id,
                 });
             }
             RemoteVideoTrackUpdate::Unsubscribed {
                 publisher_id,
                 track_id,
             } => {
-                let peer_id = publisher_id.parse()?;
+                let user_id = publisher_id.parse()?;
                 let participant = self
                     .remote_participants
-                    .get_mut(&peer_id)
+                    .get_mut(&user_id)
                     .ok_or_else(|| anyhow!("unsubscribed from track by unknown participant"))?;
                 participant.tracks.remove(&track_id);
                 cx.emit(Event::RemoteVideoTracksChanged {
-                    participant_id: peer_id,
+                    participant_id: participant.peer_id,
                 });
             }
         }

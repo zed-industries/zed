@@ -6,7 +6,6 @@ use prost::Message as _;
 use serde::Serialize;
 use std::any::{Any, TypeId};
 use std::fmt;
-use std::str::FromStr;
 use std::{
     cmp,
     fmt::Debug,
@@ -116,23 +115,6 @@ impl std::hash::Hash for PeerId {
 impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.owner_id, self.id)
-    }
-}
-
-impl FromStr for PeerId {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut components = s.split('/');
-        let owner_id = components
-            .next()
-            .ok_or_else(|| anyhow!("invalid peer id {:?}", s))?
-            .parse()?;
-        let id = components
-            .next()
-            .ok_or_else(|| anyhow!("invalid peer id {:?}", s))?
-            .parse()?;
-        Ok(PeerId { owner_id, id })
     }
 }
 

@@ -2141,7 +2141,7 @@ impl Workspace {
 
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participants().get(&leader_id)?;
+        let participant = room.remote_participant_for_peer_id(leader_id)?;
 
         let mut items_to_add = Vec::new();
         match participant.location {
@@ -2190,7 +2190,7 @@ impl Workspace {
     ) -> Option<ViewHandle<SharedScreen>> {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participants().get(&peer_id)?;
+        let participant = room.remote_participant_for_peer_id(peer_id)?;
         let track = participant.tracks.values().next()?.clone();
         let user = participant.user.clone();
 
