@@ -39,6 +39,7 @@ pub struct LocalParticipant {
 #[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
+    pub peer_id: proto::PeerId,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
     pub tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,

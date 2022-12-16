@@ -461,15 +461,13 @@ impl ContactList {
             // Populate remote participants.
             self.match_candidates.clear();
             self.match_candidates
-                .extend(
-                    room.remote_participants()
-                        .iter()
-                        .map(|(peer_id, participant)| StringMatchCandidate {
-                            id: peer_id.as_u64() as usize,
-                            string: participant.user.github_login.clone(),
-                            char_bag: participant.user.github_login.chars().collect(),
-                        }),
-                );
+                .extend(room.remote_participants().iter().map(|(_, participant)| {
+                    StringMatchCandidate {
+                        id: participant.user.id as usize,
+                        string: participant.user.github_login.clone(),
+                        char_bag: participant.user.github_login.chars().collect(),
+                    }
+                }));
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -479,8 +477,8 @@ impl ContactList {
                 executor.clone(),
             ));
             for mat in matches {
-                let peer_id = PeerId::from_u64(mat.candidate_id as u64);
-                let participant = &room.remote_participants()[&peer_id];
+                let user_id = mat.candidate_id as u64;
+                let participant = &room.remote_participants()[&user_id];
                 participant_entries.push(ContactEntry::CallParticipant {
                     user: participant.user.clone(),
                     is_pending: false,
@@ -496,7 +494,7 @@ impl ContactList {
                 }
                 if !participant.tracks.is_empty() {
                     participant_entries.push(ContactEntry::ParticipantScreen {
-                        peer_id,
+                        peer_id: participant.peer_id,
                         is_last: true,
                     });
                 }

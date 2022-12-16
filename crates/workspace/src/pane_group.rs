@@ -148,7 +148,7 @@ impl Member {
                     .and_then(|leader_id| {
                         let room = active_call?.read(cx).room()?.read(cx);
                         let collaborator = project.read(cx).collaborators().get(leader_id)?;
-                        let participant = room.remote_participants().get(&leader_id)?;
+                        let participant = room.remote_participant_for_peer_id(*leader_id)?;
                         Some((collaborator.replica_id, participant))
                     });
 

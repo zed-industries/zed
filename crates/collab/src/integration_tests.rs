@@ -199,7 +199,7 @@ async fn test_basic_calls(
         assert_eq!(participant_id, client_a.peer_id().unwrap());
         room_b.read_with(cx_b, |room, _| {
             assert_eq!(
-                room.remote_participants()[&client_a.peer_id().unwrap()]
+                room.remote_participants()[&client_a.user_id().unwrap()]
                     .tracks
                     .len(),
                 1
