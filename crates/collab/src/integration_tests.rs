@@ -492,7 +492,7 @@ async fn test_client_disconnecting_from_room(
     // to automatically leave the room.
     server
         .test_live_kit_server
-        .disconnect_client(client_b.peer_id().unwrap().to_string())
+        .disconnect_client(client_b.user_id().unwrap().to_string())
         .await;
     deterministic.run_until_parked();
     active_call_a.update(cx_a, |call, _| assert!(call.room().is_none()));
