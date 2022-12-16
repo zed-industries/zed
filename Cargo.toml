@@ -40,6 +40,7 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/recent_projects",
     "crates/rope",
     "crates/rpc",
     "crates/search",

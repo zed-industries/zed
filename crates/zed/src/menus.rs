@@ -80,6 +80,11 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(workspace::Open),
                 },
                 MenuItem::Action {
+                    name: "Open Recent...",
+                    action: Box::new(recent_projects::Toggle),
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
                     name: "Add Folder to Project…",
                     action: Box::new(workspace::AddFolderToProject),
                 },

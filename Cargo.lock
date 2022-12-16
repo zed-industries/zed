@@ -4808,6 +4808,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "recent_projects"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "ordered-float",
+ "picker",
+ "postage",
+ "settings",
+ "smol",
+ "text",
+ "workspace",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8181,6 +8199,7 @@ dependencies = [
  "project_panel",
  "project_symbols",
  "rand 0.8.5",
+ "recent_projects",
  "regex",
  "rpc",
  "rsa",
