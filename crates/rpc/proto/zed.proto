@@ -853,9 +853,10 @@ message UpdateView {
         repeated ExcerptInsertion inserted_excerpts = 1;
         repeated uint64 deleted_excerpts = 2;
         repeated Selection selections = 3;
-        EditorAnchor scroll_top_anchor = 4;
-        float scroll_x = 5;
-        float scroll_y = 6;
+        optional Selection pending_selection = 4;
+        EditorAnchor scroll_top_anchor = 5;
+        float scroll_x = 6;
+        float scroll_y = 7;
     }
 }
 
@@ -872,9 +873,10 @@ message View {
         optional string title = 2;
         repeated Excerpt excerpts = 3;
         repeated Selection selections = 4;
-        EditorAnchor scroll_top_anchor = 5;
-        float scroll_x = 6;
-        float scroll_y = 7;
+        optional Selection pending_selection = 5;
+        EditorAnchor scroll_top_anchor = 6;
+        float scroll_x = 7;
+        float scroll_y = 8;
     }
 }
 

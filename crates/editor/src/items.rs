@@ -130,13 +130,17 @@ impl FollowableItem for Editor {
                             .ok_or_else(|| anyhow!("invalid selection"))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let pending_selection = state
+                    .pending_selection
+                    .map(|selection| deserialize_selection(&buffer, selection))
+                    .flatten();
                 let scroll_top_anchor = state
                     .scroll_top_anchor
                     .and_then(|anchor| deserialize_anchor(&buffer, anchor));
                 drop(buffer);
 
-                if !selections.is_empty() {
-                    editor.set_selections_from_remote(selections, cx);
+                if !selections.is_empty() || pending_selection.is_some() {
+                    editor.set_selections_from_remote(selections, pending_selection, cx);
                 }
 
                 if let Some(scroll_top_anchor) = scroll_top_anchor {
@@ -216,6 +220,11 @@ impl FollowableItem for Editor {
                 .iter()
                 .map(serialize_selection)
                 .collect(),
+            pending_selection: self
+                .selections
+                .pending_anchor()
+                .as_ref()
+                .map(serialize_selection),
         }))
     }
 
@@ -269,9 +278,13 @@ impl FollowableItem for Editor {
                         .selections
                         .disjoint_anchors()
                         .iter()
-                        .chain(self.selections.pending_anchor().as_ref())
                         .map(serialize_selection)
                         .collect();
+                    update.pending_selection = self
+                        .selections
+                        .pending_anchor()
+                        .as_ref()
+                        .map(serialize_selection);
                     true
                 }
                 _ => false,
@@ -307,6 +320,10 @@ impl FollowableItem for Editor {
             .into_iter()
             .filter_map(|selection| deserialize_selection(&multibuffer, selection))
             .collect::<Vec<_>>();
+        let pending_selection = message
+            .pending_selection
+            .and_then(|selection| deserialize_selection(&multibuffer, selection));
+
         let scroll_top_anchor = message
             .scroll_top_anchor
             .and_then(|anchor| deserialize_anchor(&multibuffer, anchor));
@@ -361,8 +378,8 @@ impl FollowableItem for Editor {
                     multibuffer.remove_excerpts(removals, cx);
                 });
 
-                if !selections.is_empty() {
-                    this.set_selections_from_remote(selections, cx);
+                if !selections.is_empty() || pending_selection.is_some() {
+                    this.set_selections_from_remote(selections, pending_selection, cx);
                     this.request_autoscroll_remotely(Autoscroll::newest(), cx);
                 } else if let Some(anchor) = scroll_top_anchor {
                     this.set_scroll_anchor_remote(ScrollAnchor {
