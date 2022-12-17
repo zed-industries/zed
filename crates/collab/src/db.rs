@@ -1601,10 +1601,11 @@ impl Database {
             .exec(&*tx)
             .await?;
 
-            let collaborator_on_projects = project_collaborator::Entity::find()
+            let guest_collaborators_and_projects = project_collaborator::Entity::find()
                 .find_also_related(project::Entity)
                 .filter(
                     Condition::all()
+                        .add(project_collaborator::Column::IsHost.eq(false))
                         .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
                         .add(
                             project_collaborator::Column::ConnectionServerId
@@ -1613,40 +1614,36 @@ impl Database {
                 )
                 .all(&*tx)
                 .await?;
+
             project_collaborator::Entity::delete_many()
                 .filter(
-                    Condition::all()
-                        .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
-                        .add(
-                            project_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
+                    project_collaborator::Column::Id
+                        .is_in(guest_collaborators_and_projects.iter().map(|e| e.0.id)),
                 )
                 .exec(&*tx)
                 .await?;
 
             let mut left_projects = Vec::new();
-            for (_, project) in collaborator_on_projects {
-                if let Some(project) = project {
-                    let collaborators = project
-                        .find_related(project_collaborator::Entity)
-                        .all(&*tx)
-                        .await?;
-                    let connection_ids = collaborators
-                        .into_iter()
-                        .map(|collaborator| ConnectionId {
-                            id: collaborator.connection_id as u32,
-                            owner_id: collaborator.connection_server_id.0 as u32,
-                        })
-                        .collect();
+            for (_, project) in guest_collaborators_and_projects {
+                let Some(project) = project else { continue };
+                let collaborators = project
+                    .find_related(project_collaborator::Entity)
+                    .all(&*tx)
+                    .await?;
+                let connection_ids = collaborators
+                    .into_iter()
+                    .map(|collaborator| ConnectionId {
+                        id: collaborator.connection_id as u32,
+                        owner_id: collaborator.connection_server_id.0 as u32,
+                    })
+                    .collect();
 
-                    left_projects.push(LeftProject {
-                        id: project.id,
-                        host_user_id: project.host_user_id,
-                        host_connection_id: project.host_connection()?,
-                        connection_ids,
-                    });
-                }
+                left_projects.push(LeftProject {
+                    id: project.id,
+                    host_user_id: project.host_user_id,
+                    host_connection_id: project.host_connection()?,
+                    connection_ids,
+                });
             }
 
             project::Entity::delete_many()

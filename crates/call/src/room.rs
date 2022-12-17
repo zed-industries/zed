@@ -43,6 +43,7 @@ pub struct Room {
     id: u64,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
+    shared_projects: HashSet<WeakModelHandle<Project>>,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<u64, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
@@ -132,6 +133,7 @@ impl Room {
             id,
             live_kit: live_kit_room,
             status: RoomStatus::Online,
+            shared_projects: Default::default(),
             participant_user_ids: Default::default(),
             local_participant: Default::default(),
             remote_participants: Default::default(),
@@ -291,9 +293,18 @@ impl Room {
                                             .ok_or_else(|| anyhow!("room was dropped"))?
                                             .update(&mut cx, |this, cx| {
                                                 this.status = RoomStatus::Online;
-                                                this.apply_room_update(room_proto, cx)
-                                            })?;
-                                        anyhow::Ok(())
+                                                this.apply_room_update(room_proto, cx)?;
+                                                this.shared_projects.retain(|project| {
+                                                    let Some(project) = project.upgrade(cx) else { return false };
+                                                    project.update(cx, |project, cx| {
+                                                        if let Some(remote_id) = project.remote_id() {
+                                                            project.shared(remote_id, cx).detach()
+                                                        }
+                                                    });
+                                                    true
+                                                });
+                                                anyhow::Ok(())
+                                            })
                                     };
 
                                     if rejoin_room.await.log_err().is_some() {
@@ -666,6 +677,7 @@ impl Room {
 
             // If the user's location is in this project, it changes from UnsharedProject to SharedProject.
             this.update(&mut cx, |this, cx| {
+                this.shared_projects.insert(project.downgrade());
                 let active_project = this.local_participant.active_project.as_ref();
                 if active_project.map_or(false, |location| *location == project) {
                     this.set_location(Some(&project), cx)
