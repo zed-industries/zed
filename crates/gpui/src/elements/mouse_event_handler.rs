@@ -9,7 +9,7 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
         MouseMove, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    DebugContext, Element, ElementBox, EventContext, LayoutContext, MeasurementContext,
+    Action, DebugContext, Element, ElementBox, EventContext, LayoutContext, MeasurementContext,
     MouseButton, MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
@@ -107,6 +107,12 @@ impl<Tag> MouseEventHandler<Tag> {
     ) -> Self {
         self.handlers = self.handlers.on_click(button, handler);
         self
+    }
+
+    pub fn action_on_click(self, button: MouseButton, action: Box<dyn Action>) -> Self {
+        self.on_click(button, move |_, cx| {
+            cx.dispatch_any_action(action.boxed_clone())
+        })
     }
 
     pub fn on_down_out(

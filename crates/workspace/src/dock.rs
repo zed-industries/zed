@@ -1,13 +1,14 @@
 use collections::HashMap;
+use design_system::DesignSystem;
 use gpui::{
     actions,
-    elements::{ChildView, Container, Empty, MouseEventHandler, ParentElement, Side, Stack, Svg},
-    impl_internal_actions, Border, CursorStyle, Element, ElementBox, Entity, MouseButton,
+    elements::{ChildView, Container, Empty, MouseEventHandler, ParentElement, Side, Stack},
+    impl_internal_actions, Action, Border, CursorStyle, Element, ElementBox, Entity, MouseButton,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use serde::Deserialize;
 use settings::{DockAnchor, Settings};
-use theme::Theme;
+use theme::{buttons::ButtonStyle, Theme};
 
 use crate::{
     handle_dropped_item, sidebar::SidebarSide, ItemHandle, Pane, StatusItemView, Workspace,
@@ -122,6 +123,29 @@ impl DockPosition {
         match self {
             DockPosition::Hidden(anchor) => DockPosition::Shown(anchor),
             DockPosition::Shown(_) => self,
+        }
+    }
+
+    fn to_dock_button(&self, theme: &Theme) -> ButtonStyle {
+        match self {
+            DockPosition::Shown(DockAnchor::Bottom) => {
+                theme.workspace.dock.buttons.show_bottom.to_owned()
+            }
+            DockPosition::Shown(DockAnchor::Right) => {
+                theme.workspace.dock.buttons.show_right.to_owned()
+            }
+            DockPosition::Shown(DockAnchor::Expanded) => {
+                theme.workspace.dock.buttons.show_expanded.to_owned()
+            }
+            DockPosition::Hidden(DockAnchor::Bottom) => {
+                theme.workspace.dock.buttons.hide_bottom.to_owned()
+            }
+            DockPosition::Hidden(DockAnchor::Right) => {
+                theme.workspace.dock.buttons.hide_right.to_owned()
+            }
+            DockPosition::Hidden(DockAnchor::Expanded) => {
+                theme.workspace.dock.buttons.hide_expanded.to_owned()
+            }
         }
     }
 }
@@ -388,61 +412,21 @@ impl View for ToggleDockButton {
         let workspace = workspace.unwrap();
         let dock_position = workspace.read(cx).dock.position;
 
-        let theme = cx.global::<Settings>().theme.clone();
-
-        let button = MouseEventHandler::<Self>::new(0, cx, {
-            let theme = theme.clone();
-            move |state, _| {
-                let style = theme
-                    .workspace
-                    .status_bar
-                    .sidebar_buttons
-                    .item
-                    .style_for(state, dock_position.is_visible());
-
-                Svg::new(icon_for_dock_anchor(dock_position.anchor()))
-                    .with_color(style.icon_color)
-                    .constrained()
-                    .with_width(style.icon_size)
-                    .with_height(style.icon_size)
-                    .contained()
-                    .with_style(style.container)
-                    .boxed()
-            }
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_up(MouseButton::Left, move |event, cx| {
-            let dock_pane = workspace.read(cx.app).dock_pane();
-            let drop_index = dock_pane.read(cx.app).items_len() + 1;
-            handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
-        });
-
-        if dock_position.is_visible() {
-            button
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(HideDock);
-                })
-                .with_tooltip::<Self, _>(
-                    0,
-                    "Hide Dock".into(),
-                    Some(Box::new(HideDock)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
+        let action = if dock_position.is_visible() {
+            Box::new(HideDock) as Box<dyn Action>
         } else {
-            button
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(FocusDock);
-                })
-                .with_tooltip::<Self, _>(
-                    0,
-                    "Focus Dock".into(),
-                    Some(Box::new(FocusDock)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-        }
-        .boxed()
+            Box::new(FocusDock) as Box<dyn Action>
+        };
+
+        let button = dock_position.to_dock_button(&cx.global::<Settings>().theme);
+
+        DesignSystem::<Self>::toggleable_button(0, dock_position.is_visible(), action, button, cx)
+            .on_up(MouseButton::Left, move |event, cx| {
+                let dock_pane = workspace.read(cx.app).dock_pane();
+                let drop_index = dock_pane.read(cx.app).items_len() + 1;
+                handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
+            })
+            .boxed()
     }
 }
 

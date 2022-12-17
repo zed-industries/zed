@@ -8075,6 +8075,7 @@ dependencies = [
  "collections",
  "context_menu",
  "db",
+ "design_system",
  "drag_and_drop",
  "env_logger",
  "fs",

@@ -1,7 +1,6 @@
 use crate::{
-    elements::{nav_button, option_button},
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleWholeWord,
+    direction_button, option_button, SearchOption, SelectNextMatch, SelectPrevMatch,
+    ToggleCaseSensitive, ToggleRegex, ToggleWholeWord,
 };
 use collections::HashMap;
 
@@ -144,33 +143,24 @@ impl View for BufferSearchBar {
             )
             .with_child(
                 Flex::row()
-                    .with_child(nav_button(Direction::Prev, cx))
-                    .with_child(nav_button(Direction::Next, cx))
+                    .with_child(direction_button(Direction::Prev, cx))
+                    .with_child(direction_button(Direction::Next, cx))
                     .aligned()
                     .boxed(),
             )
             .with_child(
                 Flex::row()
                     .with_children(supported_options.case.then(|| {
-                        option_button(
-                            SearchOption::CaseSensitive,
-                            self.is_search_option_enabled(SearchOption::CaseSensitive),
-                            cx,
-                        )
+                        let option = SearchOption::CaseSensitive;
+                        option_button(option, self.is_search_option_enabled(option), cx)
                     }))
                     .with_children(supported_options.word.then(|| {
-                        option_button(
-                            SearchOption::WholeWord,
-                            self.is_search_option_enabled(SearchOption::WholeWord),
-                            cx,
-                        )
+                        let option = SearchOption::WholeWord;
+                        option_button(option, self.is_search_option_enabled(option), cx)
                     }))
                     .with_children(supported_options.regex.then(|| {
-                        option_button(
-                            SearchOption::Regex,
-                            self.is_search_option_enabled(SearchOption::Regex),
-                            cx,
-                        )
+                        let option = SearchOption::Regex;
+                        option_button(option, self.is_search_option_enabled(option), cx)
                     }))
                     .contained()
                     .with_style(theme.search.option_button_group)

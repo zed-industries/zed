@@ -1,6 +1,7 @@
 import { ColorScheme } from "../themes/common/colorScheme";
 import { withOpacity } from "../utils/color";
 import { background, border, foreground, text } from "./components";
+import { icon_button, icon_label_button, label_button } from "./design_system/buttons";
 
 export default function search(colorScheme: ColorScheme) {
   let layer = colorScheme.highest;
@@ -31,36 +32,6 @@ export default function search(colorScheme: ColorScheme) {
     matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
     tabIconSpacing: 8,
     tabIconWidth: 14,
-    optionButton: {
-      ...text(layer, "mono", "on"),
-      background: background(layer, "on"),
-      cornerRadius: 6,
-      border: border(layer, "on"),
-      margin: {
-        right: 4,
-      },
-      padding: {
-        bottom: 2,
-        left: 10,
-        right: 10,
-        top: 2,
-      },
-      active: {
-        ...text(layer, "mono", "on", "inverted"),
-        background: background(layer, "on", "inverted"),
-        border: border(layer, "on", "inverted"),
-      },
-      clicked: {
-        ...text(layer, "mono", "on", "pressed"),
-        background: background(layer, "on", "pressed"),
-        border: border(layer, "on", "pressed"),
-      },
-      hover: {
-        ...text(layer, "mono", "on", "hovered"),
-        background: background(layer, "on", "hovered"),
-        border: border(layer, "on", "hovered"),
-      },
-    },
     editor,
     invalidEditor: {
       ...editor,
@@ -80,7 +51,10 @@ export default function search(colorScheme: ColorScheme) {
       ...text(layer, "mono", "on"),
       size: 18,
     },
-    previous: "ZDS_BUTTON",
-    next: "ZDS_BUTTON"
+    previous: label_button("<", "Select Previous Match", layer),
+    next: label_button(">", "Select Next Match", layer),
+    whole_word: label_button("Word", "Toggle Match Whole Word", layer),
+    case_sensitive: label_button("Case", "Toggle Match Case", layer),
+    regex: label_button("Regex", "Toggle Use Regular Expression", layer),
   };
 }

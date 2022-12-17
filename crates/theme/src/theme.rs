@@ -1,7 +1,9 @@
-pub mod design_system;
+mod components;
 mod theme_registry;
 
-use design_system::LabelButton;
+pub use components::*;
+
+use components::buttons::ButtonStyle;
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
@@ -227,6 +229,7 @@ pub struct Dock {
     pub wash_color: Color,
     pub panel: ContainerStyle,
     pub maximized: ContainerStyle,
+    pub buttons: DockButtons,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -237,24 +240,33 @@ pub struct Notifications {
 }
 
 #[derive(Clone, Deserialize, Default)]
+pub struct DockButtons {
+    pub show_expanded: ButtonStyle,
+    pub show_right: ButtonStyle,
+    pub show_bottom: ButtonStyle,
+    pub hide_expanded: ButtonStyle,
+    pub hide_right: ButtonStyle,
+    pub hide_bottom: ButtonStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
 pub struct Search {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub editor: FindEditor,
     pub invalid_editor: ContainerStyle,
     pub option_button_group: ContainerStyle,
-    pub option_button: Interactive<ContainedText>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
     // Design System:
-    pub previous: LabelButton,
-    pub next: LabelButton,
-    pub whole_word: LabelButton,
-    pub case_sensitive: LabelButton,
-    pub regex: LabelButton,
+    pub previous: ButtonStyle,
+    pub next: ButtonStyle,
+    pub whole_word: ButtonStyle,
+    pub case_sensitive: ButtonStyle,
+    pub regex: ButtonStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

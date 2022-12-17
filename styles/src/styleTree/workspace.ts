@@ -7,6 +7,7 @@ import {
   foreground,
   text,
 } from "./components";
+import { icon_button } from "./design_system/buttons";
 import statusBar from "./statusBar";
 import tabBar from "./tabBar";
 
@@ -226,6 +227,14 @@ export default function workspace(colorScheme: ColorScheme) {
         border: border(colorScheme.highest, { overlay: true }),
         shadow: colorScheme.modalShadow,
       },
+      buttons: {
+        show_expanded: icon_button("icons/dock_modal_12.svg", "Focus Dock", layer),
+        show_right: icon_button("icons/dock_right_12.svg", "Focus Dock", layer),
+        show_bottom: icon_button("icons/dock_bottom_12.svg", "Focus Dock", layer),
+        hide_expanded: icon_button("icons/dock_modal_12.svg", "Hide Dock", layer),
+        hide_right: icon_button("icons/dock_right_12.svg", "Hide Dock", layer),
+        hide_bottom: icon_button("icons/dock_bottom_12.svg", "Hide Dock", layer)
+      }
     },
     dropTargetOverlayColor: withOpacity(
       foreground(layer, "variant"),
