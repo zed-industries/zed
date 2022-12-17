@@ -39,6 +39,7 @@ const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
 const DB_FILE_NAME: &'static str = "db.sqlite";
 
 lazy_static::lazy_static! {
+    static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
     static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
     pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);    
@@ -49,6 +50,10 @@ lazy_static::lazy_static! {
 /// is moved to a backup folder and a new one is created. If that fails, a shared in memory db is created.
 /// In either case, static variables are set so that the user can be notified.
 pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, release_channel: &ReleaseChannel) -> ThreadSafeConnection<M> {
+    if *ZED_STATELESS {
+        return open_fallback_db().await;
+    }
+
     let release_channel_name = release_channel.dev_name();
     let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel_name)));
 
