@@ -254,7 +254,7 @@ impl<'a> EditorTestContext<'a> {
                     
                     Actual selections:
                     {}
-                    "},
+                "},
                 self.assertion_context(),
                 expected_marked_text,
                 actual_marked_text,

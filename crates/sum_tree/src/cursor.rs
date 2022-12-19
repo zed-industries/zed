@@ -597,6 +597,10 @@ where
         self.cursor.item()
     }
 
+    pub fn item_summary(&self) -> Option<&'a T::Summary> {
+        self.cursor.item_summary()
+    }
+
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.cursor.next_internal(&mut self.filter_node, cx);
     }
