@@ -6077,6 +6077,7 @@ async fn test_random_collaboration(
     let mut user_ids = Vec::new();
     let mut op_start_signals = Vec::new();
     let mut next_entity_id = 100000;
+    let mut can_disconnect = rng.lock().gen_bool(0.2);
 
     let mut operations = 0;
     while operations < max_operations {

@@ -253,6 +253,15 @@ message ShareProjectResponse {
     uint64 project_id = 1;
 }
 
+message ReshareProject {
+    uint64 id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+}
+
+message ReshareProjectResponse {
+    repeated Collaborator collaborators = 1;
+}
+
 message UnshareProject {
     uint64 project_id = 1;
 }
@@ -271,6 +280,22 @@ message JoinProjectResponse {
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
+}
+
+message RejoinProject {
+    uint64 project_id = 1;
+    repeated RejoinWorktree worktrees = 2;
+}
+
+message RejoinWorktree {
+    uint64 id = 1;
+    uint64 scan_id = 2;
+}
+
+message RejoinProjectResponse {
+    repeated WorktreeMetadata worktrees = 1;
+    repeated Collaborator collaborators = 2;
+    repeated LanguageServer language_servers = 3;
 }
 
 message LeaveProject {
