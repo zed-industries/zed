@@ -125,7 +125,6 @@ pub struct LocalSnapshot {
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
-    extension_counts: HashMap<OsString, usize>,
 }
 
 impl Clone for LocalSnapshot {
@@ -136,7 +135,6 @@ impl Clone for LocalSnapshot {
             removed_entry_ids: self.removed_entry_ids.clone(),
             next_entry_id: self.next_entry_id.clone(),
             snapshot: self.snapshot.clone(),
-            extension_counts: self.extension_counts.clone(),
         }
     }
 }
@@ -427,7 +425,6 @@ impl LocalWorktree {
                     scan_id: 0,
                     is_complete: true,
                 },
-                extension_counts: Default::default(),
             };
             if let Some(metadata) = metadata {
                 let entry = Entry::new(
@@ -1363,10 +1360,6 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub fn extension_counts(&self) -> &HashMap<OsString, usize> {
-        &self.extension_counts
-    }
-
     // Gives the most specific git repository for a given path
     pub(crate) fn repo_for(&self, path: &Path) -> Option<GitRepositoryEntry> {
         self.git_repositories
@@ -1508,11 +1501,6 @@ impl LocalSnapshot {
             &(),
         );
 
-        if let Some(removed_entry) = removed_entry {
-            self.dec_extension_count(&removed_entry.path, removed_entry.is_ignored);
-        }
-        self.inc_extension_count(&entry.path, entry.is_ignored);
-
         entry
     }
 
@@ -1573,7 +1561,6 @@ impl LocalSnapshot {
 
         for mut entry in entries {
             self.reuse_entry_id(&mut entry);
-            self.inc_extension_count(&entry.path, entry.is_ignored);
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -1584,33 +1571,7 @@ impl LocalSnapshot {
         }
 
         self.entries_by_path.edit(entries_by_path_edits, &());
-        let removed_entries = self.entries_by_id.edit(entries_by_id_edits, &());
-
-        for removed_entry in removed_entries {
-            self.dec_extension_count(&removed_entry.path, removed_entry.is_ignored);
-        }
-    }
-
-    fn inc_extension_count(&mut self, path: &Path, ignored: bool) {
-        if !ignored {
-            if let Some(extension) = path.extension() {
-                if let Some(count) = self.extension_counts.get_mut(extension) {
-                    *count += 1;
-                } else {
-                    self.extension_counts.insert(extension.into(), 1);
-                }
-            }
-        }
-    }
-
-    fn dec_extension_count(&mut self, path: &Path, ignored: bool) {
-        if !ignored {
-            if let Some(extension) = path.extension() {
-                if let Some(count) = self.extension_counts.get_mut(extension) {
-                    *count -= 1;
-                }
-            }
-        }
+        self.entries_by_id.edit(entries_by_id_edits, &());
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
@@ -1640,7 +1601,6 @@ impl LocalSnapshot {
                 .or_insert(entry.id);
             *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
             entries_by_id_edits.push(Edit::Remove(entry.id));
-            self.dec_extension_count(&entry.path, entry.is_ignored);
         }
         self.entries_by_id.edit(entries_by_id_edits, &());
 
@@ -3481,7 +3441,6 @@ mod tests {
                 scan_id: 0,
                 is_complete: true,
             },
-            extension_counts: Default::default(),
         };
         initial_snapshot.insert_entry(
             Entry::new(
@@ -3763,15 +3722,6 @@ mod tests {
                     .entry_for_path(ignore_parent_path.join(&*GITIGNORE))
                     .is_some());
             }
-
-            // Ensure extension counts are correct.
-            let mut expected_extension_counts = HashMap::default();
-            for extension in self.entries(false).filter_map(|e| e.path.extension()) {
-                *expected_extension_counts
-                    .entry(extension.into())
-                    .or_insert(0) += 1;
-            }
-            assert_eq!(self.extension_counts, expected_extension_counts);
         }
 
         fn to_vec(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
