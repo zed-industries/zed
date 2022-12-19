@@ -93,7 +93,7 @@ impl LspAdapter for RustLspAdapter {
     }
 
     async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
-        Some("rust-analyzer/checkOnSave".into())
+        Some("rust-analyzer/flycheck".into())
     }
 
     async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
