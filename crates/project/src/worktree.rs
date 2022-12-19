@@ -36,7 +36,7 @@ use std::{
     any::Any,
     cmp::{self, Ordering},
     convert::TryFrom,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt,
     future::Future,
     mem,
@@ -1489,9 +1489,9 @@ impl LocalSnapshot {
             }
         }
 
-        self.entries_by_path.insert_or_replace(entry.clone(), &());
         let scan_id = self.scan_id;
-        let removed_entry = self.entries_by_id.insert_or_replace(
+        self.entries_by_path.insert_or_replace(entry.clone(), &());
+        self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
