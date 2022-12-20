@@ -219,6 +219,7 @@ messages!(
     (UpdateLanguageServer, Foreground),
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
+    (UpdateProjectCollaborator, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateDiffBase, Background),
     (GetPrivateUserInfo, Foreground),
@@ -322,6 +323,7 @@ entity_messages!(
     UpdateFollowers,
     UpdateLanguageServer,
     UpdateProject,
+    UpdateProjectCollaborator,
     UpdateWorktree,
     UpdateDiffBase
 );

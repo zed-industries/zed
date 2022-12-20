@@ -39,6 +39,7 @@ message Envelope {
         JoinProjectResponse join_project_response = 25;
         LeaveProject leave_project = 26;
         AddProjectCollaborator add_project_collaborator = 27;
+        UpdateProjectCollaborator update_project_collaborator = 110;
         RemoveProjectCollaborator remove_project_collaborator = 28;
 
         GetDefinition get_definition = 29;
@@ -193,10 +194,9 @@ message ResharedProject {
 
 message RejoinedProject {
     uint64 id = 1;
-    uint32 replica_id = 2;
-    repeated WorktreeMetadata worktrees = 3;
-    repeated Collaborator collaborators = 4;
-    repeated LanguageServer language_servers = 5;
+    repeated WorktreeMetadata worktrees = 2;
+    repeated Collaborator collaborators = 3;
+    repeated LanguageServer language_servers = 4;
 }
 
 message LeaveRoom {}
@@ -358,6 +358,12 @@ message ProjectEntryResponse {
 message AddProjectCollaborator {
     uint64 project_id = 1;
     Collaborator collaborator = 2;
+}
+
+message UpdateProjectCollaborator {
+    uint64 project_id = 1;
+    PeerId old_peer_id = 2;
+    PeerId new_peer_id = 3;
 }
 
 message RemoveProjectCollaborator {

@@ -1319,15 +1319,7 @@ impl Database {
                     Condition::all()
                         .add(room_participant::Column::RoomId.eq(room_id))
                         .add(room_participant::Column::UserId.eq(user_id))
-                        .add(
-                            Condition::any()
-                                .add(room_participant::Column::AnsweringConnectionId.is_null())
-                                .add(room_participant::Column::AnsweringConnectionLost.eq(true))
-                                .add(
-                                    room_participant::Column::AnsweringConnectionServerId
-                                        .ne(connection.owner_id as i32),
-                                ),
-                        ),
+                        .add(room_participant::Column::AnsweringConnectionId.is_null()),
                 )
                 .set(room_participant::ActiveModel {
                     answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
@@ -1347,6 +1339,15 @@ impl Database {
             }
         })
         .await
+    }
+
+    pub async fn rejoin_room(
+        &self,
+        room_id: proto::RejoinRoom,
+        user_id: UserId,
+        connection_id: ConnectionId,
+    ) -> Result<RejoinedRoom> {
+        todo!()
     }
 
     pub async fn leave_room(
@@ -2287,7 +2288,18 @@ impl Database {
 
             let room_id = project.room_id;
             let project = Project {
-                collaborators,
+                collaborators: collaborators
+                    .into_iter()
+                    .map(|collaborator| ProjectCollaborator {
+                        connection_id: ConnectionId {
+                            owner_id: collaborator.connection_server_id.0 as u32,
+                            id: collaborator.connection_id as u32,
+                        },
+                        user_id: collaborator.user_id,
+                        replica_id: collaborator.replica_id,
+                        is_host: collaborator.is_host,
+                    })
+                    .collect(),
                 worktrees,
                 language_servers: language_servers
                     .into_iter()
@@ -2354,8 +2366,8 @@ impl Database {
     pub async fn project_collaborators(
         &self,
         project_id: ProjectId,
-        connection: ConnectionId,
-    ) -> Result<RoomGuard<Vec<project_collaborator::Model>>> {
+        connection_id: ConnectionId,
+    ) -> Result<RoomGuard<Vec<ProjectCollaborator>>> {
         self.room_transaction(|tx| async move {
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
@@ -2364,15 +2376,23 @@ impl Database {
             let collaborators = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
                 .all(&*tx)
-                .await?;
+                .await?
+                .into_iter()
+                .map(|collaborator| ProjectCollaborator {
+                    connection_id: ConnectionId {
+                        owner_id: collaborator.connection_server_id.0 as u32,
+                        id: collaborator.connection_id as u32,
+                    },
+                    user_id: collaborator.user_id,
+                    replica_id: collaborator.replica_id,
+                    is_host: collaborator.is_host,
+                })
+                .collect::<Vec<_>>();
 
-            if collaborators.iter().any(|collaborator| {
-                let collaborator_connection = ConnectionId {
-                    owner_id: collaborator.connection_server_id.0 as u32,
-                    id: collaborator.connection_id as u32,
-                };
-                collaborator_connection == connection
-            }) {
+            if collaborators
+                .iter()
+                .any(|collaborator| collaborator.connection_id == connection_id)
+            {
                 Ok((project.room_id, collaborators))
             } else {
                 Err(anyhow!("no such project"))?
@@ -2846,6 +2866,38 @@ id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
 
+pub struct RejoinedRoom {
+    pub room: proto::Room,
+    pub rejoined_projects: Vec<RejoinedProject>,
+    pub reshared_projects: Vec<ResharedProject>,
+}
+
+pub struct ResharedProject {
+    pub id: ProjectId,
+    pub old_connection_id: ConnectionId,
+    pub collaborators: Vec<ProjectCollaborator>,
+}
+
+pub struct RejoinedProject {
+    pub id: ProjectId,
+    pub old_connection_id: ConnectionId,
+    pub collaborators: Vec<ProjectCollaborator>,
+    pub worktrees: Vec<RejoinedWorktree>,
+    pub language_servers: Vec<proto::LanguageServer>,
+}
+
+pub struct RejoinedWorktree {
+    pub id: u64,
+    pub abs_path: String,
+    pub root_name: String,
+    pub visible: bool,
+    pub updated_entries: Vec<proto::Entry>,
+    pub removed_entries: Vec<u64>,
+    pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
+    pub scan_id: u64,
+    pub is_complete: bool,
+}
+
 pub struct LeftRoom {
     pub room: proto::Room,
     pub left_projects: HashMap<ProjectId, LeftProject>,
@@ -2859,9 +2911,26 @@ pub struct RefreshedRoom {
 }
 
 pub struct Project {
-    pub collaborators: Vec<project_collaborator::Model>,
+    pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
+}
+
+pub struct ProjectCollaborator {
+    pub connection_id: ConnectionId,
+    pub user_id: UserId,
+    pub replica_id: ReplicaId,
+    pub is_host: bool,
+}
+
+impl ProjectCollaborator {
+    pub fn to_proto(&self) -> proto::Collaborator {
+        proto::Collaborator {
+            peer_id: Some(self.connection_id.into()),
+            replica_id: self.replica_id.0 as u32,
+            user_id: self.user_id.to_proto(),
+        }
+    }
 }
 
 pub struct LeftProject {
