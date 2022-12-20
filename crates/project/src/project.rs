@@ -13,7 +13,7 @@ use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
-    select_biased, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
+    AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
