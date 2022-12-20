@@ -1028,28 +1028,16 @@ impl Project {
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
         cx.notify();
 
-        let mut status = self.client.status();
         let (metadata_changed_tx, mut metadata_changed_rx) = mpsc::unbounded();
         self.client_state = Some(ProjectClientState::Local {
             remote_id: project_id,
             metadata_changed: metadata_changed_tx,
             _maintain_metadata: cx.spawn_weak(move |this, cx| async move {
                 let mut txs = Vec::new();
-                loop {
-                    select_biased! {
-                        tx = metadata_changed_rx.next().fuse() => {
-                            let Some(tx) = tx else { break };
-                            txs.push(tx);
-                            while let Ok(Some(next_tx)) = metadata_changed_rx.try_next() {
-                                txs.push(next_tx);
-                            }
-                        }
-                        status = status.next().fuse() => {
-                            let Some(status) = status else { break };
-                            if !status.is_connected() {
-                                continue
-                            }
-                        }
+                while let Some(tx) = metadata_changed_rx.next().await {
+                    txs.push(tx);
+                    while let Ok(Some(next_tx)) = metadata_changed_rx.try_next() {
+                        txs.push(next_tx);
                     }
 
                     let Some(this) = this.upgrade(&cx) else { break };
@@ -4284,12 +4272,13 @@ impl Project {
                         if let Some(project_id) =
                             project.read_with(&cx, |project, _| project.remote_id())
                         {
-                            worktree
-                                .update(&mut cx, |worktree, cx| {
-                                    worktree.as_local_mut().unwrap().share(project_id, cx)
-                                })
-                                .await
-                                .log_err();
+                            worktree.update(&mut cx, |worktree, cx| {
+                                worktree
+                                    .as_local_mut()
+                                    .unwrap()
+                                    .share(project_id, cx)
+                                    .detach_and_log_err(cx);
+                            });
                         }
 
                         Ok(worktree)

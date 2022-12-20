@@ -1336,7 +1336,9 @@ async fn test_host_reconnect(
                     }
                 },
                 "dir2": {
-                    "x.txt": "x-contents",
+                    "x": "x-contents",
+                    "y": "y-contents",
+                    "z": "z-contents",
                 },
             }),
         )
@@ -1344,7 +1346,8 @@ async fn test_host_reconnect(
 
     let active_call_a = cx_a.read(ActiveCall::global);
     let (project_a, _) = client_a.build_local_project("/root/dir1", cx_a).await;
-    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_a1 =
+        project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -1353,7 +1356,7 @@ async fn test_host_reconnect(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     deterministic.run_until_parked();
 
-    let worktree_id = worktree_a.read_with(cx_a, |worktree, _| {
+    let worktree1_id = worktree_a1.read_with(cx_a, |worktree, _| {
         assert!(worktree.as_local().unwrap().is_shared());
         worktree.id()
     });
@@ -1370,11 +1373,11 @@ async fn test_host_reconnect(
         assert!(!project.is_read_only());
         assert_eq!(project.collaborators().len(), 1);
     });
-    worktree_a.read_with(cx_a, |tree, _| {
+    worktree_a1.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared())
     });
 
-    // While disconnected, add and remove files from the client A's project.
+    // While disconnected, add/remove files and worktrees from client A's project.
     client_a
         .fs
         .insert_tree(
@@ -1398,6 +1401,20 @@ async fn test_host_reconnect(
         )
         .await
         .unwrap();
+    let (worktree_a2, _) = project_a
+        .update(cx_a, |p, cx| {
+            p.find_or_create_local_worktree("/root/dir2", true, cx)
+        })
+        .await
+        .unwrap();
+    worktree_a2
+        .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
+        assert!(tree.as_local().unwrap().is_shared());
+        tree.id()
+    });
+    deterministic.run_until_parked();
 
     // Client A reconnects. Their project is re-shared, and client B re-joins it.
     server.allow_connections();
@@ -1409,7 +1426,7 @@ async fn test_host_reconnect(
     project_a.read_with(cx_a, |project, cx| {
         assert!(project.is_shared());
         assert_eq!(
-            worktree_a
+            worktree_a1
                 .read(cx)
                 .snapshot()
                 .paths()
@@ -1429,12 +1446,22 @@ async fn test_host_reconnect(
                 "subdir2/i.txt"
             ]
         );
+        assert_eq!(
+            worktree_a2
+                .read(cx)
+                .snapshot()
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["x", "y", "z"]
+        );
     });
     project_b.read_with(cx_b, |project, cx| {
         assert!(!project.is_read_only());
-        let worktree_b = project.worktree_for_id(worktree_id, cx).unwrap();
         assert_eq!(
-            worktree_b
+            project
+                .worktree_for_id(worktree1_id, cx)
+                .unwrap()
                 .read(cx)
                 .snapshot()
                 .paths()
@@ -1453,6 +1480,17 @@ async fn test_host_reconnect(
                 "subdir2/h.txt",
                 "subdir2/i.txt"
             ]
+        );
+        assert_eq!(
+            project
+                .worktree_for_id(worktree2_id, cx)
+                .unwrap()
+                .read(cx)
+                .snapshot()
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["x", "y", "z"]
         );
     });
 }

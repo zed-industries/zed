@@ -1421,6 +1421,9 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
+                    self.update_project_worktrees(project_id, &reshared_project.worktrees, &tx)
+                        .await?;
+
                     reshared_projects.push(ResharedProject {
                         id: project_id,
                         old_connection_id,
@@ -1970,35 +1973,7 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
 
-            if !worktrees.is_empty() {
-                worktree::Entity::insert_many(worktrees.iter().map(|worktree| {
-                    worktree::ActiveModel {
-                        id: ActiveValue::set(worktree.id as i64),
-                        project_id: ActiveValue::set(project.id),
-                        abs_path: ActiveValue::set(worktree.abs_path.clone()),
-                        root_name: ActiveValue::set(worktree.root_name.clone()),
-                        visible: ActiveValue::set(worktree.visible),
-                        scan_id: ActiveValue::set(0),
-                        is_complete: ActiveValue::set(false),
-                    }
-                }))
-                .on_conflict(
-                    OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
-                        .update_column(worktree::Column::RootName)
-                        .to_owned(),
-                )
-                .exec(&*tx)
-                .await?;
-            }
-
-            worktree::Entity::delete_many()
-                .filter(
-                    worktree::Column::ProjectId.eq(project.id).and(
-                        worktree::Column::Id
-                            .is_not_in(worktrees.iter().map(|worktree| worktree.id as i64)),
-                    ),
-                )
-                .exec(&*tx)
+            self.update_project_worktrees(project.id, worktrees, &tx)
                 .await?;
 
             let guest_connection_ids = self.project_guest_connection_ids(project.id, &tx).await?;
@@ -2006,6 +1981,41 @@ impl Database {
             Ok((project.room_id, (room, guest_connection_ids)))
         })
         .await
+    }
+
+    async fn update_project_worktrees(
+        &self,
+        project_id: ProjectId,
+        worktrees: &[proto::WorktreeMetadata],
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        if !worktrees.is_empty() {
+            worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
+                id: ActiveValue::set(worktree.id as i64),
+                project_id: ActiveValue::set(project_id),
+                abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                root_name: ActiveValue::set(worktree.root_name.clone()),
+                visible: ActiveValue::set(worktree.visible),
+                scan_id: ActiveValue::set(0),
+                is_complete: ActiveValue::set(false),
+            }))
+            .on_conflict(
+                OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
+                    .update_column(worktree::Column::RootName)
+                    .to_owned(),
+            )
+            .exec(&*tx)
+            .await?;
+        }
+
+        worktree::Entity::delete_many()
+            .filter(worktree::Column::ProjectId.eq(project_id).and(
+                worktree::Column::Id.is_not_in(worktrees.iter().map(|worktree| worktree.id as i64)),
+            ))
+            .exec(&*tx)
+            .await?;
+
+        Ok(())
     }
 
     pub async fn update_worktree(
