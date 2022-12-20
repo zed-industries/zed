@@ -942,56 +942,89 @@ async fn rejoin_room(
     response: Response<proto::RejoinRoom>,
     session: Session,
 ) -> Result<()> {
-    let mut rejoined_room = session
-        .db()
-        .await
-        .rejoin_room(request, session.user_id, session.connection_id)
-        .await?;
+    {
+        let mut rejoined_room = session
+            .db()
+            .await
+            .rejoin_room(request, session.user_id, session.connection_id)
+            .await?;
 
-    response.send(proto::RejoinRoomResponse {
-        room: Some(rejoined_room.room.clone()),
-        reshared_projects: rejoined_room
-            .reshared_projects
-            .iter()
-            .map(|project| proto::ResharedProject {
-                id: project.id.to_proto(),
-                collaborators: project
+        response.send(proto::RejoinRoomResponse {
+            room: Some(rejoined_room.room.clone()),
+            reshared_projects: rejoined_room
+                .reshared_projects
+                .iter()
+                .map(|project| proto::ResharedProject {
+                    id: project.id.to_proto(),
+                    collaborators: project
+                        .collaborators
+                        .iter()
+                        .map(|collaborator| collaborator.to_proto())
+                        .collect(),
+                })
+                .collect(),
+            rejoined_projects: rejoined_room
+                .rejoined_projects
+                .iter()
+                .map(|rejoined_project| proto::RejoinedProject {
+                    id: rejoined_project.id.to_proto(),
+                    worktrees: rejoined_project
+                        .worktrees
+                        .iter()
+                        .map(|worktree| proto::WorktreeMetadata {
+                            id: worktree.id,
+                            root_name: worktree.root_name.clone(),
+                            visible: worktree.visible,
+                            abs_path: worktree.abs_path.clone(),
+                        })
+                        .collect(),
+                    collaborators: rejoined_project
+                        .collaborators
+                        .iter()
+                        .map(|collaborator| collaborator.to_proto())
+                        .collect(),
+                    language_servers: rejoined_project.language_servers.clone(),
+                })
+                .collect(),
+        })?;
+        room_updated(&rejoined_room.room, &session.peer);
+
+        for project in &rejoined_room.reshared_projects {
+            for collaborator in &project.collaborators {
+                session
+                    .peer
+                    .send(
+                        collaborator.connection_id,
+                        proto::UpdateProjectCollaborator {
+                            project_id: project.id.to_proto(),
+                            old_peer_id: Some(project.old_connection_id.into()),
+                            new_peer_id: Some(session.connection_id.into()),
+                        },
+                    )
+                    .trace_err();
+            }
+
+            broadcast(
+                session.connection_id,
+                project
                     .collaborators
                     .iter()
-                    .map(|collaborator| collaborator.to_proto())
-                    .collect(),
-            })
-            .collect(),
-        rejoined_projects: rejoined_room
-            .rejoined_projects
-            .iter()
-            .map(|rejoined_project| proto::RejoinedProject {
-                id: rejoined_project.id.to_proto(),
-                worktrees: rejoined_project
-                    .worktrees
-                    .iter()
-                    .map(|worktree| proto::WorktreeMetadata {
-                        id: worktree.id,
-                        root_name: worktree.root_name.clone(),
-                        visible: worktree.visible,
-                        abs_path: worktree.abs_path.clone(),
-                    })
-                    .collect(),
-                collaborators: rejoined_project
-                    .collaborators
-                    .iter()
-                    .map(|collaborator| collaborator.to_proto())
-                    .collect(),
-                language_servers: rejoined_project.language_servers.clone(),
-            })
-            .collect(),
-    })?;
-    room_updated(&rejoined_room.room, &session.peer);
+                    .map(|collaborator| collaborator.connection_id),
+                |connection_id| {
+                    session.peer.forward_send(
+                        session.connection_id,
+                        connection_id,
+                        proto::UpdateProject {
+                            project_id: project.id.to_proto(),
+                            worktrees: project.worktrees.clone(),
+                        },
+                    )
+                },
+            );
+        }
 
-    // Notify other participants about this peer's reconnection to projects.
-    for project in &rejoined_room.reshared_projects {
-        for collaborator in &project.collaborators {
-            if collaborator.connection_id != session.connection_id {
+        for project in &rejoined_room.rejoined_projects {
+            for collaborator in &project.collaborators {
                 session
                     .peer
                     .send(
@@ -1005,73 +1038,56 @@ async fn rejoin_room(
                     .trace_err();
             }
         }
-    }
-    for project in &rejoined_room.rejoined_projects {
-        for collaborator in &project.collaborators {
-            if collaborator.connection_id != session.connection_id {
-                session
-                    .peer
-                    .send(
-                        collaborator.connection_id,
-                        proto::UpdateProjectCollaborator {
+
+        for project in &mut rejoined_room.rejoined_projects {
+            for worktree in mem::take(&mut project.worktrees) {
+                #[cfg(any(test, feature = "test-support"))]
+                const MAX_CHUNK_SIZE: usize = 2;
+                #[cfg(not(any(test, feature = "test-support")))]
+                const MAX_CHUNK_SIZE: usize = 256;
+
+                // Stream this worktree's entries.
+                let message = proto::UpdateWorktree {
+                    project_id: project.id.to_proto(),
+                    worktree_id: worktree.id,
+                    abs_path: worktree.abs_path.clone(),
+                    root_name: worktree.root_name,
+                    updated_entries: worktree.updated_entries,
+                    removed_entries: worktree.removed_entries,
+                    scan_id: worktree.scan_id,
+                    is_last_update: worktree.is_complete,
+                };
+                for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+                    session.peer.send(session.connection_id, update.clone())?;
+                }
+
+                // Stream this worktree's diagnostics.
+                for summary in worktree.diagnostic_summaries {
+                    session.peer.send(
+                        session.connection_id,
+                        proto::UpdateDiagnosticSummary {
                             project_id: project.id.to_proto(),
-                            old_peer_id: Some(project.old_connection_id.into()),
-                            new_peer_id: Some(session.connection_id.into()),
+                            worktree_id: worktree.id,
+                            summary: Some(summary),
                         },
-                    )
-                    .trace_err();
-            }
-        }
-    }
-
-    for project in &mut rejoined_room.rejoined_projects {
-        for worktree in mem::take(&mut project.worktrees) {
-            #[cfg(any(test, feature = "test-support"))]
-            const MAX_CHUNK_SIZE: usize = 2;
-            #[cfg(not(any(test, feature = "test-support")))]
-            const MAX_CHUNK_SIZE: usize = 256;
-
-            // Stream this worktree's entries.
-            let message = proto::UpdateWorktree {
-                project_id: project.id.to_proto(),
-                worktree_id: worktree.id,
-                abs_path: worktree.abs_path.clone(),
-                root_name: worktree.root_name,
-                updated_entries: worktree.updated_entries,
-                removed_entries: worktree.removed_entries,
-                scan_id: worktree.scan_id,
-                is_last_update: worktree.is_complete,
-            };
-            for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
-                session.peer.send(session.connection_id, update.clone())?;
+                    )?;
+                }
             }
 
-            // Stream this worktree's diagnostics.
-            for summary in worktree.diagnostic_summaries {
+            for language_server in &project.language_servers {
                 session.peer.send(
                     session.connection_id,
-                    proto::UpdateDiagnosticSummary {
+                    proto::UpdateLanguageServer {
                         project_id: project.id.to_proto(),
-                        worktree_id: worktree.id,
-                        summary: Some(summary),
+                        language_server_id: language_server.id,
+                        variant: Some(
+                            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                                proto::LspDiskBasedDiagnosticsUpdated {},
+                            ),
+                        ),
                     },
                 )?;
             }
-        }
-
-        for language_server in &project.language_servers {
-            session.peer.send(
-                session.connection_id,
-                proto::UpdateLanguageServer {
-                    project_id: project.id.to_proto(),
-                    language_server_id: language_server.id,
-                    variant: Some(
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                            proto::LspDiskBasedDiagnosticsUpdated {},
-                        ),
-                    ),
-                },
-            )?;
         }
     }
 

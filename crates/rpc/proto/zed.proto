@@ -172,7 +172,7 @@ message RejoinRoom {
 }
 
 message RejoinProject {
-    uint64 project_id = 1;
+    uint64 id = 1;
     repeated RejoinWorktree worktrees = 2;
 }
 

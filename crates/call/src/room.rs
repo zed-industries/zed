@@ -357,7 +357,7 @@ impl Room {
                 if let Some(project_id) = project.remote_id() {
                     projects.insert(project_id, handle.clone());
                     rejoined_projects.push(proto::RejoinProject {
-                        project_id,
+                        id: project_id,
                         worktrees: project
                             .worktrees(cx)
                             .map(|worktree| {

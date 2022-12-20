@@ -1,4 +1,5 @@
 use super::{ProjectCollaboratorId, ProjectId, ReplicaId, ServerId, UserId};
+use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -12,6 +13,15 @@ pub struct Model {
     pub user_id: UserId,
     pub replica_id: ReplicaId,
     pub is_host: bool,
+}
+
+impl Model {
+    pub fn connection(&self) -> ConnectionId {
+        ConnectionId {
+            owner_id: self.connection_server_id.0 as u32,
+            id: self.connection_id as u32,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

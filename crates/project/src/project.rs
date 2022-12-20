@@ -1081,6 +1081,17 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         self.set_collaborators_from_proto(message.collaborators, cx)?;
+        for worktree in self.worktrees.iter() {
+            if let Some(worktree) = worktree.upgrade(&cx) {
+                worktree.update(cx, |worktree, _| {
+                    if let Some(worktree) = worktree.as_local_mut() {
+                        worktree.reshare()
+                    } else {
+                        Ok(())
+                    }
+                })?;
+            }
+        }
         Ok(())
     }
 
