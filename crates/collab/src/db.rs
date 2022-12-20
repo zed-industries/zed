@@ -1347,6 +1347,7 @@ impl Database {
         user_id: UserId,
         connection_id: ConnectionId,
     ) -> Result<RejoinedRoom> {
+        println!("==============");
         todo!()
     }
 
@@ -1573,11 +1574,8 @@ impl Database {
         .await
     }
 
-    pub async fn connection_lost(
-        &self,
-        connection: ConnectionId,
-    ) -> Result<RoomGuard<Vec<LeftProject>>> {
-        self.room_transaction(|tx| async move {
+    pub async fn connection_lost(&self, connection: ConnectionId) -> Result<()> {
+        self.transaction(|tx| async move {
             let participant = room_participant::Entity::find()
                 .filter(
                     Condition::all()
@@ -1593,7 +1591,6 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("not a participant in any room"))?;
-            let room_id = participant.room_id;
 
             room_participant::Entity::update(room_participant::ActiveModel {
                 answering_connection_lost: ActiveValue::set(true),
@@ -1602,63 +1599,7 @@ impl Database {
             .exec(&*tx)
             .await?;
 
-            let guest_collaborators_and_projects = project_collaborator::Entity::find()
-                .find_also_related(project::Entity)
-                .filter(
-                    Condition::all()
-                        .add(project_collaborator::Column::IsHost.eq(false))
-                        .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
-                        .add(
-                            project_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .all(&*tx)
-                .await?;
-
-            project_collaborator::Entity::delete_many()
-                .filter(
-                    project_collaborator::Column::Id
-                        .is_in(guest_collaborators_and_projects.iter().map(|e| e.0.id)),
-                )
-                .exec(&*tx)
-                .await?;
-
-            let mut left_projects = Vec::new();
-            for (_, project) in guest_collaborators_and_projects {
-                let Some(project) = project else { continue };
-                let collaborators = project
-                    .find_related(project_collaborator::Entity)
-                    .all(&*tx)
-                    .await?;
-                let connection_ids = collaborators
-                    .into_iter()
-                    .map(|collaborator| ConnectionId {
-                        id: collaborator.connection_id as u32,
-                        owner_id: collaborator.connection_server_id.0 as u32,
-                    })
-                    .collect();
-
-                left_projects.push(LeftProject {
-                    id: project.id,
-                    host_user_id: project.host_user_id,
-                    host_connection_id: project.host_connection()?,
-                    connection_ids,
-                });
-            }
-
-            project::Entity::delete_many()
-                .filter(
-                    Condition::all()
-                        .add(project::Column::HostConnectionId.eq(connection.id as i32))
-                        .add(
-                            project::Column::HostConnectionServerId.eq(connection.owner_id as i32),
-                        ),
-                )
-                .exec(&*tx)
-                .await?;
-
-            Ok((room_id, left_projects))
+            Ok(())
         })
         .await
     }

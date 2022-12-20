@@ -156,7 +156,6 @@ enum ProjectClientState {
         sharing_has_stopped: bool,
         remote_id: u64,
         replica_id: ReplicaId,
-        _detect_unshare: Task<Option<()>>,
     },
 }
 
@@ -495,21 +494,6 @@ impl Project {
                     sharing_has_stopped: false,
                     remote_id,
                     replica_id,
-                    _detect_unshare: cx.spawn_weak(move |this, mut cx| {
-                        async move {
-                            let mut status = client.status();
-                            let is_connected =
-                                status.next().await.map_or(false, |s| s.is_connected());
-                            // Even if we're initially connected, any future change of the status means we momentarily disconnected.
-                            if !is_connected || status.next().await.is_some() {
-                                if let Some(this) = this.upgrade(&cx) {
-                                    this.update(&mut cx, |this, cx| this.disconnected_from_host(cx))
-                                }
-                            }
-                            Ok(())
-                        }
-                        .log_err()
-                    }),
                 }),
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
@@ -1094,6 +1078,15 @@ impl Project {
     pub fn reshared(
         &mut self,
         message: proto::ResharedProject,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        self.set_collaborators_from_proto(message.collaborators, cx)?;
+        Ok(())
+    }
+
+    pub fn rejoined(
+        &mut self,
+        message: proto::RejoinedProject,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         self.set_collaborators_from_proto(message.collaborators, cx)?;

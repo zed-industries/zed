@@ -1351,19 +1351,27 @@ async fn test_host_reconnect(
         .unwrap();
 
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+    deterministic.run_until_parked();
+
+    let worktree_id = worktree_a.read_with(cx_a, |worktree, _| {
+        assert!(worktree.as_local().unwrap().is_shared());
+        worktree.id()
+    });
 
     // Drop client A's connection.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT);
     project_a.read_with(cx_a, |project, _| {
-        assert!(project.collaborators().is_empty())
+        assert!(project.is_shared());
+        assert_eq!(project.collaborators().len(), 1);
     });
-    project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
-    project_b.read_with(cx_b, |project, _| assert!(project.is_read_only()));
+    project_b.read_with(cx_b, |project, _| {
+        assert!(!project.is_read_only());
+        assert_eq!(project.collaborators().len(), 1);
+    });
     worktree_a.read_with(cx_a, |tree, _| {
-        assert!(!tree.as_local().unwrap().is_shared())
+        assert!(tree.as_local().unwrap().is_shared())
     });
 
     // While disconnected, add and remove files from the client A's project.
@@ -1393,9 +1401,60 @@ async fn test_host_reconnect(
 
     // Client A reconnects. Their project is re-shared, and client B re-joins it.
     server.allow_connections();
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
-    project_a.read_with(cx_a, |project, _| assert!(project.is_shared()));
-    project_b.read_with(cx_b, |project, _| assert!(!project.is_read_only()));
+    client_a
+        .authenticate_and_connect(false, &cx_a.to_async())
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, cx| {
+        assert!(project.is_shared());
+        assert_eq!(
+            worktree_a
+                .read(cx)
+                .snapshot()
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "a.txt",
+                "b.txt",
+                "subdir1",
+                "subdir1/c.txt",
+                "subdir1/d.txt",
+                "subdir1/e.txt",
+                "subdir2",
+                "subdir2/f.txt",
+                "subdir2/g.txt",
+                "subdir2/h.txt",
+                "subdir2/i.txt"
+            ]
+        );
+    });
+    project_b.read_with(cx_b, |project, cx| {
+        assert!(!project.is_read_only());
+        let worktree_b = project.worktree_for_id(worktree_id, cx).unwrap();
+        assert_eq!(
+            worktree_b
+                .read(cx)
+                .snapshot()
+                .paths()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "a.txt",
+                "b.txt",
+                "subdir1",
+                "subdir1/c.txt",
+                "subdir1/d.txt",
+                "subdir1/e.txt",
+                "subdir2",
+                "subdir2/f.txt",
+                "subdir2/g.txt",
+                "subdir2/h.txt",
+                "subdir2/i.txt"
+            ]
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -6169,7 +6228,6 @@ async fn test_random_collaboration(
     let mut user_ids = Vec::new();
     let mut op_start_signals = Vec::new();
     let mut next_entity_id = 100000;
-    let mut can_disconnect = rng.lock().gen_bool(0.2);
 
     let mut operations = 0;
     while operations < max_operations {

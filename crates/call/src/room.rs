@@ -355,6 +355,7 @@ impl Room {
             if let Some(handle) = project.upgrade(cx) {
                 let project = handle.read(cx);
                 if let Some(project_id) = project.remote_id() {
+                    projects.insert(project_id, handle.clone());
                     rejoined_projects.push(proto::RejoinProject {
                         project_id,
                         worktrees: project
@@ -387,10 +388,18 @@ impl Room {
                 this.status = RoomStatus::Online;
                 this.apply_room_update(room_proto, cx)?;
 
-                for shared_project in response.reshared_projects {
-                    if let Some(project) = projects.get(&shared_project.id) {
+                for reshared_project in response.reshared_projects {
+                    if let Some(project) = projects.get(&reshared_project.id) {
                         project.update(cx, |project, cx| {
-                            project.reshared(shared_project, cx).log_err();
+                            project.reshared(reshared_project, cx).log_err();
+                        });
+                    }
+                }
+
+                for rejoined_project in response.rejoined_projects {
+                    if let Some(project) = projects.get(&rejoined_project.id) {
+                        project.update(cx, |project, cx| {
+                            project.rejoined(rejoined_project, cx).log_err();
                         });
                     }
                 }
