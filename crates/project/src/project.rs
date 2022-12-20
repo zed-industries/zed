@@ -1146,7 +1146,7 @@ impl Project {
         }
     }
 
-    fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(ProjectClientState::Remote {
             sharing_has_stopped,
             ..

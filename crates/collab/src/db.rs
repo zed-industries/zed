@@ -1440,9 +1440,20 @@ impl Database {
                     });
                 }
 
-                // TODO: handle unshared projects
-                // TODO: handle left projects
+                project::Entity::delete_many()
+                    .filter(
+                        Condition::all()
+                            .add(project::Column::RoomId.eq(room_id))
+                            .add(project::Column::HostUserId.eq(user_id))
+                            .add(
+                                project::Column::Id
+                                    .is_not_in(reshared_projects.iter().map(|project| project.id)),
+                            ),
+                    )
+                    .exec(&*tx)
+                    .await?;
 
+                // TODO: handle left projects
                 let room = self.get_room(room_id, &tx).await?;
                 Ok((
                     room_id,
@@ -2971,6 +2982,7 @@ impl ProjectCollaborator {
     }
 }
 
+#[derive(Debug)]
 pub struct LeftProject {
     pub id: ProjectId,
     pub host_user_id: UserId,

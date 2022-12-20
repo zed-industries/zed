@@ -1324,7 +1324,7 @@ async fn test_host_reconnect(
     client_a
         .fs
         .insert_tree(
-            "/root",
+            "/root-1",
             json!({
                 "dir1": {
                     "a.txt": "a-contents",
@@ -1343,17 +1343,32 @@ async fn test_host_reconnect(
             }),
         )
         .await;
+    client_a
+        .fs
+        .insert_tree(
+            "/root-2",
+            json!({
+                "1.txt": "1-contents",
+            }),
+        )
+        .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
-    let (project_a, _) = client_a.build_local_project("/root/dir1", cx_a).await;
+    let (project_a1, _) = client_a.build_local_project("/root-1/dir1", cx_a).await;
+    let (project_a2, _) = client_a.build_local_project("/root-2", cx_a).await;
     let worktree_a1 =
-        project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        project_a1.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+    let project1_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a1.clone(), cx))
+        .await
+        .unwrap();
+    let project2_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a2.clone(), cx))
         .await
         .unwrap();
 
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b1 = client_b.build_remote_project(project1_id, cx_b).await;
+    let project_b2 = client_b.build_remote_project(project2_id, cx_b).await;
     deterministic.run_until_parked();
 
     let worktree1_id = worktree_a1.read_with(cx_a, |worktree, _| {
@@ -1365,11 +1380,11 @@ async fn test_host_reconnect(
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT);
-    project_a.read_with(cx_a, |project, _| {
+    project_a1.read_with(cx_a, |project, _| {
         assert!(project.is_shared());
         assert_eq!(project.collaborators().len(), 1);
     });
-    project_b.read_with(cx_b, |project, _| {
+    project_b1.read_with(cx_b, |project, _| {
         assert!(!project.is_read_only());
         assert_eq!(project.collaborators().len(), 1);
     });
@@ -1377,11 +1392,11 @@ async fn test_host_reconnect(
         assert!(tree.as_local().unwrap().is_shared())
     });
 
-    // While disconnected, add/remove files and worktrees from client A's project.
+    // While disconnected, add and remove files from client A's project.
     client_a
         .fs
         .insert_tree(
-            "/root/dir1/subdir2",
+            "/root-1/dir1/subdir2",
             json!({
                 "f.txt": "f-contents",
                 "g.txt": "g-contents",
@@ -1393,7 +1408,7 @@ async fn test_host_reconnect(
     client_a
         .fs
         .remove_dir(
-            "/root/dir1/subdir1".as_ref(),
+            "/root-1/dir1/subdir1".as_ref(),
             RemoveOptions {
                 recursive: true,
                 ..Default::default()
@@ -1401,9 +1416,11 @@ async fn test_host_reconnect(
         )
         .await
         .unwrap();
-    let (worktree_a2, _) = project_a
+
+    // While disconnected, add a worktree to client A's project.
+    let (worktree_a2, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root/dir2", true, cx)
+            p.find_or_create_local_worktree("/root-1/dir2", true, cx)
         })
         .await
         .unwrap();
@@ -1416,6 +1433,9 @@ async fn test_host_reconnect(
     });
     deterministic.run_until_parked();
 
+    // While disconnected, close project 2
+    cx_a.update(|_| drop(project_a2));
+
     // Client A reconnects. Their project is re-shared, and client B re-joins it.
     server.allow_connections();
     client_a
@@ -1423,7 +1443,7 @@ async fn test_host_reconnect(
         .await
         .unwrap();
     deterministic.run_until_parked();
-    project_a.read_with(cx_a, |project, cx| {
+    project_a1.read_with(cx_a, |project, cx| {
         assert!(project.is_shared());
         assert_eq!(
             worktree_a1
@@ -1456,7 +1476,7 @@ async fn test_host_reconnect(
             vec!["x", "y", "z"]
         );
     });
-    project_b.read_with(cx_b, |project, cx| {
+    project_b1.read_with(cx_b, |project, cx| {
         assert!(!project.is_read_only());
         assert_eq!(
             project
@@ -1493,6 +1513,7 @@ async fn test_host_reconnect(
             vec!["x", "y", "z"]
         );
     });
+    project_b2.read_with(cx_b, |project, _| assert!(project.is_read_only()));
 }
 
 #[gpui::test(iterations = 10)]
@@ -6930,17 +6951,18 @@ impl TestClient {
         host_project_id: u64,
         guest_cx: &mut TestAppContext,
     ) -> ModelHandle<Project> {
-        let project_b = guest_cx.spawn(|cx| {
-            Project::remote(
+        let active_call = guest_cx.read(ActiveCall::global);
+        let room = active_call.read_with(guest_cx, |call, _| call.room().unwrap().clone());
+        room.update(guest_cx, |room, cx| {
+            room.join_project(
                 host_project_id,
-                self.client.clone(),
-                self.user_store.clone(),
                 self.language_registry.clone(),
-                FakeFs::new(cx.background()),
+                self.fs.clone(),
                 cx,
             )
-        });
-        project_b.await.unwrap()
+        })
+        .await
+        .unwrap()
     }
 
     fn build_workspace(

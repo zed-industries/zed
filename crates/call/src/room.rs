@@ -8,10 +8,12 @@ use client::{
     Client, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
+use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
+use language::LanguageRegistry;
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
 use project::Project;
@@ -523,6 +525,20 @@ impl Room {
                         }
 
                         for unshared_project_id in old_projects.difference(&new_projects) {
+                            this.joined_projects.retain(|project| {
+                                if let Some(project) = project.upgrade(cx) {
+                                    project.update(cx, |project, cx| {
+                                        if project.remote_id() == Some(*unshared_project_id) {
+                                            project.disconnected_from_host(cx);
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    })
+                                } else {
+                                    false
+                                }
+                            });
                             cx.emit(Event::RemoteProjectUnshared {
                                 project_id: *unshared_project_id,
                             });
@@ -699,15 +715,30 @@ impl Room {
         })
     }
 
-    pub fn joined_project(&mut self, project: ModelHandle<Project>, cx: &mut ModelContext<Self>) {
-        self.joined_projects.retain(|project| {
-            if let Some(project) = project.upgrade(cx) {
-                !project.read(cx).is_read_only()
-            } else {
-                false
-            }
-        });
-        self.joined_projects.insert(project.downgrade());
+    pub fn join_project(
+        &mut self,
+        id: u64,
+        language_registry: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Project>>> {
+        let client = self.client.clone();
+        let user_store = self.user_store.clone();
+        cx.spawn(|this, mut cx| async move {
+            let project =
+                Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+            this.update(&mut cx, |this, cx| {
+                this.joined_projects.retain(|project| {
+                    if let Some(project) = project.upgrade(cx) {
+                        !project.read(cx).is_read_only()
+                    } else {
+                        false
+                    }
+                });
+                this.joined_projects.insert(project.downgrade());
+            });
+            Ok(project)
+        })
     }
 
     pub(crate) fn share_project(
