@@ -1453,14 +1453,124 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
-                // TODO: handle left projects
+                let mut rejoined_projects = Vec::new();
+                for rejoined_project in &rejoin_room.rejoined_projects {
+                    let project_id = ProjectId::from_proto(rejoined_project.id);
+                    let Some(project) = project::Entity::find_by_id(project_id)
+                        .one(&*tx)
+                        .await? else {
+                            continue
+                        };
+
+                    let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
+                    let mut worktrees = Vec::new();
+                    for db_worktree in db_worktrees {
+                        let mut worktree = RejoinedWorktree {
+                            id: db_worktree.id as u64,
+                            abs_path: db_worktree.abs_path,
+                            root_name: db_worktree.root_name,
+                            visible: db_worktree.visible,
+                            updated_entries: Default::default(),
+                            removed_entries: Default::default(),
+                            diagnostic_summaries: Default::default(),
+                            scan_id: db_worktree.scan_id as u64,
+                            is_complete: db_worktree.is_complete,
+                        };
+
+                        let rejoined_worktree = rejoined_project
+                            .worktrees
+                            .iter()
+                            .find(|worktree| worktree.id == db_worktree.id as u64);
+
+                        let entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
+                            Condition::all()
+                                .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
+                                .add(worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id))
+                        } else {
+                            Condition::all()
+                                .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
+                                .add(worktree_entry::Column::IsDeleted.eq(false))
+                        };
+
+                        let mut db_entries = worktree_entry::Entity::find()
+                            .filter(entry_filter)
+                            .stream(&*tx)
+                            .await?;
+
+                        while let Some(db_entry) = db_entries.next().await {
+                            let db_entry = db_entry?;
+
+                            if db_entry.is_deleted {
+                                worktree.removed_entries.push(db_entry.id as u64);
+                            } else {
+                                worktree.updated_entries.push(proto::Entry {
+                                    id: db_entry.id as u64,
+                                    is_dir: db_entry.is_dir,
+                                    path: db_entry.path,
+                                    inode: db_entry.inode as u64,
+                                    mtime: Some(proto::Timestamp {
+                                        seconds: db_entry.mtime_seconds as u64,
+                                        nanos: db_entry.mtime_nanos as u32,
+                                    }),
+                                    is_symlink: db_entry.is_symlink,
+                                    is_ignored: db_entry.is_ignored,
+                                });
+                            }
+                        }
+
+                        worktrees.push(worktree);
+                    }
+
+                    let language_servers = project
+                        .find_related(language_server::Entity)
+                        .all(&*tx)
+                        .await?
+                        .into_iter()
+                        .map(|language_server| proto::LanguageServer {
+                            id: language_server.id as u64,
+                            name: language_server.name,
+                        })
+                        .collect::<Vec<_>>();
+
+                    let mut collaborators = project
+                        .find_related(project_collaborator::Entity)
+                        .all(&*tx)
+                        .await?
+                        .into_iter()
+                        .map(|collaborator| ProjectCollaborator {
+                            connection_id: collaborator.connection(),
+                            user_id: collaborator.user_id,
+                            replica_id: collaborator.replica_id,
+                            is_host: collaborator.is_host,
+                        })
+                        .collect::<Vec<_>>();
+
+                    let old_connection_id;
+                    if let Some(self_collaborator_ix) = collaborators
+                        .iter()
+                        .position(|collaborator| collaborator.user_id == user_id)
+                    {
+                        let self_collaborator = collaborators.swap_remove(self_collaborator_ix);
+                        old_connection_id = self_collaborator.connection_id;
+                    } else {
+                        continue;
+                    }
+
+                    rejoined_projects.push(RejoinedProject {
+                        id: project_id,
+                        old_connection_id,
+                        collaborators,
+                        worktrees,
+                        language_servers,
+                    });
+                }
+
                 let room = self.get_room(room_id, &tx).await?;
                 Ok((
                     room_id,
                     RejoinedRoom {
                         room,
-                        // TODO: handle rejoined projects
-                        rejoined_projects: Default::default(),
+                        rejoined_projects,
                         reshared_projects,
                     },
                 ))
@@ -2079,6 +2189,8 @@ impl Database {
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
                         is_symlink: ActiveValue::set(entry.is_symlink),
                         is_ignored: ActiveValue::set(entry.is_ignored),
+                        is_deleted: ActiveValue::set(false),
+                        scan_id: ActiveValue::set(update.scan_id as i64),
                     }
                 }))
                 .on_conflict(
@@ -2103,7 +2215,7 @@ impl Database {
             }
 
             if !update.removed_entries.is_empty() {
-                worktree_entry::Entity::delete_many()
+                worktree_entry::Entity::update_many()
                     .filter(
                         worktree_entry::Column::ProjectId
                             .eq(project_id)
@@ -2113,6 +2225,11 @@ impl Database {
                                     .is_in(update.removed_entries.iter().map(|id| *id as i64)),
                             ),
                     )
+                    .set(worktree_entry::ActiveModel {
+                        is_deleted: ActiveValue::Set(true),
+                        scan_id: ActiveValue::Set(update.scan_id as i64),
+                        ..Default::default()
+                    })
                     .exec(&*tx)
                     .await?;
             }
@@ -2935,6 +3052,7 @@ pub struct RejoinedProject {
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
+#[derive(Debug)]
 pub struct RejoinedWorktree {
     pub id: u64,
     pub abs_path: String,

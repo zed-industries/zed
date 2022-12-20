@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::Axis;
 
-use util::{ unzip_option, ResultExt};
+use util::{unzip_option, ResultExt};
 
 use crate::dock::DockPosition;
 use crate::WorkspaceId;
@@ -31,7 +31,7 @@ define_connection! {
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
                 FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
             ) STRICT;
-            
+
             CREATE TABLE pane_groups(
                 group_id INTEGER PRIMARY KEY,
                 workspace_id INTEGER NOT NULL,
@@ -43,7 +43,7 @@ define_connection! {
                 ON UPDATE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
-            
+
             CREATE TABLE panes(
                 pane_id INTEGER PRIMARY KEY,
                 workspace_id INTEGER NOT NULL,
@@ -52,7 +52,7 @@ define_connection! {
                 ON DELETE CASCADE
                 ON UPDATE CASCADE
             ) STRICT;
-            
+
             CREATE TABLE center_panes(
                 pane_id INTEGER PRIMARY KEY,
                 parent_group_id INTEGER, // NULL means that this is a root pane
@@ -61,7 +61,7 @@ define_connection! {
                 ON DELETE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
-            
+
             CREATE TABLE items(
                 item_id INTEGER NOT NULL, // This is the item's view id, so this is not unique
                 workspace_id INTEGER NOT NULL,
@@ -119,7 +119,7 @@ impl WorkspaceDb {
                 .context("Getting center group")
                 .log_err()?,
             dock_position,
-            left_sidebar_open
+            left_sidebar_open,
         })
     }
 
@@ -158,7 +158,12 @@ impl WorkspaceDb {
                             dock_visible = ?4,
                             dock_anchor = ?5,
                             timestamp = CURRENT_TIMESTAMP
-                ))?((workspace.id, &workspace.location, workspace.left_sidebar_open, workspace.dock_position))
+                ))?((
+                    workspace.id,
+                    &workspace.location,
+                    workspace.left_sidebar_open,
+                    workspace.dock_position,
+                ))
                 .context("Updating workspace")?;
 
                 // Save center pane group and dock pane
@@ -191,10 +196,10 @@ impl WorkspaceDb {
 
     query! {
         pub fn recent_workspaces(limit: usize) -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
-            SELECT workspace_id, workspace_location 
+            SELECT workspace_id, workspace_location
             FROM workspaces
             WHERE workspace_location IS NOT NULL
-            ORDER BY timestamp DESC 
+            ORDER BY timestamp DESC
             LIMIT ?
         }
     }
@@ -210,10 +215,16 @@ impl WorkspaceDb {
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
-        Ok(self.get_pane_group(workspace_id, None)?
+        Ok(self
+            .get_pane_group(workspace_id, None)?
             .into_iter()
             .next()
-            .unwrap_or_else(|| SerializedPaneGroup::Pane(SerializedPane { active: true, children: vec![] })))
+            .unwrap_or_else(|| {
+                SerializedPaneGroup::Pane(SerializedPane {
+                    active: true,
+                    children: vec![],
+                })
+            }))
     }
 
     fn get_pane_group(
@@ -225,7 +236,7 @@ impl WorkspaceDb {
         type GroupOrPane = (Option<GroupId>, Option<Axis>, Option<PaneId>, Option<bool>);
         self.select_bound::<GroupKey, GroupOrPane>(sql!(
             SELECT group_id, axis, pane_id, active
-                FROM (SELECT 
+                FROM (SELECT
                         group_id,
                         axis,
                         NULL as pane_id,
@@ -233,18 +244,18 @@ impl WorkspaceDb {
                         position,
                         parent_group_id,
                         workspace_id
-                      FROM pane_groups 
+                      FROM pane_groups
                      UNION
-                      SELECT 
+                      SELECT
                         NULL,
-                        NULL,  
+                        NULL,
                         center_panes.pane_id,
                         panes.active as active,
                         position,
                         parent_group_id,
                         panes.workspace_id as workspace_id
                       FROM center_panes
-                      JOIN panes ON center_panes.pane_id = panes.pane_id) 
+                      JOIN panes ON center_panes.pane_id = panes.pane_id)
             WHERE parent_group_id IS ? AND workspace_id = ?
             ORDER BY position
         ))?((group_id, workspace_id))?
@@ -267,13 +278,12 @@ impl WorkspaceDb {
         // Filter out panes and pane groups which don't have any children or items
         .filter(|pane_group| match pane_group {
             Ok(SerializedPaneGroup::Group { children, .. }) => !children.is_empty(),
-            Ok(SerializedPaneGroup::Pane(pane)) => !pane.children.is_empty(), 
+            Ok(SerializedPaneGroup::Pane(pane)) => !pane.children.is_empty(),
             _ => true,
         })
         .collect::<Result<_>>()
     }
 
-   
     fn save_pane_group(
         conn: &Connection,
         workspace_id: WorkspaceId,
@@ -285,15 +295,10 @@ impl WorkspaceDb {
                 let (parent_id, position) = unzip_option(parent);
 
                 let group_id = conn.select_row_bound::<_, i64>(sql!(
-                        INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis) 
-                        VALUES (?, ?, ?, ?) 
+                        INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis)
+                        VALUES (?, ?, ?, ?)
                         RETURNING group_id
-                ))?((
-                    workspace_id,
-                    parent_id,
-                    position,
-                    *axis,
-                ))?
+                ))?((workspace_id, parent_id, position, *axis))?
                 .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
 
                 for (position, group) in children.iter().enumerate() {
@@ -314,9 +319,7 @@ impl WorkspaceDb {
             SELECT pane_id, active
             FROM panes
             WHERE pane_id = (SELECT dock_pane FROM workspaces WHERE workspace_id = ?)
-        ))?(
-            workspace_id,
-        )?
+        ))?(workspace_id)?
         .context("No dock pane for workspace")?;
 
         Ok(SerializedPane::new(
@@ -333,8 +336,8 @@ impl WorkspaceDb {
         dock: bool,
     ) -> Result<PaneId> {
         let pane_id = conn.select_row_bound::<_, i64>(sql!(
-            INSERT INTO panes(workspace_id, active) 
-            VALUES (?, ?) 
+            INSERT INTO panes(workspace_id, active)
+            VALUES (?, ?)
             RETURNING pane_id
         ))?((workspace_id, pane.active))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
@@ -376,14 +379,13 @@ impl WorkspaceDb {
         Ok(())
     }
 
-    query!{
+    query! {
         pub async fn update_timestamp(workspace_id: WorkspaceId) -> Result<()> {
             UPDATE workspaces
             SET timestamp = CURRENT_TIMESTAMP
             WHERE workspace_id = ?
         }
     }
-    
 }
 
 #[cfg(test)]
@@ -472,7 +474,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
             center_group: Default::default(),
             dock_pane: Default::default(),
-            left_sidebar_open: true
+            left_sidebar_open: true,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -481,7 +483,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
             center_group: Default::default(),
             dock_pane: Default::default(),
-            left_sidebar_open: false
+            left_sidebar_open: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -587,7 +589,7 @@ mod tests {
             dock_position: DockPosition::Shown(DockAnchor::Bottom),
             center_group,
             dock_pane,
-            left_sidebar_open: true
+            left_sidebar_open: true,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -660,7 +662,7 @@ mod tests {
             dock_position: DockPosition::Shown(DockAnchor::Right),
             center_group: Default::default(),
             dock_pane: Default::default(),
-            left_sidebar_open: false
+            left_sidebar_open: false,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -695,7 +697,7 @@ mod tests {
             dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Right),
             center_group: center_group.clone(),
             dock_pane,
-            left_sidebar_open: true
+            left_sidebar_open: true,
         }
     }
 

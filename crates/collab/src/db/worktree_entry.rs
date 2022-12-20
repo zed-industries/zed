@@ -17,6 +17,8 @@ pub struct Model {
     pub mtime_nanos: i32,
     pub is_symlink: bool,
     pub is_ignored: bool,
+    pub is_deleted: bool,
+    pub scan_id: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

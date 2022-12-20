@@ -1088,7 +1088,26 @@ impl Project {
         message: proto::RejoinedProject,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
+
+        self.language_server_statuses = message
+            .language_servers
+            .into_iter()
+            .map(|server| {
+                (
+                    server.id as usize,
+                    LanguageServerStatus {
+                        name: server.name,
+                        pending_work: Default::default(),
+                        has_pending_diagnostic_updates: false,
+                        progress_tokens: Default::default(),
+                    },
+                )
+            })
+            .collect();
+
+        cx.notify();
         Ok(())
     }
 
@@ -4647,39 +4666,11 @@ impl Project {
     async fn handle_update_project(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateProject>,
-        client: Arc<Client>,
+        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let replica_id = this.replica_id();
-            let remote_id = this.remote_id().ok_or_else(|| anyhow!("invalid project"))?;
-
-            let mut old_worktrees_by_id = this
-                .worktrees
-                .drain(..)
-                .filter_map(|worktree| {
-                    let worktree = worktree.upgrade(cx)?;
-                    Some((worktree.read(cx).id(), worktree))
-                })
-                .collect::<HashMap<_, _>>();
-
-            for worktree in envelope.payload.worktrees {
-                if let Some(old_worktree) =
-                    old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
-                {
-                    this.worktrees.push(WorktreeHandle::Strong(old_worktree));
-                } else {
-                    let worktree =
-                        Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
-                    let _ = this.add_worktree(&worktree, cx);
-                }
-            }
-
-            let _ = this.metadata_changed(cx);
-            for (id, _) in old_worktrees_by_id {
-                cx.emit(Event::WorktreeRemoved(id));
-            }
-
+            this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
             Ok(())
         })
     }
@@ -4871,14 +4862,15 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let language_server_id = envelope.payload.language_server_id as usize;
-        match envelope
-            .payload
-            .variant
-            .ok_or_else(|| anyhow!("invalid variant"))?
-        {
-            proto::update_language_server::Variant::WorkStart(payload) => {
-                this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, cx| {
+            let language_server_id = envelope.payload.language_server_id as usize;
+
+            match envelope
+                .payload
+                .variant
+                .ok_or_else(|| anyhow!("invalid variant"))?
+            {
+                proto::update_language_server::Variant::WorkStart(payload) => {
                     this.on_lsp_work_start(
                         language_server_id,
                         payload.token,
@@ -4889,10 +4881,9 @@ impl Project {
                         },
                         cx,
                     );
-                })
-            }
-            proto::update_language_server::Variant::WorkProgress(payload) => {
-                this.update(&mut cx, |this, cx| {
+                }
+
+                proto::update_language_server::Variant::WorkProgress(payload) => {
                     this.on_lsp_work_progress(
                         language_server_id,
                         payload.token,
@@ -4903,26 +4894,23 @@ impl Project {
                         },
                         cx,
                     );
-                })
-            }
-            proto::update_language_server::Variant::WorkEnd(payload) => {
-                this.update(&mut cx, |this, cx| {
-                    this.on_lsp_work_end(language_server_id, payload.token, cx);
-                })
-            }
-            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(_) => {
-                this.update(&mut cx, |this, cx| {
-                    this.disk_based_diagnostics_started(language_server_id, cx);
-                })
-            }
-            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(_) => {
-                this.update(&mut cx, |this, cx| {
-                    this.disk_based_diagnostics_finished(language_server_id, cx)
-                });
-            }
-        }
+                }
 
-        Ok(())
+                proto::update_language_server::Variant::WorkEnd(payload) => {
+                    this.on_lsp_work_end(language_server_id, payload.token, cx);
+                }
+
+                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(_) => {
+                    this.disk_based_diagnostics_started(language_server_id, cx);
+                }
+
+                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(_) => {
+                    this.disk_based_diagnostics_finished(language_server_id, cx)
+                }
+            }
+
+            Ok(())
+        })
     }
 
     async fn handle_update_buffer(
@@ -5636,6 +5624,43 @@ impl Project {
             buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
             Ok(buffer)
         })
+    }
+
+    fn set_worktrees_from_proto(
+        &mut self,
+        worktrees: Vec<proto::WorktreeMetadata>,
+        cx: &mut ModelContext<Project>,
+    ) -> Result<()> {
+        let replica_id = self.replica_id();
+        let remote_id = self.remote_id().ok_or_else(|| anyhow!("invalid project"))?;
+
+        let mut old_worktrees_by_id = self
+            .worktrees
+            .drain(..)
+            .filter_map(|worktree| {
+                let worktree = worktree.upgrade(cx)?;
+                Some((worktree.read(cx).id(), worktree))
+            })
+            .collect::<HashMap<_, _>>();
+
+        for worktree in worktrees {
+            if let Some(old_worktree) =
+                old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
+            {
+                self.worktrees.push(WorktreeHandle::Strong(old_worktree));
+            } else {
+                let worktree =
+                    Worktree::remote(remote_id, replica_id, worktree, self.client.clone(), cx);
+                let _ = self.add_worktree(&worktree, cx);
+            }
+        }
+
+        let _ = self.metadata_changed(cx);
+        for (id, _) in old_worktrees_by_id {
+            cx.emit(Event::WorktreeRemoved(id));
+        }
+
+        Ok(())
     }
 
     fn set_collaborators_from_proto(

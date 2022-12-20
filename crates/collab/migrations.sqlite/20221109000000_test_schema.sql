@@ -65,6 +65,7 @@ CREATE INDEX "index_worktrees_on_project_id" ON "worktrees" ("project_id");
 CREATE TABLE "worktree_entries" (
     "project_id" INTEGER NOT NULL,
     "worktree_id" INTEGER NOT NULL,
+    "scan_id" INTEGER NOT NULL,
     "id" INTEGER NOT NULL,
     "is_dir" BOOL NOT NULL,
     "path" VARCHAR NOT NULL,
@@ -73,6 +74,7 @@ CREATE TABLE "worktree_entries" (
     "mtime_nanos" INTEGER NOT NULL,
     "is_symlink" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
+    "is_deleted" BOOL NOT NULL,
     PRIMARY KEY(project_id, worktree_id, id),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
