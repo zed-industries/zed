@@ -7,7 +7,7 @@ use client::{
     proto::{self, PeerId},
     Client, TypedEnvelope, User, UserStore,
 };
-use collections::{BTreeMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use futures::{FutureExt, StreamExt};
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
@@ -44,6 +44,7 @@ pub struct Room {
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     shared_projects: HashSet<WeakModelHandle<Project>>,
+    joined_projects: HashSet<WeakModelHandle<Project>>,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<u64, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
@@ -134,6 +135,7 @@ impl Room {
             live_kit: live_kit_room,
             status: RoomStatus::Online,
             shared_projects: Default::default(),
+            joined_projects: Default::default(),
             participant_user_ids: Default::default(),
             local_participant: Default::default(),
             remote_participants: Default::default(),
@@ -259,16 +261,15 @@ impl Room {
                 .next()
                 .await
                 .map_or(false, |s| s.is_connected());
+
             // Even if we're initially connected, any future change of the status means we momentarily disconnected.
             if !is_connected || client_status.next().await.is_some() {
                 log::info!("detected client disconnection");
-                let room_id = this
-                    .upgrade(&cx)
+                this.upgrade(&cx)
                     .ok_or_else(|| anyhow!("room was dropped"))?
                     .update(&mut cx, |this, cx| {
                         this.status = RoomStatus::Rejoining;
                         cx.notify();
-                        this.id
                     });
 
                 // Wait for client to re-establish a connection to the server.
@@ -281,40 +282,21 @@ impl Room {
                                 "waiting for client status change, remaining attempts {}",
                                 remaining_attempts
                             );
-                            if let Some(status) = client_status.next().await {
-                                if status.is_connected() {
-                                    log::info!("client reconnected, attempting to rejoin room");
-                                    let rejoin_room = async {
-                                        let response =
-                                            client.request(proto::JoinRoom { id: room_id }).await?;
-                                        let room_proto =
-                                            response.room.ok_or_else(|| anyhow!("invalid room"))?;
-                                        this.upgrade(&cx)
-                                            .ok_or_else(|| anyhow!("room was dropped"))?
-                                            .update(&mut cx, |this, cx| {
-                                                this.status = RoomStatus::Online;
-                                                this.apply_room_update(room_proto, cx)?;
-                                                this.shared_projects.retain(|project| {
-                                                    let Some(project) = project.upgrade(cx) else { return false };
-                                                    project.update(cx, |project, cx| {
-                                                        if let Some(remote_id) = project.remote_id() {
-                                                            project.shared(remote_id, cx).detach()
-                                                        }
-                                                    });
-                                                    true
-                                                });
-                                                anyhow::Ok(())
-                                            })
-                                    };
+                            let Some(status) = client_status.next().await else { break };
+                            if status.is_connected() {
+                                log::info!("client reconnected, attempting to rejoin room");
 
-                                    if rejoin_room.await.log_err().is_some() {
-                                        return true;
-                                    } else {
-                                        remaining_attempts -= 1;
-                                    }
+                                let Some(this) = this.upgrade(&cx) else { break };
+                                if this
+                                    .update(&mut cx, |this, cx| this.rejoin(cx))
+                                    .await
+                                    .log_err()
+                                    .is_some()
+                                {
+                                    return true;
+                                } else {
+                                    remaining_attempts -= 1;
                                 }
-                            } else {
-                                return false;
                             }
                         }
                         false
@@ -349,6 +331,73 @@ impl Room {
                 ));
             }
         }
+    }
+
+    fn rejoin(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let mut projects = HashMap::default();
+        let mut reshared_projects = Vec::new();
+        let mut rejoined_projects = Vec::new();
+        self.shared_projects.retain(|project| {
+            if let Some(handle) = project.upgrade(cx) {
+                let project = handle.read(cx);
+                if let Some(project_id) = project.remote_id() {
+                    projects.insert(project_id, handle.clone());
+                    reshared_projects.push(proto::UpdateProject {
+                        project_id,
+                        worktrees: project.worktree_metadata_protos(cx),
+                    });
+                    return true;
+                }
+            }
+            false
+        });
+        self.joined_projects.retain(|project| {
+            if let Some(handle) = project.upgrade(cx) {
+                let project = handle.read(cx);
+                if let Some(project_id) = project.remote_id() {
+                    rejoined_projects.push(proto::RejoinProject {
+                        project_id,
+                        worktrees: project
+                            .worktrees(cx)
+                            .map(|worktree| {
+                                let worktree = worktree.read(cx);
+                                proto::RejoinWorktree {
+                                    id: worktree.id().to_proto(),
+                                    scan_id: worktree.scan_id() as u64,
+                                }
+                            })
+                            .collect(),
+                    });
+                }
+                return true;
+            }
+            false
+        });
+
+        let response = self.client.request(proto::RejoinRoom {
+            id: self.id,
+            reshared_projects,
+            rejoined_projects,
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let response = response.await?;
+            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+            this.update(&mut cx, |this, cx| {
+                this.status = RoomStatus::Online;
+                this.apply_room_update(room_proto, cx)?;
+
+                for shared_project in response.reshared_projects {
+                    if let Some(project) = projects.get(&shared_project.id) {
+                        project.update(cx, |project, cx| {
+                            project.reshared(shared_project, cx).log_err();
+                        });
+                    }
+                }
+
+                anyhow::Ok(())
+            })
+        })
     }
 
     pub fn id(&self) -> u64 {
@@ -641,6 +690,17 @@ impl Room {
         })
     }
 
+    pub fn joined_project(&mut self, project: ModelHandle<Project>, cx: &mut ModelContext<Self>) {
+        self.joined_projects.retain(|project| {
+            if let Some(project) = project.upgrade(cx) {
+                !project.read(cx).is_read_only()
+            } else {
+                false
+            }
+        });
+        self.joined_projects.insert(project.downgrade());
+    }
+
     pub(crate) fn share_project(
         &mut self,
         project: ModelHandle<Project>,
@@ -652,19 +712,7 @@ impl Room {
 
         let request = self.client.request(proto::ShareProject {
             room_id: self.id(),
-            worktrees: project
-                .read(cx)
-                .worktrees(cx)
-                .map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    proto::WorktreeMetadata {
-                        id: worktree.id().to_proto(),
-                        root_name: worktree.root_name().into(),
-                        visible: worktree.is_visible(),
-                        abs_path: worktree.abs_path().to_string_lossy().into(),
-                    }
-                })
-                .collect(),
+            worktrees: project.read(cx).worktree_metadata_protos(cx),
         });
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;

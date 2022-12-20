@@ -21,6 +21,8 @@ message Envelope {
         CreateRoomResponse create_room_response = 10;
         JoinRoom join_room = 11;
         JoinRoomResponse join_room_response = 12;
+        RejoinRoom rejoin_room = 108;
+        RejoinRoomResponse rejoin_room_response = 109;
         LeaveRoom leave_room = 13;
         Call call = 14;
         IncomingCall incoming_call = 15;
@@ -161,6 +163,42 @@ message JoinRoomResponse {
     optional LiveKitConnectionInfo live_kit_connection_info = 2;
 }
 
+message RejoinRoom {
+    uint64 id = 1;
+    repeated UpdateProject reshared_projects = 2;
+    repeated RejoinProject rejoined_projects = 3;
+    // relay open buffers and their vector clock
+}
+
+message RejoinProject {
+    uint64 project_id = 1;
+    repeated RejoinWorktree worktrees = 2;
+}
+
+message RejoinWorktree {
+    uint64 id = 1;
+    uint64 scan_id = 2;
+}
+
+message RejoinRoomResponse {
+    Room room = 1;
+    repeated ResharedProject reshared_projects = 2;
+    repeated RejoinedProject rejoined_projects = 3;
+}
+
+message ResharedProject {
+    uint64 id = 1;
+    repeated Collaborator collaborators = 2;
+}
+
+message RejoinedProject {
+    uint64 id = 1;
+    uint32 replica_id = 2;
+    repeated WorktreeMetadata worktrees = 3;
+    repeated Collaborator collaborators = 4;
+    repeated LanguageServer language_servers = 5;
+}
+
 message LeaveRoom {}
 
 message Room {
@@ -253,15 +291,6 @@ message ShareProjectResponse {
     uint64 project_id = 1;
 }
 
-message ReshareProject {
-    uint64 id = 1;
-    repeated WorktreeMetadata worktrees = 2;
-}
-
-message ReshareProjectResponse {
-    repeated Collaborator collaborators = 1;
-}
-
 message UnshareProject {
     uint64 project_id = 1;
 }
@@ -280,22 +309,6 @@ message JoinProjectResponse {
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
-}
-
-message RejoinProject {
-    uint64 project_id = 1;
-    repeated RejoinWorktree worktrees = 2;
-}
-
-message RejoinWorktree {
-    uint64 id = 1;
-    uint64 scan_id = 2;
-}
-
-message RejoinProjectResponse {
-    repeated WorktreeMetadata worktrees = 1;
-    repeated Collaborator collaborators = 2;
-    repeated LanguageServer language_servers = 3;
 }
 
 message LeaveProject {

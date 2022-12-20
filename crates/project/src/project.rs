@@ -13,7 +13,7 @@ use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
-    AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
+    select_biased, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -151,7 +151,6 @@ enum ProjectClientState {
         remote_id: u64,
         metadata_changed: mpsc::UnboundedSender<oneshot::Sender<()>>,
         _maintain_metadata: Task<()>,
-        _detect_unshare: Task<Option<()>>,
     },
     Remote {
         sharing_has_stopped: bool,
@@ -552,16 +551,12 @@ impl Project {
         user_store
             .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))
             .await?;
-        let mut collaborators = HashMap::default();
-        for message in response.collaborators {
-            let collaborator = Collaborator::from_proto(message)?;
-            collaborators.insert(collaborator.peer_id, collaborator);
-        }
 
-        this.update(&mut cx, |this, _| {
-            this.collaborators = collaborators;
+        this.update(&mut cx, |this, cx| {
+            this.set_collaborators_from_proto(response.collaborators, cx)?;
             this.client_subscriptions.push(subscription);
-        });
+            anyhow::Ok(())
+        })?;
 
         Ok(this)
     }
@@ -1055,48 +1050,38 @@ impl Project {
             remote_id: project_id,
             metadata_changed: metadata_changed_tx,
             _maintain_metadata: cx.spawn_weak(move |this, cx| async move {
-                while let Some(tx) = metadata_changed_rx.next().await {
-                    let mut txs = vec![tx];
-                    while let Ok(Some(next_tx)) = metadata_changed_rx.try_next() {
-                        txs.push(next_tx);
+                let mut txs = Vec::new();
+                loop {
+                    select_biased! {
+                        tx = metadata_changed_rx.next().fuse() => {
+                            let Some(tx) = tx else { break };
+                            txs.push(tx);
+                            while let Ok(Some(next_tx)) = metadata_changed_rx.try_next() {
+                                txs.push(next_tx);
+                            }
+                        }
+                        status = status.next().fuse() => {
+                            let Some(status) = status else { break };
+                            if !status.is_connected() {
+                                continue
+                            }
+                        }
                     }
 
                     let Some(this) = this.upgrade(&cx) else { break };
                     this.read_with(&cx, |this, cx| {
-                        let worktrees = this
-                            .worktrees
-                            .iter()
-                            .filter_map(|worktree| {
-                                worktree.upgrade(cx).map(|worktree| {
-                                    worktree.read(cx).as_local().unwrap().metadata_proto()
-                                })
-                            })
-                            .collect();
                         this.client.request(proto::UpdateProject {
                             project_id,
-                            worktrees,
+                            worktrees: this.worktree_metadata_protos(cx),
                         })
                     })
                     .await
                     .log_err();
 
-                    for tx in txs {
+                    for tx in txs.drain(..) {
                         let _ = tx.send(());
                     }
                 }
-            }),
-            _detect_unshare: cx.spawn_weak(move |this, mut cx| {
-                async move {
-                    let is_connected = status.next().await.map_or(false, |s| s.is_connected());
-                    // Even if we're initially connected, any future change of the status means we momentarily disconnected.
-                    if !is_connected || status.next().await.is_some() {
-                        if let Some(this) = this.upgrade(&cx) {
-                            let _ = this.update(&mut cx, |this, cx| this.unshare(cx));
-                        }
-                    }
-                    Ok(())
-                }
-                .log_err()
             }),
         });
 
@@ -1104,6 +1089,29 @@ impl Project {
             futures::future::try_join_all(worktree_share_tasks).await?;
             Ok(())
         })
+    }
+
+    pub fn reshared(
+        &mut self,
+        message: proto::ResharedProject,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        self.set_collaborators_from_proto(message.collaborators, cx)?;
+        Ok(())
+    }
+
+    pub fn worktree_metadata_protos(&self, cx: &AppContext) -> Vec<proto::WorktreeMetadata> {
+        self.worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                proto::WorktreeMetadata {
+                    id: worktree.id().to_proto(),
+                    root_name: worktree.root_name().into(),
+                    visible: worktree.is_visible(),
+                    abs_path: worktree.abs_path().to_string_lossy().into(),
+                }
+            })
+            .collect()
     }
 
     pub fn unshare(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
@@ -5635,6 +5643,25 @@ impl Project {
             buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
             Ok(buffer)
         })
+    }
+
+    fn set_collaborators_from_proto(
+        &mut self,
+        messages: Vec<proto::Collaborator>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let mut collaborators = HashMap::default();
+        for message in messages {
+            let collaborator = Collaborator::from_proto(message)?;
+            collaborators.insert(collaborator.peer_id, collaborator);
+        }
+        for old_peer_id in self.collaborators.keys() {
+            if !collaborators.contains_key(old_peer_id) {
+                cx.emit(Event::CollaboratorLeft(*old_peer_id));
+            }
+        }
+        self.collaborators = collaborators;
+        Ok(())
     }
 
     fn deserialize_symbol(

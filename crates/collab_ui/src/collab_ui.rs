@@ -68,6 +68,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
             workspace.update(&mut cx, |workspace, cx| {
                 if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+                    room.update(cx, |room, cx| {
+                        room.joined_project(workspace.project().clone(), cx);
+                    });
+
                     let follow_peer_id = room
                         .read(cx)
                         .remote_participants()
