@@ -123,6 +123,7 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         theme_testbench::init(cx);
+        recent_projects::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();

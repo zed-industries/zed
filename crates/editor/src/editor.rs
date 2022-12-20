@@ -5453,11 +5453,17 @@ impl Editor {
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
+        pending_selection: Option<Selection<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.selections.change_with(cx, |s| {
             s.select_anchors(selections);
+            if let Some(pending_selection) = pending_selection {
+                s.set_pending(pending_selection, SelectMode::Character);
+            } else {
+                s.clear_pending();
+            }
         });
         self.selections_did_change(false, &old_cursor_position, cx);
     }

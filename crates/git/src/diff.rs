@@ -71,18 +71,26 @@ impl BufferDiff {
         }
     }
 
-    pub fn hunks_in_range<'a>(
+    pub fn hunks_in_row_range<'a>(
         &'a self,
-        query_row_range: Range<u32>,
+        range: Range<u32>,
         buffer: &'a BufferSnapshot,
         reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        let start = buffer.anchor_before(Point::new(query_row_range.start, 0));
-        let end = buffer.anchor_after(Point::new(query_row_range.end, 0));
+        let start = buffer.anchor_before(Point::new(range.start, 0));
+        let end = buffer.anchor_after(Point::new(range.end, 0));
+        self.hunks_intersecting_range(start..end, buffer, reversed)
+    }
 
+    pub fn hunks_intersecting_range<'a>(
+        &'a self,
+        range: Range<Anchor>,
+        buffer: &'a BufferSnapshot,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&start, buffer).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&end, buffer).is_gt();
+            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
             !before_start && !after_end
         });
 
@@ -141,7 +149,9 @@ impl BufferDiff {
 
     #[cfg(test)]
     fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        self.hunks_in_range(0..u32::MAX, text, false)
+        let start = text.anchor_before(Point::new(0, 0));
+        let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
+        self.hunks_intersecting_range(start..end, text, false)
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
@@ -355,7 +365,7 @@ mod tests {
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(
-            diff.hunks_in_range(7..12, &buffer, false),
+            diff.hunks_in_row_range(7..12, &buffer, false),
             &buffer,
             &diff_base,
             &[

@@ -2310,13 +2310,21 @@ impl BufferSnapshot {
             })
     }
 
-    pub fn git_diff_hunks_in_range<'a>(
+    pub fn git_diff_hunks_in_row_range<'a>(
         &'a self,
-        query_row_range: Range<u32>,
+        range: Range<u32>,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+        self.git_diff.hunks_in_row_range(range, self, reversed)
+    }
+
+    pub fn git_diff_hunks_intersecting_range<'a>(
+        &'a self,
+        range: Range<Anchor>,
         reversed: bool,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff
-            .hunks_in_range(query_row_range, self, reversed)
+            .hunks_intersecting_range(range, self, reversed)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(

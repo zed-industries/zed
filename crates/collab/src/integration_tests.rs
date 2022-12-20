@@ -2133,7 +2133,7 @@ async fn test_git_diff_base_change(
     buffer_local_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2153,7 +2153,7 @@ async fn test_git_diff_base_change(
     buffer_remote_a.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2177,7 +2177,7 @@ async fn test_git_diff_base_change(
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
 
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
@@ -2188,7 +2188,7 @@ async fn test_git_diff_base_change(
     buffer_remote_a.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
@@ -2231,7 +2231,7 @@ async fn test_git_diff_base_change(
     buffer_local_b.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2251,7 +2251,7 @@ async fn test_git_diff_base_change(
     buffer_remote_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2279,12 +2279,12 @@ async fn test_git_diff_base_change(
             "{:?}",
             buffer
                 .snapshot()
-                .git_diff_hunks_in_range(0..4, false)
+                .git_diff_hunks_in_row_range(0..4, false)
                 .collect::<Vec<_>>()
         );
 
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
@@ -2295,7 +2295,7 @@ async fn test_git_diff_base_change(
     buffer_remote_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],

@@ -1,0 +1,22 @@
+[package]
+name = "recent_projects"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/recent_projects.rs"
+doctest = false
+
+[dependencies]
+db = { path = "../db" }
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+gpui = { path = "../gpui" }
+language = { path = "../language" }
+picker = { path = "../picker" }
+settings = { path = "../settings" }
+text = { path = "../text" }
+workspace = { path = "../workspace" }
+ordered-float = "2.1.1"
+postage = { version = "0.4", features = ["futures-traits"] }
+smol = "1.2"

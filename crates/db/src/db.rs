@@ -39,6 +39,7 @@ const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
 const DB_FILE_NAME: &'static str = "db.sqlite";
 
 lazy_static::lazy_static! {
+    static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
     static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
     pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);
@@ -52,6 +53,10 @@ pub async fn open_db<M: Migrator + 'static>(
     db_dir: &Path,
     release_channel: &ReleaseChannel,
 ) -> ThreadSafeConnection<M> {
+    if *ZED_STATELESS {
+        return open_fallback_db().await;
+    }
+
     let release_channel_name = release_channel.dev_name();
     let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel_name)));
 
@@ -67,11 +72,11 @@ pub async fn open_db<M: Migrator + 'static>(
         //
         // Basically: Don't ever push invalid migrations to stable or everyone will have
         // a bad time.
-        
+
         // If no db folder, create one at 0-{channel}
         create_dir_all(&main_db_dir).context("Could not create db directory")?;
         let db_path = main_db_dir.join(Path::new(DB_FILE_NAME));
-        
+
         // Optimistically open databases in parallel
         if !DB_FILE_OPERATIONS.is_locked() {
             // Try building a connection
@@ -79,7 +84,7 @@ pub async fn open_db<M: Migrator + 'static>(
                 return Ok(connection)
             };
         }
-        
+
         // Take a lock in the failure case so that we move the db once per process instead 
         // of potentially multiple times from different threads. This shouldn't happen in the
         // normal path
@@ -87,12 +92,12 @@ pub async fn open_db<M: Migrator + 'static>(
         if let Some(connection) = open_main_db(&db_path).await {
             return Ok(connection)
         };
-        
+
         let backup_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("System clock is set before the unix timestamp, Zed does not support this region of spacetime")
             .as_millis();
-        
+
         // If failed, move 0-{channel} to {current unix timestamp}-{channel}
         let backup_db_dir = db_dir.join(Path::new(&format!(
             "{}-{}",
@@ -108,7 +113,7 @@ pub async fn open_db<M: Migrator + 'static>(
             let mut guard = BACKUP_DB_PATH.write();
             *guard = Some(backup_db_dir);
         }
-        
+
         // Create a new 0-{channel}
         create_dir_all(&main_db_dir).context("Should be able to create the database directory")?;
         let db_path = main_db_dir.join(Path::new(DB_FILE_NAME));
