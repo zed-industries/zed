@@ -37,9 +37,9 @@ async fn test_random_collaboration(
     let mut server = TestServer::start(&deterministic).await;
     let db = server.app_state.db.clone();
 
-    let mut available_guests = Vec::new();
+    let mut available_users = Vec::new();
     for ix in 0..max_peers {
-        let username = format!("guest-{}", ix + 1);
+        let username = format!("user-{}", ix + 1);
         let user_id = db
             .create_user(
                 &format!("{username}@example.com"),
@@ -53,11 +53,11 @@ async fn test_random_collaboration(
             .await
             .unwrap()
             .user_id;
-        available_guests.push((user_id, username));
+        available_users.push((user_id, username));
     }
 
-    for (ix, (user_id_a, _)) in available_guests.iter().enumerate() {
-        for (user_id_b, _) in &available_guests[ix + 1..] {
+    for (ix, (user_id_a, _)) in available_users.iter().enumerate() {
+        for (user_id_b, _) in &available_users[ix + 1..] {
             server
                 .app_state
                 .db
@@ -82,12 +82,12 @@ async fn test_random_collaboration(
     while operations < max_operations {
         let distribution = rng.lock().gen_range(0..100);
         match distribution {
-            0..=19 if !available_guests.is_empty() => {
-                let guest_ix = rng.lock().gen_range(0..available_guests.len());
-                let (_, guest_username) = available_guests.remove(guest_ix);
-                log::info!("Adding new connection for {}", guest_username);
+            0..=19 if !available_users.is_empty() => {
+                let client_ix = rng.lock().gen_range(0..available_users.len());
+                let (_, username) = available_users.remove(client_ix);
+                log::info!("Adding new connection for {}", username);
                 next_entity_id += 100000;
-                let mut guest_cx = TestAppContext::new(
+                let mut client_cx = TestAppContext::new(
                     cx.foreground_platform(),
                     cx.platform(),
                     deterministic.build_foreground(next_entity_id),
@@ -99,46 +99,47 @@ async fn test_random_collaboration(
                 );
 
                 let op_start_signal = futures::channel::mpsc::unbounded();
-                let guest = server.create_client(&mut guest_cx, &guest_username).await;
-                user_ids.push(guest.current_user_id(&guest_cx));
+                let client = server.create_client(&mut client_cx, &username).await;
+                user_ids.push(client.current_user_id(&client_cx));
                 op_start_signals.push(op_start_signal.0);
-                clients.push(guest_cx.foreground().spawn(simulate_client(
-                    guest,
+                clients.push(client_cx.foreground().spawn(simulate_client(
+                    client,
                     op_start_signal.1,
                     rng.clone(),
-                    guest_cx,
+                    client_cx,
                 )));
 
-                log::info!("Added connection for {}", guest_username);
+                log::info!("Added connection for {}", username);
                 operations += 1;
             }
+
             20..=24 if clients.len() > 1 => {
-                let guest_ix = rng.lock().gen_range(1..clients.len());
+                let client_ix = rng.lock().gen_range(1..clients.len());
                 log::info!(
-                    "Simulating full disconnection of guest {}",
-                    user_ids[guest_ix]
+                    "Simulating full disconnection of user {}",
+                    user_ids[client_ix]
                 );
-                let removed_guest_id = user_ids.remove(guest_ix);
+                let removed_user_id = user_ids.remove(client_ix);
                 let user_connection_ids = server
                     .connection_pool
                     .lock()
-                    .user_connection_ids(removed_guest_id)
+                    .user_connection_ids(removed_user_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
                 let removed_peer_id = user_connection_ids[0].into();
-                let guest = clients.remove(guest_ix);
-                op_start_signals.remove(guest_ix);
+                let client = clients.remove(client_ix);
+                op_start_signals.remove(client_ix);
                 server.forbid_connections();
                 server.disconnect_client(removed_peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 deterministic.start_waiting();
-                log::info!("Waiting for guest {} to exit...", removed_guest_id);
-                let (guest, mut guest_cx) = guest.await;
+                log::info!("Waiting for user {} to exit...", removed_user_id);
+                let (client, mut client_cx) = client.await;
                 deterministic.finish_waiting();
                 server.allow_connections();
 
-                for project in &guest.remote_projects {
-                    project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
+                for project in &client.remote_projects {
+                    project.read_with(&client_cx, |project, _| assert!(project.is_read_only()));
                 }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
@@ -147,27 +148,28 @@ async fn test_random_collaboration(
                         if let db::Contact::Accepted { user_id, .. } = contact {
                             if pool.is_user_online(user_id) {
                                 assert_ne!(
-                                    user_id, removed_guest_id,
-                                    "removed guest is still a contact of another peer"
+                                    user_id, removed_user_id,
+                                    "removed client is still a contact of another peer"
                                 );
                             }
                         }
                     }
                 }
 
-                log::info!("{} removed", guest.username);
-                available_guests.push((removed_guest_id, guest.username.clone()));
-                guest_cx.update(|cx| {
+                log::info!("{} removed", client.username);
+                available_users.push((removed_user_id, client.username.clone()));
+                client_cx.update(|cx| {
                     cx.clear_globals();
-                    drop(guest);
+                    drop(client);
                 });
 
                 operations += 1;
             }
+
             25..=29 if clients.len() > 1 => {
-                let guest_ix = rng.lock().gen_range(1..clients.len());
-                let user_id = user_ids[guest_ix];
-                log::info!("Simulating temporary disconnection of guest {}", user_id);
+                let client_ix = rng.lock().gen_range(1..clients.len());
+                let user_id = user_ids[client_ix];
+                log::info!("Simulating temporary disconnection of user {}", user_id);
                 let user_connection_ids = server
                     .connection_pool
                     .lock()
@@ -179,6 +181,7 @@ async fn test_random_collaboration(
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 operations += 1;
             }
+
             30..=34 => {
                 log::info!("Simulating server restart");
                 server.reset().await;
@@ -194,6 +197,7 @@ async fn test_random_collaboration(
                     .unwrap();
                 assert_eq!(stale_room_ids, vec![]);
             }
+
             _ if !op_start_signals.is_empty() => {
                 while operations < max_operations && rng.lock().gen_bool(0.7) {
                     op_start_signals
@@ -218,9 +222,9 @@ async fn test_random_collaboration(
     deterministic.finish_waiting();
     deterministic.run_until_parked();
 
-    for (guest_client, guest_cx) in &clients {
-        for guest_project in &guest_client.remote_projects {
-            guest_project.read_with(guest_cx, |guest_project, cx| {
+    for (client, client_cx) in &clients {
+        for guest_project in &client.remote_projects {
+            guest_project.read_with(client_cx, |guest_project, cx| {
                 let host_project = clients.iter().find_map(|(client, cx)| {
                     let project = client.local_projects.iter().find(|host_project| {
                         host_project.read_with(cx, |host_project, _| {
@@ -254,7 +258,7 @@ async fn test_random_collaboration(
                             guest_worktree_snapshots.keys().collect::<Vec<_>>(),
                             host_worktree_snapshots.keys().collect::<Vec<_>>(),
                             "{} has different worktrees than the host",
-                            guest_client.username
+                            client.username
                         );
 
                         for (id, host_snapshot) in &host_worktree_snapshots {
@@ -263,21 +267,21 @@ async fn test_random_collaboration(
                                 guest_snapshot.root_name(),
                                 host_snapshot.root_name(),
                                 "{} has different root name than the host for worktree {}",
-                                guest_client.username,
+                                client.username,
                                 id
                             );
                             assert_eq!(
                                 guest_snapshot.abs_path(),
                                 host_snapshot.abs_path(),
                                 "{} has different abs path than the host for worktree {}",
-                                guest_client.username,
+                                client.username,
                                 id
                             );
                             assert_eq!(
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
                                 "{} has different snapshot than the host for worktree {}",
-                                guest_client.username,
+                                client.username,
                                 id
                             );
                             assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
@@ -289,14 +293,14 @@ async fn test_random_collaboration(
             });
         }
 
-        for (guest_project, guest_buffers) in &guest_client.buffers {
-            let project_id = if guest_project.read_with(guest_cx, |project, _| {
+        for (guest_project, guest_buffers) in &client.buffers {
+            let project_id = if guest_project.read_with(client_cx, |project, _| {
                 project.is_local() || project.is_read_only()
             }) {
                 continue;
             } else {
                 guest_project
-                    .read_with(guest_cx, |project, _| project.remote_id())
+                    .read_with(client_cx, |project, _| project.remote_id())
                     .unwrap()
             };
 
@@ -316,13 +320,13 @@ async fn test_random_collaboration(
             };
 
             for guest_buffer in guest_buffers {
-                let buffer_id = guest_buffer.read_with(guest_cx, |buffer, _| buffer.remote_id());
+                let buffer_id = guest_buffer.read_with(client_cx, |buffer, _| buffer.remote_id());
                 let host_buffer = host_project.read_with(host_cx, |project, cx| {
                     project.buffer_for_id(buffer_id, cx).unwrap_or_else(|| {
                         panic!(
                             "host does not have buffer for guest:{}, peer:{:?}, id:{}",
-                            guest_client.username,
-                            guest_client.peer_id(),
+                            client.username,
+                            client.peer_id(),
                             buffer_id
                         )
                     })
@@ -331,18 +335,18 @@ async fn test_random_collaboration(
                     .read_with(host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
 
                 assert_eq!(
-                    guest_buffer.read_with(guest_cx, |buffer, _| buffer.deferred_ops_len()),
+                    guest_buffer.read_with(client_cx, |buffer, _| buffer.deferred_ops_len()),
                     0,
                     "{}, buffer {}, path {:?} has deferred operations",
-                    guest_client.username,
+                    client.username,
                     buffer_id,
                     path,
                 );
                 assert_eq!(
-                    guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
+                    guest_buffer.read_with(client_cx, |buffer, _| buffer.text()),
                     host_buffer.read_with(host_cx, |buffer, _| buffer.text()),
                     "{}, buffer {}, path {:?}, differs from the host's buffer",
-                    guest_client.username,
+                    client.username,
                     buffer_id,
                     path
                 );
