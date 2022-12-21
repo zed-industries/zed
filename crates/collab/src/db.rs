@@ -123,34 +123,6 @@ impl Database {
         .await
     }
 
-    pub async fn delete_stale_projects(
-        &self,
-        environment: &str,
-        new_server_id: ServerId,
-    ) -> Result<()> {
-        self.transaction(|tx| async move {
-            let stale_server_epochs = self
-                .stale_server_ids(environment, new_server_id, &tx)
-                .await?;
-            project_collaborator::Entity::delete_many()
-                .filter(
-                    project_collaborator::Column::ConnectionServerId
-                        .is_in(stale_server_epochs.iter().copied()),
-                )
-                .exec(&*tx)
-                .await?;
-            project::Entity::delete_many()
-                .filter(
-                    project::Column::HostConnectionServerId
-                        .is_in(stale_server_epochs.iter().copied()),
-                )
-                .exec(&*tx)
-                .await?;
-            Ok(())
-        })
-        .await
-    }
-
     pub async fn stale_room_ids(
         &self,
         environment: &str,
@@ -235,8 +207,8 @@ impl Database {
 
     pub async fn delete_stale_servers(
         &self,
-        new_server_id: ServerId,
         environment: &str,
+        new_server_id: ServerId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
             server::Entity::delete_many()

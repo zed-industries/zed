@@ -250,16 +250,6 @@ impl Server {
         let live_kit_client = self.app_state.live_kit_client.clone();
 
         let span = info_span!("start server");
-        let span_enter = span.enter();
-
-        tracing::info!("begin deleting stale projects");
-        app_state
-            .db
-            .delete_stale_projects(&app_state.config.zed_environment, server_id)
-            .await?;
-        tracing::info!("finish deleting stale projects");
-
-        drop(span_enter);
         self.executor.spawn_detached(
             async move {
                 tracing::info!("waiting for cleanup timeout");
@@ -355,7 +345,7 @@ impl Server {
 
                 app_state
                     .db
-                    .delete_stale_servers(server_id, &app_state.config.zed_environment)
+                    .delete_stale_servers(&app_state.config.zed_environment, server_id)
                     .await
                     .trace_err();
             }
