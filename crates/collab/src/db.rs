@@ -1461,8 +1461,8 @@ impl Database {
                             continue
                         };
 
-                let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
                 let mut worktrees = Vec::new();
+                let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
                 for db_worktree in db_worktrees {
                     let mut worktree = RejoinedWorktree {
                         id: db_worktree.id as u64,
@@ -1480,25 +1480,23 @@ impl Database {
                         .worktrees
                         .iter()
                         .find(|worktree| worktree.id == db_worktree.id as u64);
-
                     let entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
-                        Condition::all()
-                            .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
-                            .add(worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id))
+                        worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id)
                     } else {
-                        Condition::all()
-                            .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
-                            .add(worktree_entry::Column::IsDeleted.eq(false))
+                        worktree_entry::Column::IsDeleted.eq(false)
                     };
 
                     let mut db_entries = worktree_entry::Entity::find()
-                        .filter(entry_filter)
+                        .filter(
+                            Condition::all()
+                                .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
+                                .add(entry_filter),
+                        )
                         .stream(&*tx)
                         .await?;
 
                     while let Some(db_entry) = db_entries.next().await {
                         let db_entry = db_entry?;
-
                         if db_entry.is_deleted {
                             worktree.removed_entries.push(db_entry.id as u64);
                         } else {
@@ -1544,16 +1542,15 @@ impl Database {
                     })
                     .collect::<Vec<_>>();
 
-                let old_connection_id;
-                if let Some(self_collaborator_ix) = collaborators
+                let old_connection_id = if let Some(self_collaborator_ix) = collaborators
                     .iter()
                     .position(|collaborator| collaborator.user_id == user_id)
                 {
                     let self_collaborator = collaborators.swap_remove(self_collaborator_ix);
-                    old_connection_id = self_collaborator.connection_id;
+                    self_collaborator.connection_id
                 } else {
                     continue;
-                }
+                };
 
                 rejoined_projects.push(RejoinedProject {
                     id: project_id,
