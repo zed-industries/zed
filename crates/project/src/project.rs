@@ -379,6 +379,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_reload_buffers);
+        client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_get_code_actions);
         client.add_model_request_handler(Self::handle_get_completions);
@@ -1082,7 +1083,6 @@ impl Project {
     ) -> Result<()> {
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-
         self.language_server_statuses = message
             .language_servers
             .into_iter()
@@ -1098,6 +1098,7 @@ impl Project {
                 )
             })
             .collect();
+        self.synchronize_remote_buffers(cx).detach_and_log_err(cx);
 
         cx.notify();
         Ok(())
@@ -4631,10 +4632,15 @@ impl Project {
                 .collaborators
                 .remove(&old_peer_id)
                 .ok_or_else(|| anyhow!("received UpdateProjectCollaborator for unknown peer"))?;
+            let is_host = collaborator.replica_id == 0;
             this.collaborators.insert(new_peer_id, collaborator);
 
             if let Some(buffers) = this.shared_buffers.remove(&old_peer_id) {
                 this.shared_buffers.insert(new_peer_id, buffers);
+            }
+
+            if is_host {
+                this.synchronize_remote_buffers(cx).detach_and_log_err(cx);
             }
 
             cx.emit(Event::CollaboratorUpdated {
@@ -5131,6 +5137,55 @@ impl Project {
         })
     }
 
+    async fn handle_synchronize_buffers(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::SynchronizeBuffers>,
+        _: Arc<Client>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::SynchronizeBuffersResponse> {
+        let project_id = envelope.payload.project_id;
+        let mut response = proto::SynchronizeBuffersResponse {
+            buffers: Default::default(),
+        };
+
+        this.read_with(&cx, |this, cx| {
+            for buffer in envelope.payload.buffers {
+                let buffer_id = buffer.id;
+                let remote_version = language::proto::deserialize_version(buffer.version);
+                if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
+                    let buffer = buffer.read(cx);
+                    response.buffers.push(proto::BufferVersion {
+                        id: buffer_id,
+                        version: language::proto::serialize_version(&buffer.version),
+                    });
+
+                    let operations = buffer.serialize_ops(Some(remote_version), cx);
+                    let client = this.client.clone();
+                    cx.background()
+                        .spawn(
+                            async move {
+                                let operations = operations.await;
+                                for chunk in split_operations(operations) {
+                                    client
+                                        .request(proto::UpdateBuffer {
+                                            project_id,
+                                            buffer_id,
+                                            operations: chunk,
+                                        })
+                                        .await?;
+                                }
+                                anyhow::Ok(())
+                            }
+                            .log_err(),
+                        )
+                        .detach();
+                }
+            }
+        });
+
+        Ok(response)
+    }
+
     async fn handle_format_buffers(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::FormatBuffers>,
@@ -5557,12 +5612,12 @@ impl Project {
             if shared_buffers.insert(buffer_id) {
                 let buffer = buffer.read(cx);
                 let state = buffer.to_proto();
-                let operations = buffer.serialize_ops(cx);
+                let operations = buffer.serialize_ops(None, cx);
                 let client = self.client.clone();
                 cx.background()
                     .spawn(
                         async move {
-                            let mut operations = operations.await;
+                            let operations = operations.await;
 
                             client.send(proto::CreateBufferForPeer {
                                 project_id,
@@ -5570,17 +5625,9 @@ impl Project {
                                 variant: Some(proto::create_buffer_for_peer::Variant::State(state)),
                             })?;
 
-                            loop {
-                                #[cfg(any(test, feature = "test-support"))]
-                                const CHUNK_SIZE: usize = 5;
-
-                                #[cfg(not(any(test, feature = "test-support")))]
-                                const CHUNK_SIZE: usize = 100;
-
-                                let chunk = operations
-                                    .drain(..cmp::min(CHUNK_SIZE, operations.len()))
-                                    .collect();
-                                let is_last = operations.is_empty();
+                            let mut chunks = split_operations(operations).peekable();
+                            while let Some(chunk) = chunks.next() {
+                                let is_last = chunks.peek().is_none();
                                 client.send(proto::CreateBufferForPeer {
                                     project_id,
                                     peer_id: Some(peer_id),
@@ -5592,10 +5639,6 @@ impl Project {
                                         },
                                     )),
                                 })?;
-
-                                if is_last {
-                                    break;
-                                }
                             }
 
                             Ok(())
@@ -5635,6 +5678,81 @@ impl Project {
             };
             buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
             Ok(buffer)
+        })
+    }
+
+    fn synchronize_remote_buffers(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let project_id = match self.client_state.as_ref() {
+            Some(ProjectClientState::Remote {
+                sharing_has_stopped,
+                remote_id,
+                ..
+            }) => {
+                if *sharing_has_stopped {
+                    return Task::ready(Err(anyhow!(
+                        "can't synchronize remote buffers on a readonly project"
+                    )));
+                } else {
+                    *remote_id
+                }
+            }
+            Some(ProjectClientState::Local { .. }) | None => {
+                return Task::ready(Err(anyhow!(
+                    "can't synchronize remote buffers on a local project"
+                )))
+            }
+        };
+
+        let client = self.client.clone();
+        cx.spawn(|this, cx| async move {
+            let buffers = this.read_with(&cx, |this, cx| {
+                this.opened_buffers
+                    .iter()
+                    .filter_map(|(id, buffer)| {
+                        let buffer = buffer.upgrade(cx)?;
+                        Some(proto::BufferVersion {
+                            id: *id,
+                            version: language::proto::serialize_version(&buffer.read(cx).version),
+                        })
+                    })
+                    .collect()
+            });
+            let response = client
+                .request(proto::SynchronizeBuffers {
+                    project_id,
+                    buffers,
+                })
+                .await?;
+
+            let send_updates_for_buffers = response.buffers.into_iter().map(|buffer| {
+                let client = client.clone();
+                let buffer_id = buffer.id;
+                let remote_version = language::proto::deserialize_version(buffer.version);
+                this.read_with(&cx, |this, cx| {
+                    if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
+                        let operations = buffer.read(cx).serialize_ops(Some(remote_version), cx);
+                        cx.background().spawn(async move {
+                            let operations = operations.await;
+                            for chunk in split_operations(operations) {
+                                client
+                                    .request(proto::UpdateBuffer {
+                                        project_id,
+                                        buffer_id,
+                                        operations: chunk,
+                                    })
+                                    .await?;
+                            }
+                            anyhow::Ok(())
+                        })
+                    } else {
+                        Task::ready(Ok(()))
+                    }
+                })
+            });
+            futures::future::join_all(send_updates_for_buffers)
+                .await
+                .into_iter()
+                .collect()
         })
     }
 
@@ -6124,6 +6242,28 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
             path: path.as_ref().into(),
         }
     }
+}
+
+fn split_operations(
+    mut operations: Vec<proto::Operation>,
+) -> impl Iterator<Item = Vec<proto::Operation>> {
+    #[cfg(any(test, feature = "test-support"))]
+    const CHUNK_SIZE: usize = 5;
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    const CHUNK_SIZE: usize = 100;
+
+    std::iter::from_fn(move || {
+        if operations.is_empty() {
+            return None;
+        }
+
+        Some(
+            operations
+                .drain(..cmp::min(CHUNK_SIZE, operations.len()))
+                .collect(),
+        )
+    })
 }
 
 fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {

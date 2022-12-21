@@ -1275,7 +1275,9 @@ fn test_serialization(cx: &mut gpui::MutableAppContext) {
     assert_eq!(buffer1.read(cx).text(), "abcDF");
 
     let state = buffer1.read(cx).to_proto();
-    let ops = cx.background().block(buffer1.read(cx).serialize_ops(cx));
+    let ops = cx
+        .background()
+        .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.add_model(|cx| {
         let mut buffer = Buffer::from_proto(1, state, None).unwrap();
         buffer
@@ -1316,7 +1318,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             let state = base_buffer.read(cx).to_proto();
             let ops = cx
                 .background()
-                .block(base_buffer.read(cx).serialize_ops(cx));
+                .block(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer = Buffer::from_proto(i as ReplicaId, state, None).unwrap();
             buffer
                 .apply_ops(
@@ -1413,7 +1415,9 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             }
             50..=59 if replica_ids.len() < max_peers => {
                 let old_buffer_state = buffer.read(cx).to_proto();
-                let old_buffer_ops = cx.background().block(buffer.read(cx).serialize_ops(cx));
+                let old_buffer_ops = cx
+                    .background()
+                    .block(buffer.read(cx).serialize_ops(None, cx));
                 let new_replica_id = (0..=replica_ids.len() as ReplicaId)
                     .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())
                     .choose(&mut rng)

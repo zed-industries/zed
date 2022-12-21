@@ -3651,7 +3651,7 @@ mod tests {
             let state = host_buffer.read(cx).to_proto();
             let ops = cx
                 .background()
-                .block(host_buffer.read(cx).serialize_ops(cx));
+                .block(host_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer = Buffer::from_proto(1, state, None).unwrap();
             buffer
                 .apply_ops(

@@ -398,7 +398,11 @@ impl Buffer {
         }
     }
 
-    pub fn serialize_ops(&self, cx: &AppContext) -> Task<Vec<proto::Operation>> {
+    pub fn serialize_ops(
+        &self,
+        since: Option<clock::Global>,
+        cx: &AppContext,
+    ) -> Task<Vec<proto::Operation>> {
         let mut operations = Vec::new();
         operations.extend(self.deferred_ops.iter().map(proto::serialize_operation));
         operations.extend(self.remote_selections.iter().map(|(_, set)| {
@@ -422,9 +426,11 @@ impl Buffer {
 
         let text_operations = self.text.operations().clone();
         cx.background().spawn(async move {
+            let since = since.unwrap_or_default();
             operations.extend(
                 text_operations
                     .iter()
+                    .filter(|(_, op)| !since.observed(op.local_timestamp()))
                     .map(|(_, op)| proto::serialize_operation(&Operation::Buffer(op.clone()))),
             );
             operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);

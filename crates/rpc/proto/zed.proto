@@ -79,6 +79,8 @@ message Envelope {
         BufferReloaded buffer_reloaded = 61;
         ReloadBuffers reload_buffers = 62;
         ReloadBuffersResponse reload_buffers_response = 63;
+        SynchronizeBuffers synchronize_buffers = 200;
+        SynchronizeBuffersResponse synchronize_buffers_response = 201;
         FormatBuffers format_buffers = 64;
         FormatBuffersResponse format_buffers_response = 65;
         GetCompletions get_completions = 66;
@@ -536,6 +538,20 @@ message ReloadBuffers {
 
 message ReloadBuffersResponse {
     ProjectTransaction transaction = 1;
+}
+
+message SynchronizeBuffers {
+    uint64 project_id = 1;
+    repeated BufferVersion buffers = 2;
+}
+
+message SynchronizeBuffersResponse {
+    repeated BufferVersion buffers = 1;
+}
+
+message BufferVersion {
+    uint64 id = 1;
+    repeated VectorClockEntry version = 2;
 }
 
 enum FormatTrigger {

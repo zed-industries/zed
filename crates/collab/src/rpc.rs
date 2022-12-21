@@ -216,6 +216,7 @@ impl Server {
             .add_request_handler(forward_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_project_request::<proto::PerformRename>)
             .add_request_handler(forward_project_request::<proto::ReloadBuffers>)
+            .add_request_handler(forward_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_project_request::<proto::FormatBuffers>)
             .add_request_handler(forward_project_request::<proto::CreateProjectEntry>)
             .add_request_handler(forward_project_request::<proto::RenameProjectEntry>)
