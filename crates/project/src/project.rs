@@ -4645,6 +4645,7 @@ impl Project {
                 .remove(&old_peer_id)
                 .ok_or_else(|| anyhow!("received UpdateProjectCollaborator for unknown peer"))?;
             this.collaborators.insert(new_peer_id, collaborator);
+
             if let Some(buffers) = this.shared_buffers.remove(&old_peer_id) {
                 this.shared_buffers.insert(new_peer_id, buffers);
             }

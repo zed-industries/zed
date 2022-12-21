@@ -1328,21 +1328,24 @@ async fn test_project_reconnect(
             "/root-1",
             json!({
                 "dir1": {
-                    "a.txt": "a-contents",
-                    "b.txt": "b-contents",
+                    "a.txt": "a",
+                    "b.txt": "b",
                     "subdir1": {
-                        "c.txt": "c-contents",
-                        "d.txt": "d-contents",
-                        "e.txt": "e-contents",
+                        "c.txt": "c",
+                        "d.txt": "d",
+                        "e.txt": "e",
                     }
                 },
                 "dir2": {
-                    "x.txt": "x-contents",
-                    "y.txt": "y-contents",
-                    "z.txt": "z-contents",
+                    "v.txt": "v",
                 },
                 "dir3": {
-                    "w.txt": "w-contents",
+                    "w.txt": "w",
+                    "x.txt": "x",
+                    "y.txt": "y",
+                },
+                "dir4": {
+                    "z.txt": "z",
                 },
             }),
         )
@@ -1352,7 +1355,7 @@ async fn test_project_reconnect(
         .insert_tree(
             "/root-2",
             json!({
-                "2.txt": "2-contents",
+                "2.txt": "2",
             }),
         )
         .await;
@@ -1361,7 +1364,7 @@ async fn test_project_reconnect(
         .insert_tree(
             "/root-3",
             json!({
-                "3.txt": "3-contents",
+                "3.txt": "3",
             }),
         )
         .await;
@@ -1393,6 +1396,23 @@ async fn test_project_reconnect(
     let worktree1_id = worktree_a1.read_with(cx_a, |worktree, _| {
         assert!(worktree.as_local().unwrap().is_shared());
         worktree.id()
+    });
+    let (worktree_a2, _) = project_a1
+        .update(cx_a, |p, cx| {
+            p.find_or_create_local_worktree("/root-1/dir2", true, cx)
+        })
+        .await
+        .unwrap();
+    worktree_a2
+        .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
+        assert!(tree.as_local().unwrap().is_shared());
+        tree.id()
+    });
+    deterministic.run_until_parked();
+    project_b1.read_with(cx_b, |project, cx| {
+        assert!(project.worktree_for_id(worktree2_id, cx).is_some())
     });
 
     // Drop client A's connection.
@@ -1436,17 +1456,22 @@ async fn test_project_reconnect(
         .await
         .unwrap();
 
-    // While disconnected, add a worktree to client A's project.
-    let (worktree_a2, _) = project_a1
+    // While disconnected, add and remove worktrees from client A's project.
+    project_a1
+        .update(cx_a, |project, cx| {
+            project.remove_worktree(worktree2_id, cx)
+        })
+        .await;
+    let (worktree_a3, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir2", true, cx)
+            p.find_or_create_local_worktree("/root-1/dir3", true, cx)
         })
         .await
         .unwrap();
-    worktree_a2
+    worktree_a3
         .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
-    let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
+    let worktree3_id = worktree_a3.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared());
         tree.id()
     });
@@ -1454,6 +1479,11 @@ async fn test_project_reconnect(
 
     // While disconnected, close project 2
     cx_a.update(|_| drop(project_a2));
+
+    // While disconnected, mutate a buffer on both the host and the guest.
+    buffer_a1.update(cx_a, |buf, cx| buf.edit([(0..0, "X")], None, cx));
+    buffer_b1.update(cx_b, |buf, cx| buf.edit([(1..1, "Y")], None, cx));
+    deterministic.run_until_parked();
 
     // Client A reconnects. Their project is re-shared, and client B re-joins it.
     server.allow_connections();
@@ -1486,13 +1516,13 @@ async fn test_project_reconnect(
             ]
         );
         assert_eq!(
-            worktree_a2
+            worktree_a3
                 .read(cx)
                 .snapshot()
                 .paths()
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["x.txt", "y.txt", "z.txt"]
+            vec!["w.txt", "x.txt", "y.txt"]
         );
     });
     project_b1.read_with(cx_b, |project, cx| {
@@ -1520,16 +1550,17 @@ async fn test_project_reconnect(
                 "subdir2/i.txt"
             ]
         );
+        assert!(project.worktree_for_id(worktree2_id, cx).is_none());
         assert_eq!(
             project
-                .worktree_for_id(worktree2_id, cx)
+                .worktree_for_id(worktree3_id, cx)
                 .unwrap()
                 .read(cx)
                 .snapshot()
                 .paths()
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["x.txt", "y.txt", "z.txt"]
+            vec!["w.txt", "x.txt", "y.txt"]
         );
     });
     project_b2.read_with(cx_b, |project, _| assert!(project.is_read_only()));
@@ -1552,22 +1583,22 @@ async fn test_project_reconnect(
         .unwrap();
 
     // While client B is disconnected, add and remove worktrees from client A's project.
-    let (worktree_a3, _) = project_a1
+    let (worktree_a4, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir3", true, cx)
+            p.find_or_create_local_worktree("/root-1/dir4", true, cx)
         })
         .await
         .unwrap();
-    worktree_a3
+    worktree_a4
         .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
-    let worktree3_id = worktree_a3.read_with(cx_a, |tree, _| {
+    let worktree4_id = worktree_a4.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared());
         tree.id()
     });
     project_a1
         .update(cx_a, |project, cx| {
-            project.remove_worktree(worktree2_id, cx)
+            project.remove_worktree(worktree3_id, cx)
         })
         .await;
     deterministic.run_until_parked();
@@ -1610,14 +1641,14 @@ async fn test_project_reconnect(
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
         assert_eq!(
             project
-                .worktree_for_id(worktree3_id, cx)
+                .worktree_for_id(worktree4_id, cx)
                 .unwrap()
                 .read(cx)
                 .snapshot()
                 .paths()
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["w.txt"]
+            vec!["z.txt"]
         );
     });
     project_b3.read_with(cx_b, |project, _| assert!(project.is_read_only()));
