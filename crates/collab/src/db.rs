@@ -1376,205 +1376,203 @@ impl Database {
                 .exec(&*tx)
                 .await?;
             if participant_update.rows_affected == 0 {
-                Err(anyhow!("room does not exist or was already joined"))?
-            } else {
-                let mut reshared_projects = Vec::new();
-                for reshared_project in &rejoin_room.reshared_projects {
-                    let project_id = ProjectId::from_proto(reshared_project.project_id);
-                    let project = project::Entity::find_by_id(project_id)
-                        .one(&*tx)
-                        .await?
-                        .ok_or_else(|| anyhow!("project does not exist"))?;
-                    if project.host_user_id != user_id {
-                        return Err(anyhow!("no such project"))?;
-                    }
+                return Err(anyhow!("room does not exist or was already joined"))?;
+            }
 
-                    let mut collaborators = project
-                        .find_related(project_collaborator::Entity)
-                        .all(&*tx)
-                        .await?;
-                    let host_ix = collaborators
-                        .iter()
-                        .position(|collaborator| {
-                            collaborator.user_id == user_id && collaborator.is_host
-                        })
-                        .ok_or_else(|| anyhow!("host not found among collaborators"))?;
-                    let host = collaborators.swap_remove(host_ix);
-                    let old_connection_id = host.connection();
-
-                    project::Entity::update(project::ActiveModel {
-                        host_connection_id: ActiveValue::set(Some(connection.id as i32)),
-                        host_connection_server_id: ActiveValue::set(Some(ServerId(
-                            connection.owner_id as i32,
-                        ))),
-                        ..project.into_active_model()
-                    })
-                    .exec(&*tx)
-                    .await?;
-                    project_collaborator::Entity::update(project_collaborator::ActiveModel {
-                        connection_id: ActiveValue::set(connection.id as i32),
-                        connection_server_id: ActiveValue::set(ServerId(
-                            connection.owner_id as i32,
-                        )),
-                        ..host.into_active_model()
-                    })
-                    .exec(&*tx)
-                    .await?;
-
-                    self.update_project_worktrees(project_id, &reshared_project.worktrees, &tx)
-                        .await?;
-
-                    reshared_projects.push(ResharedProject {
-                        id: project_id,
-                        old_connection_id,
-                        collaborators: collaborators
-                            .iter()
-                            .map(|collaborator| ProjectCollaborator {
-                                connection_id: collaborator.connection(),
-                                user_id: collaborator.user_id,
-                                replica_id: collaborator.replica_id,
-                                is_host: collaborator.is_host,
-                            })
-                            .collect(),
-                        worktrees: reshared_project.worktrees.clone(),
-                    });
+            let mut reshared_projects = Vec::new();
+            for reshared_project in &rejoin_room.reshared_projects {
+                let project_id = ProjectId::from_proto(reshared_project.project_id);
+                let project = project::Entity::find_by_id(project_id)
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("project does not exist"))?;
+                if project.host_user_id != user_id {
+                    return Err(anyhow!("no such project"))?;
                 }
 
-                project::Entity::delete_many()
-                    .filter(
-                        Condition::all()
-                            .add(project::Column::RoomId.eq(room_id))
-                            .add(project::Column::HostUserId.eq(user_id))
-                            .add(
-                                project::Column::Id
-                                    .is_not_in(reshared_projects.iter().map(|project| project.id)),
-                            ),
-                    )
-                    .exec(&*tx)
+                let mut collaborators = project
+                    .find_related(project_collaborator::Entity)
+                    .all(&*tx)
+                    .await?;
+                let host_ix = collaborators
+                    .iter()
+                    .position(|collaborator| {
+                        collaborator.user_id == user_id && collaborator.is_host
+                    })
+                    .ok_or_else(|| anyhow!("host not found among collaborators"))?;
+                let host = collaborators.swap_remove(host_ix);
+                let old_connection_id = host.connection();
+
+                project::Entity::update(project::ActiveModel {
+                    host_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                    host_connection_server_id: ActiveValue::set(Some(ServerId(
+                        connection.owner_id as i32,
+                    ))),
+                    ..project.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+                project_collaborator::Entity::update(project_collaborator::ActiveModel {
+                    connection_id: ActiveValue::set(connection.id as i32),
+                    connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
+                    ..host.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+
+                self.update_project_worktrees(project_id, &reshared_project.worktrees, &tx)
                     .await?;
 
-                let mut rejoined_projects = Vec::new();
-                for rejoined_project in &rejoin_room.rejoined_projects {
-                    let project_id = ProjectId::from_proto(rejoined_project.id);
-                    let Some(project) = project::Entity::find_by_id(project_id)
-                        .one(&*tx)
-                        .await? else {
-                            continue
-                        };
-
-                    let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
-                    let mut worktrees = Vec::new();
-                    for db_worktree in db_worktrees {
-                        let mut worktree = RejoinedWorktree {
-                            id: db_worktree.id as u64,
-                            abs_path: db_worktree.abs_path,
-                            root_name: db_worktree.root_name,
-                            visible: db_worktree.visible,
-                            updated_entries: Default::default(),
-                            removed_entries: Default::default(),
-                            diagnostic_summaries: Default::default(),
-                            scan_id: db_worktree.scan_id as u64,
-                            is_complete: db_worktree.is_complete,
-                        };
-
-                        let rejoined_worktree = rejoined_project
-                            .worktrees
-                            .iter()
-                            .find(|worktree| worktree.id == db_worktree.id as u64);
-
-                        let entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
-                            Condition::all()
-                                .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
-                                .add(worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id))
-                        } else {
-                            Condition::all()
-                                .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
-                                .add(worktree_entry::Column::IsDeleted.eq(false))
-                        };
-
-                        let mut db_entries = worktree_entry::Entity::find()
-                            .filter(entry_filter)
-                            .stream(&*tx)
-                            .await?;
-
-                        while let Some(db_entry) = db_entries.next().await {
-                            let db_entry = db_entry?;
-
-                            if db_entry.is_deleted {
-                                worktree.removed_entries.push(db_entry.id as u64);
-                            } else {
-                                worktree.updated_entries.push(proto::Entry {
-                                    id: db_entry.id as u64,
-                                    is_dir: db_entry.is_dir,
-                                    path: db_entry.path,
-                                    inode: db_entry.inode as u64,
-                                    mtime: Some(proto::Timestamp {
-                                        seconds: db_entry.mtime_seconds as u64,
-                                        nanos: db_entry.mtime_nanos as u32,
-                                    }),
-                                    is_symlink: db_entry.is_symlink,
-                                    is_ignored: db_entry.is_ignored,
-                                });
-                            }
-                        }
-
-                        worktrees.push(worktree);
-                    }
-
-                    let language_servers = project
-                        .find_related(language_server::Entity)
-                        .all(&*tx)
-                        .await?
-                        .into_iter()
-                        .map(|language_server| proto::LanguageServer {
-                            id: language_server.id as u64,
-                            name: language_server.name,
-                        })
-                        .collect::<Vec<_>>();
-
-                    let mut collaborators = project
-                        .find_related(project_collaborator::Entity)
-                        .all(&*tx)
-                        .await?
-                        .into_iter()
+                reshared_projects.push(ResharedProject {
+                    id: project_id,
+                    old_connection_id,
+                    collaborators: collaborators
+                        .iter()
                         .map(|collaborator| ProjectCollaborator {
                             connection_id: collaborator.connection(),
                             user_id: collaborator.user_id,
                             replica_id: collaborator.replica_id,
                             is_host: collaborator.is_host,
                         })
-                        .collect::<Vec<_>>();
+                        .collect(),
+                    worktrees: reshared_project.worktrees.clone(),
+                });
+            }
 
-                    let old_connection_id;
-                    if let Some(self_collaborator_ix) = collaborators
+            project::Entity::delete_many()
+                .filter(
+                    Condition::all()
+                        .add(project::Column::RoomId.eq(room_id))
+                        .add(project::Column::HostUserId.eq(user_id))
+                        .add(
+                            project::Column::Id
+                                .is_not_in(reshared_projects.iter().map(|project| project.id)),
+                        ),
+                )
+                .exec(&*tx)
+                .await?;
+
+            let mut rejoined_projects = Vec::new();
+            for rejoined_project in &rejoin_room.rejoined_projects {
+                let project_id = ProjectId::from_proto(rejoined_project.id);
+                let Some(project) = project::Entity::find_by_id(project_id)
+                        .one(&*tx)
+                        .await? else {
+                            continue
+                        };
+
+                let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
+                let mut worktrees = Vec::new();
+                for db_worktree in db_worktrees {
+                    let mut worktree = RejoinedWorktree {
+                        id: db_worktree.id as u64,
+                        abs_path: db_worktree.abs_path,
+                        root_name: db_worktree.root_name,
+                        visible: db_worktree.visible,
+                        updated_entries: Default::default(),
+                        removed_entries: Default::default(),
+                        diagnostic_summaries: Default::default(),
+                        scan_id: db_worktree.scan_id as u64,
+                        is_complete: db_worktree.is_complete,
+                    };
+
+                    let rejoined_worktree = rejoined_project
+                        .worktrees
                         .iter()
-                        .position(|collaborator| collaborator.user_id == user_id)
-                    {
-                        let self_collaborator = collaborators.swap_remove(self_collaborator_ix);
-                        old_connection_id = self_collaborator.connection_id;
+                        .find(|worktree| worktree.id == db_worktree.id as u64);
+
+                    let entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
+                        Condition::all()
+                            .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
+                            .add(worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id))
                     } else {
-                        continue;
+                        Condition::all()
+                            .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
+                            .add(worktree_entry::Column::IsDeleted.eq(false))
+                    };
+
+                    let mut db_entries = worktree_entry::Entity::find()
+                        .filter(entry_filter)
+                        .stream(&*tx)
+                        .await?;
+
+                    while let Some(db_entry) = db_entries.next().await {
+                        let db_entry = db_entry?;
+
+                        if db_entry.is_deleted {
+                            worktree.removed_entries.push(db_entry.id as u64);
+                        } else {
+                            worktree.updated_entries.push(proto::Entry {
+                                id: db_entry.id as u64,
+                                is_dir: db_entry.is_dir,
+                                path: db_entry.path,
+                                inode: db_entry.inode as u64,
+                                mtime: Some(proto::Timestamp {
+                                    seconds: db_entry.mtime_seconds as u64,
+                                    nanos: db_entry.mtime_nanos as u32,
+                                }),
+                                is_symlink: db_entry.is_symlink,
+                                is_ignored: db_entry.is_ignored,
+                            });
+                        }
                     }
 
-                    rejoined_projects.push(RejoinedProject {
-                        id: project_id,
-                        old_connection_id,
-                        collaborators,
-                        worktrees,
-                        language_servers,
-                    });
+                    worktrees.push(worktree);
                 }
 
-                let room = self.get_room(room_id, &tx).await?;
-                Ok((
-                    room_id,
-                    RejoinedRoom {
-                        room,
-                        rejoined_projects,
-                        reshared_projects,
-                    },
-                ))
+                let language_servers = project
+                    .find_related(language_server::Entity)
+                    .all(&*tx)
+                    .await?
+                    .into_iter()
+                    .map(|language_server| proto::LanguageServer {
+                        id: language_server.id as u64,
+                        name: language_server.name,
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut collaborators = project
+                    .find_related(project_collaborator::Entity)
+                    .all(&*tx)
+                    .await?
+                    .into_iter()
+                    .map(|collaborator| ProjectCollaborator {
+                        connection_id: collaborator.connection(),
+                        user_id: collaborator.user_id,
+                        replica_id: collaborator.replica_id,
+                        is_host: collaborator.is_host,
+                    })
+                    .collect::<Vec<_>>();
+
+                let old_connection_id;
+                if let Some(self_collaborator_ix) = collaborators
+                    .iter()
+                    .position(|collaborator| collaborator.user_id == user_id)
+                {
+                    let self_collaborator = collaborators.swap_remove(self_collaborator_ix);
+                    old_connection_id = self_collaborator.connection_id;
+                } else {
+                    continue;
+                }
+
+                rejoined_projects.push(RejoinedProject {
+                    id: project_id,
+                    old_connection_id,
+                    collaborators,
+                    worktrees,
+                    language_servers,
+                });
             }
+
+            let room = self.get_room(room_id, &tx).await?;
+            Ok((
+                room_id,
+                RejoinedRoom {
+                    room,
+                    rejoined_projects,
+                    reshared_projects,
+                },
+            ))
         })
         .await
     }
