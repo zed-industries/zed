@@ -2234,16 +2234,6 @@ fn project_left(project: &db::LeftProject, session: &Session) {
                 .trace_err();
         }
     }
-
-    session
-        .peer
-        .send(
-            session.connection_id,
-            proto::UnshareProject {
-                project_id: project.id.to_proto(),
-            },
-        )
-        .trace_err();
 }
 
 pub trait ResultExt {
