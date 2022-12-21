@@ -1415,6 +1415,15 @@ async fn test_project_reconnect(
         assert!(project.worktree_for_id(worktree2_id, cx).is_some())
     });
 
+    let buffer_a1 = project_a1
+        .update(cx_a, |p, cx| p.open_buffer((worktree1_id, "a.txt"), cx))
+        .await
+        .unwrap();
+    let buffer_b1 = project_b1
+        .update(cx_b, |p, cx| p.open_buffer((worktree1_id, "a.txt"), cx))
+        .await
+        .unwrap();
+
     // Drop client A's connection.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
@@ -1431,7 +1440,7 @@ async fn test_project_reconnect(
         assert!(tree.as_local().unwrap().is_shared())
     });
 
-    // While disconnected, add and remove files from client A's project.
+    // While client A is disconnected, add and remove files from client A's project.
     client_a
         .fs
         .insert_tree(
@@ -1456,7 +1465,7 @@ async fn test_project_reconnect(
         .await
         .unwrap();
 
-    // While disconnected, add and remove worktrees from client A's project.
+    // While client A is disconnected, add and remove worktrees from client A's project.
     project_a1
         .update(cx_a, |project, cx| {
             project.remove_worktree(worktree2_id, cx)
@@ -1477,12 +1486,12 @@ async fn test_project_reconnect(
     });
     deterministic.run_until_parked();
 
-    // While disconnected, close project 2
+    // While client A is disconnected, close project 2
     cx_a.update(|_| drop(project_a2));
 
-    // While disconnected, mutate a buffer on both the host and the guest.
-    buffer_a1.update(cx_a, |buf, cx| buf.edit([(0..0, "X")], None, cx));
-    buffer_b1.update(cx_b, |buf, cx| buf.edit([(1..1, "Y")], None, cx));
+    // While client A is disconnected, mutate a buffer on both the host and the guest.
+    buffer_a1.update(cx_a, |buf, cx| buf.edit([(0..0, "W")], None, cx));
+    buffer_b1.update(cx_b, |buf, cx| buf.edit([(1..1, "Z")], None, cx));
     deterministic.run_until_parked();
 
     // Client A reconnects. Their project is re-shared, and client B re-joins it.
@@ -1565,6 +1574,8 @@ async fn test_project_reconnect(
     });
     project_b2.read_with(cx_b, |project, _| assert!(project.is_read_only()));
     project_b3.read_with(cx_b, |project, _| assert!(!project.is_read_only()));
+    buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WaZ"));
+    buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "WaZ"));
 
     // Drop client B's connection.
     server.forbid_connections();
@@ -1601,6 +1612,11 @@ async fn test_project_reconnect(
             project.remove_worktree(worktree3_id, cx)
         })
         .await;
+    deterministic.run_until_parked();
+
+    // While client B is disconnected, mutate a buffer on both the host and the guest.
+    buffer_a1.update(cx_a, |buf, cx| buf.edit([(1..1, "X")], None, cx));
+    buffer_b1.update(cx_b, |buf, cx| buf.edit([(2..2, "Y")], None, cx));
     deterministic.run_until_parked();
 
     // While disconnected, close project 3
@@ -1652,6 +1668,8 @@ async fn test_project_reconnect(
         );
     });
     project_b3.read_with(cx_b, |project, _| assert!(project.is_read_only()));
+    buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WXaYZ"));
+    buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "WXaYZ"));
 }
 
 #[gpui::test(iterations = 10)]
