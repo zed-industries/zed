@@ -62,7 +62,6 @@ use std::{
     time::Instant,
 };
 use terminal::{Terminal, TerminalBuilder};
-use thiserror::Error;
 use util::{defer, post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
@@ -121,18 +120,6 @@ pub struct Project {
     buffers_being_formatted: HashSet<usize>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
-}
-
-#[derive(Error, Debug)]
-pub enum JoinProjectError {
-    #[error("host declined join request")]
-    HostDeclined,
-    #[error("host closed the project")]
-    HostClosedProject,
-    #[error("host went offline")]
-    HostWentOffline,
-    #[error("{0}")]
-    Other(#[from] anyhow::Error),
 }
 
 enum OpenBuffer {
@@ -457,7 +444,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         mut cx: AsyncAppContext,
-    ) -> Result<ModelHandle<Self>, JoinProjectError> {
+    ) -> Result<ModelHandle<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
         let subscription = client.subscribe_to_entity(remote_id);
