@@ -1428,10 +1428,8 @@ impl Database {
             for rejoined_project in &rejoin_room.rejoined_projects {
                 let project_id = ProjectId::from_proto(rejoined_project.id);
                 let Some(project) = project::Entity::find_by_id(project_id)
-                        .one(&*tx)
-                        .await? else {
-                            continue
-                        };
+                    .one(&*tx)
+                    .await? else { continue };
 
                 let mut worktrees = Vec::new();
                 let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
@@ -1504,7 +1502,25 @@ impl Database {
                 let mut collaborators = project
                     .find_related(project_collaborator::Entity)
                     .all(&*tx)
-                    .await?
+                    .await?;
+                let self_collaborator = if let Some(self_collaborator_ix) = collaborators
+                    .iter()
+                    .position(|collaborator| collaborator.user_id == user_id)
+                {
+                    collaborators.swap_remove(self_collaborator_ix)
+                } else {
+                    continue;
+                };
+                let old_connection_id = self_collaborator.connection();
+                project_collaborator::Entity::update(project_collaborator::ActiveModel {
+                    connection_id: ActiveValue::set(connection.id as i32),
+                    connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
+                    ..self_collaborator.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+
+                let collaborators = collaborators
                     .into_iter()
                     .map(|collaborator| ProjectCollaborator {
                         connection_id: collaborator.connection(),
@@ -1513,16 +1529,6 @@ impl Database {
                         is_host: collaborator.is_host,
                     })
                     .collect::<Vec<_>>();
-
-                let old_connection_id = if let Some(self_collaborator_ix) = collaborators
-                    .iter()
-                    .position(|collaborator| collaborator.user_id == user_id)
-                {
-                    let self_collaborator = collaborators.swap_remove(self_collaborator_ix);
-                    self_collaborator.connection_id
-                } else {
-                    continue;
-                };
 
                 rejoined_projects.push(RejoinedProject {
                     id: project_id,
