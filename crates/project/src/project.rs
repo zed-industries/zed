@@ -1111,20 +1111,6 @@ impl Project {
         Ok(())
     }
 
-    pub fn worktree_metadata_protos(&self, cx: &AppContext) -> Vec<proto::WorktreeMetadata> {
-        self.worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                proto::WorktreeMetadata {
-                    id: worktree.id().to_proto(),
-                    root_name: worktree.root_name().into(),
-                    visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().into(),
-                }
-            })
-            .collect()
-    }
-
     pub fn unshare(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         if self.is_remote() {
             return Err(anyhow!("attempted to unshare a remote project"));
@@ -5624,6 +5610,20 @@ impl Project {
             buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
             Ok(buffer)
         })
+    }
+
+    pub fn worktree_metadata_protos(&self, cx: &AppContext) -> Vec<proto::WorktreeMetadata> {
+        self.worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                proto::WorktreeMetadata {
+                    id: worktree.id().to_proto(),
+                    root_name: worktree.root_name().into(),
+                    visible: worktree.is_visible(),
+                    abs_path: worktree.abs_path().to_string_lossy().into(),
+                }
+            })
+            .collect()
     }
 
     fn set_worktrees_from_proto(
