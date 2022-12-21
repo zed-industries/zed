@@ -13,7 +13,7 @@ use gpui::{executor::Deterministic, TestAppContext};
 use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
-use project::{search::SearchQuery, Project};
+use project::search::SearchQuery;
 use rand::prelude::*;
 use std::{env, path::PathBuf, sync::Arc};
 
@@ -139,7 +139,13 @@ async fn test_random_collaboration(
                 server.allow_connections();
 
                 for project in &client.remote_projects {
-                    project.read_with(&client_cx, |project, _| assert!(project.is_read_only()));
+                    project.read_with(&client_cx, |project, _| {
+                        assert!(
+                            project.is_read_only(),
+                            "project {:?} should be read only",
+                            project.remote_id()
+                        )
+                    });
                 }
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
@@ -602,15 +608,18 @@ async fn randomly_mutate_client(
                     client.username,
                     remote_project_id
                 );
-                let remote_project = Project::remote(
-                    remote_project_id,
-                    client.client.clone(),
-                    client.user_store.clone(),
-                    client.language_registry.clone(),
-                    FakeFs::new(cx.background()),
-                    cx.to_async(),
-                )
-                .await?;
+                let call = cx.read(ActiveCall::global);
+                let room = call.read_with(cx, |call, _| call.room().unwrap().clone());
+                let remote_project = room
+                    .update(cx, |room, cx| {
+                        room.join_project(
+                            remote_project_id,
+                            client.language_registry.clone(),
+                            FakeFs::new(cx.background().clone()),
+                            cx,
+                        )
+                    })
+                    .await?;
                 client.remote_projects.push(remote_project.clone());
                 remote_project
             };
