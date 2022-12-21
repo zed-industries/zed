@@ -5034,14 +5034,14 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let buffer_id = envelope.payload.buffer_id;
             let diff_base = envelope.payload.diff_base;
-            let buffer = this
+            if let Some(buffer) = this
                 .opened_buffers
                 .get_mut(&buffer_id)
                 .and_then(|b| b.upgrade(cx))
-                .ok_or_else(|| anyhow!("No such buffer {}", buffer_id))?;
-
-            buffer.update(cx, |buffer, cx| buffer.set_diff_base(diff_base, cx));
-
+                .or_else(|| this.incomplete_buffers.get(&buffer_id).cloned())
+            {
+                buffer.update(cx, |buffer, cx| buffer.set_diff_base(diff_base, cx));
+            }
             Ok(())
         })
     }
@@ -5055,20 +5055,22 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
             let buffer_id = payload.buffer_id;
-            let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
-            let worktree = this
-                .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
-                .ok_or_else(|| anyhow!("no such worktree"))?;
-            let file = File::from_proto(file, worktree, cx)?;
-            let buffer = this
+            if let Some(buffer) = this
                 .opened_buffers
                 .get_mut(&buffer_id)
                 .and_then(|b| b.upgrade(cx))
-                .ok_or_else(|| anyhow!("no such buffer"))?;
-            buffer.update(cx, |buffer, cx| {
-                buffer.file_updated(Arc::new(file), cx).detach();
-            });
-            this.assign_language_to_buffer(&buffer, cx);
+                .or_else(|| this.incomplete_buffers.get(&buffer_id).cloned())
+            {
+                let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
+                let worktree = this
+                    .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
+                    .ok_or_else(|| anyhow!("no such worktree"))?;
+                let file = File::from_proto(file, worktree, cx)?;
+                buffer.update(cx, |buffer, cx| {
+                    buffer.file_updated(Arc::new(file), cx).detach();
+                });
+                this.assign_language_to_buffer(&buffer, cx);
+            }
             Ok(())
         })
     }
