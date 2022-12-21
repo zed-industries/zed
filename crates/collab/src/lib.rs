@@ -3,9 +3,10 @@ pub mod auth;
 pub mod db;
 pub mod env;
 pub mod executor;
-#[cfg(test)]
-mod integration_tests;
 pub mod rpc;
+
+#[cfg(test)]
+mod tests;
 
 use axum::{http::StatusCode, response::IntoResponse};
 use db::Database;
