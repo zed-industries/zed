@@ -514,8 +514,8 @@ impl Buffer {
         self.text.snapshot()
     }
 
-    pub fn file(&self) -> Option<&dyn File> {
-        self.file.as_deref()
+    pub fn file(&self) -> Option<&Arc<dyn File>> {
+        self.file.as_ref()
     }
 
     pub fn save(
@@ -2373,8 +2373,8 @@ impl BufferSnapshot {
         self.selections_update_count
     }
 
-    pub fn file(&self) -> Option<&dyn File> {
-        self.file.as_deref()
+    pub fn file(&self) -> Option<&Arc<dyn File>> {
+        self.file.as_ref()
     }
 
     pub fn resolve_file_path(&self, cx: &AppContext, include_root: bool) -> Option<PathBuf> {

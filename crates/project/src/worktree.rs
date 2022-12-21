@@ -1981,7 +1981,7 @@ impl File {
         })
     }
 
-    pub fn from_dyn(file: Option<&dyn language::File>) -> Option<&Self> {
+    pub fn from_dyn(file: Option<&Arc<dyn language::File>>) -> Option<&Self> {
         file.and_then(|f| f.as_any().downcast_ref())
     }
 

@@ -170,7 +170,6 @@ message RejoinRoom {
     uint64 id = 1;
     repeated UpdateProject reshared_projects = 2;
     repeated RejoinProject rejoined_projects = 3;
-    // relay open buffers and their vector clock
 }
 
 message RejoinProject {

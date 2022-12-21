@@ -356,6 +356,19 @@ async fn test_random_collaboration(
                     buffer_id,
                     path
                 );
+
+                let host_file = host_buffer.read_with(host_cx, |b, _| b.file().cloned());
+                let guest_file = guest_buffer.read_with(client_cx, |b, _| b.file().cloned());
+                match (host_file, guest_file) {
+                    (Some(host_file), Some(guest_file)) => {
+                        assert_eq!(host_file.mtime(), guest_file.mtime());
+                        assert_eq!(host_file.path(), guest_file.path());
+                        assert_eq!(host_file.is_deleted(), guest_file.is_deleted());
+                    }
+                    (None, None) => {}
+                    (None, _) => panic!("host's file is None, guest's isn't "),
+                    (_, None) => panic!("guest's file is None, hosts's isn't "),
+                }
             }
         }
     }

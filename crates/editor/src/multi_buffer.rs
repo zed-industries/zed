@@ -1311,7 +1311,7 @@ impl MultiBuffer {
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a dyn File; 2]> {
+    pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a Arc<dyn File>; 2]> {
         let buffers = self.buffers.borrow();
         buffers
             .values()

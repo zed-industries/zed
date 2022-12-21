@@ -23,7 +23,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tempfile::NamedTempFile;
-use util::ResultExt;
+use util::{post_inc, ResultExt};
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
@@ -389,6 +389,7 @@ pub struct FakeFs {
 struct FakeFsState {
     root: Arc<Mutex<FakeFsEntry>>,
     next_inode: u64,
+    next_mtime: SystemTime,
     event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
 }
 
@@ -521,6 +522,7 @@ impl FakeFs {
                     entries: Default::default(),
                     git_repo_state: None,
                 })),
+                next_mtime: SystemTime::UNIX_EPOCH,
                 next_inode: 1,
                 event_txs: Default::default(),
             }),
@@ -531,10 +533,12 @@ impl FakeFs {
         let mut state = self.state.lock().await;
         let path = path.as_ref();
         let inode = state.next_inode;
+        let mtime = state.next_mtime;
         state.next_inode += 1;
+        state.next_mtime += Duration::from_millis(1);
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
-            mtime: SystemTime::now(),
+            mtime,
             content,
         }));
         state
@@ -816,6 +820,9 @@ impl Fs for FakeFs {
         let source = normalize_path(source);
         let target = normalize_path(target);
         let mut state = self.state.lock().await;
+        let mtime = state.next_mtime;
+        let inode = post_inc(&mut state.next_inode);
+        state.next_mtime += Duration::from_millis(1);
         let source_entry = state.read_path(&source).await?;
         let content = source_entry.lock().await.file_content(&source)?.clone();
         let entry = state
@@ -831,8 +838,8 @@ impl Fs for FakeFs {
                 }
                 btree_map::Entry::Vacant(e) => Ok(Some(
                     e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
-                        inode: 0,
-                        mtime: SystemTime::now(),
+                        inode,
+                        mtime,
                         content: String::new(),
                     })))
                     .clone(),
