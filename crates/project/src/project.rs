@@ -182,6 +182,10 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
+    CollaboratorUpdated {
+        old_peer_id: proto::PeerId,
+        new_peer_id: proto::PeerId,
+    },
     CollaboratorLeft(proto::PeerId),
 }
 
@@ -368,11 +372,12 @@ impl FormatTrigger {
 impl Project {
     pub fn init(client: &Arc<Client>) {
         client.add_model_message_handler(Self::handle_add_collaborator);
+        client.add_model_message_handler(Self::handle_update_collaborator);
+        client.add_model_message_handler(Self::handle_remove_collaborator);
         client.add_model_message_handler(Self::handle_buffer_reloaded);
         client.add_model_message_handler(Self::handle_buffer_saved);
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
-        client.add_model_message_handler(Self::handle_remove_collaborator);
         client.add_model_message_handler(Self::handle_update_project);
         client.add_model_message_handler(Self::handle_unshare_project);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
@@ -4618,6 +4623,39 @@ impl Project {
         });
 
         Ok(())
+    }
+
+    async fn handle_update_collaborator(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateProjectCollaborator>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let old_peer_id = envelope
+            .payload
+            .old_peer_id
+            .ok_or_else(|| anyhow!("missing old peer id"))?;
+        let new_peer_id = envelope
+            .payload
+            .new_peer_id
+            .ok_or_else(|| anyhow!("missing new peer id"))?;
+        this.update(&mut cx, |this, cx| {
+            let collaborator = this
+                .collaborators
+                .remove(&old_peer_id)
+                .ok_or_else(|| anyhow!("received UpdateProjectCollaborator for unknown peer"))?;
+            this.collaborators.insert(new_peer_id, collaborator);
+            if let Some(buffers) = this.shared_buffers.remove(&old_peer_id) {
+                this.shared_buffers.insert(new_peer_id, buffers);
+            }
+
+            cx.emit(Event::CollaboratorUpdated {
+                old_peer_id,
+                new_peer_id,
+            });
+            cx.notify();
+            Ok(())
+        })
     }
 
     async fn handle_remove_collaborator(
