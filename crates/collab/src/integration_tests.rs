@@ -1301,8 +1301,9 @@ async fn test_host_disconnect(
         .unwrap();
 
     // Drop client A's connection again. We should still unshare it successfully.
+    server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 }
 
@@ -2920,7 +2921,7 @@ async fn test_leaving_project(
 
     // Drop client B's connection and ensure client A and client C observe client B leaving.
     client_b.disconnect(&cx_b.to_async()).unwrap();
-    deterministic.run_until_parked();
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
     });
@@ -2947,8 +2948,9 @@ async fn test_leaving_project(
 
     // Simulate connection loss for client C and ensure client A observes client C leaving the project.
     client_c.wait_for_current_user(cx_c).await;
+    server.forbid_connections();
     server.disconnect_client(client_c.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 0);
@@ -5784,7 +5786,7 @@ async fn test_following(
 
     // Following interrupts when client B disconnects.
     client_b.disconnect(&cx_b.to_async()).unwrap();
-    deterministic.run_until_parked();
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
         None

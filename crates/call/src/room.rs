@@ -240,6 +240,22 @@ impl Room {
         cx.notify();
         cx.emit(Event::Left);
         log::info!("leaving room");
+
+        for project in self.shared_projects.drain() {
+            if let Some(project) = project.upgrade(cx) {
+                project.update(cx, |project, cx| {
+                    project.unshare(cx).log_err();
+                });
+            }
+        }
+        for project in self.joined_projects.drain() {
+            if let Some(project) = project.upgrade(cx) {
+                project.update(cx, |project, cx| {
+                    project.disconnected_from_host(cx);
+                });
+            }
+        }
+
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
         self.pending_participants.clear();
