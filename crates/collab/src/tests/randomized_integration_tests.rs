@@ -3,17 +3,17 @@ use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{TestClient, TestServer},
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs as _};
 use futures::StreamExt as _;
-use gpui::{executor::Deterministic, TestAppContext};
+use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
-use project::search::SearchQuery;
+use project::{search::SearchQuery, Project};
 use rand::prelude::*;
 use std::{env, path::PathBuf, sync::Arc};
 
@@ -77,6 +77,9 @@ async fn test_random_collaboration(
     let mut user_ids = Vec::new();
     let mut op_start_signals = Vec::new();
     let mut next_entity_id = 100000;
+    let allow_server_restarts = rng.lock().gen_bool(0.7);
+    let allow_client_reconnection = rng.lock().gen_bool(0.7);
+    let allow_client_disconnection = rng.lock().gen_bool(0.1);
 
     let mut operations = 0;
     while operations < max_operations {
@@ -105,6 +108,7 @@ async fn test_random_collaboration(
                 clients.push(client_cx.foreground().spawn(simulate_client(
                     client,
                     op_start_signal.1,
+                    allow_client_disconnection,
                     rng.clone(),
                     client_cx,
                 )));
@@ -113,7 +117,7 @@ async fn test_random_collaboration(
                 operations += 1;
             }
 
-            20..=24 if clients.len() > 1 => {
+            20..=24 if clients.len() > 1 && allow_client_disconnection => {
                 let client_ix = rng.lock().gen_range(1..clients.len());
                 log::info!(
                     "Simulating full disconnection of user {}",
@@ -172,7 +176,7 @@ async fn test_random_collaboration(
                 operations += 1;
             }
 
-            25..=29 if clients.len() > 1 => {
+            25..=29 if clients.len() > 1 && allow_client_reconnection => {
                 let client_ix = rng.lock().gen_range(1..clients.len());
                 let user_id = user_ids[client_ix];
                 log::info!("Simulating temporary disconnection of user {}", user_id);
@@ -188,7 +192,7 @@ async fn test_random_collaboration(
                 operations += 1;
             }
 
-            30..=34 => {
+            30..=34 if allow_server_restarts => {
                 log::info!("Simulating server restart");
                 server.reset().await;
                 deterministic.advance_clock(RECEIVE_TIMEOUT);
@@ -384,6 +388,7 @@ async fn test_random_collaboration(
 async fn simulate_client(
     mut client: TestClient,
     mut op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
+    can_hang_up: bool,
     rng: Arc<Mutex<StdRng>>,
     mut cx: TestAppContext,
 ) -> (TestClient, TestAppContext) {
@@ -500,7 +505,9 @@ async fn simulate_client(
     client.language_registry.add(Arc::new(language));
 
     while op_start_signal.next().await.is_some() {
-        if let Err(error) = randomly_mutate_client(&mut client, rng.clone(), &mut cx).await {
+        if let Err(error) =
+            randomly_mutate_client(&mut client, can_hang_up, rng.clone(), &mut cx).await
+        {
             log::error!("{} error: {:?}", client.username, error);
         }
 
@@ -513,12 +520,35 @@ async fn simulate_client(
 
 async fn randomly_mutate_client(
     client: &mut TestClient,
+    can_hang_up: bool,
     rng: Arc<Mutex<StdRng>>,
     cx: &mut TestAppContext,
-) -> anyhow::Result<()> {
+) -> Result<()> {
+    let choice = rng.lock().gen_range(0..100);
+    match choice {
+        0..=19 => randomly_mutate_active_call(client, can_hang_up, &rng, cx).await?,
+        20..=49 => randomly_mutate_projects(client, &rng, cx).await?,
+        50..=59 if !client.local_projects.is_empty() || !client.remote_projects.is_empty() => {
+            randomly_mutate_worktrees(client, &rng, cx).await?;
+        }
+        60..=84 if !client.local_projects.is_empty() || !client.remote_projects.is_empty() => {
+            randomly_query_and_mutate_buffers(client, &rng, cx).await?;
+        }
+        _ => randomly_mutate_fs(client, &rng).await,
+    }
+
+    Ok(())
+}
+
+async fn randomly_mutate_active_call(
+    client: &mut TestClient,
+    can_hang_up: bool,
+    rng: &Mutex<StdRng>,
+    cx: &mut TestAppContext,
+) -> Result<()> {
     let active_call = cx.read(ActiveCall::global);
     if active_call.read_with(cx, |call, _| call.incoming().borrow().is_some()) {
-        if rng.lock().gen() {
+        if rng.lock().gen_bool(0.7) {
             log::info!("{}: accepting incoming call", client.username);
             active_call
                 .update(cx, |call, cx| call.accept_incoming(cx))
@@ -550,7 +580,9 @@ async fn randomly_mutate_client(
                     .update(cx, |call, cx| call.invite(contact.user.id, None, cx))
                     .await?;
             }
-            30..=39 if active_call.read_with(cx, |call, _| call.room().is_some()) => {
+            30..=39
+                if can_hang_up && active_call.read_with(cx, |call, _| call.room().is_some()) =>
+            {
                 log::info!("{}: hanging up", client.username);
                 active_call.update(cx, |call, cx| call.hang_up(cx))?;
             }
@@ -558,6 +590,39 @@ async fn randomly_mutate_client(
         }
     }
 
+    Ok(())
+}
+
+async fn randomly_mutate_fs(client: &mut TestClient, rng: &Mutex<StdRng>) {
+    let is_dir = rng.lock().gen::<bool>();
+    let mut new_path = client
+        .fs
+        .directories()
+        .await
+        .choose(&mut *rng.lock())
+        .unwrap()
+        .clone();
+    new_path.push(gen_file_name(rng));
+    if is_dir {
+        log::info!("{}: creating local dir at {:?}", client.username, new_path);
+        client.fs.create_dir(&new_path).await.unwrap();
+    } else {
+        new_path.set_extension("rs");
+        log::info!("{}: creating local file at {:?}", client.username, new_path);
+        client
+            .fs
+            .create_file(&new_path, Default::default())
+            .await
+            .unwrap();
+    }
+}
+
+async fn randomly_mutate_projects(
+    client: &mut TestClient,
+    rng: &Mutex<StdRng>,
+    cx: &mut TestAppContext,
+) -> Result<()> {
+    let active_call = cx.read(ActiveCall::global);
     let remote_projects =
         if let Some(room) = active_call.read_with(cx, |call, _| call.room().cloned()) {
             room.read_with(cx, |room, _| {
@@ -572,8 +637,8 @@ async fn randomly_mutate_client(
 
     let project = if remote_projects.is_empty() || rng.lock().gen() {
         if client.local_projects.is_empty() || rng.lock().gen() {
-            let dir_paths = client.fs.directories().await;
-            let local_project = if dir_paths.is_empty() || rng.lock().gen() {
+            let paths = client.fs.paths().await;
+            let local_project = if paths.is_empty() || rng.lock().gen() {
                 let root_path = client.create_new_root_dir();
                 client.fs.create_dir(&root_path).await.unwrap();
                 client
@@ -588,7 +653,7 @@ async fn randomly_mutate_client(
                 );
                 client.build_local_project(root_path, cx).await.0
             } else {
-                let root_path = dir_paths.choose(&mut *rng.lock()).unwrap();
+                let root_path = paths.choose(&mut *rng.lock()).unwrap();
                 log::info!(
                     "{}: opening local project at {:?}",
                     client.username,
@@ -647,7 +712,9 @@ async fn randomly_mutate_client(
         }
     };
 
-    if active_call.read_with(cx, |call, _| call.room().is_some()) {
+    if active_call.read_with(cx, |call, _| call.room().is_some())
+        && project.read_with(cx, |project, _| project.is_local())
+    {
         if let Err(error) = active_call
             .update(cx, |call, cx| call.share_project(project.clone(), cx))
             .await
@@ -656,9 +723,99 @@ async fn randomly_mutate_client(
         }
     }
 
+    let choice = rng.lock().gen_range(0..100);
+    match choice {
+        0..=19 if project.read_with(cx, |project, _| project.is_local()) => {
+            let paths = client.fs.paths().await;
+            let path = paths.choose(&mut *rng.lock()).unwrap();
+            log::info!(
+                "{}: find or create local worktree for path {:?}",
+                client.username,
+                path
+            );
+            project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(&path, true, cx)
+                })
+                .await
+                .unwrap();
+        }
+        20..=24 if project.read_with(cx, |project, _| project.is_remote()) => {
+            log::info!(
+                "{}: dropping remote project {}",
+                client.username,
+                project.read_with(cx, |project, _| project.remote_id().unwrap())
+            );
+
+            cx.update(|_| {
+                client
+                    .remote_projects
+                    .retain(|remote_project| *remote_project != project);
+                client.buffers.remove(&project);
+                drop(project);
+            });
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+async fn randomly_mutate_worktrees(
+    client: &mut TestClient,
+    rng: &Mutex<StdRng>,
+    cx: &mut TestAppContext,
+) -> Result<()> {
+    let project = choose_random_project(client, rng).unwrap();
+    let Some(worktree) = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .filter(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree.is_visible()
+                    && worktree.entries(false).any(|e| e.is_file())
+                    && worktree.root_entry().map_or(false, |e| e.is_dir())
+            })
+            .choose(&mut *rng.lock())
+    }) else {
+        return Ok(())
+    };
+
+    let (worktree_id, worktree_root_name) = worktree.read_with(cx, |worktree, _| {
+        (worktree.id(), worktree.root_name().to_string())
+    });
+
+    let is_dir = rng.lock().gen::<bool>();
+    let mut new_path = PathBuf::new();
+    new_path.push(gen_file_name(rng));
+    if !is_dir {
+        new_path.set_extension("rs");
+    }
+    log::info!(
+        "{}: creating {:?} in worktree {} ({})",
+        client.username,
+        new_path,
+        worktree_id,
+        worktree_root_name,
+    );
+    project
+        .update(cx, |project, cx| {
+            project.create_entry((worktree_id, new_path), is_dir, cx)
+        })
+        .unwrap()
+        .await?;
+    Ok(())
+}
+
+async fn randomly_query_and_mutate_buffers(
+    client: &mut TestClient,
+    rng: &Mutex<StdRng>,
+    cx: &mut TestAppContext,
+) -> Result<()> {
+    let project = choose_random_project(client, rng).unwrap();
     let buffers = client.buffers.entry(project.clone()).or_default();
     let buffer = if buffers.is_empty() || rng.lock().gen() {
-        let worktree = if let Some(worktree) = project.read_with(cx, |project, cx| {
+        let Some(worktree) = project.read_with(cx, |project, cx| {
             project
                 .worktrees(cx)
                 .filter(|worktree| {
@@ -666,10 +823,7 @@ async fn randomly_mutate_client(
                     worktree.is_visible() && worktree.entries(false).any(|e| e.is_file())
                 })
                 .choose(&mut *rng.lock())
-        }) {
-            worktree
-        } else {
-            cx.background().simulate_random_delay().await;
+        }) else {
             return Ok(());
         };
 
@@ -880,50 +1034,6 @@ async fn randomly_mutate_client(
                 buffers.extend(search.await?.into_keys());
             }
         }
-        60..=79 => {
-            let worktree = project
-                .read_with(cx, |project, cx| {
-                    project
-                        .worktrees(cx)
-                        .filter(|worktree| {
-                            let worktree = worktree.read(cx);
-                            worktree.is_visible()
-                                && worktree.entries(false).any(|e| e.is_file())
-                                && worktree.root_entry().map_or(false, |e| e.is_dir())
-                        })
-                        .choose(&mut *rng.lock())
-                })
-                .unwrap();
-            let (worktree_id, worktree_root_name) = worktree.read_with(cx, |worktree, _| {
-                (worktree.id(), worktree.root_name().to_string())
-            });
-
-            let mut new_name = String::new();
-            for _ in 0..10 {
-                let letter = rng.lock().gen_range('a'..='z');
-                new_name.push(letter);
-            }
-
-            let is_dir = rng.lock().gen::<bool>();
-            let mut new_path = PathBuf::new();
-            new_path.push(new_name);
-            if !is_dir {
-                new_path.set_extension("rs");
-            }
-            log::info!(
-                "{}: creating {:?} in worktree {} ({})",
-                client.username,
-                new_path,
-                worktree_id,
-                worktree_root_name,
-            );
-            project
-                .update(cx, |project, cx| {
-                    project.create_entry((worktree_id, new_path), is_dir, cx)
-                })
-                .unwrap()
-                .await?;
-        }
         _ => {
             buffer.update(cx, |buffer, cx| {
                 log::info!(
@@ -942,4 +1052,25 @@ async fn randomly_mutate_client(
     }
 
     Ok(())
+}
+
+fn choose_random_project(
+    client: &mut TestClient,
+    rng: &Mutex<StdRng>,
+) -> Option<ModelHandle<Project>> {
+    client
+        .local_projects
+        .iter()
+        .chain(&client.remote_projects)
+        .choose(&mut *rng.lock())
+        .cloned()
+}
+
+fn gen_file_name(rng: &Mutex<StdRng>) -> String {
+    let mut name = String::new();
+    for _ in 0..10 {
+        let letter = rng.lock().gen_range('a'..='z');
+        name.push(letter);
+    }
+    name
 }
