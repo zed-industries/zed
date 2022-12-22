@@ -290,9 +290,10 @@ async fn test_random_collaboration(
                             assert_eq!(
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
-                                "{} has different snapshot than the host for worktree {}",
+                                "{} has different snapshot than the host for worktree {} ({:?})",
                                 client.username,
-                                id
+                                id,
+                                host_snapshot.abs_path()
                             );
                             assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
                         }
@@ -713,13 +714,18 @@ async fn randomly_mutate_projects(
     };
 
     if active_call.read_with(cx, |call, _| call.room().is_some())
-        && project.read_with(cx, |project, _| project.is_local())
+        && project.read_with(cx, |project, _| project.is_local() && !project.is_shared())
     {
-        if let Err(error) = active_call
+        match active_call
             .update(cx, |call, cx| call.share_project(project.clone(), cx))
             .await
         {
-            log::error!("{}: error sharing project, {:?}", client.username, error);
+            Ok(project_id) => {
+                log::info!("{}: shared project with id {}", client.username, project_id);
+            }
+            Err(error) => {
+                log::error!("{}: error sharing project, {:?}", client.username, error);
+            }
         }
     }
 
@@ -729,7 +735,7 @@ async fn randomly_mutate_projects(
             let paths = client.fs.paths().await;
             let path = paths.choose(&mut *rng.lock()).unwrap();
             log::info!(
-                "{}: find or create local worktree for path {:?}",
+                "{}: finding/creating local worktree for path {:?}",
                 client.username,
                 path
             );
