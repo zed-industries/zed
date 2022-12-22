@@ -1,6 +1,7 @@
 mod feedback;
 pub mod languages;
 pub mod menus;
+pub mod system_specs;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -21,7 +22,7 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, ClipboardItem, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -33,6 +34,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{env, path::Path, str, sync::Arc};
+use system_specs::SystemSpecs;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
@@ -67,6 +69,7 @@ actions!(
         ResetBufferFontSize,
         InstallCommandLineInterface,
         ResetDatabase,
+        CopySystemSpecsIntoClipboard
     ]
 );
 
@@ -242,6 +245,19 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
          _: &project_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
             workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
+        },
+    );
+
+    cx.add_action(
+        |_: &mut Workspace, _: &CopySystemSpecsIntoClipboard, cx: &mut ViewContext<Workspace>| {
+            let system_specs = SystemSpecs::new(cx).to_string();
+            let item = ClipboardItem::new(system_specs.clone());
+            cx.prompt(
+                gpui::PromptLevel::Info,
+                &format!("Copied into clipboard:\n\n{system_specs}"),
+                &["OK"],
+            );
+            cx.write_to_clipboard(item);
         },
     );
 
