@@ -34,15 +34,16 @@ use gpui::{
     elements::*,
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Entity,
+    ModelContext, ModelHandle, MouseButton, MutableAppContext, PathPromptOptions, PromptLevel,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
 use std::{
     any::TypeId,
     borrow::Cow,
+    env,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -72,7 +73,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::ResultExt;
+use util::{channel::ReleaseChannel, ResultExt};
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -96,6 +97,7 @@ actions!(
         ToggleRightSidebar,
         NewTerminal,
         NewSearch,
+        CopySystemDetailsIntoClipboard
     ]
 );
 
@@ -296,6 +298,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                         Ok(())
                     })
                 })
+        },
+    );
+
+    cx.add_action(
+        |workspace: &mut Workspace, _: &CopySystemDetailsIntoClipboard, cx| {
+            workspace.copy_system_details_into_clipboard(cx);
         },
     );
 
@@ -978,6 +986,42 @@ impl Workspace {
             }
             Ok(true)
         })
+    }
+
+    fn copy_system_details_into_clipboard(&mut self, cx: &mut ViewContext<Self>) {
+        let platform = cx.platform();
+
+        let os_name: String = platform.os_name().into();
+        let os_version = platform.os_version().ok();
+        let app_version = env!("CARGO_PKG_VERSION");
+        let release_channel = cx.global::<ReleaseChannel>().dev_name();
+        let architecture = env::var("CARGO_CFG_TARGET_ARCH");
+
+        let os_information = match os_version {
+            Some(os_version) => format!("OS: {os_name} {os_version}"),
+            None => format!("OS: {os_name}"),
+        };
+        let system_information = vec![
+            Some(os_information),
+            Some(format!("Zed: {app_version} ({release_channel})")),
+            architecture
+                .map(|architecture| format!("Architecture: {architecture}"))
+                .ok(),
+        ];
+
+        let system_information = system_information
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let item = ClipboardItem::new(system_information.clone());
+        cx.prompt(
+            gpui::PromptLevel::Info,
+            &format!("Copied into clipboard:\n\n{system_information}"),
+            &["OK"],
+        );
+        cx.write_to_clipboard(item.clone());
     }
 
     #[allow(clippy::type_complexity)]
