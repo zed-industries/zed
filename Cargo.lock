@@ -1882,6 +1882,7 @@ dependencies = [
  "ordered-float",
  "parking_lot 0.11.2",
  "postage",
+ "pretty_assertions",
  "project",
  "rand 0.8.5",
  "rpc",

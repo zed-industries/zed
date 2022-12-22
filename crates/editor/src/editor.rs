@@ -237,6 +237,7 @@ actions!(
         RestartLanguageServer,
         Hover,
         Format,
+        SortLines
     ]
 );
 
@@ -355,6 +356,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
+    cx.add_action(Editor::sort_lines);
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
@@ -3194,6 +3196,69 @@ impl Editor {
         });
     }
 
+    pub fn sort_lines(&mut self, _: &SortLines, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let multi_buffer = self.buffer.read(cx).snapshot(cx);
+
+        let selections = self.selections.all::<Point>(cx);
+        let mut line_text = Vec::new();
+        let mut edits: Vec<_> = Vec::new();
+        let mut new_selections = Vec::new();
+
+        for (range, _) in selections
+            .clone()
+            .into_iter()
+            .by_contiguous_rows(&display_map)
+        {
+            let range_to_sort_by_points = Point::new(*range.start(), 0)
+                ..Point::new(*range.end(), multi_buffer.line_len(*range.end()));
+
+            let insertion_point = display_map
+                .prev_line_boundary(Point::new(*range.start(), 0))
+                .0;
+
+            for row in range {
+                if let Some((buffer, line_range)) = multi_buffer.buffer_line_for_row(row) {
+                    line_text.push((
+                        buffer.text_for_range(line_range).collect::<String>(),
+                        buffer.anchor_before(line_range.start)
+                            ..buffer.anchor_before(line_range.end),
+                    ))
+                }
+            }
+            line_text.sort_by_key(|line_text| line_text.0);
+
+            let text = line_text.iter().map(|line_text| line_text.1).join("\n");
+
+            edits.push((
+                multi_buffer.anchor_before(range_to_sort_by_points.start)
+                    ..multi_buffer.anchor_before(range_to_sort_by_points.end),
+                String::new(),
+            ));
+            let insertion_anchor = multi_buffer.anchor_before(insertion_point);
+            edits.push((insertion_anchor..insertion_anchor, text));
+
+            let display_range_start = range_to_sort_by_points.start.to_display_point(&display_map);
+
+            let display_range_end = range_to_sort_by_points.end.to_display_point(&display_map);
+
+            new_selections.push(lines[0].start_anchor..lines[last].end_anchor)
+        }
+
+        self.transact(cx, |this, cx| {
+            // this.unfold_ranges(unfold_ranges, true, cx);
+            this.buffer.update(cx, |buffer, cx| {
+                for (range, text) in edits {
+                    buffer.edit([(range, text)], None, cx);
+                }
+            });
+            // this.fold_ranges(refold_ranges, cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_display_ranges(new_selections);
+            })
+        });
+    }
+
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -3205,11 +3270,11 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
         let mut new_selections = Vec::new();
 
-        for (range, mut selectins_in_range) in
+        for (range, mut selections_in_range) in
             selections.into_iter().by_contiguous_rows(&display_map)
         {
-            let start_row = range.start;
-            let end_row = range.end;
+            let start_row = *range.start();
+            let end_row = *range.end();
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row > 0 {
                 let range_to_move = Point::new(start_row - 1, buffer.line_len(start_row - 1))
@@ -3245,7 +3310,7 @@ impl Editor {
                     let row_delta = range_to_move.start.row - insertion_point.row + 1;
 
                     // Move selections up
-                    new_selections.extend(selectins_in_range.drain(..).map(|mut selection| {
+                    new_selections.extend(selections_in_range.drain(..).map(|mut selection| {
                         selection.start.row -= row_delta;
                         selection.end.row -= row_delta;
                         selection
@@ -3267,7 +3332,7 @@ impl Editor {
             }
 
             // If we didn't move line(s), preserve the existing selections
-            new_selections.append(&mut selectins_in_range);
+            new_selections.append(&mut selections_in_range);
         }
 
         self.transact(cx, |this, cx| {
@@ -3298,8 +3363,8 @@ impl Editor {
         for (range, mut selections_in_range) in
             selections.into_iter().by_contiguous_rows(&display_map)
         {
-            let start_row = range.start;
-            let end_row = range.end;
+            let start_row = *range.start();
+            let end_row = *range.end();
 
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row <= buffer.max_point().row {

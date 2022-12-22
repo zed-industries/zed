@@ -17,6 +17,9 @@ use util::{
     test::{generate_marked_text, marked_text_ranges},
 };
 
+#[cfg(test)]
+use pretty_assertions::assert_eq;
+
 use super::build_editor;
 
 pub struct EditorTestContext<'a> {

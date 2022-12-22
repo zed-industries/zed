@@ -140,7 +140,8 @@
                     "center_cursor": true
                 }
             ],
-            "ctrl-cmd-space": "editor::ShowCharacterPalette"
+            "ctrl-cmd-space": "editor::ShowCharacterPalette",
+            "ctrl-'": "editor::SortLines"
         }
     },
     {

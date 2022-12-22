@@ -98,6 +98,12 @@ pub struct BufferSnapshot {
     parse_count: usize,
 }
 
+impl std::fmt::Debug for BufferSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<BufferSnapshot>")
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct IndentSize {
     pub len: u32,

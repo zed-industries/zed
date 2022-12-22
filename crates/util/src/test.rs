@@ -51,6 +51,7 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     }
 }
 
+// Returns a square string, where each row is filled with the ascii character (start_char + row)
 pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
     let mut text = String::new();
     for row in 0..rows {

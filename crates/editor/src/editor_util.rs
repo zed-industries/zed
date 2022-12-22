@@ -1,4 +1,4 @@
-use std::{iter::Peekable, ops::Range};
+use std::{iter::Peekable, ops::RangeInclusive};
 
 use language::{Point, Selection};
 
@@ -8,7 +8,7 @@ type RowIndex = u32;
 
 pub fn end_row_for(selection: &Selection<Point>, display_map: &DisplaySnapshot) -> RowIndex {
     if selection.end.column > 0 || selection.is_empty() {
-        display_map.next_line_boundary(selection.end).0.row + 1
+        display_map.next_line_boundary(selection.end).0.row
     } else {
         selection.end.row
     }
@@ -36,7 +36,7 @@ impl<I> IteratorExtension for I where I: Iterator {}
 impl<'snapshot, I: Iterator<Item = Selection<Point>>> Iterator
     for ContiguousRowRanges<'snapshot, I>
 {
-    type Item = (Range<u32>, Vec<Selection<Point>>);
+    type Item = (RangeInclusive<u32>, Vec<Selection<Point>>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.selections.next();
@@ -56,7 +56,7 @@ impl<'snapshot, I: Iterator<Item = Selection<Point>>> Iterator
                     break;
                 }
             }
-            Some((start_row..end_row, selections))
+            Some((start_row..=end_row, selections))
         } else {
             None
         }

@@ -5439,6 +5439,43 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     );
 }
 
+#[gpui::test]
+async fn test_sort_lines(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    //cargo test -p editor
+
+    let start_text = r#"
+        «bb
+        dddd
+        ccc
+        aˇ»
+        "#
+    .unindent();
+
+    let end_text = r#"
+        «a
+        bb
+        ccc
+        ddddˇ»
+        "#
+    .unindent();
+
+    // Things to test:
+    // 1) Make sure we're clipping to the right range (not deleting the line after the selections)
+    // 2) Make sure that we move the selections, associated with the line that gets moved
+
+    // 3) Support folds
+    // 4) Support excerpts
+
+    cx.set_state(&start_text);
+    cx.update_editor(|editor, cx| {
+        editor.sort_lines(&SortLines, cx);
+    });
+
+    cx.assert_editor_state(&end_text);
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
