@@ -30,6 +30,7 @@ clock = { path = "../clock" }
 diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
+human_bytes = "0.4.1"
 search = { path = "../search" }
 fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
@@ -48,6 +49,7 @@ recent_projects = { path = "../recent_projects" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
+sysinfo = "0.27.1"
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }
 theme = { path = "../theme" }
