@@ -2758,6 +2758,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4a1e36c821dbe04574f602848a19f742f4fb3c98d40449f11bcad18d6b17421"
 
 [[package]]
+name = "human_bytes"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39b528196c838e8b3da8b665e08c30958a6f2ede91d79f2ffcd0d4664b9c64eb"
+
+[[package]]
 name = "humantime"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3756,6 +3762,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntapi"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc51db7b362b205941f71232e56c625156eb9a929f8cf74a428fd5bc094a4afc"
+dependencies = [
+ "winapi 0.3.9",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4424,7 +4439,7 @@ source = "git+https://github.com/zed-industries/wezterm?rev=5cd757e5f2eb039ed0c6
 dependencies = [
  "libc",
  "log",
- "ntapi",
+ "ntapi 0.3.7",
  "winapi 0.3.9",
 ]
 
@@ -6217,6 +6232,21 @@ checksum = "0b3a0d0aba8bf96a0e1ddfdc352fc53b3df7f39318c71854910c3c4b024ae52c"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccb297c0afb439440834b4bcf02c5c9da8ec2e808e70f36b0d8e815ff403bd24"
+dependencies = [
+ "cfg-if 1.0.0",
+ "core-foundation-sys",
+ "libc",
+ "ntapi 0.4.0",
+ "once_cell",
+ "rayon",
+ "winapi 0.3.9",
 ]
 
 [[package]]
@@ -8180,6 +8210,7 @@ dependencies = [
  "fuzzy",
  "go_to_line",
  "gpui",
+ "human_bytes",
  "ignore",
  "image",
  "indexmap",
@@ -8213,6 +8244,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
+ "sysinfo",
  "tempdir",
  "terminal_view",
  "text",
