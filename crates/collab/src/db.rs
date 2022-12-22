@@ -2390,7 +2390,11 @@ impl Database {
             // Populate worktree entries.
             {
                 let mut db_entries = worktree_entry::Entity::find()
-                    .filter(worktree_entry::Column::ProjectId.eq(project_id))
+                    .filter(
+                        Condition::all()
+                            .add(worktree_entry::Column::ProjectId.eq(project_id))
+                            .add(worktree_entry::Column::IsDeleted.eq(false)),
+                    )
                     .stream(&*tx)
                     .await?;
                 while let Some(db_entry) = db_entries.next().await {
