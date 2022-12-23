@@ -6255,16 +6255,19 @@ fn split_operations(
     #[cfg(not(any(test, feature = "test-support")))]
     const CHUNK_SIZE: usize = 100;
 
+    let mut done = false;
     std::iter::from_fn(move || {
-        if operations.is_empty() {
+        if done {
             return None;
         }
 
-        Some(
-            operations
-                .drain(..cmp::min(CHUNK_SIZE, operations.len()))
-                .collect(),
-        )
+        let operations = operations
+            .drain(..cmp::min(CHUNK_SIZE, operations.len()))
+            .collect::<Vec<_>>();
+        if operations.is_empty() {
+            done = true;
+        }
+        Some(operations)
     })
 }
 
