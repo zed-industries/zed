@@ -343,10 +343,12 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(crate::CopySystemSpecsIntoClipboard),
                 },
                 MenuItem::Action {
-                    name: "Give Feedback",
-                    action: Box::new(crate::OpenBrowser {
-                        url: super::feedback::NEW_ISSUE_URL.into(),
-                    }),
+                    name: "File Bug Report",
+                    action: Box::new(crate::FileBugReport),
+                },
+                MenuItem::Action {
+                    name: "Request Feature",
+                    action: Box::new(crate::RequestFeature),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
