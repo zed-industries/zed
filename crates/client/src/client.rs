@@ -1235,6 +1235,7 @@ impl Client {
             subscriber
         } else {
             log::info!("unhandled message {}", type_name);
+            self.peer.respond_with_unhandled_message(message).log_err();
             return;
         };
 
@@ -1278,6 +1279,7 @@ impl Client {
                 .detach();
         } else {
             log::info!("unhandled message {}", type_name);
+            self.peer.respond_with_unhandled_message(message).log_err();
         }
     }
 

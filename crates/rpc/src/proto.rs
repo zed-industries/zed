@@ -42,6 +42,8 @@ pub trait AnyTypedEnvelope: 'static + Send + Sync {
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
     fn is_background(&self) -> bool;
     fn original_sender_id(&self) -> Option<PeerId>;
+    fn sender_id(&self) -> ConnectionId;
+    fn message_id(&self) -> u32;
 }
 
 pub enum MessagePriority {
@@ -72,6 +74,14 @@ impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
 
     fn original_sender_id(&self) -> Option<PeerId> {
         self.original_sender_id
+    }
+
+    fn sender_id(&self) -> ConnectionId {
+        self.sender_id
+    }
+
+    fn message_id(&self) -> u32 {
+        self.message_id
     }
 }
 
