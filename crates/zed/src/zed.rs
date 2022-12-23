@@ -69,7 +69,9 @@ actions!(
         ResetBufferFontSize,
         InstallCommandLineInterface,
         ResetDatabase,
-        CopySystemSpecsIntoClipboard
+        CopySystemSpecsIntoClipboard,
+        RequestFeature,
+        FileBugReport
     ]
 );
 
@@ -258,6 +260,28 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
                 &["OK"],
             );
             cx.write_to_clipboard(item);
+        },
+    );
+
+    cx.add_action(
+        |_: &mut Workspace, _: &RequestFeature, cx: &mut ViewContext<Workspace>| {
+            let url = "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
+            cx.dispatch_action(OpenBrowser {
+                url: url.into(),
+            });
+        },
+    );
+
+    cx.add_action(
+        |_: &mut Workspace, _: &FileBugReport, cx: &mut ViewContext<Workspace>| {
+            let system_specs_text = SystemSpecs::new(cx).to_string();
+            let url = format!(
+                "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
+                urlencoding::encode(&system_specs_text)
+            );
+            cx.dispatch_action(OpenBrowser {
+                url: url.into(),
+            });
         },
     );
 
