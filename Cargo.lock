@@ -4437,6 +4437,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "async-trait",
+ "backtrace",
  "client",
  "clock",
  "collections",
