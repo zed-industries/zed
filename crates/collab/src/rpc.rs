@@ -95,6 +95,7 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+    executor: Executor,
 }
 
 impl Session {
@@ -521,7 +522,8 @@ impl Server {
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
-                live_kit_client: this.app_state.live_kit_client.clone()
+                live_kit_client: this.app_state.live_kit_client.clone(),
+                executor: executor.clone(),
             };
             update_user_contacts(user_id, &session).await?;
 
@@ -1515,6 +1517,7 @@ async fn update_language_server(
     request: proto::UpdateLanguageServer,
     session: Session,
 ) -> Result<()> {
+    session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.project_id);
     let project_connection_ids = session
         .db()
@@ -1541,6 +1544,7 @@ async fn forward_project_request<T>(
 where
     T: EntityMessage + RequestMessage,
 {
+    session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.remote_entity_id());
     let host_connection_id = {
         let collaborators = session
@@ -1609,6 +1613,7 @@ async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
     session: Session,
 ) -> Result<()> {
+    session.executor.record_backtrace();
     let peer_id = request.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?;
     session
         .peer
@@ -1621,12 +1626,15 @@ async fn update_buffer(
     response: Response<proto::UpdateBuffer>,
     session: Session,
 ) -> Result<()> {
+    session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.project_id);
     let project_connection_ids = session
         .db()
         .await
         .project_connection_ids(project_id, session.connection_id)
         .await?;
+
+    session.executor.record_backtrace();
 
     broadcast(
         session.connection_id,

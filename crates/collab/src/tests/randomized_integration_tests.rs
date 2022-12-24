@@ -17,7 +17,7 @@ use project::{search::SearchQuery, Project};
 use rand::prelude::*;
 use std::{env, path::PathBuf, sync::Arc};
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 100, detect_nondeterminism = true)]
 async fn test_random_collaboration(
     cx: &mut TestAppContext,
     deterministic: Arc<Deterministic>,

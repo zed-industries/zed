@@ -4,7 +4,7 @@ use futures::channel::mpsc;
 use smol::{channel, prelude::*, Executor};
 use std::{
     any::Any,
-    fmt::{self, Display},
+    fmt::{self, Display, Write as _},
     marker::PhantomData,
     mem,
     pin::Pin,
@@ -17,7 +17,8 @@ use std::{
 
 use crate::{
     platform::{self, Dispatcher},
-    util, MutableAppContext,
+    util::{self, CwdBacktrace},
+    MutableAppContext,
 };
 
 pub enum Foreground {
@@ -74,9 +75,16 @@ struct DeterministicState {
     pending_timers: Vec<(usize, std::time::Instant, postage::barrier::Sender)>,
     waiting_backtrace: Option<backtrace::Backtrace>,
     next_runnable_id: usize,
-    poll_history: Vec<usize>,
+    poll_history: Vec<ExecutorEvent>,
+    previous_poll_history: Option<Vec<ExecutorEvent>>,
     enable_runnable_backtraces: bool,
     runnable_backtraces: collections::HashMap<usize, backtrace::Backtrace>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ExecutorEvent {
+    PollRunnable { id: usize },
+    EnqueuRunnable { id: usize },
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -130,6 +138,7 @@ impl Deterministic {
                 waiting_backtrace: None,
                 next_runnable_id: 0,
                 poll_history: Default::default(),
+                previous_poll_history: Default::default(),
                 enable_runnable_backtraces: false,
                 runnable_backtraces: Default::default(),
             })),
@@ -137,8 +146,12 @@ impl Deterministic {
         })
     }
 
-    pub fn runnable_history(&self) -> Vec<usize> {
+    pub fn execution_history(&self) -> Vec<ExecutorEvent> {
         self.state.lock().poll_history.clone()
+    }
+
+    pub fn set_previous_execution_history(&self, history: Option<Vec<ExecutorEvent>>) {
+        self.state.lock().previous_poll_history = history;
     }
 
     pub fn enable_runnable_backtrace(&self) {
@@ -186,6 +199,9 @@ impl Deterministic {
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut state = state.lock();
             state
+                .poll_history
+                .push(ExecutorEvent::EnqueuRunnable { id });
+            state
                 .scheduled_from_foreground
                 .entry(cx_id)
                 .or_default()
@@ -212,6 +228,9 @@ impl Deterministic {
         let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             let mut state = state.lock();
+            state
+                .poll_history
+                .push(ExecutorEvent::EnqueuRunnable { id });
             state
                 .scheduled_from_background
                 .push(BackgroundRunnable { id, runnable });
@@ -314,7 +333,9 @@ impl Deterministic {
                 let background_len = state.scheduled_from_background.len();
                 let ix = state.rng.gen_range(0..background_len);
                 let background_runnable = state.scheduled_from_background.remove(ix);
-                state.poll_history.push(background_runnable.id);
+                state.push_to_history(ExecutorEvent::PollRunnable {
+                    id: background_runnable.id,
+                });
                 drop(state);
                 background_runnable.runnable.run();
             } else if !state.scheduled_from_foreground.is_empty() {
@@ -332,7 +353,9 @@ impl Deterministic {
                 if scheduled_from_cx.is_empty() {
                     state.scheduled_from_foreground.remove(&cx_id_to_run);
                 }
-                state.poll_history.push(foreground_runnable.id);
+                state.push_to_history(ExecutorEvent::PollRunnable {
+                    id: foreground_runnable.id,
+                });
 
                 drop(state);
 
@@ -366,7 +389,9 @@ impl Deterministic {
             let ix = state.rng.gen_range(0..=runnable_count);
             if ix < state.scheduled_from_background.len() {
                 let background_runnable = state.scheduled_from_background.remove(ix);
-                state.poll_history.push(background_runnable.id);
+                state.push_to_history(ExecutorEvent::PollRunnable {
+                    id: background_runnable.id,
+                });
                 drop(state);
                 background_runnable.runnable.run();
             } else {
@@ -465,6 +490,25 @@ impl Deterministic {
             }
         }
     }
+
+    pub fn record_backtrace(&self) {
+        let mut state = self.state.lock();
+        if state.enable_runnable_backtraces {
+            let current_id = state
+                .poll_history
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    ExecutorEvent::PollRunnable { id } => Some(*id),
+                    _ => None,
+                });
+            if let Some(id) = current_id {
+                state
+                    .runnable_backtraces
+                    .insert(id, backtrace::Backtrace::new_unresolved());
+            }
+        }
+    }
 }
 
 impl Drop for Timer {
@@ -506,6 +550,38 @@ impl Future for Timer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl DeterministicState {
+    fn push_to_history(&mut self, event: ExecutorEvent) {
+        self.poll_history.push(event);
+        if let Some(prev_history) = &self.previous_poll_history {
+            let ix = self.poll_history.len() - 1;
+            let prev_event = prev_history[ix];
+            if event != prev_event {
+                let mut message = String::new();
+                writeln!(
+                    &mut message,
+                    "current runnable backtrace:\n{:?}",
+                    self.runnable_backtraces.get_mut(&event.id()).map(|trace| {
+                        trace.resolve();
+                        CwdBacktrace(trace)
+                    })
+                )
+                .unwrap();
+                writeln!(
+                    &mut message,
+                    "previous runnable backtrace:\n{:?}",
+                    self.runnable_backtraces
+                        .get_mut(&prev_event.id())
+                        .map(|trace| {
+                            trace.resolve();
+                            CwdBacktrace(trace)
+                        })
+                )
+                .unwrap();
+                panic!("detected non-determinism after {ix}. {message}");
+            }
+        }
+    }
+
     fn will_park(&mut self) {
         if self.forbid_parking {
             let mut backtrace_message = String::new();
@@ -522,6 +598,16 @@ impl DeterministicState {
                 "deterministic executor parked after a call to forbid_parking{}",
                 backtrace_message
             );
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ExecutorEvent {
+    pub fn id(&self) -> usize {
+        match self {
+            ExecutorEvent::PollRunnable { id } => *id,
+            ExecutorEvent::EnqueuRunnable { id } => *id,
         }
     }
 }
@@ -750,6 +836,16 @@ impl Background {
             Self::Deterministic { executor, .. } => {
                 executor.simulate_random_delay().await;
             }
+            _ => {
+                panic!("this method can only be called on a deterministic executor")
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn record_backtrace(&self) {
+        match self {
+            Self::Deterministic { executor, .. } => executor.record_backtrace(),
             _ => {
                 panic!("this method can only be called on a deterministic executor")
             }

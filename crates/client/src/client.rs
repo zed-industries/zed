@@ -851,6 +851,7 @@ impl Client {
             })
             .detach();
 
+        let t0 = Instant::now();
         let this = self.clone();
         let cx = cx.clone();
         cx.foreground()
@@ -867,7 +868,12 @@ impl Client {
                         }
                     }
                     Err(err) => {
-                        log::error!("connection error: {:?}", err);
+                        // TODO - remove. Make the test's non-determinism more apparent by
+                        // only sometimes formatting this stack trace.
+                        if Instant::now().duration_since(t0).as_nanos() % 2 == 0 {
+                            log::error!("connection error: {:?}", err);
+                        }
+
                         this.set_status(Status::ConnectionLost, &cx);
                     }
                 }
