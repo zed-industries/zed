@@ -67,9 +67,11 @@
             "up": "editor::MoveUp",
             "pageup": "editor::PageUp",
             "shift-pageup": "editor::MovePageUp",
+            "home": "editor::MoveToBeginningOfLine",
             "down": "editor::MoveDown",
             "pagedown": "editor::PageDown",
             "shift-pagedown": "editor::MovePageDown",
+            "end": "editor::MoveToEndOfLine",
             "left": "editor::MoveLeft",
             "right": "editor::MoveRight",
             "ctrl-p": "editor::MoveUp",
@@ -110,6 +112,12 @@
                     "stop_at_soft_wraps": true
                 }
             ],
+            "shift-home": [
+                "editor::SelectToBeginningOfLine",
+                {
+                    "stop_at_soft_wraps": true
+                }
+            ],
             "ctrl-shift-a": [
                 "editor::SelectToBeginningOfLine",
                 {
@@ -117,6 +125,12 @@
                 }
             ],
             "cmd-shift-right": [
+                "editor::SelectToEndOfLine",
+                {
+                    "stop_at_soft_wraps": true
+                }
+            ],
+            "shift-end": [
                 "editor::SelectToEndOfLine",
                 {
                     "stop_at_soft_wraps": true
