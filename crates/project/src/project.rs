@@ -4636,9 +4636,11 @@ impl Project {
             this.collaborators.insert(new_peer_id, collaborator);
 
             let buffers = this.shared_buffers.remove(&old_peer_id);
-            println!(
+            log::info!(
                 "peer {} became {}. moving buffers {:?}",
-                old_peer_id, new_peer_id, &buffers
+                old_peer_id,
+                new_peer_id,
+                &buffers
             );
             if let Some(buffers) = buffers {
                 this.shared_buffers.insert(new_peer_id, buffers);
@@ -5615,13 +5617,6 @@ impl Project {
     ) -> u64 {
         let buffer_id = buffer.read(cx).remote_id();
         if let Some(project_id) = self.remote_id() {
-            if buffer_id == 300015 {
-                println!(
-                    "creating buffer for peer {}. {:?}",
-                    peer_id,
-                    backtrace::Backtrace::new()
-                );
-            }
             let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
             if shared_buffers.insert(buffer_id) {
                 let buffer = buffer.read(cx);
