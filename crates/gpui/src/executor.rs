@@ -198,9 +198,7 @@ impl Deterministic {
         let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut state = state.lock();
-            state
-                .poll_history
-                .push(ExecutorEvent::EnqueuRunnable { id });
+            state.push_to_history(ExecutorEvent::EnqueuRunnable { id });
             state
                 .scheduled_from_foreground
                 .entry(cx_id)
