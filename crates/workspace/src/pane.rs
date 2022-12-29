@@ -746,7 +746,7 @@ impl Pane {
         }
 
         let active_item_id = pane.items[pane.active_item_index].id();
-        let clean_buffers: Vec<_> = pane
+        let clean_item_ids: Vec<_> = pane
             .items()
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.id())
@@ -759,7 +759,7 @@ impl Pane {
                 move |item_id| match close_item_type {
                     ItemType::Active => item_id == active_item_id,
                     ItemType::Inactive => item_id != active_item_id,
-                    ItemType::Clean => clean_buffers.contains(&item_id),
+                    ItemType::Clean => clean_item_ids.contains(&item_id),
                     ItemType::All => true,
                 },
             );
