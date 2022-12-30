@@ -44,7 +44,7 @@ actions!(
         ActivateLastItem,
         CloseActiveItem,
         CloseInactiveItems,
-        CloseCleanItems,
+        CloseSavedItems,
         CloseAllItems,
         ReopenClosedItem,
         SplitLeft,
@@ -124,7 +124,7 @@ pub fn init(cx: &mut MutableAppContext) {
     });
     cx.add_async_action(Pane::close_active_item);
     cx.add_async_action(Pane::close_inactive_items);
-    cx.add_async_action(Pane::close_clean_items);
+    cx.add_async_action(Pane::close_saved_items);
     cx.add_async_action(Pane::close_all_items);
     cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
         let pane = action.pane.upgrade(cx)?;
@@ -265,7 +265,7 @@ pub enum ReorderBehavior {
 enum ItemType {
     Active,
     Inactive,
-    Clean,
+    Saved,
     All,
 }
 
@@ -726,12 +726,12 @@ impl Pane {
         Self::close_main(workspace, ItemType::All, cx)
     }
 
-    pub fn close_clean_items(
+    pub fn close_saved_items(
         workspace: &mut Workspace,
-        _: &CloseCleanItems,
+        _: &CloseSavedItems,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
-        Self::close_main(workspace, ItemType::Clean, cx)
+        Self::close_main(workspace, ItemType::Saved, cx)
     }
 
     fn close_main(
@@ -746,7 +746,7 @@ impl Pane {
         }
 
         let active_item_id = pane.items[pane.active_item_index].id();
-        let clean_item_ids: Vec<_> = pane
+        let saved_item_ids: Vec<_> = pane
             .items()
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.id())
@@ -759,7 +759,7 @@ impl Pane {
                 move |item_id| match close_item_type {
                     ItemType::Active => item_id == active_item_id,
                     ItemType::Inactive => item_id != active_item_id,
-                    ItemType::Clean => clean_item_ids.contains(&item_id),
+                    ItemType::Saved => saved_item_ids.contains(&item_id),
                     ItemType::All => true,
                 },
             );
