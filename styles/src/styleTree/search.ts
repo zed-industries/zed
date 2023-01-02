@@ -80,5 +80,17 @@ export default function search(colorScheme: ColorScheme) {
       ...text(layer, "mono", "on"),
       size: 18,
     },
+    dismissButton: {
+      color: foreground(layer, "variant"),
+      iconWidth: 12,
+      buttonWidth: 14,
+      padding: {
+        left: 10,
+        right: 10,
+      },
+      hover: {
+        color: foreground(layer, "hovered"),
+      },
+    },
   };
 }
