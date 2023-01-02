@@ -518,7 +518,7 @@ impl FakeFs {
             state: Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
-                    mtime: SystemTime::now(),
+                    mtime: SystemTime::UNIX_EPOCH,
                     entries: Default::default(),
                     git_repo_state: None,
                 })),
@@ -535,7 +535,7 @@ impl FakeFs {
         let inode = state.next_inode;
         let mtime = state.next_mtime;
         state.next_inode += 1;
-        state.next_mtime += Duration::from_millis(1);
+        state.next_mtime += Duration::from_nanos(1);
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
@@ -745,6 +745,8 @@ impl Fs for FakeFs {
             }
 
             let inode = state.next_inode;
+            let mtime = state.next_mtime;
+            state.next_mtime += Duration::from_nanos(1);
             state.next_inode += 1;
             state
                 .write_path(&cur_path, |entry| {
@@ -752,7 +754,7 @@ impl Fs for FakeFs {
                         created_dirs.push(cur_path.clone());
                         Arc::new(Mutex::new(FakeFsEntry::Dir {
                             inode,
-                            mtime: SystemTime::now(),
+                            mtime,
                             entries: Default::default(),
                             git_repo_state: None,
                         }))
@@ -770,10 +772,12 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
         let inode = state.next_inode;
+        let mtime = state.next_mtime;
+        state.next_mtime += Duration::from_nanos(1);
         state.next_inode += 1;
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
-            mtime: SystemTime::now(),
+            mtime,
             content: String::new(),
         }));
         state
@@ -837,7 +841,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock().await;
         let mtime = state.next_mtime;
         let inode = post_inc(&mut state.next_inode);
-        state.next_mtime += Duration::from_millis(1);
+        state.next_mtime += Duration::from_nanos(1);
         let source_entry = state.read_path(&source).await?;
         let content = source_entry.lock().await.file_content(&source)?.clone();
         let entry = state
