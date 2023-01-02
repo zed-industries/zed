@@ -4038,7 +4038,7 @@ pub struct RenderContext<'a, T: View> {
     pub refreshing: bool,
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MouseState {
     hovered: bool,
     clicked: Option<MouseButton>,

@@ -26,7 +26,7 @@ export default function tabBar(colorScheme: ColorScheme) {
     // Close icons
     iconWidth: 8,
     iconClose: foreground(layer, "variant"),
-    iconCloseActive: foreground(layer),
+    iconCloseActive: foreground(layer, "hovered"),
 
     // Indicators
     iconConflict: foreground(layer, "warning"),
