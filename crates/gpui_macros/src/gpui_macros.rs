@@ -162,11 +162,9 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             if let FnArg::Typed(arg) = arg {
                 if let Type::Path(ty) = &*arg.ty {
                     let last_segment = ty.path.segments.last();
-                    match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        Some("StdRng") => {
-                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
-                        }
-                        _ => {}
+
+                    if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
+                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
                     }
                 } else {
                     inner_fn_args.extend(quote!(cx,));

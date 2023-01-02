@@ -647,7 +647,7 @@ impl platform::Platform for MacPlatform {
             attrs.set(kSecReturnAttributes as *const _, cf_true);
             attrs.set(kSecReturnData as *const _, cf_true);
 
-            let mut result = CFTypeRef::from(ptr::null_mut());
+            let mut result = CFTypeRef::from(ptr::null());
             let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
             match status {
                 security::errSecSuccess => {}

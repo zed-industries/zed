@@ -20,7 +20,7 @@ unsafe impl Send for Connection {}
 impl Connection {
     pub(crate) fn open(uri: &str, persistent: bool) -> Result<Self> {
         let mut connection = Self {
-            sqlite3: 0 as *mut _,
+            sqlite3: ptr::null_mut(),
             persistent,
             write: RefCell::new(true),
             _sqlite: PhantomData,
@@ -32,7 +32,7 @@ impl Connection {
                 CString::new(uri)?.as_ptr(),
                 &mut connection.sqlite3,
                 flags,
-                0 as *const _,
+                ptr::null(),
             );
 
             // Turn on extended error codes
@@ -97,7 +97,7 @@ impl Connection {
                 let remaining_sql_str = remaining_sql.to_str().unwrap().trim();
                 remaining_sql_str != ";" && !remaining_sql_str.is_empty()
             } {
-                let mut raw_statement = 0 as *mut sqlite3_stmt;
+                let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
                 let mut remaining_sql_ptr = ptr::null();
                 sqlite3_prepare_v2(
                     self.sqlite3,

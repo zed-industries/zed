@@ -114,12 +114,12 @@ impl<M: Migrator> ThreadSafeConnection<M> {
             let mut queues = QUEUES.write();
             if !queues.contains_key(&self.uri) {
                 let mut write_queue_constructor =
-                    write_queue_constructor.unwrap_or(background_thread_queue());
+                    write_queue_constructor.unwrap_or_else(background_thread_queue);
                 queues.insert(self.uri.clone(), write_queue_constructor());
                 return true;
             }
         }
-        return false;
+        false
     }
 
     pub fn builder(uri: &str, persistent: bool) -> ThreadSafeConnectionBuilder<M> {
@@ -187,10 +187,9 @@ impl<M: Migrator> ThreadSafeConnection<M> {
         *connection.write.get_mut() = false;
 
         if let Some(initialize_query) = connection_initialize_query {
-            connection.exec(initialize_query).expect(&format!(
-                "Initialize query failed to execute: {}",
-                initialize_query
-            ))()
+            connection.exec(initialize_query).unwrap_or_else(|_| {
+                panic!("Initialize query failed to execute: {}", initialize_query)
+            })()
             .unwrap()
         }
 
@@ -225,7 +224,7 @@ impl<M: Migrator> Clone for ThreadSafeConnection<M> {
         Self {
             uri: self.uri.clone(),
             persistent: self.persistent,
-            connection_initialize_query: self.connection_initialize_query.clone(),
+            connection_initialize_query: self.connection_initialize_query,
             connections: self.connections.clone(),
             _migrator: PhantomData,
         }
