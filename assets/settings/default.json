@@ -221,7 +221,7 @@
         // rust-analyzer
         // typescript-language-server
         // vscode-json-languageserver
-        // "rust_analyzer": {
+        // "rust-analyzer": {
         //     //These initialization options are merged into Zed's defaults
         //     "initialization_options": {
         //         "checkOnSave": {
