@@ -1,5 +1,5 @@
 use crate::{
-    db::{self, NewUserParams},
+    db::{self, NewUserParams, UserId},
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{TestClient, TestServer},
 };
@@ -15,16 +15,190 @@ use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Project};
 use rand::prelude::*;
-use std::{env, path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf, rc::Rc, sync::Arc};
+
+struct TestPlan {
+    rng: StdRng,
+    allow_server_restarts: bool,
+    allow_client_reconnection: bool,
+    allow_client_disconnection: bool,
+}
+
+#[derive(Debug)]
+enum Operation {
+    AddConnection {
+        user_id: UserId,
+    },
+    RemoveConnection {
+        user_id: UserId,
+    },
+    BounceConnection {
+        user_id: UserId,
+    },
+    RestartServer,
+    RunUntilParked,
+    MutateClient {
+        user_id: UserId,
+        operation: ClientOperation,
+    },
+}
+
+#[derive(Debug)]
+enum ClientOperation {
+    AcceptIncomingCall,
+    RejectIncomingCall,
+    LeaveCall,
+    InviteContactToCall { user_id: UserId },
+    OpenLocalProject { root: PathBuf },
+    OpenRemoteProject { host_id: UserId, root: String },
+    AddWorktreeToProject { id: u64, new_path: PathBuf },
+    CloseProject { id: u64 },
+}
+
+impl TestPlan {
+    fn next_operation(
+        &mut self,
+        clients: &[(Rc<TestClient>, TestAppContext)],
+        offline_users: &[(UserId, String)],
+    ) -> Operation {
+        let operation = loop {
+            break match self.rng.gen_range(0..100) {
+                0..=9 if !offline_users.is_empty() => {
+                    let user_id = offline_users[self.rng.gen_range(0..offline_users.len())].0;
+                    Operation::AddConnection { user_id }
+                }
+                10..=14 if clients.len() > 1 && self.allow_client_disconnection => {
+                    let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
+                    let user_id = client.current_user_id(cx);
+                    Operation::RemoveConnection { user_id }
+                }
+                15..=19 if clients.len() > 1 && self.allow_client_reconnection => {
+                    let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
+                    let user_id = client.current_user_id(cx);
+                    Operation::BounceConnection { user_id }
+                }
+                20..=24 if self.allow_server_restarts => Operation::RestartServer,
+                25..=29 => Operation::RunUntilParked,
+                _ if !clients.is_empty() => {
+                    let ix = self.rng.gen_range(0..clients.len());
+                    let (client, cx) = &clients[ix];
+                    let user_id = client.current_user_id(cx);
+                    let operation = self.next_client_operation(clients, ix);
+                    Operation::MutateClient { user_id, operation }
+                }
+                _ => continue,
+            };
+        };
+        operation
+    }
+
+    fn next_client_operation(
+        &mut self,
+        clients: &[(Rc<TestClient>, TestAppContext)],
+        client_ix: usize,
+    ) -> ClientOperation {
+        let (client, cx) = &clients[client_ix];
+        let call = cx.read(ActiveCall::global);
+
+        loop {
+            match self.rng.gen_range(0..100) {
+                // Respond to an incoming call
+                0..=19 => {
+                    if call.read_with(cx, |call, _| call.incoming().borrow().is_some()) {
+                        return if self.rng.gen_bool(0.7) {
+                            ClientOperation::AcceptIncomingCall
+                        } else {
+                            ClientOperation::RejectIncomingCall
+                        };
+                    }
+                }
+
+                // Invite a contact to the current call
+                20..=29 => {
+                    let available_contacts = client.user_store.read_with(cx, |user_store, _| {
+                        user_store
+                            .contacts()
+                            .iter()
+                            .filter(|contact| contact.online && !contact.busy)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    });
+                    if !available_contacts.is_empty() {
+                        let contact = available_contacts.choose(&mut self.rng).unwrap();
+                        return ClientOperation::InviteContactToCall {
+                            user_id: UserId(contact.user.id as i32),
+                        };
+                    }
+                }
+
+                // Leave the current call
+                30..=39 => {
+                    if self.allow_client_disconnection
+                        && call.read_with(cx, |call, _| call.room().is_some())
+                    {
+                        return ClientOperation::LeaveCall;
+                    }
+                }
+
+                // Open a remote project
+                40..=49 => {
+                    if let Some(room) = call.read_with(cx, |call, _| call.room().cloned()) {
+                        let remote_projects = room.read_with(cx, |room, _| {
+                            room.remote_participants()
+                                .values()
+                                .flat_map(|participant| {
+                                    participant.projects.iter().map(|project| {
+                                        (
+                                            UserId::from_proto(participant.user.id),
+                                            project.worktree_root_names[0].clone(),
+                                        )
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                        if !remote_projects.is_empty() {
+                            let (host_id, root) =
+                                remote_projects.choose(&mut self.rng).unwrap().clone();
+                            return ClientOperation::OpenRemoteProject { host_id, root };
+                        }
+                    }
+                }
+
+                // Open a local project
+                50..=59 => {
+                    let root = client.create_new_root_dir();
+                    return ClientOperation::OpenLocalProject { root };
+                }
+
+                // Add a worktree to a local project
+                60..=69 if !client.local_projects().is_empty() => {
+                    let project = client
+                        .local_projects()
+                        .choose(&mut self.rng)
+                        .unwrap()
+                        .clone();
+
+                    // let paths = client.fs.paths().await;
+                    // let path = paths.choose(&mut self.rng).unwrap();
+
+                    // if let Some(room) = call.read_with(cx, |call, _| call.room().cloned()) {
+                    //     //
+                    // }
+                }
+
+                _ => continue,
+            };
+        }
+    }
+}
 
 #[gpui::test(iterations = 100)]
 async fn test_random_collaboration(
     cx: &mut TestAppContext,
     deterministic: Arc<Deterministic>,
-    rng: StdRng,
+    mut rng: StdRng,
 ) {
     deterministic.forbid_parking();
-    let rng = Arc::new(Mutex::new(rng));
 
     let max_peers = env::var("MAX_PEERS")
         .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
@@ -56,6 +230,13 @@ async fn test_random_collaboration(
         available_users.push((user_id, username));
     }
 
+    let plan = Arc::new(Mutex::new(TestPlan {
+        allow_server_restarts: rng.gen_bool(0.7),
+        allow_client_reconnection: rng.gen_bool(0.7),
+        allow_client_disconnection: rng.gen_bool(0.1),
+        rng,
+    }));
+
     for (ix, (user_id_a, _)) in available_users.iter().enumerate() {
         for (user_id_b, _) in &available_users[ix + 1..] {
             server
@@ -74,20 +255,19 @@ async fn test_random_collaboration(
     }
 
     let mut clients = Vec::new();
-    let mut user_ids = Vec::new();
+    let mut client_tasks = Vec::new();
     let mut op_start_signals = Vec::new();
     let mut next_entity_id = 100000;
-    let allow_server_restarts = rng.lock().gen_bool(0.7);
-    let allow_client_reconnection = rng.lock().gen_bool(0.7);
-    let allow_client_disconnection = rng.lock().gen_bool(0.1);
 
-    let mut operations = 0;
-    while operations < max_operations {
-        let distribution = rng.lock().gen_range(0..100);
-        match distribution {
-            0..=19 if !available_users.is_empty() => {
-                let client_ix = rng.lock().gen_range(0..available_users.len());
-                let (_, username) = available_users.remove(client_ix);
+    for _ in 0..max_operations {
+        let next_operation = plan.lock().next_operation(&clients, &available_users);
+        match next_operation {
+            Operation::AddConnection { user_id } => {
+                let user_ix = available_users
+                    .iter()
+                    .position(|(id, _)| *id == user_id)
+                    .unwrap();
+                let (_, username) = available_users.remove(user_ix);
                 log::info!("Adding new connection for {}", username);
                 next_entity_id += 100000;
                 let mut client_cx = TestAppContext::new(
@@ -102,47 +282,45 @@ async fn test_random_collaboration(
                 );
 
                 let op_start_signal = futures::channel::mpsc::unbounded();
-                let client = server.create_client(&mut client_cx, &username).await;
-                user_ids.push(client.current_user_id(&client_cx));
+                let client = Rc::new(server.create_client(&mut client_cx, &username).await);
                 op_start_signals.push(op_start_signal.0);
-                clients.push(client_cx.foreground().spawn(simulate_client(
+                clients.push((client.clone(), client_cx.clone()));
+                client_tasks.push(client_cx.foreground().spawn(simulate_client(
                     client,
                     op_start_signal.1,
-                    allow_client_disconnection,
-                    rng.clone(),
+                    plan.clone(),
                     client_cx,
                 )));
 
                 log::info!("Added connection for {}", username);
-                operations += 1;
             }
 
-            20..=24 if clients.len() > 1 && allow_client_disconnection => {
-                let client_ix = rng.lock().gen_range(1..clients.len());
-                log::info!(
-                    "Simulating full disconnection of user {}",
-                    user_ids[client_ix]
-                );
-                let removed_user_id = user_ids.remove(client_ix);
+            Operation::RemoveConnection { user_id } => {
+                log::info!("Simulating full disconnection of user {}", user_id);
+                let client_ix = clients
+                    .iter()
+                    .position(|(client, cx)| client.current_user_id(cx) == user_id)
+                    .unwrap();
                 let user_connection_ids = server
                     .connection_pool
                     .lock()
-                    .user_connection_ids(removed_user_id)
+                    .user_connection_ids(user_id)
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
                 let removed_peer_id = user_connection_ids[0].into();
-                let client = clients.remove(client_ix);
+                let (client, mut client_cx) = clients.remove(client_ix);
+                let client_task = client_tasks.remove(client_ix);
                 op_start_signals.remove(client_ix);
                 server.forbid_connections();
                 server.disconnect_client(removed_peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
                 deterministic.start_waiting();
-                log::info!("Waiting for user {} to exit...", removed_user_id);
-                let (client, mut client_cx) = client.await;
+                log::info!("Waiting for user {} to exit...", user_id);
+                client_task.await;
                 deterministic.finish_waiting();
                 server.allow_connections();
 
-                for project in &client.remote_projects {
+                for project in client.remote_projects().iter() {
                     project.read_with(&client_cx, |project, _| {
                         assert!(
                             project.is_read_only(),
@@ -151,14 +329,20 @@ async fn test_random_collaboration(
                         )
                     });
                 }
-                for user_id in &user_ids {
-                    let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
+
+                for (client, cx) in &clients {
+                    let contacts = server
+                        .app_state
+                        .db
+                        .get_contacts(client.current_user_id(cx))
+                        .await
+                        .unwrap();
                     let pool = server.connection_pool.lock();
                     for contact in contacts {
-                        if let db::Contact::Accepted { user_id, .. } = contact {
-                            if pool.is_user_online(user_id) {
+                        if let db::Contact::Accepted { user_id: id, .. } = contact {
+                            if pool.is_user_online(id) {
                                 assert_ne!(
-                                    user_id, removed_user_id,
+                                    id, user_id,
                                     "removed client is still a contact of another peer"
                                 );
                             }
@@ -167,18 +351,14 @@ async fn test_random_collaboration(
                 }
 
                 log::info!("{} removed", client.username);
-                available_users.push((removed_user_id, client.username.clone()));
+                available_users.push((user_id, client.username.clone()));
                 client_cx.update(|cx| {
                     cx.clear_globals();
                     drop(client);
                 });
-
-                operations += 1;
             }
 
-            25..=29 if clients.len() > 1 && allow_client_reconnection => {
-                let client_ix = rng.lock().gen_range(1..clients.len());
-                let user_id = user_ids[client_ix];
+            Operation::BounceConnection { user_id } => {
                 log::info!("Simulating temporary disconnection of user {}", user_id);
                 let user_connection_ids = server
                     .connection_pool
@@ -189,10 +369,9 @@ async fn test_random_collaboration(
                 let peer_id = user_connection_ids[0].into();
                 server.disconnect_client(peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-                operations += 1;
             }
 
-            30..=34 if allow_server_restarts => {
+            Operation::RestartServer => {
                 log::info!("Simulating server restart");
                 server.reset().await;
                 deterministic.advance_clock(RECEIVE_TIMEOUT);
@@ -208,39 +387,41 @@ async fn test_random_collaboration(
                 assert_eq!(stale_room_ids, vec![]);
             }
 
-            _ if !op_start_signals.is_empty() => {
-                while operations < max_operations && rng.lock().gen_bool(0.7) {
-                    op_start_signals
-                        .choose(&mut *rng.lock())
-                        .unwrap()
-                        .unbounded_send(())
-                        .unwrap();
-                    operations += 1;
-                }
-
-                if rng.lock().gen_bool(0.8) {
-                    deterministic.run_until_parked();
-                }
+            Operation::RunUntilParked => {
+                deterministic.run_until_parked();
             }
-            _ => {}
+
+            Operation::MutateClient { user_id, operation } => {
+                let client_ix = clients
+                    .iter()
+                    .position(|(client, cx)| client.current_user_id(cx) == user_id)
+                    .unwrap();
+                op_start_signals[client_ix]
+                    .unbounded_send(operation)
+                    .unwrap();
+            }
         }
     }
 
     drop(op_start_signals);
     deterministic.start_waiting();
-    let clients = futures::future::join_all(clients).await;
+    futures::future::join_all(client_tasks).await;
     deterministic.finish_waiting();
     deterministic.run_until_parked();
 
     for (client, client_cx) in &clients {
-        for guest_project in &client.remote_projects {
+        for guest_project in client.remote_projects().iter() {
             guest_project.read_with(client_cx, |guest_project, cx| {
                 let host_project = clients.iter().find_map(|(client, cx)| {
-                    let project = client.local_projects.iter().find(|host_project| {
-                        host_project.read_with(cx, |host_project, _| {
-                            host_project.remote_id() == guest_project.remote_id()
-                        })
-                    })?;
+                    let project = client
+                        .local_projects()
+                        .iter()
+                        .find(|host_project| {
+                            host_project.read_with(cx, |host_project, _| {
+                                host_project.remote_id() == guest_project.remote_id()
+                            })
+                        })?
+                        .clone();
                     Some((project, cx))
                 });
 
@@ -305,7 +486,8 @@ async fn test_random_collaboration(
             });
         }
 
-        for (guest_project, guest_buffers) in &client.buffers {
+        let buffers = client.buffers().clone();
+        for (guest_project, guest_buffers) in &buffers {
             let project_id = if guest_project.read_with(client_cx, |project, _| {
                 project.is_local() || project.is_read_only()
             }) {
@@ -318,11 +500,15 @@ async fn test_random_collaboration(
             let guest_user_id = client.user_id().unwrap();
 
             let host_project = clients.iter().find_map(|(client, cx)| {
-                let project = client.local_projects.iter().find(|host_project| {
-                    host_project.read_with(cx, |host_project, _| {
-                        host_project.remote_id() == Some(project_id)
-                    })
-                })?;
+                let project = client
+                    .local_projects()
+                    .iter()
+                    .find(|host_project| {
+                        host_project.read_with(cx, |host_project, _| {
+                            host_project.remote_id() == Some(project_id)
+                        })
+                    })?
+                    .clone();
                 Some((client.user_id().unwrap(), project, cx))
             });
 
@@ -398,12 +584,11 @@ async fn test_random_collaboration(
 }
 
 async fn simulate_client(
-    mut client: TestClient,
-    mut op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
-    can_hang_up: bool,
-    rng: Arc<Mutex<StdRng>>,
+    client: Rc<TestClient>,
+    mut op_start_signal: futures::channel::mpsc::UnboundedReceiver<ClientOperation>,
+    plan: Arc<Mutex<TestPlan>>,
     mut cx: TestAppContext,
-) -> (TestClient, TestAppContext) {
+) {
     // Setup language server
     let mut language = Language::new(
         LanguageConfig {
@@ -418,7 +603,7 @@ async fn simulate_client(
             name: "the-fake-language-server",
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: Some(Box::new({
-                let rng = rng.clone();
+                let plan = plan.clone();
                 let fs = client.fs.clone();
                 move |fake_server: &mut FakeLanguageServer| {
                     fake_server.handle_request::<lsp::request::Completion, _, _>(
@@ -460,16 +645,16 @@ async fn simulate_client(
 
                     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
                         let fs = fs.clone();
-                        let rng = rng.clone();
+                        let plan = plan.clone();
                         move |_, _| {
                             let fs = fs.clone();
-                            let rng = rng.clone();
+                            let plan = plan.clone();
                             async move {
                                 let files = fs.files().await;
-                                let mut rng = rng.lock();
-                                let count = rng.gen_range::<usize, _>(1..3);
+                                let mut plan = plan.lock();
+                                let count = plan.rng.gen_range::<usize, _>(1..3);
                                 let files = (0..count)
-                                    .map(|_| files.choose(&mut *rng).unwrap())
+                                    .map(|_| files.choose(&mut plan.rng).unwrap())
                                     .collect::<Vec<_>>();
                                 log::info!("LSP: Returning definitions in files {:?}", &files);
                                 Ok(Some(lsp::GotoDefinitionResponse::Array(
@@ -486,16 +671,16 @@ async fn simulate_client(
                     });
 
                     fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>({
-                        let rng = rng.clone();
+                        let plan = plan.clone();
                         move |_, _| {
                             let mut highlights = Vec::new();
-                            let highlight_count = rng.lock().gen_range(1..=5);
+                            let highlight_count = plan.lock().rng.gen_range(1..=5);
                             for _ in 0..highlight_count {
-                                let start_row = rng.lock().gen_range(0..100);
-                                let start_column = rng.lock().gen_range(0..100);
+                                let start_row = plan.lock().rng.gen_range(0..100);
+                                let start_column = plan.lock().rng.gen_range(0..100);
                                 let start = PointUtf16::new(start_row, start_column);
-                                let end_row = rng.lock().gen_range(0..100);
-                                let end_column = rng.lock().gen_range(0..100);
+                                let end_row = plan.lock().rng.gen_range(0..100);
+                                let end_column = plan.lock().rng.gen_range(0..100);
                                 let end = PointUtf16::new(end_row, end_column);
                                 let range = if start > end { end..start } else { start..end };
                                 highlights.push(lsp::DocumentHighlight {
@@ -517,50 +702,62 @@ async fn simulate_client(
     client.language_registry.add(Arc::new(language));
 
     while op_start_signal.next().await.is_some() {
-        if let Err(error) =
-            randomly_mutate_client(&mut client, can_hang_up, rng.clone(), &mut cx).await
-        {
+        if let Err(error) = randomly_mutate_client(&client, plan.clone(), &mut cx).await {
             log::error!("{} error: {:?}", client.username, error);
         }
 
         cx.background().simulate_random_delay().await;
     }
     log::info!("{}: done", client.username);
-
-    (client, cx)
 }
 
+// async fn apply_client_operation(
+//     client: &mut TestClient,
+//     plan: Arc<Mutex<TestPlan>>,
+//     operation: ClientOperation,
+//     cx: &mut TestAppContext,
+// ) -> Result<()> {
+//     match operation {
+//         ClientOperation::AcceptIncomingCall => todo!(),
+//         ClientOperation::RejectIncomingCall => todo!(),
+//         ClientOperation::OpenLocalProject { path } => todo!(),
+//         ClientOperation::AddWorktreeToProject {
+//             existing_path,
+//             new_path,
+//         } => todo!(),
+//         ClientOperation::CloseProject { existing_path } => todo!(),
+//     }
+// }
+
 async fn randomly_mutate_client(
-    client: &mut TestClient,
-    can_hang_up: bool,
-    rng: Arc<Mutex<StdRng>>,
+    client: &Rc<TestClient>,
+    plan: Arc<Mutex<TestPlan>>,
     cx: &mut TestAppContext,
 ) -> Result<()> {
-    let choice = rng.lock().gen_range(0..100);
+    let choice = plan.lock().rng.gen_range(0..100);
     match choice {
-        0..=19 => randomly_mutate_active_call(client, can_hang_up, &rng, cx).await?,
-        20..=49 => randomly_mutate_projects(client, &rng, cx).await?,
-        50..=59 if !client.local_projects.is_empty() || !client.remote_projects.is_empty() => {
-            randomly_mutate_worktrees(client, &rng, cx).await?;
+        0..=19 => randomly_mutate_active_call(client, &plan, cx).await?,
+        20..=49 => randomly_mutate_projects(client, &plan, cx).await?,
+        50..=59 if !client.local_projects().is_empty() || !client.remote_projects().is_empty() => {
+            randomly_mutate_worktrees(client, &plan, cx).await?;
         }
-        60..=84 if !client.local_projects.is_empty() || !client.remote_projects.is_empty() => {
-            randomly_query_and_mutate_buffers(client, &rng, cx).await?;
+        60..=84 if !client.local_projects().is_empty() || !client.remote_projects().is_empty() => {
+            randomly_query_and_mutate_buffers(client, &plan, cx).await?;
         }
-        _ => randomly_mutate_fs(client, &rng).await,
+        _ => randomly_mutate_fs(client, &plan).await,
     }
 
     Ok(())
 }
 
 async fn randomly_mutate_active_call(
-    client: &mut TestClient,
-    can_hang_up: bool,
-    rng: &Mutex<StdRng>,
+    client: &TestClient,
+    plan: &Arc<Mutex<TestPlan>>,
     cx: &mut TestAppContext,
 ) -> Result<()> {
     let active_call = cx.read(ActiveCall::global);
     if active_call.read_with(cx, |call, _| call.incoming().borrow().is_some()) {
-        if rng.lock().gen_bool(0.7) {
+        if plan.lock().rng.gen_bool(0.7) {
             log::info!("{}: accepting incoming call", client.username);
             active_call
                 .update(cx, |call, cx| call.accept_incoming(cx))
@@ -579,10 +776,10 @@ async fn randomly_mutate_active_call(
                 .collect::<Vec<_>>()
         });
 
-        let distribution = rng.lock().gen_range(0..100);
+        let distribution = plan.lock().rng.gen_range(0..100);
         match distribution {
             0..=29 if !available_contacts.is_empty() => {
-                let contact = available_contacts.choose(&mut *rng.lock()).unwrap();
+                let contact = available_contacts.choose(&mut plan.lock().rng).unwrap();
                 log::info!(
                     "{}: inviting {}",
                     client.username,
@@ -593,7 +790,8 @@ async fn randomly_mutate_active_call(
                     .await?;
             }
             30..=39
-                if can_hang_up && active_call.read_with(cx, |call, _| call.room().is_some()) =>
+                if plan.lock().allow_client_disconnection
+                    && active_call.read_with(cx, |call, _| call.room().is_some()) =>
             {
                 log::info!("{}: hanging up", client.username);
                 active_call.update(cx, |call, cx| call.hang_up(cx))?;
@@ -605,16 +803,16 @@ async fn randomly_mutate_active_call(
     Ok(())
 }
 
-async fn randomly_mutate_fs(client: &mut TestClient, rng: &Mutex<StdRng>) {
-    let is_dir = rng.lock().gen::<bool>();
+async fn randomly_mutate_fs(client: &TestClient, plan: &Arc<Mutex<TestPlan>>) {
+    let is_dir = plan.lock().rng.gen::<bool>();
     let mut new_path = client
         .fs
         .directories()
         .await
-        .choose(&mut *rng.lock())
+        .choose(&mut plan.lock().rng)
         .unwrap()
         .clone();
-    new_path.push(gen_file_name(rng));
+    new_path.push(gen_file_name(&mut plan.lock().rng));
     if is_dir {
         log::info!("{}: creating local dir at {:?}", client.username, new_path);
         client.fs.create_dir(&new_path).await.unwrap();
@@ -630,8 +828,8 @@ async fn randomly_mutate_fs(client: &mut TestClient, rng: &Mutex<StdRng>) {
 }
 
 async fn randomly_mutate_projects(
-    client: &mut TestClient,
-    rng: &Mutex<StdRng>,
+    client: &TestClient,
+    plan: &Arc<Mutex<TestPlan>>,
     cx: &mut TestAppContext,
 ) -> Result<()> {
     let active_call = cx.read(ActiveCall::global);
@@ -647,10 +845,10 @@ async fn randomly_mutate_projects(
             Default::default()
         };
 
-    let project = if remote_projects.is_empty() || rng.lock().gen() {
-        if client.local_projects.is_empty() || rng.lock().gen() {
+    let project = if remote_projects.is_empty() || plan.lock().rng.gen() {
+        if client.local_projects().is_empty() || plan.lock().rng.gen() {
             let paths = client.fs.paths().await;
-            let local_project = if paths.is_empty() || rng.lock().gen() {
+            let local_project = if paths.is_empty() || plan.lock().rng.gen() {
                 let root_path = client.create_new_root_dir();
                 client.fs.create_dir(&root_path).await.unwrap();
                 client
@@ -665,7 +863,7 @@ async fn randomly_mutate_projects(
                 );
                 client.build_local_project(root_path, cx).await.0
             } else {
-                let root_path = paths.choose(&mut *rng.lock()).unwrap();
+                let root_path = paths.choose(&mut plan.lock().rng).unwrap();
                 log::info!(
                     "{}: opening local project at {:?}",
                     client.username,
@@ -673,25 +871,29 @@ async fn randomly_mutate_projects(
                 );
                 client.build_local_project(root_path, cx).await.0
             };
-            client.local_projects.push(local_project.clone());
+            client.local_projects_mut().push(local_project.clone());
             local_project
         } else {
             client
-                .local_projects
-                .choose(&mut *rng.lock())
+                .local_projects()
+                .choose(&mut plan.lock().rng)
                 .unwrap()
                 .clone()
         }
     } else {
-        if client.remote_projects.is_empty() || rng.lock().gen() {
-            let remote_project_id = remote_projects.choose(&mut *rng.lock()).unwrap().id;
-            let remote_project = if let Some(project) =
-                client.remote_projects.iter().find(|project| {
+        if client.remote_projects().is_empty() || plan.lock().rng.gen() {
+            let remote_project_id = remote_projects.choose(&mut plan.lock().rng).unwrap().id;
+            let remote_projects = client.remote_projects().clone();
+            let remote_project = if let Some(project) = remote_projects
+                .iter()
+                .find(|project| {
                     project.read_with(cx, |project, _| {
                         project.remote_id() == Some(remote_project_id)
                     })
-                }) {
-                project.clone()
+                })
+                .cloned()
+            {
+                project
             } else {
                 log::info!(
                     "{}: opening remote project {}",
@@ -710,15 +912,15 @@ async fn randomly_mutate_projects(
                         )
                     })
                     .await?;
-                client.remote_projects.push(remote_project.clone());
+                client.remote_projects_mut().push(remote_project.clone());
                 remote_project
             };
 
             remote_project
         } else {
             client
-                .remote_projects
-                .choose(&mut *rng.lock())
+                .remote_projects()
+                .choose(&mut plan.lock().rng)
                 .unwrap()
                 .clone()
         }
@@ -740,11 +942,11 @@ async fn randomly_mutate_projects(
         }
     }
 
-    let choice = rng.lock().gen_range(0..100);
+    let choice = plan.lock().rng.gen_range(0..100);
     match choice {
         0..=19 if project.read_with(cx, |project, _| project.is_local()) => {
             let paths = client.fs.paths().await;
-            let path = paths.choose(&mut *rng.lock()).unwrap();
+            let path = paths.choose(&mut plan.lock().rng).unwrap();
             log::info!(
                 "{}: finding/creating local worktree for path {:?}",
                 client.username,
@@ -766,9 +968,9 @@ async fn randomly_mutate_projects(
 
             cx.update(|_| {
                 client
-                    .remote_projects
+                    .remote_projects_mut()
                     .retain(|remote_project| *remote_project != project);
-                client.buffers.remove(&project);
+                client.buffers().remove(&project);
                 drop(project);
             });
         }
@@ -779,11 +981,11 @@ async fn randomly_mutate_projects(
 }
 
 async fn randomly_mutate_worktrees(
-    client: &mut TestClient,
-    rng: &Mutex<StdRng>,
+    client: &TestClient,
+    plan: &Arc<Mutex<TestPlan>>,
     cx: &mut TestAppContext,
 ) -> Result<()> {
-    let project = choose_random_project(client, rng).unwrap();
+    let project = choose_random_project(client, &mut plan.lock().rng).unwrap();
     let Some(worktree) = project.read_with(cx, |project, cx| {
         project
             .worktrees(cx)
@@ -793,7 +995,7 @@ async fn randomly_mutate_worktrees(
                     && worktree.entries(false).any(|e| e.is_file())
                     && worktree.root_entry().map_or(false, |e| e.is_dir())
             })
-            .choose(&mut *rng.lock())
+            .choose(&mut plan.lock().rng)
     }) else {
         return Ok(())
     };
@@ -802,9 +1004,9 @@ async fn randomly_mutate_worktrees(
         (worktree.id(), worktree.root_name().to_string())
     });
 
-    let is_dir = rng.lock().gen::<bool>();
+    let is_dir = plan.lock().rng.gen::<bool>();
     let mut new_path = PathBuf::new();
-    new_path.push(gen_file_name(rng));
+    new_path.push(gen_file_name(&mut plan.lock().rng));
     if !is_dir {
         new_path.set_extension("rs");
     }
@@ -825,13 +1027,13 @@ async fn randomly_mutate_worktrees(
 }
 
 async fn randomly_query_and_mutate_buffers(
-    client: &mut TestClient,
-    rng: &Mutex<StdRng>,
+    client: &TestClient,
+    plan: &Arc<Mutex<TestPlan>>,
     cx: &mut TestAppContext,
 ) -> Result<()> {
-    let project = choose_random_project(client, rng).unwrap();
-    let buffers = client.buffers.entry(project.clone()).or_default();
-    let buffer = if buffers.is_empty() || rng.lock().gen() {
+    let project = choose_random_project(client, &mut plan.lock().rng).unwrap();
+    let has_buffers_for_project = !client.buffers_for_project(&project).is_empty();
+    let buffer = if !has_buffers_for_project || plan.lock().rng.gen() {
         let Some(worktree) = project.read_with(cx, |project, cx| {
             project
                 .worktrees(cx)
@@ -839,7 +1041,7 @@ async fn randomly_query_and_mutate_buffers(
                     let worktree = worktree.read(cx);
                     worktree.is_visible() && worktree.entries(false).any(|e| e.is_file())
                 })
-                .choose(&mut *rng.lock())
+                .choose(&mut plan.lock().rng)
         }) else {
             return Ok(());
         };
@@ -848,7 +1050,7 @@ async fn randomly_query_and_mutate_buffers(
             let entry = worktree
                 .entries(false)
                 .filter(|e| e.is_file())
-                .choose(&mut *rng.lock())
+                .choose(&mut plan.lock().rng)
                 .unwrap();
             (
                 worktree.root_name().to_string(),
@@ -875,13 +1077,18 @@ async fn randomly_query_and_mutate_buffers(
             worktree_root_name,
             buffer.read_with(cx, |buffer, _| buffer.remote_id())
         );
-        buffers.insert(buffer.clone());
+        client.buffers_for_project(&project).insert(buffer.clone());
         buffer
     } else {
-        buffers.iter().choose(&mut *rng.lock()).unwrap().clone()
+        client
+            .buffers_for_project(&project)
+            .iter()
+            .choose(&mut plan.lock().rng)
+            .unwrap()
+            .clone()
     };
 
-    let choice = rng.lock().gen_range(0..100);
+    let choice = plan.lock().rng.gen_range(0..100);
     match choice {
         0..=9 => {
             cx.update(|cx| {
@@ -890,7 +1097,7 @@ async fn randomly_query_and_mutate_buffers(
                     client.username,
                     buffer.read(cx).file().unwrap().full_path(cx)
                 );
-                buffers.remove(&buffer);
+                client.buffers_for_project(&project).remove(&buffer);
                 drop(buffer);
             });
         }
@@ -902,7 +1109,7 @@ async fn randomly_query_and_mutate_buffers(
                     buffer.read(cx).remote_id(),
                     buffer.read(cx).file().unwrap().full_path(cx)
                 );
-                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                let offset = plan.lock().rng.gen_range(0..=buffer.read(cx).len());
                 project.completions(&buffer, offset, cx)
             });
             let completions = cx.background().spawn(async move {
@@ -910,7 +1117,7 @@ async fn randomly_query_and_mutate_buffers(
                     .await
                     .map_err(|err| anyhow!("completions request failed: {:?}", err))
             });
-            if rng.lock().gen_bool(0.3) {
+            if plan.lock().rng.gen_bool(0.3) {
                 log::info!("{}: detaching completions request", client.username);
                 cx.update(|cx| completions.detach_and_log_err(cx));
             } else {
@@ -925,7 +1132,7 @@ async fn randomly_query_and_mutate_buffers(
                     buffer.read(cx).remote_id(),
                     buffer.read(cx).file().unwrap().full_path(cx)
                 );
-                let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
+                let range = buffer.read(cx).random_byte_range(0, &mut plan.lock().rng);
                 project.code_actions(&buffer, range, cx)
             });
             let code_actions = cx.background().spawn(async move {
@@ -933,7 +1140,7 @@ async fn randomly_query_and_mutate_buffers(
                     .await
                     .map_err(|err| anyhow!("code actions request failed: {:?}", err))
             });
-            if rng.lock().gen_bool(0.3) {
+            if plan.lock().rng.gen_bool(0.3) {
                 log::info!("{}: detaching code actions request", client.username);
                 cx.update(|cx| code_actions.detach_and_log_err(cx));
             } else {
@@ -957,7 +1164,7 @@ async fn randomly_query_and_mutate_buffers(
                 assert!(saved_version.observed_all(&requested_version));
                 Ok::<_, anyhow::Error>(())
             });
-            if rng.lock().gen_bool(0.3) {
+            if plan.lock().rng.gen_bool(0.3) {
                 log::info!("{}: detaching save request", client.username);
                 cx.update(|cx| save.detach_and_log_err(cx));
             } else {
@@ -972,7 +1179,7 @@ async fn randomly_query_and_mutate_buffers(
                     buffer.read(cx).remote_id(),
                     buffer.read(cx).file().unwrap().full_path(cx)
                 );
-                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                let offset = plan.lock().rng.gen_range(0..=buffer.read(cx).len());
                 project.prepare_rename(buffer, offset, cx)
             });
             let prepare_rename = cx.background().spawn(async move {
@@ -980,7 +1187,7 @@ async fn randomly_query_and_mutate_buffers(
                     .await
                     .map_err(|err| anyhow!("prepare rename request failed: {:?}", err))
             });
-            if rng.lock().gen_bool(0.3) {
+            if plan.lock().rng.gen_bool(0.3) {
                 log::info!("{}: detaching prepare rename request", client.username);
                 cx.update(|cx| prepare_rename.detach_and_log_err(cx));
             } else {
@@ -995,7 +1202,7 @@ async fn randomly_query_and_mutate_buffers(
                     buffer.read(cx).remote_id(),
                     buffer.read(cx).file().unwrap().full_path(cx)
                 );
-                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                let offset = plan.lock().rng.gen_range(0..=buffer.read(cx).len());
                 project.definition(&buffer, offset, cx)
             });
             let definitions = cx.background().spawn(async move {
@@ -1003,11 +1210,14 @@ async fn randomly_query_and_mutate_buffers(
                     .await
                     .map_err(|err| anyhow!("definitions request failed: {:?}", err))
             });
-            if rng.lock().gen_bool(0.3) {
+            if plan.lock().rng.gen_bool(0.3) {
                 log::info!("{}: detaching definitions request", client.username);
                 cx.update(|cx| definitions.detach_and_log_err(cx));
             } else {
-                buffers.extend(definitions.await?.into_iter().map(|loc| loc.target.buffer));
+                let definitions = definitions.await?;
+                client
+                    .buffers_for_project(&project)
+                    .extend(definitions.into_iter().map(|loc| loc.target.buffer));
             }
         }
         50..=54 => {
@@ -1018,7 +1228,7 @@ async fn randomly_query_and_mutate_buffers(
                     buffer.read(cx).remote_id(),
                     buffer.read(cx).file().unwrap().full_path(cx)
                 );
-                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                let offset = plan.lock().rng.gen_range(0..=buffer.read(cx).len());
                 project.document_highlights(&buffer, offset, cx)
             });
             let highlights = cx.background().spawn(async move {
@@ -1026,7 +1236,7 @@ async fn randomly_query_and_mutate_buffers(
                     .await
                     .map_err(|err| anyhow!("highlights request failed: {:?}", err))
             });
-            if rng.lock().gen_bool(0.3) {
+            if plan.lock().rng.gen_bool(0.3) {
                 log::info!("{}: detaching highlights request", client.username);
                 cx.update(|cx| highlights.detach_and_log_err(cx));
             } else {
@@ -1035,7 +1245,7 @@ async fn randomly_query_and_mutate_buffers(
         }
         55..=59 => {
             let search = project.update(cx, |project, cx| {
-                let query = rng.lock().gen_range('a'..='z');
+                let query = plan.lock().rng.gen_range('a'..='z');
                 log::info!("{}: project-wide search {:?}", client.username, query);
                 project.search(SearchQuery::text(query, false, false), cx)
             });
@@ -1044,11 +1254,14 @@ async fn randomly_query_and_mutate_buffers(
                     .await
                     .map_err(|err| anyhow!("search request failed: {:?}", err))
             });
-            if rng.lock().gen_bool(0.3) {
+            if plan.lock().rng.gen_bool(0.3) {
                 log::info!("{}: detaching search request", client.username);
                 cx.update(|cx| search.detach_and_log_err(cx));
             } else {
-                buffers.extend(search.await?.into_keys());
+                let search = search.await?;
+                client
+                    .buffers_for_project(&project)
+                    .extend(search.into_keys());
             }
         }
         _ => {
@@ -1059,10 +1272,10 @@ async fn randomly_query_and_mutate_buffers(
                     buffer.remote_id(),
                     buffer.file().unwrap().full_path(cx)
                 );
-                if rng.lock().gen_bool(0.7) {
-                    buffer.randomly_edit(&mut *rng.lock(), 5, cx);
+                if plan.lock().rng.gen_bool(0.7) {
+                    buffer.randomly_edit(&mut plan.lock().rng, 5, cx);
                 } else {
-                    buffer.randomly_undo_redo(&mut *rng.lock(), cx);
+                    buffer.randomly_undo_redo(&mut plan.lock().rng, cx);
                 }
             });
         }
@@ -1071,22 +1284,19 @@ async fn randomly_query_and_mutate_buffers(
     Ok(())
 }
 
-fn choose_random_project(
-    client: &mut TestClient,
-    rng: &Mutex<StdRng>,
-) -> Option<ModelHandle<Project>> {
+fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<ModelHandle<Project>> {
     client
-        .local_projects
+        .local_projects()
         .iter()
-        .chain(&client.remote_projects)
-        .choose(&mut *rng.lock())
+        .chain(client.remote_projects().iter())
+        .choose(rng)
         .cloned()
 }
 
-fn gen_file_name(rng: &Mutex<StdRng>) -> String {
+fn gen_file_name(rng: &mut StdRng) -> String {
     let mut name = String::new();
     for _ in 0..10 {
-        let letter = rng.lock().gen_range('a'..='z');
+        let letter = rng.gen_range('a'..='z');
         name.push(letter);
     }
     name

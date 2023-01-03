@@ -27,6 +27,7 @@ use collections::BTreeMap;
 
 use super::{AsyncAppContext, RefCounts};
 
+#[derive(Clone)]
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
