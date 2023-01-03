@@ -128,8 +128,14 @@ impl LspAdapter for TypeScriptLspAdapter {
             Kind::PROPERTY | Kind::FIELD => grammar.highlight_id_for_name("property"),
             _ => None,
         }?;
+
+        let text = match &item.detail {
+            Some(detail) => format!("{} {}", item.label, detail),
+            None => item.label.clone(),
+        };
+
         Some(language::CodeLabel {
-            text: item.label.clone(),
+            text,
             runs: vec![(0..len, highlight_id)],
             filter_range: 0..len,
         })
