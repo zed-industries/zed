@@ -62,7 +62,7 @@ use std::{
     time::Instant,
 };
 use terminal::{Terminal, TerminalBuilder};
-use util::{defer, post_inc, ResultExt, TryFutureExt as _};
+use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
 pub use worktree::*;
@@ -1501,16 +1501,20 @@ impl Project {
             }
             Some(OpenBuffer::Weak(existing_handle)) => {
                 if existing_handle.upgrade(cx).is_some() {
+                    debug_panic!("already registered buffer with remote id {}", remote_id);
                     Err(anyhow!(
                         "already registered buffer with remote id {}",
                         remote_id
                     ))?
                 }
             }
-            Some(OpenBuffer::Strong(_)) => Err(anyhow!(
-                "already registered buffer with remote id {}",
-                remote_id
-            ))?,
+            Some(OpenBuffer::Strong(_)) => {
+                debug_panic!("already registered buffer with remote id {}", remote_id);
+                Err(anyhow!(
+                    "already registered buffer with remote id {}",
+                    remote_id
+                ))?
+            }
         }
         cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
@@ -5150,18 +5154,28 @@ impl Project {
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
         _: Arc<Client>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<proto::SynchronizeBuffersResponse> {
         let project_id = envelope.payload.project_id;
         let mut response = proto::SynchronizeBuffersResponse {
             buffers: Default::default(),
         };
 
-        this.read_with(&cx, |this, cx| {
+        this.update(&mut cx, |this, cx| {
+            let Some(guest_id) = envelope.original_sender_id else {
+                log::error!("missing original_sender_id on SynchronizeBuffers request");
+                return;
+            };
+
             for buffer in envelope.payload.buffers {
                 let buffer_id = buffer.id;
                 let remote_version = language::proto::deserialize_version(buffer.version);
                 if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
+                    this.shared_buffers
+                        .entry(guest_id)
+                        .or_default()
+                        .insert(buffer_id);
+
                     let buffer = buffer.read(cx);
                     response.buffers.push(proto::BufferVersion {
                         id: buffer_id,

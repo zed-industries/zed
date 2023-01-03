@@ -23,7 +23,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tempfile::NamedTempFile;
-use util::{post_inc, ResultExt};
+use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
@@ -840,7 +840,7 @@ impl Fs for FakeFs {
         let target = normalize_path(target);
         let mut state = self.state.lock().await;
         let mtime = state.next_mtime;
-        let inode = post_inc(&mut state.next_inode);
+        let inode = util::post_inc(&mut state.next_inode);
         state.next_mtime += Duration::from_nanos(1);
         let source_entry = state.read_path(&source).await?;
         let content = source_entry.lock().await.file_content(&source)?.clone();

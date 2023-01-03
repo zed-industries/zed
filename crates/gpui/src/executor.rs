@@ -4,7 +4,7 @@ use futures::channel::mpsc;
 use smol::{channel, prelude::*, Executor};
 use std::{
     any::Any,
-    fmt::{self, Display, Write as _},
+    fmt::{self, Display},
     marker::PhantomData,
     mem,
     pin::Pin,
@@ -17,8 +17,7 @@ use std::{
 
 use crate::{
     platform::{self, Dispatcher},
-    util::{self, CwdBacktrace},
-    MutableAppContext,
+    util, MutableAppContext,
 };
 
 pub enum Foreground {
@@ -549,6 +548,8 @@ impl Future for Timer {
 #[cfg(any(test, feature = "test-support"))]
 impl DeterministicState {
     fn push_to_history(&mut self, event: ExecutorEvent) {
+        use std::fmt::Write as _;
+
         self.poll_history.push(event);
         if let Some(prev_history) = &self.previous_poll_history {
             let ix = self.poll_history.len() - 1;
@@ -560,7 +561,7 @@ impl DeterministicState {
                     "current runnable backtrace:\n{:?}",
                     self.runnable_backtraces.get_mut(&event.id()).map(|trace| {
                         trace.resolve();
-                        CwdBacktrace(trace)
+                        util::CwdBacktrace(trace)
                     })
                 )
                 .unwrap();
@@ -571,7 +572,7 @@ impl DeterministicState {
                         .get_mut(&prev_event.id())
                         .map(|trace| {
                             trace.resolve();
-                            CwdBacktrace(trace)
+                            util::CwdBacktrace(trace)
                         })
                 )
                 .unwrap();
