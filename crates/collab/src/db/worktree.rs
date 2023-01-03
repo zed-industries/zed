@@ -11,8 +11,10 @@ pub struct Model {
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
+    /// The last scan for which we've observed entries. It may be in progress.
     pub scan_id: i64,
-    pub is_complete: bool,
+    /// The last scan that fully completed.
+    pub completed_scan_id: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

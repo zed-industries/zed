@@ -1443,7 +1443,7 @@ impl Database {
                         removed_entries: Default::default(),
                         diagnostic_summaries: Default::default(),
                         scan_id: db_worktree.scan_id as u64,
-                        is_complete: db_worktree.is_complete,
+                        completed_scan_id: db_worktree.completed_scan_id as u64,
                     };
 
                     let rejoined_worktree = rejoined_project
@@ -1997,7 +1997,7 @@ impl Database {
                         root_name: ActiveValue::set(worktree.root_name.clone()),
                         visible: ActiveValue::set(worktree.visible),
                         scan_id: ActiveValue::set(0),
-                        is_complete: ActiveValue::set(false),
+                        completed_scan_id: ActiveValue::set(0),
                     }
                 }))
                 .exec(&*tx)
@@ -2091,7 +2091,7 @@ impl Database {
                 root_name: ActiveValue::set(worktree.root_name.clone()),
                 visible: ActiveValue::set(worktree.visible),
                 scan_id: ActiveValue::set(0),
-                is_complete: ActiveValue::set(false),
+                completed_scan_id: ActiveValue::set(0),
             }))
             .on_conflict(
                 OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
@@ -2141,7 +2141,11 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 root_name: ActiveValue::set(update.root_name.clone()),
                 scan_id: ActiveValue::set(update.scan_id as i64),
-                is_complete: ActiveValue::set(update.is_last_update),
+                completed_scan_id: if update.is_last_update {
+                    ActiveValue::set(update.scan_id as i64)
+                } else {
+                    ActiveValue::default()
+                },
                 abs_path: ActiveValue::set(update.abs_path.clone()),
                 ..Default::default()
             })
@@ -2381,7 +2385,7 @@ impl Database {
                             entries: Default::default(),
                             diagnostic_summaries: Default::default(),
                             scan_id: db_worktree.scan_id as u64,
-                            is_complete: db_worktree.is_complete,
+                            completed_scan_id: db_worktree.completed_scan_id as u64,
                         },
                     )
                 })
@@ -3039,7 +3043,7 @@ pub struct RejoinedWorktree {
     pub removed_entries: Vec<u64>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub scan_id: u64,
-    pub is_complete: bool,
+    pub completed_scan_id: u64,
 }
 
 pub struct LeftRoom {
@@ -3093,7 +3097,7 @@ pub struct Worktree {
     pub entries: Vec<proto::Entry>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub scan_id: u64,
-    pub is_complete: bool,
+    pub completed_scan_id: u64,
 }
 
 #[cfg(test)]

@@ -94,7 +94,7 @@ pub struct Snapshot {
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
     scan_id: usize,
-    is_complete: bool,
+    completed_scan_id: usize,
 }
 
 #[derive(Clone)]
@@ -230,7 +230,7 @@ impl Worktree {
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
             scan_id: 0,
-            is_complete: false,
+            completed_scan_id: 0,
         };
 
         let (updates_tx, mut updates_rx) = mpsc::unbounded();
@@ -423,8 +423,8 @@ impl LocalWorktree {
                     root_char_bag,
                     entries_by_path: Default::default(),
                     entries_by_id: Default::default(),
-                    scan_id: 0,
-                    is_complete: true,
+                    scan_id: 1,
+                    completed_scan_id: 0,
                 },
             };
             if let Some(metadata) = metadata {
@@ -1002,7 +1002,7 @@ impl LocalWorktree {
                             entries_by_path: Default::default(),
                             entries_by_id: Default::default(),
                             scan_id: 0,
-                            is_complete: true,
+                            completed_scan_id: 0,
                         },
                     };
                     while let Some(snapshot) = snapshots_rx.recv().await {
@@ -1091,7 +1091,7 @@ impl RemoteWorktree {
     }
 
     fn observed_snapshot(&self, scan_id: usize) -> bool {
-        self.scan_id > scan_id || (self.scan_id == scan_id && self.is_complete)
+        self.completed_scan_id >= scan_id
     }
 
     fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
@@ -1254,7 +1254,9 @@ impl Snapshot {
         self.entries_by_path.edit(entries_by_path_edits, &());
         self.entries_by_id.edit(entries_by_id_edits, &());
         self.scan_id = update.scan_id as usize;
-        self.is_complete = update.is_last_update;
+        if update.is_last_update {
+            self.completed_scan_id = update.scan_id as usize;
+        }
 
         Ok(())
     }
@@ -1466,7 +1468,7 @@ impl LocalSnapshot {
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,
-            is_last_update: true,
+            is_last_update: self.completed_scan_id == self.scan_id,
         }
     }
 
@@ -3437,7 +3439,7 @@ mod tests {
                 root_name: Default::default(),
                 root_char_bag: Default::default(),
                 scan_id: 0,
-                is_complete: true,
+                completed_scan_id: 0,
             },
         };
         initial_snapshot.insert_entry(
