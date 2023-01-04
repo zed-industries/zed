@@ -314,6 +314,7 @@ async fn test_random_collaboration(
                     .read_with(client_cx, |project, _| project.remote_id())
                     .unwrap()
             };
+            let guest_user_id = client.user_id().unwrap();
 
             let host_project = clients.iter().find_map(|(client, cx)| {
                 let project = client.local_projects.iter().find(|host_project| {
@@ -321,14 +322,15 @@ async fn test_random_collaboration(
                         host_project.remote_id() == Some(project_id)
                     })
                 })?;
-                Some((project, cx))
+                Some((client.user_id().unwrap(), project, cx))
             });
 
-            let (host_project, host_cx) = if let Some((host_project, host_cx)) = host_project {
-                (host_project, host_cx)
-            } else {
-                continue;
-            };
+            let (host_user_id, host_project, host_cx) =
+                if let Some((host_user_id, host_project, host_cx)) = host_project {
+                    (host_user_id, host_project, host_cx)
+                } else {
+                    continue;
+                };
 
             for guest_buffer in guest_buffers {
                 let buffer_id = guest_buffer.read_with(client_cx, |buffer, _| buffer.remote_id());
@@ -366,9 +368,17 @@ async fn test_random_collaboration(
                 let guest_file = guest_buffer.read_with(client_cx, |b, _| b.file().cloned());
                 match (host_file, guest_file) {
                     (Some(host_file), Some(guest_file)) => {
-                        assert_eq!(host_file.mtime(), guest_file.mtime());
-                        assert_eq!(host_file.path(), guest_file.path());
-                        assert_eq!(host_file.is_deleted(), guest_file.is_deleted());
+                        assert_eq!(guest_file.path(), host_file.path());
+                        assert_eq!(guest_file.is_deleted(), host_file.is_deleted());
+                        assert_eq!(
+                            guest_file.mtime(),
+                            host_file.mtime(),
+                            "guest {} mtime does not match host {} for path {:?} in project {}",
+                            guest_user_id,
+                            host_user_id,
+                            guest_file.path(),
+                            project_id,
+                        );
                     }
                     (None, None) => {}
                     (None, _) => panic!("host's file is None, guest's isn't "),

@@ -327,8 +327,6 @@ mod tests {
             .path();
         corrupted_backup_dir.push(DB_FILE_NAME);
 
-        dbg!(&corrupted_backup_dir);
-
         let backup = Connection::open_file(&corrupted_backup_dir.to_string_lossy());
         assert!(backup.select_row::<usize>("SELECT * FROM test").unwrap()()
             .unwrap()

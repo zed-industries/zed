@@ -359,7 +359,7 @@ impl FormatTrigger {
 impl Project {
     pub fn init(client: &Arc<Client>) {
         client.add_model_message_handler(Self::handle_add_collaborator);
-        client.add_model_message_handler(Self::handle_update_collaborator);
+        client.add_model_message_handler(Self::handle_update_project_collaborator);
         client.add_model_message_handler(Self::handle_remove_collaborator);
         client.add_model_message_handler(Self::handle_buffer_reloaded);
         client.add_model_message_handler(Self::handle_buffer_saved);
@@ -4617,7 +4617,7 @@ impl Project {
         Ok(())
     }
 
-    async fn handle_update_collaborator(
+    async fn handle_update_project_collaborator(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateProjectCollaborator>,
         _: Arc<Client>,
@@ -5184,9 +5184,20 @@ impl Project {
 
                     let operations = buffer.serialize_ops(Some(remote_version), cx);
                     let client = this.client.clone();
+                    let file = buffer.file().cloned();
                     cx.background()
                         .spawn(
                             async move {
+                                if let Some(file) = file {
+                                    client
+                                        .send(proto::UpdateBufferFile {
+                                            project_id,
+                                            buffer_id: buffer_id as u64,
+                                            file: Some(file.to_proto()),
+                                        })
+                                        .log_err();
+                                }
+
                                 let operations = operations.await;
                                 for chunk in split_operations(operations) {
                                     client

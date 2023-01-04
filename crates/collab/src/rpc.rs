@@ -580,7 +580,7 @@ impl Server {
 
             drop(foreground_message_handlers);
             tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
-            if let Err(error) = sign_out(session, teardown, executor).await {
+            if let Err(error) = connection_lost(session, teardown, executor).await {
                 tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
@@ -781,7 +781,7 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
 }
 
 #[instrument(err, skip(executor))]
-async fn sign_out(
+async fn connection_lost(
     session: Session,
     mut teardown: watch::Receiver<()>,
     executor: Executor,

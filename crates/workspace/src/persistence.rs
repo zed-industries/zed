@@ -216,7 +216,7 @@ impl WorkspaceDb {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         for (id, location) in self.recent_workspaces()? {
-            if location.paths().iter().all(|path| dbg!(path).exists()) {
+            if location.paths().iter().all(|path| path.exists()) {
                 result.push((id, location));
             } else {
                 delete_tasks.push(self.delete_stale_workspace(id));
