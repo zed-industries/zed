@@ -1429,12 +1429,11 @@ impl Buffer {
         start..end
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn randomly_edit<T>(
-        &mut self,
+    pub fn get_random_edits<T>(
+        &self,
         rng: &mut T,
         edit_count: usize,
-    ) -> (Vec<(Range<usize>, Arc<str>)>, Operation)
+    ) -> Vec<(Range<usize>, Arc<str>)>
     where
         T: rand::Rng,
     {
@@ -1453,8 +1452,21 @@ impl Buffer {
 
             edits.push((range, new_text.into()));
         }
+        edits
+    }
 
+    #[allow(clippy::type_complexity)]
+    pub fn randomly_edit<T>(
+        &mut self,
+        rng: &mut T,
+        edit_count: usize,
+    ) -> (Vec<(Range<usize>, Arc<str>)>, Operation)
+    where
+        T: rand::Rng,
+    {
+        let mut edits = self.get_random_edits(rng, edit_count);
         log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
+
         let op = self.edit(edits.iter().cloned());
         if let Operation::Edit(edit) = &op {
             assert_eq!(edits.len(), edit.new_text.len());

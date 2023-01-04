@@ -24,7 +24,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     env,
     ops::{Deref, DerefMut},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -332,7 +332,6 @@ struct TestClientState {
     local_projects: Vec<ModelHandle<Project>>,
     remote_projects: Vec<ModelHandle<Project>>,
     buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
-    next_root_dir_id: usize,
 }
 
 impl Deref for TestClient {
@@ -482,15 +481,6 @@ impl TestClient {
                 cx,
             )
         })
-    }
-
-    fn create_new_root_dir(&self) -> PathBuf {
-        format!(
-            "/{}-root-{}",
-            self.username,
-            util::post_inc(&mut self.state.borrow_mut().next_root_dir_id)
-        )
-        .into()
     }
 }
 
