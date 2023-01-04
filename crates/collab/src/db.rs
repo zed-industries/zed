@@ -2184,6 +2184,7 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::IsSymlink,
                         worktree_entry::Column::IsIgnored,
+                        worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
                 )
