@@ -48,15 +48,27 @@ enum ClientOperation {
     AcceptIncomingCall,
     RejectIncomingCall,
     LeaveCall,
-    InviteContactToCall { user_id: UserId },
-    OpenLocalProject { root: PathBuf },
-    OpenRemoteProject { host_id: UserId, root: String },
-    AddWorktreeToProject { id: u64, new_path: PathBuf },
-    CloseProject { id: u64 },
+    InviteContactToCall {
+        user_id: UserId,
+    },
+    OpenLocalProject {
+        first_root_path: PathBuf,
+    },
+    OpenRemoteProject {
+        host_id: UserId,
+        first_root_name: String,
+    },
+    AddWorktreeToProject {
+        first_root_path: PathBuf,
+        new_root_path: PathBuf,
+    },
+    CloseProject {
+        id: u64,
+    },
 }
 
 impl TestPlan {
-    fn next_operation(
+    async fn next_operation(
         &mut self,
         clients: &[(Rc<TestClient>, TestAppContext)],
         offline_users: &[(UserId, String)],
@@ -83,7 +95,7 @@ impl TestPlan {
                     let ix = self.rng.gen_range(0..clients.len());
                     let (client, cx) = &clients[ix];
                     let user_id = client.current_user_id(cx);
-                    let operation = self.next_client_operation(clients, ix);
+                    let operation = self.next_client_operation(clients, ix).await;
                     Operation::MutateClient { user_id, operation }
                 }
                 _ => continue,
@@ -92,7 +104,7 @@ impl TestPlan {
         operation
     }
 
-    fn next_client_operation(
+    async fn next_client_operation(
         &mut self,
         clients: &[(Rc<TestClient>, TestAppContext)],
         client_ix: usize,
@@ -157,17 +169,25 @@ impl TestPlan {
                                 .collect::<Vec<_>>()
                         });
                         if !remote_projects.is_empty() {
-                            let (host_id, root) =
+                            let (host_id, first_root_name) =
                                 remote_projects.choose(&mut self.rng).unwrap().clone();
-                            return ClientOperation::OpenRemoteProject { host_id, root };
+                            return ClientOperation::OpenRemoteProject {
+                                host_id,
+                                first_root_name,
+                            };
                         }
                     }
                 }
 
                 // Open a local project
                 50..=59 => {
-                    let root = client.create_new_root_dir();
-                    return ClientOperation::OpenLocalProject { root };
+                    let paths = client.fs.paths().await;
+                    let first_root_path = if paths.is_empty() || self.rng.gen() {
+                        client.create_new_root_dir()
+                    } else {
+                        paths.choose(&mut self.rng).unwrap().clone()
+                    };
+                    return ClientOperation::OpenLocalProject { first_root_path };
                 }
 
                 // Add a worktree to a local project
@@ -178,12 +198,27 @@ impl TestPlan {
                         .unwrap()
                         .clone();
 
-                    // let paths = client.fs.paths().await;
-                    // let path = paths.choose(&mut self.rng).unwrap();
+                    let first_root_path = project.read_with(cx, |project, cx| {
+                        project
+                            .visible_worktrees(cx)
+                            .next()
+                            .unwrap()
+                            .read(cx)
+                            .abs_path()
+                            .to_path_buf()
+                    });
 
-                    // if let Some(room) = call.read_with(cx, |call, _| call.room().cloned()) {
-                    //     //
-                    // }
+                    let paths = client.fs.paths().await;
+                    let new_root_path = if paths.is_empty() || self.rng.gen() {
+                        client.create_new_root_dir()
+                    } else {
+                        paths.choose(&mut self.rng).unwrap().clone()
+                    };
+
+                    return ClientOperation::AddWorktreeToProject {
+                        first_root_path,
+                        new_root_path,
+                    };
                 }
 
                 _ => continue,
@@ -260,7 +295,7 @@ async fn test_random_collaboration(
     let mut next_entity_id = 100000;
 
     for _ in 0..max_operations {
-        let next_operation = plan.lock().next_operation(&clients, &available_users);
+        let next_operation = plan.lock().next_operation(&clients, &available_users).await;
         match next_operation {
             Operation::AddConnection { user_id } => {
                 let user_ix = available_users
