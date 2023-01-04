@@ -23,7 +23,7 @@ pub fn random_token() -> String {
     for byte in token_bytes.iter_mut() {
         *byte = rng.gen();
     }
-    base64::encode_config(&token_bytes, base64::URL_SAFE)
+    base64::encode_config(token_bytes, base64::URL_SAFE)
 }
 
 impl PublicKey {

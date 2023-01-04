@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     pub static ref RELEASE_CHANNEL_NAME: String = env::var("ZED_RELEASE_CHANNEL")
-        .unwrap_or(include_str!("../../zed/RELEASE_CHANNEL").to_string());
+        .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").to_string());
     pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => ReleaseChannel::Dev,
         "preview" => ReleaseChannel::Preview,

@@ -338,11 +338,11 @@ pub fn initialize_workspace(
                 },
                 "schemas": [
                     {
-                        "fileMatch": [schema_file_match(&*paths::SETTINGS)],
+                        "fileMatch": [schema_file_match(&paths::SETTINGS)],
                         "schema": settings_file_json_schema(theme_names, language_names),
                     },
                     {
-                        "fileMatch": [schema_file_match(&*paths::KEYMAP)],
+                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
                         "schema": keymap_file_json_schema(&action_names),
                     }
                 ]
@@ -646,7 +646,7 @@ fn open_bundled_config_file(
     cx: &mut ViewContext<Workspace>,
 ) {
     workspace
-        .with_local_workspace(&app_state.clone(), cx, |workspace, cx| {
+        .with_local_workspace(&app_state, cx, |workspace, cx| {
             let project = workspace.project().clone();
             let buffer = project.update(cx, |project, cx| {
                 let text = Assets::get(asset_path).unwrap().data;

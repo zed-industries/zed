@@ -50,14 +50,14 @@ impl LspAdapter for RubyLanguageServer {
                 grammar.highlight_id_for_name("type")?
             }
             lsp::CompletionItemKind::KEYWORD => {
-                if label.starts_with(":") {
+                if label.starts_with(':') {
                     grammar.highlight_id_for_name("string.special.symbol")?
                 } else {
                     grammar.highlight_id_for_name("keyword")?
                 }
             }
             lsp::CompletionItemKind::VARIABLE => {
-                if label.starts_with("@") {
+                if label.starts_with('@') {
                     grammar.highlight_id_for_name("property")?
                 } else {
                     return None;

@@ -58,7 +58,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         self.0.insert_or_replace(MapEntry { key, value }, &());
     }
 
-    pub fn remove<'a>(&mut self, key: &'a K) -> Option<V> {
+    pub fn remove(&mut self, key: &K) -> Option<V> {
         let mut removed = None;
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         let key = MapKeyRef(Some(key));

@@ -101,7 +101,7 @@ fn main() {
 
         //Setup settings global before binding actions
         cx.set_global(SettingsFile::new(
-            &*paths::SETTINGS,
+            &paths::SETTINGS,
             settings_file_content.clone(),
             fs.clone(),
         ));
@@ -586,7 +586,7 @@ async fn handle_cli_connection(
 
                 responses
                     .send(CliResponse::Exit {
-                        status: if errored { 1 } else { 0 },
+                        status: i32::from(errored),
                     })
                     .log_err();
             }

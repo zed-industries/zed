@@ -5,7 +5,7 @@ use std::{
     process::Command,
 };
 
-const SWIFT_PACKAGE_NAME: &'static str = "LiveKitBridge";
+const SWIFT_PACKAGE_NAME: &str = "LiveKitBridge";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,8 +61,8 @@ fn build_bridge(swift_target: &SwiftTarget) {
     let swift_package_root = swift_package_root();
     if !Command::new("swift")
         .arg("build")
-        .args(&["--configuration", &env::var("PROFILE").unwrap()])
-        .args(&["--triple", &swift_target.target.triple])
+        .args(["--configuration", &env::var("PROFILE").unwrap()])
+        .args(["--triple", &swift_target.target.triple])
         .current_dir(&swift_package_root)
         .status()
         .unwrap()
@@ -116,7 +116,7 @@ fn get_swift_target() -> SwiftTarget {
     let target = format!("{}-apple-macosx{}", arch, MACOS_TARGET_VERSION);
 
     let swift_target_info_str = Command::new("swift")
-        .args(&["-target", &target, "-print-target-info"])
+        .args(["-target", &target, "-print-target-info"])
         .output()
         .unwrap()
         .stdout;
@@ -143,7 +143,7 @@ fn copy_dir(source: &Path, destination: &Path) {
     assert!(
         Command::new("cp")
             .arg("-R")
-            .args(&[source, destination])
+            .args([source, destination])
             .status()
             .unwrap()
             .success(),

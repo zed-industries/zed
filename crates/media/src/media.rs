@@ -113,9 +113,9 @@ pub mod core_video {
                 let mut this = ptr::null();
                 let result = CVMetalTextureCacheCreate(
                     kCFAllocatorDefault,
-                    ptr::null_mut(),
+                    ptr::null(),
                     metal_device,
-                    ptr::null_mut(),
+                    ptr::null(),
                     &mut this,
                 );
                 if result == kCVReturnSuccess {
@@ -192,7 +192,7 @@ pub mod core_video {
         pub fn as_texture_ref(&self) -> &metal::TextureRef {
             unsafe {
                 let texture = CVMetalTextureGetTexture(self.as_concrete_TypeRef());
-                &metal::TextureRef::from_ptr(texture as *mut _)
+                metal::TextureRef::from_ptr(texture as *mut _)
             }
         }
     }
