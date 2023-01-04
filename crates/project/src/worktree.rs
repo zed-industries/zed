@@ -344,6 +344,13 @@ impl Worktree {
         }
     }
 
+    pub fn completed_scan_id(&self) -> usize {
+        match self {
+            Worktree::Local(worktree) => worktree.snapshot.completed_scan_id,
+            Worktree::Remote(worktree) => worktree.snapshot.completed_scan_id,
+        }
+    }
+
     pub fn is_visible(&self) -> bool {
         match self {
             Worktree::Local(worktree) => worktree.visible,
@@ -423,7 +430,7 @@ impl LocalWorktree {
                     root_char_bag,
                     entries_by_path: Default::default(),
                     entries_by_id: Default::default(),
-                    scan_id: 1,
+                    scan_id: 0,
                     completed_scan_id: 0,
                 },
             };
@@ -955,8 +962,9 @@ impl LocalWorktree {
                     if let Some(old_path) = old_path {
                         snapshot.remove_path(&old_path);
                     }
+                    snapshot.scan_started();
                     inserted_entry = snapshot.insert_entry(entry, fs.as_ref());
-                    snapshot.scan_id += 1;
+                    snapshot.scan_completed();
                 }
                 this.poll_snapshot(true, cx);
                 Ok(inserted_entry)
@@ -1343,6 +1351,14 @@ impl Snapshot {
 
     pub fn root_name(&self) -> &str {
         &self.root_name
+    }
+
+    pub fn scan_started(&mut self) {
+        self.scan_id += 1;
+    }
+
+    pub fn scan_completed(&mut self) {
+        self.completed_scan_id = self.scan_id;
     }
 
     pub fn scan_id(&self) -> usize {
@@ -2250,7 +2266,8 @@ impl BackgroundScanner {
         let is_dir;
         let next_entry_id;
         {
-            let snapshot = self.snapshot.lock();
+            let mut snapshot = self.snapshot.lock();
+            snapshot.scan_started();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
             root_inode = snapshot.root_entry().map(|e| e.inode);
@@ -2316,6 +2333,8 @@ impl BackgroundScanner {
                     }
                 })
                 .await;
+
+            self.snapshot.lock().scan_completed();
         }
 
         Ok(())
@@ -2443,7 +2462,8 @@ impl BackgroundScanner {
         let root_abs_path;
         let next_entry_id;
         {
-            let snapshot = self.snapshot.lock();
+            let mut snapshot = self.snapshot.lock();
+            snapshot.scan_started();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
             next_entry_id = snapshot.next_entry_id.clone();
@@ -2468,7 +2488,6 @@ impl BackgroundScanner {
         let (scan_queue_tx, scan_queue_rx) = channel::unbounded();
         {
             let mut snapshot = self.snapshot.lock();
-            snapshot.scan_id += 1;
             for event in &events {
                 if let Ok(path) = event.path.strip_prefix(&root_canonical_path) {
                     snapshot.remove_path(path);
@@ -2555,6 +2574,7 @@ impl BackgroundScanner {
 
         self.update_ignore_statuses().await;
         self.update_git_repositories();
+        self.snapshot.lock().scan_completed();
         true
     }
 

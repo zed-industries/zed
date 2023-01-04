@@ -57,7 +57,7 @@ CREATE TABLE "worktrees" (
     "abs_path" VARCHAR NOT NULL,
     "visible" BOOL NOT NULL,
     "scan_id" INTEGER NOT NULL,
-    "is_complete" BOOL NOT NULL,
+    "completed_scan_id" INTEGER NOT NULL,
     PRIMARY KEY(project_id, id)
 );
 CREATE INDEX "index_worktrees_on_project_id" ON "worktrees" ("project_id");

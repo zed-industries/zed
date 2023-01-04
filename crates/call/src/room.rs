@@ -382,7 +382,7 @@ impl Room {
                                 let worktree = worktree.read(cx);
                                 proto::RejoinWorktree {
                                     id: worktree.id().to_proto(),
-                                    scan_id: worktree.scan_id() as u64,
+                                    scan_id: worktree.completed_scan_id() as u64,
                                 }
                             })
                             .collect(),
