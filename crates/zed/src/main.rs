@@ -41,7 +41,7 @@ use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
-use zed::{self, build_window_options, initialize_workspace, languages, menus};
+use zed::{self, build_window_options, feedback_popover, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();
@@ -108,6 +108,9 @@ fn main() {
         watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
+        cx.set_global(http.clone());
+
+        feedback_popover::init(cx);
         context_menu::init(cx);
         project::Project::init(&client);
         client::init(client.clone(), cx);
