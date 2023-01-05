@@ -230,11 +230,7 @@ async fn test_random_collaboration(
                 i += 1;
             }
 
-            Operation::RunUntilParked => {
-                deterministic.run_until_parked();
-            }
-
-            Operation::MutateClients(user_ids) => {
+            Operation::MutateClients { user_ids, quiesce } => {
                 for user_id in user_ids {
                     let client_ix = clients
                         .iter()
@@ -242,6 +238,10 @@ async fn test_random_collaboration(
                         .unwrap();
                     operation_channels[client_ix].unbounded_send(()).unwrap();
                     i += 1;
+                }
+
+                if quiesce {
+                    deterministic.run_until_parked();
                 }
             }
         }
@@ -444,12 +444,20 @@ struct UserTestPlan {
 
 #[derive(Debug)]
 enum Operation {
-    AddConnection { user_id: UserId },
-    RemoveConnection { user_id: UserId },
-    BounceConnection { user_id: UserId },
+    AddConnection {
+        user_id: UserId,
+    },
+    RemoveConnection {
+        user_id: UserId,
+    },
+    BounceConnection {
+        user_id: UserId,
+    },
     RestartServer,
-    RunUntilParked,
-    MutateClients(Vec<UserId>),
+    MutateClients {
+        user_ids: Vec<UserId>,
+        quiesce: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -490,7 +498,7 @@ impl TestPlan {
     async fn next_operation(&mut self, clients: &[(Rc<TestClient>, TestAppContext)]) -> Operation {
         let operation = loop {
             break match self.rng.gen_range(0..100) {
-                0..=19 if clients.len() < self.users.len() => {
+                0..=29 if clients.len() < self.users.len() => {
                     let user = self
                         .users
                         .iter()
@@ -501,20 +509,19 @@ impl TestPlan {
                         user_id: user.user_id,
                     }
                 }
-                20..=24 if clients.len() > 1 && self.allow_client_disconnection => {
+                30..=34 if clients.len() > 1 && self.allow_client_disconnection => {
                     let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
                     let user_id = client.current_user_id(cx);
                     Operation::RemoveConnection { user_id }
                 }
-                25..=29 if clients.len() > 1 && self.allow_client_reconnection => {
+                35..=39 if clients.len() > 1 && self.allow_client_reconnection => {
                     let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
                     let user_id = client.current_user_id(cx);
                     Operation::BounceConnection { user_id }
                 }
-                30..=34 if self.allow_server_restarts && clients.len() > 1 => {
+                40..=44 if self.allow_server_restarts && clients.len() > 1 => {
                     Operation::RestartServer
                 }
-                35..=39 => Operation::RunUntilParked,
                 _ if !clients.is_empty() => {
                     let user_ids = (0..self.rng.gen_range(0..10))
                         .map(|_| {
@@ -523,7 +530,10 @@ impl TestPlan {
                             client.current_user_id(cx)
                         })
                         .collect();
-                    Operation::MutateClients(user_ids)
+                    Operation::MutateClients {
+                        user_ids,
+                        quiesce: self.rng.gen(),
+                    }
                 }
                 _ => continue,
             };
@@ -541,78 +551,95 @@ impl TestPlan {
         let operation = loop {
             match self.rng.gen_range(0..100) {
                 // Mutate the call
-                0..=19 => match self.rng.gen_range(0..100_u32) {
+                0..=29 => {
                     // Respond to an incoming call
-                    0..=39 => {
-                        if call.read_with(cx, |call, _| call.incoming().borrow().is_some()) {
-                            break if self.rng.gen_bool(0.7) {
-                                ClientOperation::AcceptIncomingCall
-                            } else {
-                                ClientOperation::RejectIncomingCall
-                            };
-                        }
+                    if call.read_with(cx, |call, _| call.incoming().borrow().is_some()) {
+                        break if self.rng.gen_bool(0.7) {
+                            ClientOperation::AcceptIncomingCall
+                        } else {
+                            ClientOperation::RejectIncomingCall
+                        };
                     }
 
-                    // Invite a contact to the current call
-                    30..=89 => {
-                        let available_contacts =
-                            client.user_store.read_with(cx, |user_store, _| {
-                                user_store
-                                    .contacts()
-                                    .iter()
-                                    .filter(|contact| contact.online && !contact.busy)
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                            });
-                        if !available_contacts.is_empty() {
-                            let contact = available_contacts.choose(&mut self.rng).unwrap();
-                            break ClientOperation::InviteContactToCall {
-                                user_id: UserId(contact.user.id as i32),
-                            };
+                    match self.rng.gen_range(0..100_u32) {
+                        // Invite a contact to the current call
+                        0..=70 => {
+                            let available_contacts =
+                                client.user_store.read_with(cx, |user_store, _| {
+                                    user_store
+                                        .contacts()
+                                        .iter()
+                                        .filter(|contact| contact.online && !contact.busy)
+                                        .cloned()
+                                        .collect::<Vec<_>>()
+                                });
+                            if !available_contacts.is_empty() {
+                                let contact = available_contacts.choose(&mut self.rng).unwrap();
+                                break ClientOperation::InviteContactToCall {
+                                    user_id: UserId(contact.user.id as i32),
+                                };
+                            }
                         }
-                    }
 
-                    // Leave the current call
-                    90.. => {
-                        if self.allow_client_disconnection
-                            && call.read_with(cx, |call, _| call.room().is_some())
-                        {
-                            break ClientOperation::LeaveCall;
+                        // Leave the current call
+                        71.. => {
+                            if self.allow_client_disconnection
+                                && call.read_with(cx, |call, _| call.room().is_some())
+                            {
+                                break ClientOperation::LeaveCall;
+                            }
                         }
                     }
-                },
+                }
 
                 // Mutate projects
-                20..=39 => match self.rng.gen_range(0..100_u32) {
-                    // Open a remote project
-                    0..=30 => {
+                39..=59 => match self.rng.gen_range(0..100_u32) {
+                    // Open a new project
+                    0..=70 => {
+                        // Open a remote project
                         if let Some(room) = call.read_with(cx, |call, _| call.room().cloned()) {
-                            let remote_projects = room.read_with(cx, |room, _| {
+                            let existing_remote_project_ids = cx.read(|cx| {
+                                client
+                                    .remote_projects()
+                                    .iter()
+                                    .map(|p| p.read(cx).remote_id().unwrap())
+                                    .collect::<Vec<_>>()
+                            });
+                            let new_remote_projects = room.read_with(cx, |room, _| {
                                 room.remote_participants()
                                     .values()
                                     .flat_map(|participant| {
-                                        participant.projects.iter().map(|project| {
-                                            (
-                                                UserId::from_proto(participant.user.id),
-                                                project.worktree_root_names[0].clone(),
-                                            )
+                                        participant.projects.iter().filter_map(|project| {
+                                            if existing_remote_project_ids.contains(&project.id) {
+                                                None
+                                            } else {
+                                                Some((
+                                                    UserId::from_proto(participant.user.id),
+                                                    project.worktree_root_names[0].clone(),
+                                                ))
+                                            }
                                         })
                                     })
                                     .collect::<Vec<_>>()
                             });
-                            if !remote_projects.is_empty() {
+                            if !new_remote_projects.is_empty() {
                                 let (host_id, first_root_name) =
-                                    remote_projects.choose(&mut self.rng).unwrap().clone();
+                                    new_remote_projects.choose(&mut self.rng).unwrap().clone();
                                 break ClientOperation::OpenRemoteProject {
                                     host_id,
                                     first_root_name,
                                 };
                             }
                         }
+                        // Open a local project
+                        else {
+                            let first_root_name = self.next_root_dir_name(user_id);
+                            break ClientOperation::OpenLocalProject { first_root_name };
+                        }
                     }
 
                     // Close a remote project
-                    31..=40 => {
+                    71..=80 => {
                         if !client.remote_projects().is_empty() {
                             let project = client
                                 .remote_projects()
@@ -626,14 +653,8 @@ impl TestPlan {
                         }
                     }
 
-                    // Open a local project
-                    41..=60 => {
-                        let first_root_name = self.next_root_dir_name(user_id);
-                        break ClientOperation::OpenLocalProject { first_root_name };
-                    }
-
                     // Add a worktree to a local project
-                    61.. => {
+                    81.. => {
                         if !client.local_projects().is_empty() {
                             let project = client
                                 .local_projects()
@@ -659,7 +680,7 @@ impl TestPlan {
                 },
 
                 // Mutate buffers
-                40..=79 => {
+                60.. => {
                     let Some(project) = choose_random_project(client, &mut self.rng) else { continue };
                     let project_root_name = root_name_for_project(&project, cx);
 
@@ -871,9 +892,8 @@ async fn simulate_client(
         let operation = plan.lock().next_client_operation(&client, &cx).await;
         if let Err(error) = apply_client_operation(&client, plan.clone(), operation, &mut cx).await
         {
-            log::error!("{} error: {:?}", client.username, error);
+            log::error!("{} error: {}", client.username, error);
         }
-
         cx.background().simulate_random_delay().await;
     }
     log::info!("{}: done", client.username);
@@ -928,34 +948,7 @@ async fn apply_client_operation(
                 .await
                 .unwrap();
             let project = client.build_local_project(root_path, cx).await.0;
-
-            let active_call = cx.read(ActiveCall::global);
-            if active_call.read_with(cx, |call, _| call.room().is_some())
-                && project.read_with(cx, |project, _| project.is_local() && !project.is_shared())
-            {
-                match active_call
-                    .update(cx, |call, cx| call.share_project(project.clone(), cx))
-                    .await
-                {
-                    Ok(project_id) => {
-                        log::info!(
-                            "{}: shared project {} with id {}",
-                            client.username,
-                            first_root_name,
-                            project_id
-                        );
-                    }
-                    Err(error) => {
-                        log::error!(
-                            "{}: error sharing project {}: {:?}",
-                            client.username,
-                            first_root_name,
-                            error
-                        );
-                    }
-                }
-            }
-
+            ensure_project_shared(&project, client, cx).await;
             client.local_projects_mut().push(project.clone());
         }
 
@@ -971,6 +964,7 @@ async fn apply_client_operation(
             );
             let project = project_for_root_name(client, &project_root_name, cx)
                 .expect("invalid project in test operation");
+            ensure_project_shared(&project, client, cx).await;
             if !client.fs.paths().await.contains(&new_root_path) {
                 client.fs.create_dir(&new_root_path).await.unwrap();
             }
@@ -984,13 +978,13 @@ async fn apply_client_operation(
 
         ClientOperation::CloseRemoteProject { project_root_name } => {
             log::info!(
-                "{}: dropping project with root path {}",
+                "{}: closing remote project with root path {}",
                 client.username,
                 project_root_name,
             );
             let ix = project_ix_for_root_name(&*client.remote_projects(), &project_root_name, cx)
                 .expect("invalid project in test operation");
-            client.remote_projects_mut().remove(ix);
+            cx.update(|_| client.remote_projects_mut().remove(ix));
         }
 
         ClientOperation::OpenRemoteProject {
@@ -1027,13 +1021,14 @@ async fn apply_client_operation(
             full_path,
         } => {
             log::info!(
-                "{}: opening path {:?} in project {}",
+                "{}: opening buffer {:?} in project {}",
                 client.username,
                 full_path,
                 project_root_name,
             );
             let project = project_for_root_name(client, &project_root_name, cx)
                 .expect("invalid project in test operation");
+            // ensure_project_shared(&project, client, cx).await;
             let mut components = full_path.components();
             let root_name = components.next().unwrap().as_os_str().to_str().unwrap();
             let path = components.as_path();
@@ -1086,10 +1081,10 @@ async fn apply_client_operation(
             });
         }
 
-        _ => {
+        ClientOperation::Other => {
             let choice = plan.lock().rng.gen_range(0..100);
             match choice {
-                50..=59
+                0..=59
                     if !client.local_projects().is_empty()
                         || !client.remote_projects().is_empty() =>
                 {
@@ -1145,6 +1140,40 @@ fn root_name_for_project(project: &ModelHandle<Project>, cx: &TestAppContext) ->
             .root_name()
             .to_string()
     })
+}
+
+async fn ensure_project_shared(
+    project: &ModelHandle<Project>,
+    client: &TestClient,
+    cx: &mut TestAppContext,
+) {
+    let first_root_name = root_name_for_project(project, cx);
+    let active_call = cx.read(ActiveCall::global);
+    if active_call.read_with(cx, |call, _| call.room().is_some())
+        && project.read_with(cx, |project, _| project.is_local() && !project.is_shared())
+    {
+        match active_call
+            .update(cx, |call, cx| call.share_project(project.clone(), cx))
+            .await
+        {
+            Ok(project_id) => {
+                log::info!(
+                    "{}: shared project {} with id {}",
+                    client.username,
+                    first_root_name,
+                    project_id
+                );
+            }
+            Err(error) => {
+                log::error!(
+                    "{}: error sharing project {}: {:?}",
+                    client.username,
+                    first_root_name,
+                    error
+                );
+            }
+        }
+    }
 }
 
 async fn randomly_mutate_fs(client: &TestClient, plan: &Arc<Mutex<TestPlan>>) {
