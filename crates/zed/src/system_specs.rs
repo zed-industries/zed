@@ -2,9 +2,11 @@ use std::{env, fmt::Display};
 
 use gpui::AppContext;
 use human_bytes::human_bytes;
+use serde::Serialize;
 use sysinfo::{System, SystemExt};
 use util::channel::ReleaseChannel;
 
+#[derive(Debug, Serialize)]
 pub struct SystemSpecs {
     app_version: &'static str,
     release_channel: &'static str,

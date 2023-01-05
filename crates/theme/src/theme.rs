@@ -25,6 +25,7 @@ pub struct Theme {
     pub command_palette: CommandPalette,
     pub picker: Picker,
     pub editor: Editor,
+    // pub feedback_box: Editor,
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
@@ -118,6 +119,22 @@ pub struct ContactList {
     pub section_icon_size: f32,
     pub calling_indicator: ContainedText,
 }
+
+// TODO FEEDBACK: Remove or use this
+// #[derive(Deserialize, Default)]
+// pub struct FeedbackPopover {
+//     #[serde(flatten)]
+//     pub container: ContainerStyle,
+//     pub height: f32,
+//     pub width: f32,
+//     pub invite_row_height: f32,
+//     pub invite_row: Interactive<ContainedLabel>,
+// }
+
+// #[derive(Deserialize, Default)]
+// pub struct FeedbackBox {
+//     pub feedback_editor: FieldEditor,
+// }
 
 #[derive(Deserialize, Default)]
 pub struct ProjectRow {

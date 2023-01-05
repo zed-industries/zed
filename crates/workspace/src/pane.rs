@@ -95,6 +95,11 @@ pub struct DeployNewMenu {
     position: Vector2F,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct DeployFeedbackModal {
+    position: Vector2F,
+}
+
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
 impl_internal_actions!(
     pane,
@@ -104,6 +109,7 @@ impl_internal_actions!(
         DeployNewMenu,
         DeployDockMenu,
         MoveItem,
+        DeployFeedbackModal
     ]
 );
 
