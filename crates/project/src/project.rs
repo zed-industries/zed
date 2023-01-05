@@ -5074,20 +5074,29 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
+        let buffer_id = envelope.payload.buffer_id;
+        let is_incomplete = this.read_with(&cx, |this, _| {
+            this.incomplete_remote_buffers.contains_key(&buffer_id)
+        });
+
+        let buffer = if is_incomplete {
+            Some(
+                this.update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
-            let buffer_id = payload.buffer_id;
-            if let Some(buffer) = this
-                .opened_buffers
-                .get_mut(&buffer_id)
-                .and_then(|b| b.upgrade(cx))
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .cloned()
-                        .flatten()
-                })
-            {
+            if let Some(buffer) = buffer.or_else(|| {
+                this.opened_buffers
+                    .get(&buffer_id)
+                    .and_then(|b| b.upgrade(cx))
+            }) {
                 let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
                 let worktree = this
                     .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
