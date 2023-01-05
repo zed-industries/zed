@@ -31,6 +31,7 @@ use crate::{feedback_popover, system_specs::SystemSpecs};
        to make the modal look nice. Copy the theme values from the contact list styles
 
     Now
+        Obtain metrics_id
         Fix all layout issues, theming, buttons, etc
         Make multi-line editor without line numbers
         Some sort of feedback when something fails or succeeds
