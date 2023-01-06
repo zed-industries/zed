@@ -27,7 +27,7 @@ use smol::prelude::*;
 
 pub use action::*;
 use callback_collection::CallbackCollection;
-use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 use keymap::MatchResult;
 use platform::Event;
 #[cfg(any(test, feature = "test-support"))]
@@ -621,7 +621,7 @@ pub struct MutableAppContext {
     global_observations: CallbackCollection<TypeId, GlobalObservationCallback>,
     focus_observations: CallbackCollection<usize, FocusObservationCallback>,
     release_observations: CallbackCollection<usize, ReleaseObservationCallback>,
-    action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
+    action_dispatch_observations: CallbackCollection<(), ActionObservationCallback>,
     window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
     window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
     keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
@@ -1189,14 +1189,13 @@ impl MutableAppContext {
     where
         F: 'static + FnMut(TypeId, &mut MutableAppContext),
     {
-        let id = post_inc(&mut self.next_subscription_id);
+        let subscription_id = post_inc(&mut self.next_subscription_id);
         self.action_dispatch_observations
-            .lock()
-            .insert(id, Box::new(callback));
-        Subscription::ActionObservation {
-            id,
-            observations: Some(Arc::downgrade(&self.action_dispatch_observations)),
-        }
+            .add_callback((), subscription_id, Box::new(callback));
+        Subscription::ActionObservation(
+            self.action_dispatch_observations
+                .subscribe((), subscription_id),
+        )
     }
 
     fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> Subscription
@@ -2489,11 +2488,12 @@ impl MutableAppContext {
     }
 
     fn handle_action_dispatch_notification_effect(&mut self, action_id: TypeId) {
-        let mut callbacks = mem::take(&mut *self.action_dispatch_observations.lock());
-        for callback in callbacks.values_mut() {
-            callback(action_id, self);
-        }
-        self.action_dispatch_observations.lock().extend(callbacks);
+        self.action_dispatch_observations
+            .clone()
+            .emit((), self, |callback, this| {
+                callback(action_id, this);
+                true
+            });
     }
 
     fn handle_window_should_close_subscription_effect(
@@ -5091,14 +5091,25 @@ pub enum Subscription {
     WindowFullscreenObservation(callback_collection::Subscription<usize, WindowFullscreenCallback>),
     KeystrokeObservation(callback_collection::Subscription<usize, KeystrokeCallback>),
     ReleaseObservation(callback_collection::Subscription<usize, ReleaseObservationCallback>),
-
-    ActionObservation {
-        id: usize,
-        observations: Option<Weak<Mutex<BTreeMap<usize, ActionObservationCallback>>>>,
-    },
+    ActionObservation(callback_collection::Subscription<(), ActionObservationCallback>),
 }
 
 impl Subscription {
+    pub fn id(&self) -> usize {
+        match self {
+            Subscription::Subscription(subscription) => subscription.id(),
+            Subscription::Observation(subscription) => subscription.id(),
+            Subscription::GlobalSubscription(subscription) => subscription.id(),
+            Subscription::GlobalObservation(subscription) => subscription.id(),
+            Subscription::FocusObservation(subscription) => subscription.id(),
+            Subscription::WindowActivationObservation(subscription) => subscription.id(),
+            Subscription::WindowFullscreenObservation(subscription) => subscription.id(),
+            Subscription::KeystrokeObservation(subscription) => subscription.id(),
+            Subscription::ReleaseObservation(subscription) => subscription.id(),
+            Subscription::ActionObservation(subscription) => subscription.id(),
+        }
+    }
+
     pub fn detach(&mut self) {
         match self {
             Subscription::Subscription(subscription) => subscription.detach(),
@@ -5110,22 +5121,7 @@ impl Subscription {
             Subscription::WindowActivationObservation(subscription) => subscription.detach(),
             Subscription::WindowFullscreenObservation(subscription) => subscription.detach(),
             Subscription::ReleaseObservation(subscription) => subscription.detach(),
-            Subscription::ActionObservation { observations, .. } => {
-                observations.take();
-            }
-        }
-    }
-}
-
-impl Drop for Subscription {
-    fn drop(&mut self) {
-        match self {
-            Subscription::ActionObservation { id, observations } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    observations.lock().remove(id);
-                }
-            }
-            _ => {}
+            Subscription::ActionObservation(subscription) => subscription.detach(),
         }
     }
 }

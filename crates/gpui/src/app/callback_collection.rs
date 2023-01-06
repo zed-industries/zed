@@ -1,44 +1,13 @@
+use crate::MutableAppContext;
+use collections::{BTreeMap, HashMap, HashSet};
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::{hash::Hash, sync::Weak};
 
-use parking_lot::Mutex;
+pub struct CallbackCollection<K: Clone + Hash + Eq, F> {
+    internal: Arc<Mutex<Mapping<K, F>>>,
+}
 
-use collections::{BTreeMap, HashMap, HashSet};
-
-use crate::MutableAppContext;
-
-// Problem 5: Current bug callbacks currently called many times after being dropped
-// update
-//   notify
-//   observe (push effect)
-//     subscription {id : 5}
-//     pending: [Effect::Notify, Effect::observe { id: 5 }]
-//   drop observation subscription (write None into subscriptions)
-// flush effects
-//   notify
-//   observe
-// Problem 6: Key-value pair is leaked if you drop a callback while calling it, and then never call that set of callbacks again
-// -----------------
-// Problem 1: Many very similar subscription enum variants
-// Problem 2: Subscriptions and CallbackCollections use a shared mutex to update the callback status
-// Problem 3: Current implementation is error prone with regard to uninitialized callbacks or dropping during callback
-// Problem 4: Calling callbacks requires removing all of them from the list and adding them back
-
-// Solution 1 CallbackState:
-//      Add more state to the CallbackCollection map to communicate dropped and initialized status
-//      Solves: P5
-// Solution 2 DroppedSubscriptionList:
-//      Store a parallel set of dropped subscriptions in the Mapping which stores the key and subscription id for all dropped subscriptions
-//      which can be
-// Solution 3 GarbageCollection:
-//      Use some type of traditional garbage collection to handle dropping of callbacks
-//          atomic flag per callback which is looped over in remove dropped entities
-
-// TODO:
-//   - Move subscription id counter to CallbackCollection
-//   - Consider adding a reverse map in Mapping from subscription id to key so that the dropped subscriptions
-//     can be a hashset of usize and the Subscription doesn't need the key
-//   - Investigate why the remaining two types of callback lists can't use the same callback collection and subscriptions
 pub struct Subscription<K: Clone + Hash + Eq, F> {
     key: K,
     id: usize,
@@ -57,10 +26,6 @@ impl<K, F> Default for Mapping<K, F> {
             dropped_subscriptions: Default::default(),
         }
     }
-}
-
-pub(crate) struct CallbackCollection<K: Clone + Hash + Eq, F> {
-    internal: Arc<Mutex<Mapping<K, F>>>,
 }
 
 impl<K: Clone + Hash + Eq, F> Clone for CallbackCollection<K, F> {
@@ -150,6 +115,10 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
 }
 
 impl<K: Clone + Hash + Eq, F> Subscription<K, F> {
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
     pub fn detach(&mut self) {
         self.mapping.take();
     }
