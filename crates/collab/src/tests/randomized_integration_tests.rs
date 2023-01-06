@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
 use collections::{BTreeMap, HashSet};
-use fs::Fs as _;
+use fs::{FakeFs, Fs as _};
 use futures::StreamExt as _;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
@@ -531,22 +531,30 @@ async fn apply_client_operation(
             );
 
             let active_call = cx.read(ActiveCall::global);
-            let project_id = active_call
-                .read_with(cx, |call, cx| {
+            let project = active_call
+                .update(cx, |call, cx| {
                     let room = call.room().cloned()?;
                     let participant = room
                         .read(cx)
                         .remote_participants()
                         .get(&host_id.to_proto())?;
-                    let project = participant
+                    let project_id = participant
                         .projects
                         .iter()
-                        .find(|project| project.worktree_root_names[0] == first_root_name)?;
-                    Some(project.id)
+                        .find(|project| project.worktree_root_names[0] == first_root_name)?
+                        .id;
+                    Some(room.update(cx, |room, cx| {
+                        room.join_project(
+                            project_id,
+                            client.language_registry.clone(),
+                            FakeFs::new(cx.background().clone()),
+                            cx,
+                        )
+                    }))
                 })
-                .expect("invalid project in test operation");
-            let project = client.build_remote_project(project_id, cx).await;
-            client.remote_projects_mut().push(project);
+                .expect("invalid project in test operation")
+                .await?;
+            client.remote_projects_mut().push(project.clone());
         }
 
         ClientOperation::CreateWorktreeEntry {
