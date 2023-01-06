@@ -1294,6 +1294,10 @@ impl Client {
     pub fn telemetry_log_file_path(&self) -> Option<PathBuf> {
         self.telemetry.log_file_path()
     }
+
+    pub fn metrics_id(&self) -> Option<Arc<str>> {
+        self.telemetry.metrics_id()
+    }
 }
 
 impl WeakSubscriber {

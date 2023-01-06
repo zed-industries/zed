@@ -1,7 +1,7 @@
 use std::{ops::Range, sync::Arc};
 
 use anyhow::bail;
-use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
+use client::{Client, ZED_SECRET_CLIENT_TOKEN};
 use editor::Editor;
 use futures::AsyncReadExt;
 use gpui::{
@@ -93,19 +93,11 @@ impl View for FeedbackButton {
                 .boxed(),
             )
             .with_children(self.feedback_popover.as_ref().map(|popover| {
-                Overlay::new(
-                    ChildView::new(popover, cx)
-                        .contained()
-                        // .with_height(theme.contact_list.user_query_editor_height)
-                        // .with_margin_top(-50.0)
-                        // .with_margin_left(titlebar.toggle_contacts_button.default.button_width)
-                        // .with_margin_right(-titlebar.toggle_contacts_button.default.button_width)
-                        .boxed(),
-                )
-                .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                .with_anchor_corner(AnchorCorner::TopLeft)
-                .with_z_index(999)
-                .boxed()
+                Overlay::new(ChildView::new(popover, cx).contained().boxed())
+                    .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                    .with_anchor_corner(AnchorCorner::TopLeft)
+                    .with_z_index(999)
+                    .boxed()
             }))
             .boxed()
     }
@@ -142,9 +134,7 @@ impl FeedbackPopover {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let feedback_editor = cx.add_view(|cx| {
             let editor = Editor::multi_line(
-                Some(Arc::new(|theme| {
-                    theme.contact_list.user_query_editor.clone()
-                })),
+                Some(Arc::new(|theme| theme.feedback.feedback_editor.clone())),
                 cx,
             );
             editor
@@ -174,18 +164,19 @@ impl FeedbackPopover {
 
     fn submit_feedback(&mut self, _: &SubmitFeedback, cx: &mut ViewContext<'_, Self>) {
         let feedback_text = self.feedback_editor.read(cx).text(cx);
-        let http_client = cx.global::<Arc<dyn HttpClient>>().clone();
+        let zed_client = cx.global::<Arc<Client>>();
         let system_specs = SystemSpecs::new(cx);
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
 
-        cx.spawn(|this, async_cx| {
+        let metrics_id = zed_client.metrics_id();
+        let http_client = zed_client.http_client();
+
+        cx.spawn(|_, _| {
             async move {
                 // TODO FEEDBACK: Use or remove
                 // this.read_with(&async_cx, |this, cx| {
                 //     // Now we have a &self and a &AppContext
                 // });
-
-                let metrics_id = None;
 
                 let request = FeedbackRequestBody {
                     feedback_text: &feedback_text,
@@ -240,14 +231,7 @@ impl View for FeedbackPopover {
         enum SubmitFeedback {}
 
         let theme = cx.global::<Settings>().theme.clone();
-        let status_bar_height = theme.workspace.status_bar.height;
         let submit_feedback_text_button_height = 20.0;
-
-        // I'd like to just define:
-
-        // 1. Overall popover width x height dimensions
-        // 2. Submit Feedback button height dimensions
-        // 3. Allow editor to dynamically fill in the remaining space
 
         Flex::column()
             .with_child(
@@ -255,13 +239,15 @@ impl View for FeedbackPopover {
                     .with_child(
                         ChildView::new(self.feedback_editor.clone(), cx)
                             .contained()
-                            .with_style(theme.contact_list.user_query_editor.container)
+                            .with_style(theme.feedback.feedback_editor.container)
                             .flex(1., true)
                             .boxed(),
                     )
                     .constrained()
-                    .with_width(theme.contacts_popover.width)
-                    .with_height(theme.contacts_popover.height - submit_feedback_text_button_height)
+                    .with_width(theme.feedback.feedback_popover.width)
+                    .with_height(
+                        theme.feedback.feedback_popover.height - submit_feedback_text_button_height,
+                    )
                     .boxed(),
             )
             .with_child(
@@ -286,10 +272,10 @@ impl View for FeedbackPopover {
                 .boxed(),
             )
             .contained()
-            .with_style(theme.contacts_popover.container)
+            .with_style(theme.feedback.feedback_popover.container)
             .constrained()
-            .with_width(theme.contacts_popover.width + 200.0)
-            .with_height(theme.contacts_popover.height)
+            .with_width(theme.feedback.feedback_popover.width)
+            .with_height(theme.feedback.feedback_popover.height)
             .boxed()
     }
 }

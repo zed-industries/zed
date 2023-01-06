@@ -261,6 +261,10 @@ impl Telemetry {
         }
     }
 
+    pub fn metrics_id(self: &Arc<Self>) -> Option<Arc<str>> {
+        self.state.lock().metrics_id.clone()
+    }
+
     fn flush(self: &Arc<Self>) {
         let mut state = self.state.lock();
         let mut events = mem::take(&mut state.queue);
