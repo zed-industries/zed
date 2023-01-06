@@ -108,7 +108,7 @@ fn main() {
         watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
-        cx.set_global(http.clone());
+        cx.set_global(client.clone());
 
         feedback_popover::init(cx);
         context_menu::init(cx);
