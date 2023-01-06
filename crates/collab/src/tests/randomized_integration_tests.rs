@@ -290,10 +290,11 @@ async fn test_random_collaboration(
                             assert_eq!(
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
-                                "{} has different snapshot than the host for worktree {} ({:?})",
+                                "{} has different snapshot than the host for worktree {} ({:?}) and project {:?}",
                                 client.username,
                                 id,
-                                host_snapshot.abs_path()
+                                host_snapshot.abs_path(),
+                                host_project.read_with(host_cx, |project, _| project.remote_id())
                             );
                             assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
                         }

@@ -166,7 +166,7 @@ enum ScanState {
 struct ShareState {
     project_id: u64,
     snapshots_tx: watch::Sender<LocalSnapshot>,
-    reshared: watch::Sender<()>,
+    resume_updates: watch::Sender<()>,
     _maintain_remote_snapshot: Task<Option<()>>,
 }
 
@@ -975,12 +975,12 @@ impl LocalWorktree {
     pub fn share(&mut self, project_id: u64, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
         let (share_tx, share_rx) = oneshot::channel();
 
-        if self.share.is_some() {
+        if let Some(share) = self.share.as_mut() {
             let _ = share_tx.send(());
+            *share.resume_updates.borrow_mut() = ();
         } else {
             let (snapshots_tx, mut snapshots_rx) = watch::channel_with(self.snapshot());
-            let (reshared_tx, mut reshared_rx) = watch::channel();
-            let _ = reshared_rx.try_recv();
+            let (resume_updates_tx, mut resume_updates_rx) = watch::channel();
             let worktree_id = cx.model_id() as u64;
 
             for (path, summary) in self.diagnostic_summaries.iter() {
@@ -1022,10 +1022,11 @@ impl LocalWorktree {
                         let update =
                             snapshot.build_update(&prev_snapshot, project_id, worktree_id, true);
                         for update in proto::split_worktree_update(update, MAX_CHUNK_SIZE) {
+                            let _ = resume_updates_rx.try_recv();
                             while let Err(error) = client.request(update.clone()).await {
                                 log::error!("failed to send worktree update: {}", error);
-                                log::info!("waiting for worktree to be reshared");
-                                if reshared_rx.next().await.is_none() {
+                                log::info!("waiting to resume updates");
+                                if resume_updates_rx.next().await.is_none() {
                                     return Ok(());
                                 }
                             }
@@ -1046,7 +1047,7 @@ impl LocalWorktree {
             self.share = Some(ShareState {
                 project_id,
                 snapshots_tx,
-                reshared: reshared_tx,
+                resume_updates: resume_updates_tx,
                 _maintain_remote_snapshot,
             });
         }
@@ -1057,15 +1058,6 @@ impl LocalWorktree {
 
     pub fn unshare(&mut self) {
         self.share.take();
-    }
-
-    pub fn reshare(&mut self) -> Result<()> {
-        let share = self
-            .share
-            .as_mut()
-            .ok_or_else(|| anyhow!("can't reshare a worktree that wasn't shared"))?;
-        *share.reshared.borrow_mut() = ();
-        Ok(())
     }
 
     pub fn is_shared(&self) -> bool {

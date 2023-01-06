@@ -66,7 +66,7 @@ impl Entity for Room {
     fn release(&mut self, _: &mut MutableAppContext) {
         if self.status.is_online() {
             log::info!("room was released, sending leave message");
-            self.client.send(proto::LeaveRoom {}).log_err();
+            let _ = self.client.send(proto::LeaveRoom {});
         }
     }
 }

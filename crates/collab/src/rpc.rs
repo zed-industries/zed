@@ -672,15 +672,17 @@ impl<'a> Drop for ConnectionPoolGuard<'a> {
 }
 
 fn broadcast<F>(
-    sender_id: ConnectionId,
+    sender_id: Option<ConnectionId>,
     receiver_ids: impl IntoIterator<Item = ConnectionId>,
     mut f: F,
 ) where
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
-        if receiver_id != sender_id {
-            f(receiver_id).trace_err();
+        if Some(receiver_id) != sender_id {
+            if let Err(error) = f(receiver_id) {
+                tracing::error!("failed to send to {:?} {}", receiver_id, error);
+            }
         }
     }
 }
@@ -998,7 +1000,7 @@ async fn rejoin_room(
             }
 
             broadcast(
-                session.connection_id,
+                Some(session.connection_id),
                 project
                     .collaborators
                     .iter()
@@ -1279,7 +1281,7 @@ async fn unshare_project(message: proto::UnshareProject, session: Session) -> Re
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
@@ -1430,7 +1432,7 @@ async fn update_project(
         .update_project(project_id, session.connection_id, &request.worktrees)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1456,7 +1458,7 @@ async fn update_worktree(
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1479,7 +1481,7 @@ async fn update_diagnostic_summary(
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1502,7 +1504,7 @@ async fn start_language_server(
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1525,7 +1527,7 @@ async fn update_language_server(
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1600,11 +1602,15 @@ async fn save_buffer(
     let project_connection_ids = collaborators
         .iter()
         .map(|collaborator| collaborator.connection_id);
-    broadcast(host_connection_id, project_connection_ids, |conn_id| {
-        session
-            .peer
-            .forward_send(host_connection_id, conn_id, response_payload.clone())
-    });
+    broadcast(
+        Some(host_connection_id),
+        project_connection_ids,
+        |conn_id| {
+            session
+                .peer
+                .forward_send(host_connection_id, conn_id, response_payload.clone())
+        },
+    );
     response.send(response_payload)?;
     Ok(())
 }
@@ -1637,7 +1643,7 @@ async fn update_buffer(
     session.executor.record_backtrace();
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1658,7 +1664,7 @@ async fn update_buffer_file(request: proto::UpdateBufferFile, session: Session) 
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1677,7 +1683,7 @@ async fn buffer_reloaded(request: proto::BufferReloaded, session: Session) -> Re
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1696,7 +1702,7 @@ async fn buffer_saved(request: proto::BufferSaved, session: Session) -> Result<(
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1988,7 +1994,7 @@ async fn update_diff_base(request: proto::UpdateDiffBase, session: Session) -> R
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -2098,21 +2104,20 @@ fn contact_for_user(
 }
 
 fn room_updated(room: &proto::Room, peer: &Peer) {
-    for participant in &room.participants {
-        if let Some(peer_id) = participant
-            .peer_id
-            .ok_or_else(|| anyhow!("invalid participant peer id"))
-            .trace_err()
-        {
+    broadcast(
+        None,
+        room.participants
+            .iter()
+            .filter_map(|participant| Some(participant.peer_id?.into())),
+        |peer_id| {
             peer.send(
                 peer_id.into(),
                 proto::RoomUpdated {
                     room: Some(room.clone()),
                 },
             )
-            .trace_err();
-        }
-    }
+        },
+    );
 }
 
 async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> {

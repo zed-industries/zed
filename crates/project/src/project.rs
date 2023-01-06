@@ -1037,7 +1037,7 @@ impl Project {
                     if update_project.is_ok() {
                         for worktree in worktrees {
                             worktree.update(&mut cx, |worktree, cx| {
-                                let worktree = &mut worktree.as_local_mut().unwrap();
+                                let worktree = worktree.as_local_mut().unwrap();
                                 worktree.share(project_id, cx).detach_and_log_err(cx)
                             });
                         }
@@ -1062,17 +1062,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-        for worktree in self.worktrees.iter() {
-            if let Some(worktree) = worktree.upgrade(&cx) {
-                worktree.update(cx, |worktree, _| {
-                    if let Some(worktree) = worktree.as_local_mut() {
-                        worktree.reshare()
-                    } else {
-                        Ok(())
-                    }
-                })?;
-            }
-        }
+        let _ = self.metadata_changed(cx);
         Ok(())
     }
 
@@ -6259,18 +6249,14 @@ impl Entity for Project {
     fn release(&mut self, _: &mut gpui::MutableAppContext) {
         match &self.client_state {
             Some(ProjectClientState::Local { remote_id, .. }) => {
-                self.client
-                    .send(proto::UnshareProject {
-                        project_id: *remote_id,
-                    })
-                    .log_err();
+                let _ = self.client.send(proto::UnshareProject {
+                    project_id: *remote_id,
+                });
             }
             Some(ProjectClientState::Remote { remote_id, .. }) => {
-                self.client
-                    .send(proto::LeaveProject {
-                        project_id: *remote_id,
-                    })
-                    .log_err();
+                let _ = self.client.send(proto::LeaveProject {
+                    project_id: *remote_id,
+                });
             }
             _ => {}
         }
