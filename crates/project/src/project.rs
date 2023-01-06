@@ -970,8 +970,6 @@ impl Project {
             return Task::ready(Err(anyhow!("project was already shared")));
         }
 
-        let mut worktree_share_tasks = Vec::new();
-
         for open_buffer in self.opened_buffers.values_mut() {
             match open_buffer {
                 OpenBuffer::Strong(_) => {}
@@ -1007,21 +1005,11 @@ impl Project {
                 .log_err();
         }
 
-        for worktree in self.worktrees(cx).collect::<Vec<_>>() {
-            worktree.update(cx, |worktree, cx| {
-                let worktree = worktree.as_local_mut().unwrap();
-                worktree_share_tasks.push(worktree.share(project_id, cx));
-            });
-        }
-
         self.client_subscriptions.push(
             self.client
                 .subscribe_to_entity(project_id)
                 .set_model(&cx.handle(), &mut cx.to_async()),
         );
-        let _ = self.metadata_changed(cx);
-        cx.emit(Event::RemoteIdChanged(Some(project_id)));
-        cx.notify();
 
         let (metadata_changed_tx, mut metadata_changed_rx) = mpsc::unbounded();
         self.client_state = Some(ProjectClientState::Local {
@@ -1052,7 +1040,23 @@ impl Project {
             }),
         });
 
-        cx.foreground().spawn(async move {
+        let metadata_changed = self.metadata_changed(cx);
+        cx.emit(Event::RemoteIdChanged(Some(project_id)));
+        cx.notify();
+
+        let worktrees = self.worktrees(cx).collect::<Vec<_>>();
+        cx.spawn_weak(|_, mut cx| async move {
+            // Wait for the initial project metadata to be sent before sharing the worktrees.
+            metadata_changed.await;
+
+            let mut worktree_share_tasks = Vec::new();
+            for worktree in worktrees {
+                worktree.update(&mut cx, |worktree, cx| {
+                    let worktree = worktree.as_local_mut().unwrap();
+                    worktree_share_tasks.push(worktree.share(project_id, cx));
+                });
+            }
+
             futures::future::try_join_all(worktree_share_tasks).await?;
             Ok(())
         })
