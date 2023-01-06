@@ -5181,6 +5181,7 @@ impl Project {
                 return;
             };
 
+            this.shared_buffers.entry(guest_id).or_default().clear();
             for buffer in envelope.payload.buffers {
                 let buffer_id = buffer.id;
                 let remote_version = language::proto::deserialize_version(buffer.version);
