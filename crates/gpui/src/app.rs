@@ -588,9 +588,9 @@ type GlobalActionCallback = dyn FnMut(&dyn Action, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
-type FocusObservationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
-type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
+type FocusObservationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
+type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
@@ -615,17 +615,16 @@ pub struct MutableAppContext {
     next_subscription_id: usize,
     frame_count: usize,
 
-    focus_observations: CallbackCollection<usize, FocusObservationCallback>,
-    global_subscriptions: CallbackCollection<TypeId, GlobalSubscriptionCallback>,
-    global_observations: CallbackCollection<TypeId, GlobalObservationCallback>,
     subscriptions: CallbackCollection<usize, SubscriptionCallback>,
+    global_subscriptions: CallbackCollection<TypeId, GlobalSubscriptionCallback>,
     observations: CallbackCollection<usize, ObservationCallback>,
+    global_observations: CallbackCollection<TypeId, GlobalObservationCallback>,
+    focus_observations: CallbackCollection<usize, FocusObservationCallback>,
+    release_observations: CallbackCollection<usize, ReleaseObservationCallback>,
+    action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
     window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
     window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
     keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
-
-    release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
-    action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
 
     #[allow(clippy::type_complexity)]
     presenters_and_platform_windows:
@@ -1172,22 +1171,18 @@ impl MutableAppContext {
         F: 'static + FnOnce(&E, &mut Self),
     {
         let id = post_inc(&mut self.next_subscription_id);
-        self.release_observations
-            .lock()
-            .entry(handle.id())
-            .or_default()
-            .insert(
-                id,
-                Box::new(move |released, cx| {
-                    let released = released.downcast_ref().unwrap();
-                    callback(released, cx)
-                }),
-            );
-        Subscription::ReleaseObservation {
+        let mut callback = Some(callback);
+        self.release_observations.add_callback(
+            handle.id(),
             id,
-            entity_id: handle.id(),
-            observations: Some(Arc::downgrade(&self.release_observations)),
-        }
+            Box::new(move |released, cx| {
+                let released = released.downcast_ref().unwrap();
+                if let Some(callback) = callback.take() {
+                    callback(released, cx)
+                }
+            }),
+        );
+        Subscription::ReleaseObservation(self.release_observations.subscribe(handle.id(), id))
     }
 
     pub fn observe_actions<F>(&mut self, callback: F) -> Subscription
@@ -2137,6 +2132,7 @@ impl MutableAppContext {
                     self.window_activation_observations.gc();
                     self.window_fullscreen_observations.gc();
                     self.keystroke_observations.gc();
+                    self.release_observations.gc();
 
                     self.remove_dropped_entities();
 
@@ -2306,12 +2302,13 @@ impl MutableAppContext {
     }
 
     fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
-        let callbacks = self.release_observations.lock().remove(&entity_id);
-        if let Some(callbacks) = callbacks {
-            for (_, callback) in callbacks {
-                callback(entity, self);
-            }
-        }
+        self.release_observations
+            .clone()
+            .emit(entity_id, self, |callback, this| {
+                callback(entity, this);
+                // Release observations happen one time. So clear the callback by returning false
+                false
+            })
     }
 
     fn handle_fullscreen_effect(&mut self, window_id: usize, is_fullscreen: bool) {
@@ -5093,14 +5090,8 @@ pub enum Subscription {
     WindowActivationObservation(callback_collection::Subscription<usize, WindowActivationCallback>),
     WindowFullscreenObservation(callback_collection::Subscription<usize, WindowFullscreenCallback>),
     KeystrokeObservation(callback_collection::Subscription<usize, KeystrokeCallback>),
+    ReleaseObservation(callback_collection::Subscription<usize, ReleaseObservationCallback>),
 
-    ReleaseObservation {
-        id: usize,
-        entity_id: usize,
-        #[allow(clippy::type_complexity)]
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>>,
-    },
     ActionObservation {
         id: usize,
         observations: Option<Weak<Mutex<BTreeMap<usize, ActionObservationCallback>>>>,
@@ -5118,10 +5109,7 @@ impl Subscription {
             Subscription::KeystrokeObservation(subscription) => subscription.detach(),
             Subscription::WindowActivationObservation(subscription) => subscription.detach(),
             Subscription::WindowFullscreenObservation(subscription) => subscription.detach(),
-
-            Subscription::ReleaseObservation { observations, .. } => {
-                observations.take();
-            }
+            Subscription::ReleaseObservation(subscription) => subscription.detach(),
             Subscription::ActionObservation { observations, .. } => {
                 observations.take();
             }
@@ -5132,17 +5120,6 @@ impl Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         match self {
-            Subscription::ReleaseObservation {
-                id,
-                entity_id,
-                observations,
-            } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    if let Some(observations) = observations.lock().get_mut(entity_id) {
-                        observations.remove(id);
-                    }
-                }
-            }
             Subscription::ActionObservation { id, observations } => {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
                     observations.lock().remove(id);
