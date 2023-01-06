@@ -6098,6 +6098,31 @@ mod tests {
     }
 
     #[crate::test(self)]
+    fn test_notify_and_drop_observe_subscription_in_same_update_cycle(cx: &mut MutableAppContext) {
+        struct Model;
+        impl Entity for Model {
+            type Event = ();
+        }
+
+        let model = cx.add_model(|_| Model);
+        let (_, view) = cx.add_window(Default::default(), |_| TestView::default());
+
+        view.update(cx, |_, cx| {
+            model.update(cx, |_, cx| cx.notify());
+            drop(cx.observe(&model, move |this, _, _| {
+                this.events.push("model notified".into());
+            }));
+            model.update(cx, |_, cx| cx.notify());
+        });
+
+        for _ in 0..3 {
+            model.update(cx, |_, cx| cx.notify());
+        }
+
+        assert_eq!(view.read(cx).events, Vec::<String>::new());
+    }
+
+    #[crate::test(self)]
     fn test_dropping_observers(cx: &mut MutableAppContext) {
         struct Model;
 

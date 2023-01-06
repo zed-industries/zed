@@ -58,14 +58,6 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
         }
     }
 
-    pub fn count(&mut self, key: K) -> usize {
-        self.internal
-            .lock()
-            .callbacks
-            .get(&key)
-            .map_or(0, |callbacks| callbacks.len())
-    }
-
     pub fn add_callback(&mut self, key: K, subscription_id: usize, callback: F) {
         let mut this = self.internal.lock();
         if !this.dropped_subscriptions.contains(&(key, subscription_id)) {
@@ -77,7 +69,9 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
     }
 
     pub fn remove(&mut self, key: K) {
-        self.internal.lock().callbacks.remove(&key);
+        let callbacks = self.internal.lock().callbacks.remove(&key);
+        // drop these after releasing the lock
+        drop(callbacks);
     }
 
     pub fn emit<C: FnMut(&mut F, &mut MutableAppContext) -> bool>(
