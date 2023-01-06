@@ -1026,19 +1026,21 @@ impl Project {
                     let Some(this) = this.upgrade(&cx) else { break };
                     let worktrees =
                         this.read_with(&cx, |this, cx| this.worktrees(cx).collect::<Vec<_>>());
-                    this.read_with(&cx, |this, cx| {
-                        this.client.request(proto::UpdateProject {
-                            project_id,
-                            worktrees: this.worktree_metadata_protos(cx),
+                    let update_project = this
+                        .read_with(&cx, |this, cx| {
+                            this.client.request(proto::UpdateProject {
+                                project_id,
+                                worktrees: this.worktree_metadata_protos(cx),
+                            })
                         })
-                    })
-                    .await
-                    .log_err();
-                    for worktree in worktrees {
-                        worktree.update(&mut cx, |worktree, cx| {
-                            let worktree = &mut worktree.as_local_mut().unwrap();
-                            worktree.share(project_id, cx).detach_and_log_err(cx)
-                        });
+                        .await;
+                    if update_project.is_ok() {
+                        for worktree in worktrees {
+                            worktree.update(&mut cx, |worktree, cx| {
+                                let worktree = &mut worktree.as_local_mut().unwrap();
+                                worktree.share(project_id, cx).detach_and_log_err(cx)
+                            });
+                        }
                     }
 
                     for tx in txs.drain(..) {
