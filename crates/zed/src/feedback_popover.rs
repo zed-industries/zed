@@ -21,39 +21,6 @@ use workspace::{item::ItemHandle, StatusItemView};
 
 use crate::{feedback_popover, system_specs::SystemSpecs};
 
-/*
-    TODO FEEDBACK
-
-    Next steps from Mikayla:
-    1: Find the bottom bar height and maybe guess some feedback button widths?
-       Basically, just use to position the modal
-    2: Look at ContactList::render() and ContactPopover::render() for clues on how
-       to make the modal look nice. Copy the theme values from the contact list styles
-
-    Now
-        Rework all code relying on contacts list (search out "contacts")
-        Obtain metrics_id
-        Fix all layout issues, theming, buttons, etc
-        Make multi-line editor without line numbers
-        Some sort of feedback when something fails or succeeds
-        Naming of all UI stuff and separation out into files (follow a convention already in place)
-        Disable submit button when text length is 0
-        Should we store staff boolean?
-        Put behind experiments flag
-        Move to separate crate
-        Render a character counter
-        All warnings
-        Remove all comments
-    Later
-        If a character limit is imposed, switch submit button over to a "GitHub Issue" button
-        Should editor by treated as a markdown file
-        Limit characters?
-        Disable submit button when text length is GTE to character limit
-
-        Pay for AirTable
-        Add AirTable to system architecture diagram in Figma
-*/
-
 lazy_static! {
     pub static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
