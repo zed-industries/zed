@@ -339,15 +339,22 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Copy System Specs Into Clipboard",
+                    action: Box::new(crate::CopySystemSpecsIntoClipboard),
+                },
+                MenuItem::Action {
+                    name: "File Bug Report",
+                    action: Box::new(crate::FileBugReport),
+                },
+                MenuItem::Action {
+                    name: "Request Feature",
+                    action: Box::new(crate::RequestFeature),
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
                     name: "Documentation",
                     action: Box::new(crate::OpenBrowser {
                         url: "https://zed.dev/docs".into(),
-                    }),
-                },
-                MenuItem::Action {
-                    name: "Give Feedback",
-                    action: Box::new(crate::OpenBrowser {
-                        url: super::feedback::NEW_ISSUE_URL.into(),
                     }),
                 },
                 MenuItem::Action {

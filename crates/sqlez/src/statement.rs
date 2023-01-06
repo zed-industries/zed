@@ -48,7 +48,7 @@ impl<'a> Statement<'a> {
                     .trim();
                 remaining_sql_str != ";" && !remaining_sql_str.is_empty()
             } {
-                let mut raw_statement = 0 as *mut sqlite3_stmt;
+                let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
                 let mut remaining_sql_ptr = ptr::null();
                 sqlite3_prepare_v2(
                     connection.sqlite3,
@@ -101,7 +101,7 @@ impl<'a> Statement<'a> {
         }
     }
 
-    fn bind_index_with(&self, index: i32, bind: impl Fn(&*mut sqlite3_stmt) -> ()) -> Result<()> {
+    fn bind_index_with(&self, index: i32, bind: impl Fn(&*mut sqlite3_stmt)) -> Result<()> {
         let mut any_succeed = false;
         unsafe {
             for raw_statement in self.raw_statements.iter() {
@@ -133,7 +133,7 @@ impl<'a> Statement<'a> {
         })
     }
 
-    pub fn column_blob<'b>(&'b mut self, index: i32) -> Result<&'b [u8]> {
+    pub fn column_blob(&mut self, index: i32) -> Result<&[u8]> {
         let index = index as c_int;
         let pointer = unsafe { sqlite3_column_blob(self.current_statement(), index) };
 
@@ -217,7 +217,7 @@ impl<'a> Statement<'a> {
         })
     }
 
-    pub fn column_text<'b>(&'b mut self, index: i32) -> Result<&'b str> {
+    pub fn column_text(&mut self, index: i32) -> Result<&str> {
         let index = index as c_int;
         let pointer = unsafe { sqlite3_column_text(self.current_statement(), index) };
 

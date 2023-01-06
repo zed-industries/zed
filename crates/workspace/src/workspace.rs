@@ -95,7 +95,7 @@ actions!(
         ToggleLeftSidebar,
         ToggleRightSidebar,
         NewTerminal,
-        NewSearch,
+        NewSearch
     ]
 );
 

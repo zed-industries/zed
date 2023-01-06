@@ -146,6 +146,7 @@ impl PickerDelegate for RecentProjectsView {
             .matches
             .iter()
             .enumerate()
+            .rev()
             .max_by_key(|(_, m)| OrderedFloat(m.score))
             .map(|(ix, _)| ix)
             .unwrap_or(0);

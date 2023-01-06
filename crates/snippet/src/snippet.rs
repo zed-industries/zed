@@ -62,7 +62,7 @@ fn parse_snippet<'a>(
                 }
             }
             Some(_) => {
-                let chunk_end = source.find(&['}', '$', '\\']).unwrap_or(source.len());
+                let chunk_end = source.find(['}', '$', '\\']).unwrap_or(source.len());
                 let (chunk, rest) = source.split_at(chunk_end);
                 text.push_str(chunk);
                 source = rest;
