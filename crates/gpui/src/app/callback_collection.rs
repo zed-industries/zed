@@ -1,10 +1,9 @@
-use std::mem;
 use std::sync::Arc;
 use std::{hash::Hash, sync::Weak};
 
 use parking_lot::Mutex;
 
-use collections::{btree_map, BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 
 use crate::MutableAppContext;
 
@@ -142,7 +141,7 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
     pub fn gc(&mut self) {
         let mut this = self.internal.lock();
 
-        for (key, id) in mem::take(&mut this.dropped_subscriptions) {
+        for (key, id) in std::mem::take(&mut this.dropped_subscriptions) {
             if let Some(callbacks) = this.callbacks.get_mut(&key) {
                 callbacks.remove(&id);
             }
@@ -164,20 +163,13 @@ impl<K: Clone + Hash + Eq, F> Drop for Subscription<K, F> {
         if let Some(mapping) = self.mapping.as_ref().and_then(|mapping| mapping.upgrade()) {
             let mut mapping = mapping.lock();
             if let Some(callbacks) = mapping.callbacks.get_mut(&self.key) {
-                match callbacks.entry(self.id) {
-                    btree_map::Entry::Vacant(_) => {
-                        mapping
-                            .dropped_subscriptions
-                            .insert((self.key.clone(), self.id));
-                    }
-                    btree_map::Entry::Occupied(entry) => {
-                        entry.remove();
-                        mapping
-                            .dropped_subscriptions
-                            .insert((self.key.clone(), self.id));
-                    }
+                if callbacks.remove(&self.id).is_some() {
+                    return;
                 }
             }
+            mapping
+                .dropped_subscriptions
+                .insert((self.key.clone(), self.id));
         }
     }
 }
