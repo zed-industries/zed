@@ -13,7 +13,7 @@ use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
-use project::{search::SearchQuery, Project};
+use project::{search::SearchQuery, Project, ProjectPath};
 use rand::prelude::*;
 use std::{
     env,
@@ -22,6 +22,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use util::ResultExt;
 
 #[gpui::test(iterations = 100)]
 async fn test_random_collaboration(
@@ -84,10 +85,12 @@ async fn test_random_collaboration(
     }
 
     let plan = Arc::new(Mutex::new(TestPlan {
-        users,
         allow_server_restarts: rng.gen_bool(0.7),
         allow_client_reconnection: rng.gen_bool(0.7),
         allow_client_disconnection: rng.gen_bool(0.1),
+        operation_ix: 0,
+        max_operations,
+        users,
         rng,
     }));
 
@@ -96,9 +99,8 @@ async fn test_random_collaboration(
     let mut operation_channels = Vec::new();
     let mut next_entity_id = 100000;
 
-    let mut i = 0;
-    while i < max_operations {
-        let next_operation = plan.lock().next_operation(&clients).await;
+    loop {
+        let Some(next_operation) = plan.lock().next_operation(&clients).await else { break };
         match next_operation {
             Operation::AddConnection { user_id } => {
                 let username = {
@@ -132,7 +134,6 @@ async fn test_random_collaboration(
                 )));
 
                 log::info!("Added connection for {}", username);
-                i += 1;
             }
 
             Operation::RemoveConnection { user_id } => {
@@ -196,7 +197,6 @@ async fn test_random_collaboration(
                     cx.clear_globals();
                     drop(client);
                 });
-                i += 1;
             }
 
             Operation::BounceConnection { user_id } => {
@@ -210,7 +210,6 @@ async fn test_random_collaboration(
                 let peer_id = user_connection_ids[0].into();
                 server.disconnect_client(peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-                i += 1;
             }
 
             Operation::RestartServer => {
@@ -227,7 +226,6 @@ async fn test_random_collaboration(
                     .await
                     .unwrap();
                 assert_eq!(stale_room_ids, vec![]);
-                i += 1;
             }
 
             Operation::MutateClients { user_ids, quiesce } => {
@@ -237,7 +235,6 @@ async fn test_random_collaboration(
                         .position(|(client, cx)| client.current_user_id(cx) == user_id)
                         .unwrap();
                     operation_channels[client_ix].unbounded_send(()).unwrap();
-                    i += 1;
                 }
 
                 if quiesce {
@@ -427,8 +424,387 @@ async fn test_random_collaboration(
     }
 }
 
+async fn apply_client_operation(
+    client: &TestClient,
+    operation: ClientOperation,
+    cx: &mut TestAppContext,
+) -> Result<()> {
+    match operation {
+        ClientOperation::AcceptIncomingCall => {
+            log::info!("{}: accepting incoming call", client.username);
+
+            let active_call = cx.read(ActiveCall::global);
+            active_call
+                .update(cx, |call, cx| call.accept_incoming(cx))
+                .await?;
+        }
+
+        ClientOperation::RejectIncomingCall => {
+            log::info!("{}: declining incoming call", client.username);
+
+            let active_call = cx.read(ActiveCall::global);
+            active_call.update(cx, |call, _| call.decline_incoming())?;
+        }
+
+        ClientOperation::LeaveCall => {
+            log::info!("{}: hanging up", client.username);
+
+            let active_call = cx.read(ActiveCall::global);
+            active_call.update(cx, |call, cx| call.hang_up(cx))?;
+        }
+
+        ClientOperation::InviteContactToCall { user_id } => {
+            log::info!("{}: inviting {}", client.username, user_id,);
+
+            let active_call = cx.read(ActiveCall::global);
+            active_call
+                .update(cx, |call, cx| call.invite(user_id.to_proto(), None, cx))
+                .await
+                .log_err();
+        }
+
+        ClientOperation::OpenLocalProject { first_root_name } => {
+            log::info!(
+                "{}: opening local project at {:?}",
+                client.username,
+                first_root_name
+            );
+
+            let root_path = Path::new("/").join(&first_root_name);
+            client.fs.create_dir(&root_path).await.unwrap();
+            client
+                .fs
+                .create_file(&root_path.join("main.rs"), Default::default())
+                .await
+                .unwrap();
+            let project = client.build_local_project(root_path, cx).await.0;
+            ensure_project_shared(&project, client, cx).await;
+            client.local_projects_mut().push(project.clone());
+        }
+
+        ClientOperation::AddWorktreeToProject {
+            project_root_name,
+            new_root_path,
+        } => {
+            log::info!(
+                "{}: finding/creating local worktree at {:?} to project with root path {}",
+                client.username,
+                new_root_path,
+                project_root_name
+            );
+
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            ensure_project_shared(&project, client, cx).await;
+            if !client.fs.paths().await.contains(&new_root_path) {
+                client.fs.create_dir(&new_root_path).await.unwrap();
+            }
+            project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(&new_root_path, true, cx)
+                })
+                .await
+                .unwrap();
+        }
+
+        ClientOperation::CloseRemoteProject { project_root_name } => {
+            log::info!(
+                "{}: closing remote project with root path {}",
+                client.username,
+                project_root_name,
+            );
+
+            let ix = project_ix_for_root_name(&*client.remote_projects(), &project_root_name, cx)
+                .expect("invalid project in test operation");
+            cx.update(|_| client.remote_projects_mut().remove(ix));
+        }
+
+        ClientOperation::OpenRemoteProject {
+            host_id,
+            first_root_name,
+        } => {
+            log::info!(
+                "{}: joining remote project of user {}, root name {}",
+                client.username,
+                host_id,
+                first_root_name,
+            );
+
+            let active_call = cx.read(ActiveCall::global);
+            let project_id = active_call
+                .read_with(cx, |call, cx| {
+                    let room = call.room().cloned()?;
+                    let participant = room
+                        .read(cx)
+                        .remote_participants()
+                        .get(&host_id.to_proto())?;
+                    let project = participant
+                        .projects
+                        .iter()
+                        .find(|project| project.worktree_root_names[0] == first_root_name)?;
+                    Some(project.id)
+                })
+                .expect("invalid project in test operation");
+            let project = client.build_remote_project(project_id, cx).await;
+            client.remote_projects_mut().push(project);
+        }
+
+        ClientOperation::CreateWorktreeEntry {
+            project_root_name,
+            is_local,
+            full_path,
+            is_dir,
+        } => {
+            log::info!(
+                "{}: creating {} at path {:?} in {} project {}",
+                client.username,
+                if is_dir { "dir" } else { "file" },
+                full_path,
+                if is_local { "local" } else { "remote" },
+                project_root_name,
+            );
+
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            ensure_project_shared(&project, client, cx).await;
+            let project_path = project_path_for_full_path(&project, &full_path, cx)
+                .expect("invalid worktree path in test operation");
+            project
+                .update(cx, |p, cx| p.create_entry(project_path, is_dir, cx))
+                .unwrap()
+                .await?;
+        }
+
+        ClientOperation::OpenBuffer {
+            project_root_name,
+            is_local,
+            full_path,
+        } => {
+            log::info!(
+                "{}: opening buffer {:?} in {} project {}",
+                client.username,
+                full_path,
+                if is_local { "local" } else { "remote" },
+                project_root_name,
+            );
+
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            ensure_project_shared(&project, client, cx).await;
+            let project_path = project_path_for_full_path(&project, &full_path, cx)
+                .expect("invalid buffer path in test operation");
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+            client.buffers_for_project(&project).insert(buffer);
+        }
+
+        ClientOperation::EditBuffer {
+            project_root_name,
+            is_local,
+            full_path,
+            edits,
+        } => {
+            log::info!(
+                "{}: editing buffer {:?} in {} project {} with {:?}",
+                client.username,
+                full_path,
+                if is_local { "local" } else { "remote" },
+                project_root_name,
+                edits
+            );
+
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            ensure_project_shared(&project, client, cx).await;
+            let buffer =
+                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
+                    .expect("invalid buffer path in test operation");
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+        }
+
+        ClientOperation::CloseBuffer {
+            project_root_name,
+            is_local,
+            full_path,
+        } => {
+            log::info!(
+                "{}: dropping buffer {:?} in {} project {}",
+                client.username,
+                full_path,
+                if is_local { "local" } else { "remote" },
+                project_root_name
+            );
+
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            ensure_project_shared(&project, client, cx).await;
+            let buffer =
+                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
+                    .expect("invalid buffer path in test operation");
+            cx.update(|_| {
+                client.buffers_for_project(&project).remove(&buffer);
+                drop(buffer);
+            });
+        }
+
+        ClientOperation::SaveBuffer {
+            project_root_name,
+            is_local,
+            full_path,
+            detach,
+        } => {
+            log::info!(
+                "{}: saving buffer {:?} in {} project {}{}",
+                client.username,
+                full_path,
+                if is_local { "local" } else { "remote" },
+                project_root_name,
+                if detach { ", detaching" } else { ", awaiting" }
+            );
+
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            ensure_project_shared(&project, client, cx).await;
+            let buffer =
+                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
+                    .expect("invalid buffer path in test operation");
+            let (requested_version, save) =
+                buffer.update(cx, |buffer, cx| (buffer.version(), buffer.save(cx)));
+            let save = cx.background().spawn(async move {
+                let (saved_version, _, _) = save
+                    .await
+                    .map_err(|err| anyhow!("save request failed: {:?}", err))?;
+                assert!(saved_version.observed_all(&requested_version));
+                anyhow::Ok(())
+            });
+            if detach {
+                log::info!("{}: detaching save request", client.username);
+                cx.update(|cx| save.detach_and_log_err(cx));
+            } else {
+                save.await?;
+            }
+        }
+
+        ClientOperation::RequestLspDataInBuffer {
+            project_root_name,
+            is_local,
+            full_path,
+            offset,
+            kind,
+            detach,
+        } => {
+            log::info!(
+                "{}: request LSP {:?} for buffer {:?} in {} project {}{}",
+                client.username,
+                kind,
+                full_path,
+                if is_local { "local" } else { "remote" },
+                project_root_name,
+                if detach { ", detaching" } else { ", awaiting" }
+            );
+
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            let buffer =
+                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
+                    .expect("invalid buffer path in test operation");
+            let request = match kind {
+                LspRequestKind::Rename => cx.spawn(|mut cx| async move {
+                    project
+                        .update(&mut cx, |p, cx| p.prepare_rename(buffer, offset, cx))
+                        .await?;
+                    anyhow::Ok(())
+                }),
+                LspRequestKind::Completion => cx.spawn(|mut cx| async move {
+                    project
+                        .update(&mut cx, |p, cx| p.completions(&buffer, offset, cx))
+                        .await?;
+                    Ok(())
+                }),
+                LspRequestKind::CodeAction => cx.spawn(|mut cx| async move {
+                    project
+                        .update(&mut cx, |p, cx| p.code_actions(&buffer, offset..offset, cx))
+                        .await?;
+                    Ok(())
+                }),
+                LspRequestKind::Definition => cx.spawn(|mut cx| async move {
+                    project
+                        .update(&mut cx, |p, cx| p.definition(&buffer, offset, cx))
+                        .await?;
+                    Ok(())
+                }),
+                LspRequestKind::Highlights => cx.spawn(|mut cx| async move {
+                    project
+                        .update(&mut cx, |p, cx| p.document_highlights(&buffer, offset, cx))
+                        .await?;
+                    Ok(())
+                }),
+            };
+            if detach {
+                request.detach();
+            } else {
+                request.await?;
+            }
+        }
+
+        ClientOperation::SearchProject {
+            project_root_name,
+            query,
+            detach,
+        } => {
+            log::info!(
+                "{}: search project {} for {:?}{}",
+                client.username,
+                project_root_name,
+                query,
+                if detach { ", detaching" } else { ", awaiting" }
+            );
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .expect("invalid project in test operation");
+            let search = project.update(cx, |project, cx| {
+                project.search(SearchQuery::text(query, false, false), cx)
+            });
+            let search = cx.background().spawn(async move {
+                search
+                    .await
+                    .map_err(|err| anyhow!("search request failed: {:?}", err))
+            });
+            if detach {
+                log::info!("{}: detaching save request", client.username);
+                cx.update(|cx| search.detach_and_log_err(cx));
+            } else {
+                search.await?;
+            }
+        }
+
+        ClientOperation::CreateFsEntry { path, is_dir } => {
+            log::info!(
+                "{}: creating {} at {:?}",
+                client.username,
+                if is_dir { "dir" } else { "file" },
+                path
+            );
+            if is_dir {
+                client.fs.create_dir(&path).await.unwrap();
+            } else {
+                client
+                    .fs
+                    .create_file(&path, Default::default())
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+    Ok(())
+}
+
 struct TestPlan {
     rng: StdRng,
+    max_operations: usize,
+    operation_ix: usize,
     users: Vec<UserTestPlan>,
     allow_server_restarts: bool,
     allow_client_reconnection: bool,
@@ -484,6 +860,7 @@ enum ClientOperation {
     },
     OpenBuffer {
         project_root_name: String,
+        is_local: bool,
         full_path: PathBuf,
     },
     SearchProject {
@@ -493,26 +870,39 @@ enum ClientOperation {
     },
     EditBuffer {
         project_root_name: String,
+        is_local: bool,
         full_path: PathBuf,
         edits: Vec<(Range<usize>, Arc<str>)>,
     },
     CloseBuffer {
         project_root_name: String,
+        is_local: bool,
         full_path: PathBuf,
     },
     SaveBuffer {
         project_root_name: String,
+        is_local: bool,
         full_path: PathBuf,
         detach: bool,
     },
     RequestLspDataInBuffer {
         project_root_name: String,
+        is_local: bool,
         full_path: PathBuf,
         offset: usize,
         kind: LspRequestKind,
         detach: bool,
     },
-    Other,
+    CreateWorktreeEntry {
+        project_root_name: String,
+        is_local: bool,
+        full_path: PathBuf,
+        is_dir: bool,
+    },
+    CreateFsEntry {
+        path: PathBuf,
+        is_dir: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -525,7 +915,14 @@ enum LspRequestKind {
 }
 
 impl TestPlan {
-    async fn next_operation(&mut self, clients: &[(Rc<TestClient>, TestAppContext)]) -> Operation {
+    async fn next_operation(
+        &mut self,
+        clients: &[(Rc<TestClient>, TestAppContext)],
+    ) -> Option<Operation> {
+        if self.operation_ix == self.max_operations {
+            return None;
+        }
+
         let operation = loop {
             break match self.rng.gen_range(0..100) {
                 0..=29 if clients.len() < self.users.len() => {
@@ -535,6 +932,7 @@ impl TestPlan {
                         .filter(|u| !u.online)
                         .choose(&mut self.rng)
                         .unwrap();
+                    self.operation_ix += 1;
                     Operation::AddConnection {
                         user_id: user.user_id,
                     }
@@ -542,18 +940,25 @@ impl TestPlan {
                 30..=34 if clients.len() > 1 && self.allow_client_disconnection => {
                     let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
                     let user_id = client.current_user_id(cx);
+                    self.operation_ix += 1;
                     Operation::RemoveConnection { user_id }
                 }
                 35..=39 if clients.len() > 1 && self.allow_client_reconnection => {
                     let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
                     let user_id = client.current_user_id(cx);
+                    self.operation_ix += 1;
                     Operation::BounceConnection { user_id }
                 }
                 40..=44 if self.allow_server_restarts && clients.len() > 1 => {
+                    self.operation_ix += 1;
                     Operation::RestartServer
                 }
                 _ if !clients.is_empty() => {
-                    let user_ids = (0..self.rng.gen_range(0..10))
+                    let count = self
+                        .rng
+                        .gen_range(1..10)
+                        .min(self.max_operations - self.operation_ix);
+                    let user_ids = (0..count)
                         .map(|_| {
                             let ix = self.rng.gen_range(0..clients.len());
                             let (client, cx) = &clients[ix];
@@ -568,18 +973,22 @@ impl TestPlan {
                 _ => continue,
             };
         };
-        operation
+        Some(operation)
     }
 
     async fn next_client_operation(
         &mut self,
         client: &TestClient,
         cx: &TestAppContext,
-    ) -> ClientOperation {
+    ) -> Option<ClientOperation> {
+        if self.operation_ix == self.max_operations {
+            return None;
+        }
+
         let user_id = client.current_user_id(cx);
         let call = cx.read(ActiveCall::global);
         let operation = loop {
-            match self.rng.gen_range(0..100) {
+            match self.rng.gen_range(0..100_u32) {
                 // Mutate the call
                 0..=29 => {
                     // Respond to an incoming call
@@ -623,7 +1032,7 @@ impl TestPlan {
                 }
 
                 // Mutate projects
-                39..=59 => match self.rng.gen_range(0..100_u32) {
+                30..=59 => match self.rng.gen_range(0..100_u32) {
                     // Open a new project
                     0..=70 => {
                         // Open a remote project
@@ -683,16 +1092,15 @@ impl TestPlan {
                         }
                     }
 
-                    // Add a worktree to a local project
-                    81.. => {
-                        if !client.local_projects().is_empty() {
-                            let project = client
-                                .local_projects()
-                                .choose(&mut self.rng)
-                                .unwrap()
-                                .clone();
+                    // Mutate project worktrees
+                    81.. => match self.rng.gen_range(0..100_u32) {
+                        // Add a worktree to a local project
+                        0..=50 => {
+                            let Some(project) = client
+                                    .local_projects()
+                                    .choose(&mut self.rng)
+                                    .cloned() else { continue };
                             let project_root_name = root_name_for_project(&project, cx);
-
                             let mut paths = client.fs.paths().await;
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || self.rng.gen() {
@@ -700,19 +1108,51 @@ impl TestPlan {
                             } else {
                                 paths.choose(&mut self.rng).unwrap().clone()
                             };
-
                             break ClientOperation::AddWorktreeToProject {
                                 project_root_name,
                                 new_root_path,
                             };
                         }
-                    }
+
+                        // Add an entry to a worktree
+                        _ => {
+                            let Some(project) = choose_random_project(client, &mut self.rng) else { continue };
+                            let project_root_name = root_name_for_project(&project, cx);
+                            let is_local = project.read_with(cx, |project, _| project.is_local());
+                            let worktree = project.read_with(cx, |project, cx| {
+                                project
+                                    .worktrees(cx)
+                                    .filter(|worktree| {
+                                        let worktree = worktree.read(cx);
+                                        worktree.is_visible()
+                                            && worktree.entries(false).any(|e| e.is_file())
+                                            && worktree.root_entry().map_or(false, |e| e.is_dir())
+                                    })
+                                    .choose(&mut self.rng)
+                            });
+                            let Some(worktree) = worktree else { continue };
+                            let is_dir = self.rng.gen::<bool>();
+                            let mut full_path =
+                                worktree.read_with(cx, |w, _| PathBuf::from(w.root_name()));
+                            full_path.push(gen_file_name(&mut self.rng));
+                            if !is_dir {
+                                full_path.set_extension("rs");
+                            }
+                            break ClientOperation::CreateWorktreeEntry {
+                                project_root_name,
+                                is_local,
+                                full_path,
+                                is_dir,
+                            };
+                        }
+                    },
                 },
 
                 // Query and mutate buffers
-                60.. => {
+                60..=95 => {
                     let Some(project) = choose_random_project(client, &mut self.rng) else { continue };
                     let project_root_name = root_name_for_project(&project, cx);
+                    let is_local = project.read_with(cx, |project, _| project.is_local());
 
                     match self.rng.gen_range(0..100_u32) {
                         // Manipulate an existing buffer
@@ -731,6 +1171,7 @@ impl TestPlan {
                                 0..=15 => {
                                     break ClientOperation::CloseBuffer {
                                         project_root_name,
+                                        is_local,
                                         full_path,
                                     };
                                 }
@@ -739,6 +1180,7 @@ impl TestPlan {
                                     let detach = self.rng.gen_bool(0.3);
                                     break ClientOperation::SaveBuffer {
                                         project_root_name,
+                                        is_local,
                                         full_path,
                                         detach,
                                     };
@@ -750,6 +1192,7 @@ impl TestPlan {
                                     });
                                     break ClientOperation::EditBuffer {
                                         project_root_name,
+                                        is_local,
                                         full_path,
                                         edits,
                                     };
@@ -767,6 +1210,7 @@ impl TestPlan {
                                         project_root_name,
                                         full_path,
                                         offset,
+                                        is_local,
                                         kind: match self.rng.gen_range(0..5_u32) {
                                             0 => LspRequestKind::Rename,
                                             1 => LspRequestKind::Highlights,
@@ -817,16 +1261,33 @@ impl TestPlan {
                             });
                             break ClientOperation::OpenBuffer {
                                 project_root_name,
+                                is_local,
                                 full_path,
                             };
                         }
                     }
                 }
 
-                _ => break ClientOperation::Other,
+                // Create a file or directory
+                96.. => {
+                    let is_dir = self.rng.gen::<bool>();
+                    let mut path = client
+                        .fs
+                        .directories()
+                        .await
+                        .choose(&mut self.rng)
+                        .unwrap()
+                        .clone();
+                    path.push(gen_file_name(&mut self.rng));
+                    if !is_dir {
+                        path.set_extension("rs");
+                    }
+                    break ClientOperation::CreateFsEntry { path, is_dir };
+                }
             }
         };
-        operation
+        self.operation_ix += 1;
+        Some(operation)
     }
 
     fn next_root_dir_name(&mut self, user_id: UserId) -> String {
@@ -968,350 +1429,13 @@ async fn simulate_client(
     client.language_registry.add(Arc::new(language));
 
     while operation_rx.next().await.is_some() {
-        let operation = plan.lock().next_client_operation(&client, &cx).await;
-        if let Err(error) = apply_client_operation(&client, plan.clone(), operation, &mut cx).await
-        {
+        let Some(operation) = plan.lock().next_client_operation(&client, &cx).await else { break };
+        if let Err(error) = apply_client_operation(&client, operation, &mut cx).await {
             log::error!("{} error: {}", client.username, error);
         }
         cx.background().simulate_random_delay().await;
     }
     log::info!("{}: done", client.username);
-}
-
-async fn apply_client_operation(
-    client: &TestClient,
-    plan: Arc<Mutex<TestPlan>>,
-    operation: ClientOperation,
-    cx: &mut TestAppContext,
-) -> Result<()> {
-    match operation {
-        ClientOperation::AcceptIncomingCall => {
-            log::info!("{}: accepting incoming call", client.username);
-            let active_call = cx.read(ActiveCall::global);
-            active_call
-                .update(cx, |call, cx| call.accept_incoming(cx))
-                .await?;
-        }
-
-        ClientOperation::RejectIncomingCall => {
-            log::info!("{}: declining incoming call", client.username);
-            let active_call = cx.read(ActiveCall::global);
-            active_call.update(cx, |call, _| call.decline_incoming())?;
-        }
-
-        ClientOperation::LeaveCall => {
-            log::info!("{}: hanging up", client.username);
-            let active_call = cx.read(ActiveCall::global);
-            active_call.update(cx, |call, cx| call.hang_up(cx))?;
-        }
-
-        ClientOperation::InviteContactToCall { user_id } => {
-            log::info!("{}: inviting {}", client.username, user_id,);
-            let active_call = cx.read(ActiveCall::global);
-            active_call
-                .update(cx, |call, cx| call.invite(user_id.to_proto(), None, cx))
-                .await?;
-        }
-
-        ClientOperation::OpenLocalProject { first_root_name } => {
-            log::info!(
-                "{}: opening local project at {:?}",
-                client.username,
-                first_root_name
-            );
-            let root_path = Path::new("/").join(&first_root_name);
-            client.fs.create_dir(&root_path).await.unwrap();
-            client
-                .fs
-                .create_file(&root_path.join("main.rs"), Default::default())
-                .await
-                .unwrap();
-            let project = client.build_local_project(root_path, cx).await.0;
-            ensure_project_shared(&project, client, cx).await;
-            client.local_projects_mut().push(project.clone());
-        }
-
-        ClientOperation::AddWorktreeToProject {
-            project_root_name,
-            new_root_path,
-        } => {
-            log::info!(
-                "{}: finding/creating local worktree at {:?} to project with root path {}",
-                client.username,
-                new_root_path,
-                project_root_name
-            );
-            let project = project_for_root_name(client, &project_root_name, cx)
-                .expect("invalid project in test operation");
-            ensure_project_shared(&project, client, cx).await;
-            if !client.fs.paths().await.contains(&new_root_path) {
-                client.fs.create_dir(&new_root_path).await.unwrap();
-            }
-            project
-                .update(cx, |project, cx| {
-                    project.find_or_create_local_worktree(&new_root_path, true, cx)
-                })
-                .await
-                .unwrap();
-        }
-
-        ClientOperation::CloseRemoteProject { project_root_name } => {
-            log::info!(
-                "{}: closing remote project with root path {}",
-                client.username,
-                project_root_name,
-            );
-            let ix = project_ix_for_root_name(&*client.remote_projects(), &project_root_name, cx)
-                .expect("invalid project in test operation");
-            cx.update(|_| client.remote_projects_mut().remove(ix));
-        }
-
-        ClientOperation::OpenRemoteProject {
-            host_id,
-            first_root_name,
-        } => {
-            log::info!(
-                "{}: joining remote project of user {}, root name {}",
-                client.username,
-                host_id,
-                first_root_name,
-            );
-            let active_call = cx.read(ActiveCall::global);
-            let project_id = active_call
-                .read_with(cx, |call, cx| {
-                    let room = call.room().cloned()?;
-                    let participant = room
-                        .read(cx)
-                        .remote_participants()
-                        .get(&host_id.to_proto())?;
-                    let project = participant
-                        .projects
-                        .iter()
-                        .find(|project| project.worktree_root_names[0] == first_root_name)?;
-                    Some(project.id)
-                })
-                .expect("invalid project in test operation");
-            let project = client.build_remote_project(project_id, cx).await;
-            client.remote_projects_mut().push(project);
-        }
-
-        ClientOperation::OpenBuffer {
-            project_root_name,
-            full_path,
-        } => {
-            log::info!(
-                "{}: opening buffer {:?} in project {}",
-                client.username,
-                full_path,
-                project_root_name,
-            );
-            let project = project_for_root_name(client, &project_root_name, cx)
-                .expect("invalid project in test operation");
-            // ensure_project_shared(&project, client, cx).await;
-            let mut components = full_path.components();
-            let root_name = components.next().unwrap().as_os_str().to_str().unwrap();
-            let path = components.as_path();
-            let worktree_id = project
-                .read_with(cx, |project, cx| {
-                    project.worktrees(cx).find_map(|worktree| {
-                        let worktree = worktree.read(cx);
-                        if worktree.root_name() == root_name {
-                            Some(worktree.id())
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .expect("invalid buffer path in test operation");
-            let buffer = project
-                .update(cx, |project, cx| {
-                    project.open_buffer((worktree_id, &path), cx)
-                })
-                .await?;
-            client.buffers_for_project(&project).insert(buffer);
-        }
-
-        ClientOperation::EditBuffer {
-            project_root_name,
-            full_path,
-            edits,
-        } => {
-            log::info!(
-                "{}: editing buffer {:?} in project {} with {:?}",
-                client.username,
-                full_path,
-                project_root_name,
-                edits
-            );
-            let project = project_for_root_name(client, &project_root_name, cx)
-                .expect("invalid project in test operation");
-            let buffer =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
-                    .expect("invalid buffer path in test operation");
-            buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
-            });
-        }
-
-        ClientOperation::CloseBuffer {
-            project_root_name,
-            full_path,
-        } => {
-            log::info!(
-                "{}: dropping buffer {:?} in project {}",
-                client.username,
-                full_path,
-                project_root_name
-            );
-            let project = project_for_root_name(client, &project_root_name, cx)
-                .expect("invalid project in test operation");
-            let buffer =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
-                    .expect("invalid buffer path in test operation");
-            cx.update(|_| {
-                client.buffers_for_project(&project).remove(&buffer);
-                drop(buffer);
-            });
-        }
-
-        ClientOperation::SaveBuffer {
-            project_root_name,
-            full_path,
-            detach,
-        } => {
-            log::info!(
-                "{}: saving buffer {:?} in project {}{}",
-                client.username,
-                full_path,
-                project_root_name,
-                if detach { ", detaching" } else { ", awaiting" }
-            );
-            let project = project_for_root_name(client, &project_root_name, cx)
-                .expect("invalid project in test operation");
-            let buffer =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
-                    .expect("invalid buffer path in test operation");
-            let (requested_version, save) =
-                buffer.update(cx, |buffer, cx| (buffer.version(), buffer.save(cx)));
-            let save = cx.background().spawn(async move {
-                let (saved_version, _, _) = save
-                    .await
-                    .map_err(|err| anyhow!("save request failed: {:?}", err))?;
-                assert!(saved_version.observed_all(&requested_version));
-                anyhow::Ok(())
-            });
-            if detach {
-                log::info!("{}: detaching save request", client.username);
-                cx.update(|cx| save.detach_and_log_err(cx));
-            } else {
-                save.await?;
-            }
-        }
-
-        ClientOperation::RequestLspDataInBuffer {
-            project_root_name,
-            full_path,
-            offset,
-            kind,
-            detach,
-        } => {
-            log::info!(
-                "{}: request LSP {:?} for buffer {:?} in project {}{}",
-                client.username,
-                kind,
-                full_path,
-                project_root_name,
-                if detach { ", detaching" } else { ", awaiting" }
-            );
-
-            let project = project_for_root_name(client, &project_root_name, cx)
-                .expect("invalid project in test operation");
-            let buffer =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx)
-                    .expect("invalid buffer path in test operation");
-            let request = match kind {
-                LspRequestKind::Rename => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.prepare_rename(buffer, offset, cx))
-                        .await?;
-                    anyhow::Ok(())
-                }),
-                LspRequestKind::Completion => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.completions(&buffer, offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-                LspRequestKind::CodeAction => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.code_actions(&buffer, offset..offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-                LspRequestKind::Definition => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.definition(&buffer, offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-                LspRequestKind::Highlights => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.document_highlights(&buffer, offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-            };
-            if detach {
-                request.detach();
-            } else {
-                request.await?;
-            }
-        }
-
-        ClientOperation::SearchProject {
-            project_root_name,
-            query,
-            detach,
-        } => {
-            log::info!(
-                "{}: search project {} for {:?}{}",
-                client.username,
-                project_root_name,
-                query,
-                if detach { ", detaching" } else { ", awaiting" }
-            );
-            let project = project_for_root_name(client, &project_root_name, cx)
-                .expect("invalid project in test operation");
-            let search = project.update(cx, |project, cx| {
-                project.search(SearchQuery::text(query, false, false), cx)
-            });
-            let search = cx.background().spawn(async move {
-                search
-                    .await
-                    .map_err(|err| anyhow!("search request failed: {:?}", err))
-            });
-            if detach {
-                log::info!("{}: detaching save request", client.username);
-                cx.update(|cx| search.detach_and_log_err(cx));
-            } else {
-                search.await?;
-            }
-        }
-
-        ClientOperation::Other => {
-            let choice = plan.lock().rng.gen_range(0..100);
-            match choice {
-                0..=59
-                    if !client.local_projects().is_empty()
-                        || !client.remote_projects().is_empty() =>
-                {
-                    randomly_mutate_worktrees(client, &plan, cx).await?;
-                }
-                _ => randomly_mutate_fs(client, &plan).await,
-            }
-        }
-    }
-    Ok(())
 }
 
 fn buffer_for_full_path(
@@ -1368,6 +1492,27 @@ fn root_name_for_project(project: &ModelHandle<Project>, cx: &TestAppContext) ->
     })
 }
 
+fn project_path_for_full_path(
+    project: &ModelHandle<Project>,
+    full_path: &Path,
+    cx: &TestAppContext,
+) -> Option<ProjectPath> {
+    let mut components = full_path.components();
+    let root_name = components.next().unwrap().as_os_str().to_str().unwrap();
+    let path = components.as_path().into();
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).find_map(|worktree| {
+            let worktree = worktree.read(cx);
+            if worktree.root_name() == root_name {
+                Some(worktree.id())
+            } else {
+                None
+            }
+        })
+    })?;
+    Some(ProjectPath { worktree_id, path })
+}
+
 async fn ensure_project_shared(
     project: &ModelHandle<Project>,
     client: &TestClient,
@@ -1400,76 +1545,6 @@ async fn ensure_project_shared(
             }
         }
     }
-}
-
-async fn randomly_mutate_fs(client: &TestClient, plan: &Arc<Mutex<TestPlan>>) {
-    let is_dir = plan.lock().rng.gen::<bool>();
-    let mut new_path = client
-        .fs
-        .directories()
-        .await
-        .choose(&mut plan.lock().rng)
-        .unwrap()
-        .clone();
-    new_path.push(gen_file_name(&mut plan.lock().rng));
-    if is_dir {
-        log::info!("{}: creating local dir at {:?}", client.username, new_path);
-        client.fs.create_dir(&new_path).await.unwrap();
-    } else {
-        new_path.set_extension("rs");
-        log::info!("{}: creating local file at {:?}", client.username, new_path);
-        client
-            .fs
-            .create_file(&new_path, Default::default())
-            .await
-            .unwrap();
-    }
-}
-
-async fn randomly_mutate_worktrees(
-    client: &TestClient,
-    plan: &Arc<Mutex<TestPlan>>,
-    cx: &mut TestAppContext,
-) -> Result<()> {
-    let project = choose_random_project(client, &mut plan.lock().rng).unwrap();
-    let Some(worktree) = project.read_with(cx, |project, cx| {
-        project
-            .worktrees(cx)
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                worktree.is_visible()
-                    && worktree.entries(false).any(|e| e.is_file())
-                    && worktree.root_entry().map_or(false, |e| e.is_dir())
-            })
-            .choose(&mut plan.lock().rng)
-    }) else {
-        return Ok(())
-    };
-
-    let (worktree_id, worktree_root_name) = worktree.read_with(cx, |worktree, _| {
-        (worktree.id(), worktree.root_name().to_string())
-    });
-
-    let is_dir = plan.lock().rng.gen::<bool>();
-    let mut new_path = PathBuf::new();
-    new_path.push(gen_file_name(&mut plan.lock().rng));
-    if !is_dir {
-        new_path.set_extension("rs");
-    }
-    log::info!(
-        "{}: creating {:?} in worktree {} ({})",
-        client.username,
-        new_path,
-        worktree_id,
-        worktree_root_name,
-    );
-    project
-        .update(cx, |project, cx| {
-            project.create_entry((worktree_id, new_path), is_dir, cx)
-        })
-        .unwrap()
-        .await?;
-    Ok(())
 }
 
 fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<ModelHandle<Project>> {
