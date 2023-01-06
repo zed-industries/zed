@@ -774,10 +774,8 @@ impl Room {
             let response = request.await?;
 
             project.update(&mut cx, |project, cx| {
-                project
-                    .shared(response.project_id, cx)
-                    .detach_and_log_err(cx)
-            });
+                project.shared(response.project_id, cx)
+            })?;
 
             // If the user's location is in this project, it changes from UnsharedProject to SharedProject.
             this.update(&mut cx, |this, cx| {

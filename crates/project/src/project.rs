@@ -965,9 +965,9 @@ impl Project {
         }
     }
 
-    pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
         if self.client_state.is_some() {
-            return Task::ready(Err(anyhow!("project was already shared")));
+            return Err(anyhow!("project was already shared"));
         }
 
         for open_buffer in self.opened_buffers.values_mut() {
@@ -1015,7 +1015,7 @@ impl Project {
         self.client_state = Some(ProjectClientState::Local {
             remote_id: project_id,
             metadata_changed: metadata_changed_tx,
-            _maintain_metadata: cx.spawn_weak(move |this, cx| async move {
+            _maintain_metadata: cx.spawn_weak(move |this, mut cx| async move {
                 let mut txs = Vec::new();
                 while let Some(tx) = metadata_changed_rx.next().await {
                     txs.push(tx);
@@ -1024,6 +1024,8 @@ impl Project {
                     }
 
                     let Some(this) = this.upgrade(&cx) else { break };
+                    let worktrees =
+                        this.read_with(&cx, |this, cx| this.worktrees(cx).collect::<Vec<_>>());
                     this.read_with(&cx, |this, cx| {
                         this.client.request(proto::UpdateProject {
                             project_id,
@@ -1032,6 +1034,12 @@ impl Project {
                     })
                     .await
                     .log_err();
+                    for worktree in worktrees {
+                        worktree.update(&mut cx, |worktree, cx| {
+                            let worktree = &mut worktree.as_local_mut().unwrap();
+                            worktree.share(project_id, cx).detach_and_log_err(cx)
+                        });
+                    }
 
                     for tx in txs.drain(..) {
                         let _ = tx.send(());
@@ -1040,26 +1048,10 @@ impl Project {
             }),
         });
 
-        let metadata_changed = self.metadata_changed(cx);
+        let _ = self.metadata_changed(cx);
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
         cx.notify();
-
-        let worktrees = self.worktrees(cx).collect::<Vec<_>>();
-        cx.spawn_weak(|_, mut cx| async move {
-            // Wait for the initial project metadata to be sent before sharing the worktrees.
-            metadata_changed.await;
-
-            let mut worktree_share_tasks = Vec::new();
-            for worktree in worktrees {
-                worktree.update(&mut cx, |worktree, cx| {
-                    let worktree = worktree.as_local_mut().unwrap();
-                    worktree_share_tasks.push(worktree.share(project_id, cx));
-                });
-            }
-
-            futures::future::try_join_all(worktree_share_tasks).await?;
-            Ok(())
-        })
+        Ok(())
     }
 
     pub fn reshared(
@@ -4281,18 +4273,6 @@ impl Project {
                         project
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))
                             .await;
-
-                        if let Some(project_id) =
-                            project.read_with(&cx, |project, _| project.remote_id())
-                        {
-                            worktree.update(&mut cx, |worktree, cx| {
-                                worktree
-                                    .as_local_mut()
-                                    .unwrap()
-                                    .share(project_id, cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }
 
                         Ok(worktree)
                     }
