@@ -4185,8 +4185,11 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
             let message = request.to_proto(project_id, buffer);
-            return cx.spawn(|this, cx| async move {
+            return cx.spawn_weak(|this, cx| async move {
                 let response = rpc.request(message).await?;
+                let this = this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("project dropped"))?;
                 if this.read_with(&cx, |this, _| this.is_read_only()) {
                     Err(anyhow!("disconnected before completing request"))
                 } else {
@@ -5720,8 +5723,11 @@ impl Project {
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let mut opened_buffer_rx = self.opened_buffer.1.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_weak(|this, mut cx| async move {
             let buffer = loop {
+                let Some(this) = this.upgrade(&cx) else {
+                    return Err(anyhow!("project dropped"));
+                };
                 let buffer = this.read_with(&cx, |this, cx| {
                     this.opened_buffers
                         .get(&id)
@@ -5736,6 +5742,7 @@ impl Project {
                 this.update(&mut cx, |this, _| {
                     this.incomplete_remote_buffers.entry(id).or_default();
                 });
+                drop(this);
                 opened_buffer_rx
                     .next()
                     .await
