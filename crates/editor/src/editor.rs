@@ -36,6 +36,7 @@ use gpui::{
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
+    keymap_matcher::KeymapContext,
     platform::CursorStyle,
     serde_json::json,
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
@@ -464,7 +465,7 @@ pub struct Editor {
     searchable: bool,
     cursor_shape: CursorShape,
     workspace_id: Option<WorkspaceId>,
-    keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
+    keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
     remote_id: Option<ViewId>,
@@ -1225,7 +1226,7 @@ impl Editor {
         }
     }
 
-    pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: gpui::keymap::Context) {
+    pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: KeymapContext) {
         self.keymap_context_layers
             .insert(TypeId::of::<Tag>(), context);
     }
@@ -6245,7 +6246,7 @@ impl View for Editor {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut context = Self::default_keymap_context();
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",

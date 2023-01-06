@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use pathfinder_geometry::vector::vec2f;
 
-use crate::{geometry::vector::Vector2F, keymap::Keystroke};
+use crate::{geometry::vector::Vector2F, keymap_matcher::Keystroke};
 
 #[derive(Clone, Debug)]
 pub struct KeyDownEvent {

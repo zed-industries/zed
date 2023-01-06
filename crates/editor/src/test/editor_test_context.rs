@@ -9,7 +9,9 @@ use indoc::indoc;
 use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
 };
-use gpui::{keymap::Keystroke, AppContext, ContextHandle, ModelContext, ViewContext, ViewHandle};
+use gpui::{
+    keymap_matcher::Keystroke, AppContext, ContextHandle, ModelContext, ViewContext, ViewHandle,
+};
 use language::{Buffer, BufferSnapshot};
 use settings::Settings;
 use util::{

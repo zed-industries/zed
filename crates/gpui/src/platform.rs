@@ -14,7 +14,7 @@ use crate::{
         rect::{RectF, RectI},
         vector::Vector2F,
     },
-    keymap,
+    keymap_matcher::KeymapMatcher,
     text_layout::{LineLayout, RunStyle},
     Action, ClipboardItem, Menu, Scene,
 };
@@ -87,7 +87,7 @@ pub(crate) trait ForegroundPlatform {
     fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
     fn on_will_open_menu(&self, callback: Box<dyn FnMut()>);
-    fn set_menus(&self, menus: Vec<Menu>, matcher: &keymap::Matcher);
+    fn set_menus(&self, menus: Vec<Menu>, matcher: &KeymapMatcher);
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,

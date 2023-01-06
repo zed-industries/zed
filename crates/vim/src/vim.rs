@@ -16,7 +16,6 @@ use editor::{Bias, Cancel, Editor};
 use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use language::CursorShape;
 use serde::Deserialize;
-
 use settings::Settings;
 use state::{Mode, Operator, VimState};
 use workspace::{self, Workspace};
@@ -55,7 +54,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
     // Editor Actions
     cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
-        // If we are in a non normal mode or have an active operator, swap to normal mode
+        // If we are in aren't in normal mode or have an active operator, swap to normal mode
         // Otherwise forward cancel on to the editor
         let vim = Vim::read(cx);
         if vim.state.mode != Mode::Normal || vim.active_operator().is_some() {
@@ -81,17 +80,21 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 }
 
-// Any keystrokes not mapped to vim should clear the active operator
 pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
     cx.observe_keystrokes(window_id, |_keystroke, _result, handled_by, cx| {
         if let Some(handled_by) = handled_by {
-            if handled_by.namespace() == "vim" {
+            // Keystroke is handled by the vim system, so continue forward
+            // Also short circuit if it is the special cancel action
+            if handled_by.namespace() == "vim"
+                || (handled_by.namespace() == "editor" && handled_by.name() == "Cancel")
+            {
                 return true;
             }
         }
 
         Vim::update(cx, |vim, cx| {
             if vim.active_operator().is_some() {
+                // If the keystroke is not handled by vim, we should clear the operator
                 vim.clear_operator(cx);
             }
         });

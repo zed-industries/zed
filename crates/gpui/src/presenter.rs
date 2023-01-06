@@ -4,7 +4,7 @@ use crate::{
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
-    keymap::Keystroke,
+    keymap_matcher::Keystroke,
     platform::{CursorStyle, Event},
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,

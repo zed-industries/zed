@@ -1,6 +1,6 @@
 use crate::{
     geometry::vector::vec2f,
-    keymap::Keystroke,
+    keymap_matcher::Keystroke,
     platform::{Event, NavigationDirection},
     KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
     MouseMovedEvent, ScrollDelta, ScrollWheelEvent, TouchPhase,

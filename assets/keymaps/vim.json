@@ -1,6 +1,6 @@
 [
     {
-        "context": "Editor && VimControl",
+        "context": "Editor && VimControl && !VimWaiting",
         "bindings": {
             "g": [
                 "vim::PushOperator",
@@ -53,6 +53,42 @@
                 }
             ],
             "%": "vim::Matching",
+            "ctrl-y": [
+                "vim::Scroll",
+                "LineUp"
+            ],
+            "f": [
+                "vim::PushOperator",
+                {
+                    "FindForward": {
+                        "before": false
+                    }
+                }
+            ],
+            "t": [
+                "vim::PushOperator",
+                {
+                    "FindForward": {
+                        "before": true
+                    }
+                }
+            ],
+            "shift-f": [
+                "vim::PushOperator",
+                {
+                    "FindBackward": {
+                        "after": false
+                    }
+                }
+            ],
+            "shift-t": [
+                "vim::PushOperator",
+                {
+                    "FindBackward": {
+                        "after": true
+                    }
+                }
+            ],
             "escape": "editor::Cancel",
             "0": "vim::StartOfLine", // When no number operator present, use start of line motion
             "1": [
@@ -94,7 +130,7 @@
         }
     },
     {
-        "context": "Editor && vim_mode == normal && vim_operator == none",
+        "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
         "bindings": {
             "c": [
                 "vim::PushOperator",
@@ -173,10 +209,6 @@
             "ctrl-e": [
                 "vim::Scroll",
                 "LineDown"
-            ],
-            "ctrl-y": [
-                "vim::Scroll",
-                "LineUp"
             ]
         }
     },
@@ -255,7 +287,7 @@
         }
     },
     {
-        "context": "Editor && vim_mode == visual",
+        "context": "Editor && vim_mode == visual && !VimWaiting",
         "bindings": {
             "u": "editor::Undo",
             "c": "vim::VisualChange",
@@ -270,6 +302,12 @@
         "bindings": {
             "escape": "vim::NormalBefore",
             "ctrl-c": "vim::NormalBefore"
+        }
+    },
+    {
+        "context": "Editor && VimWaiting",
+        "bindings": {
+            "*": "gpui::KeyPressed"
         }
     }
 ]

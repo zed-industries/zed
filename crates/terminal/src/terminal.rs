@@ -50,7 +50,7 @@ use thiserror::Error;
 
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
-    keymap::Keystroke,
+    keymap_matcher::Keystroke,
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
     ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, Task,
 };

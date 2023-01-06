@@ -3,7 +3,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement},
-    keymap::Keystroke,
+    keymap_matcher::Keystroke,
     Action, AnyViewHandle, Element, Entity, MouseState, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
@@ -64,8 +64,10 @@ impl CommandPalette {
                     name: humanize_action_name(name),
                     action,
                     keystrokes: bindings
+                        .iter()
+                        .filter_map(|binding| binding.keystrokes())
                         .last()
-                        .map_or(Vec::new(), |binding| binding.keystrokes().to_vec()),
+                        .map_or(Vec::new(), |keystrokes| keystrokes.to_vec()),
                 })
             })
             .collect();

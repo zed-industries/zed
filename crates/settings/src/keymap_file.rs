@@ -2,7 +2,7 @@ use crate::{parse_json_with_comments, Settings};
 use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;
-use gpui::{keymap::Binding, MutableAppContext};
+use gpui::{keymap_matcher::Binding, MutableAppContext};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},

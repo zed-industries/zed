@@ -18,6 +18,7 @@ use editor::{
 };
 use gpui::{actions, impl_actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, Point, SelectionGoal};
+use log::error;
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -101,8 +102,9 @@ pub fn normal_motion(
             Some(Operator::Change) => change_motion(vim, motion, times, cx),
             Some(Operator::Delete) => delete_motion(vim, motion, times, cx),
             Some(Operator::Yank) => yank_motion(vim, motion, times, cx),
-            _ => {
+            Some(operator) => {
                 // Can't do anything for text objects or namespace operators. Ignoring
+                error!("Unexpected normal mode motion operator: {:?}", operator)
             }
         }
     });
@@ -911,5 +913,43 @@ mod test {
     async fn test_h_through_unicode(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["h"]);
         cx.assert_all("Testˇ├ˇ──ˇ┐ˇTest").await;
+    }
+
+    #[gpui::test]
+    async fn test_f_and_t(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        for count in 1..=3 {
+            let test_case = indoc! {"
+                ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
+                ˇ    ˇbˇaaˇa ˇbˇbˇb
+                ˇ   
+                ˇb
+            "};
+
+            cx.assert_binding_matches_all([&count.to_string(), "f", "b"], test_case)
+                .await;
+
+            cx.assert_binding_matches_all([&count.to_string(), "t", "b"], test_case)
+                .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_capital_f_and_capital_t(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        for count in 1..=3 {
+            let test_case = indoc! {"
+                ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
+                ˇ    ˇbˇaaˇa ˇbˇbˇb
+                ˇ   
+                ˇb
+            "};
+
+            cx.assert_binding_matches_all([&count.to_string(), "shift-f", "b"], test_case)
+                .await;
+
+            cx.assert_binding_matches_all([&count.to_string(), "shift-t", "b"], test_case)
+                .await;
+        }
     }
 }

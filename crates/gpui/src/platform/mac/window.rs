@@ -4,7 +4,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    keymap::Keystroke,
+    keymap_matcher::Keystroke,
     mac::platform::NSViewLayerContentsRedrawDuringViewResize,
     platform::{
         self,
