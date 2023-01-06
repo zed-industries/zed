@@ -60,14 +60,6 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
         self.internal.lock().callbacks.is_empty()
     }
 
-    pub fn count(&self, key: K) -> usize {
-        self.internal
-            .lock()
-            .callbacks
-            .get(&key)
-            .map_or(0, |callbacks| callbacks.len())
-    }
-
     pub fn subscribe(&mut self, key: K, subscription_id: usize) -> Subscription<K, F> {
         Subscription {
             key,
