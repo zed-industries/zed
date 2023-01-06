@@ -2123,16 +2123,6 @@ impl MutableAppContext {
                     self.pending_notifications.clear();
                     self.remove_dropped_entities();
                 } else {
-                    self.focus_observations.gc();
-                    self.global_subscriptions.gc();
-                    self.global_observations.gc();
-                    self.subscriptions.gc();
-                    self.observations.gc();
-                    self.window_activation_observations.gc();
-                    self.window_fullscreen_observations.gc();
-                    self.keystroke_observations.gc();
-                    self.release_observations.gc();
-
                     self.remove_dropped_entities();
 
                     if refreshing {
