@@ -5768,60 +5768,44 @@ mod tests {
 
     #[crate::test(self)]
     fn test_view_events(cx: &mut MutableAppContext) {
-        #[derive(Default)]
-        struct View {
-            events: Vec<usize>,
-        }
-
-        impl Entity for View {
-            type Event = usize;
-        }
-
-        impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-
-            fn ui_name() -> &'static str {
-                "View"
-            }
-        }
-
         struct Model;
 
         impl Entity for Model {
-            type Event = usize;
+            type Event = String;
         }
 
-        let (_, handle_1) = cx.add_window(Default::default(), |_| View::default());
-        let handle_2 = cx.add_view(&handle_1, |_| View::default());
+        let (_, handle_1) = cx.add_window(Default::default(), |_| TestView::default());
+        let handle_2 = cx.add_view(&handle_1, |_| TestView::default());
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, cx| {
             cx.subscribe(&handle_2, move |me, emitter, event, cx| {
-                me.events.push(*event);
+                me.events.push(event.clone());
 
                 cx.subscribe(&emitter, |me, _, event, _| {
-                    me.events.push(*event * 2);
+                    me.events.push(format!("{event} from inner"));
                 })
                 .detach();
             })
             .detach();
 
             cx.subscribe(&handle_3, |me, _, event, _| {
-                me.events.push(*event);
+                me.events.push(event.clone());
             })
             .detach();
         });
 
-        handle_2.update(cx, |_, c| c.emit(7));
-        assert_eq!(handle_1.read(cx).events, vec![7]);
+        handle_2.update(cx, |_, c| c.emit("7".into()));
+        assert_eq!(handle_1.read(cx).events, vec!["7"]);
 
-        handle_2.update(cx, |_, c| c.emit(5));
-        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
+        handle_2.update(cx, |_, c| c.emit("5".into()));
+        assert_eq!(handle_1.read(cx).events, vec!["7", "5", "5 from inner"]);
 
-        handle_3.update(cx, |_, c| c.emit(9));
-        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10, 9]);
+        handle_3.update(cx, |_, c| c.emit("9".into()));
+        assert_eq!(
+            handle_1.read(cx).events,
+            vec!["7", "5", "5 from inner", "9"]
+        );
     }
 
     #[crate::test(self)]
@@ -6012,31 +5996,15 @@ mod tests {
 
     #[crate::test(self)]
     fn test_dropping_subscribers(cx: &mut MutableAppContext) {
-        struct View;
-
-        impl Entity for View {
-            type Event = ();
-        }
-
-        impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-
-            fn ui_name() -> &'static str {
-                "View"
-            }
-        }
-
         struct Model;
 
         impl Entity for Model {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(Default::default(), |_| View);
-        let observing_view = cx.add_view(&root_view, |_| View);
-        let emitting_view = cx.add_view(&root_view, |_| View);
+        let (_, root_view) = cx.add_window(Default::default(), |_| TestView::default());
+        let observing_view = cx.add_view(&root_view, |_| TestView::default());
+        let emitting_view = cx.add_view(&root_view, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -6053,165 +6021,92 @@ mod tests {
             drop(observing_model);
         });
 
-        emitting_view.update(cx, |_, cx| cx.emit(()));
+        emitting_view.update(cx, |_, cx| cx.emit(Default::default()));
         observed_model.update(cx, |_, cx| cx.emit(()));
     }
 
     #[crate::test(self)]
     fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut MutableAppContext) {
-        #[derive(Default)]
-        struct TestView;
-
-        impl Entity for TestView {
-            type Event = ();
-        }
-
-        impl View for TestView {
-            fn ui_name() -> &'static str {
-                "TestView"
-            }
-
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-        }
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-        cx.add_window(Default::default(), |cx| {
+        let (_, view) = cx.add_window::<TestView, _>(Default::default(), |cx| {
             drop(cx.subscribe(&cx.handle(), {
-                let events = events.clone();
-                move |_, _, _, _| events.borrow_mut().push("dropped before flush")
+                move |this, _, _, _| this.events.push("dropped before flush".into())
             }));
             cx.subscribe(&cx.handle(), {
-                let events = events.clone();
-                move |_, _, _, _| events.borrow_mut().push("before emit")
+                move |this, _, _, _| this.events.push("before emit".into())
             })
             .detach();
-            cx.emit(());
+            cx.emit("the event".into());
             cx.subscribe(&cx.handle(), {
-                let events = events.clone();
-                move |_, _, _, _| events.borrow_mut().push("after emit")
+                move |this, _, _, _| this.events.push("after emit".into())
             })
             .detach();
-            TestView
+            TestView { events: Vec::new() }
         });
-        assert_eq!(*events.borrow(), ["before emit"]);
+
+        assert_eq!(view.read(cx).events, ["before emit"]);
     }
 
     #[crate::test(self)]
     fn test_observe_and_notify_from_view(cx: &mut MutableAppContext) {
         #[derive(Default)]
-        struct View {
-            events: Vec<usize>,
-        }
-
-        impl Entity for View {
-            type Event = usize;
-        }
-
-        impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-
-            fn ui_name() -> &'static str {
-                "View"
-            }
-        }
-
-        #[derive(Default)]
         struct Model {
-            count: usize,
+            state: String,
         }
 
         impl Entity for Model {
             type Event = ();
         }
 
-        let (_, view) = cx.add_window(Default::default(), |_| View::default());
-        let model = cx.add_model(|_| Model::default());
+        let (_, view) = cx.add_window(Default::default(), |_| TestView::default());
+        let model = cx.add_model(|_| Model {
+            state: "old-state".into(),
+        });
 
         view.update(cx, |_, c| {
             c.observe(&model, |me, observed, c| {
-                me.events.push(observed.read(c).count)
+                me.events.push(observed.read(c).state.clone())
             })
             .detach();
         });
 
-        model.update(cx, |model, c| {
-            model.count = 11;
-            c.notify();
+        model.update(cx, |model, cx| {
+            model.state = "new-state".into();
+            cx.notify();
         });
-        assert_eq!(view.read(cx).events, vec![11]);
+        assert_eq!(view.read(cx).events, vec!["new-state"]);
     }
 
     #[crate::test(self)]
     fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut MutableAppContext) {
-        #[derive(Default)]
-        struct TestView;
-
-        impl Entity for TestView {
-            type Event = ();
-        }
-
-        impl View for TestView {
-            fn ui_name() -> &'static str {
-                "TestView"
-            }
-
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-        }
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-        cx.add_window(Default::default(), |cx| {
+        let (_, view) = cx.add_window::<TestView, _>(Default::default(), |cx| {
             drop(cx.observe(&cx.handle(), {
-                let events = events.clone();
-                move |_, _, _| events.borrow_mut().push("dropped before flush")
+                move |this, _, _| this.events.push("dropped before flush".into())
             }));
             cx.observe(&cx.handle(), {
-                let events = events.clone();
-                move |_, _, _| events.borrow_mut().push("before notify")
+                move |this, _, _| this.events.push("before notify".into())
             })
             .detach();
             cx.notify();
             cx.observe(&cx.handle(), {
-                let events = events.clone();
-                move |_, _, _| events.borrow_mut().push("after notify")
+                move |this, _, _| this.events.push("after notify".into())
             })
             .detach();
-            TestView
+            TestView { events: Vec::new() }
         });
-        assert_eq!(*events.borrow(), ["before notify"]);
+
+        assert_eq!(view.read(cx).events, ["before notify"]);
     }
 
     #[crate::test(self)]
     fn test_dropping_observers(cx: &mut MutableAppContext) {
-        struct View;
-
-        impl Entity for View {
-            type Event = ();
-        }
-
-        impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-
-            fn ui_name() -> &'static str {
-                "View"
-            }
-        }
-
         struct Model;
 
         impl Entity for Model {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(Default::default(), |_| View);
-        let observing_view = cx.add_view(root_view, |_| View);
+        let (_, root_view) = cx.add_window(Default::default(), |_| TestView::default());
+        let observing_view = cx.add_view(root_view, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -6927,47 +6822,15 @@ mod tests {
     #[crate::test(self)]
     #[should_panic]
     async fn test_view_condition_timeout(cx: &mut TestAppContext) {
-        struct View;
-
-        impl super::Entity for View {
-            type Event = ();
-        }
-
-        impl super::View for View {
-            fn ui_name() -> &'static str {
-                "test view"
-            }
-
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-        }
-
-        let (_, view) = cx.add_window(|_| View);
+        let (_, view) = cx.add_window(|_| TestView::default());
         view.condition(cx, |_, _| false).await;
     }
 
     #[crate::test(self)]
     #[should_panic(expected = "view dropped with pending condition")]
     async fn test_view_condition_panic_on_drop(cx: &mut TestAppContext) {
-        struct View;
-
-        impl super::Entity for View {
-            type Event = ();
-        }
-
-        impl super::View for View {
-            fn ui_name() -> &'static str {
-                "test view"
-            }
-
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-        }
-
-        let (_, root_view) = cx.add_window(|_| View);
-        let view = cx.add_view(&root_view, |_| View);
+        let (_, root_view) = cx.add_window(|_| TestView::default());
+        let view = cx.add_view(&root_view, |_| TestView::default());
 
         let condition = view.condition(cx, |_, _| false);
         cx.update(|_| drop(view));
@@ -7179,5 +7042,24 @@ mod tests {
         });
         assert!(!child_rendered.take());
         assert!(child_dropped.take());
+    }
+
+    #[derive(Default)]
+    struct TestView {
+        events: Vec<String>,
+    }
+
+    impl Entity for TestView {
+        type Event = String;
+    }
+
+    impl View for TestView {
+        fn ui_name() -> &'static str {
+            "TestView"
+        }
+
+        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            Empty::new().boxed()
+        }
     }
 }
