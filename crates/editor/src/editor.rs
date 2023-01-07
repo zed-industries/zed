@@ -827,6 +827,40 @@ impl CompletionsMenu {
                 })
                 .collect()
         };
+
+        //Remove all candidates where the query's start does not match the start of any word in the candidate
+        if let Some(query) = query {
+            if let Some(&start) = query.as_bytes().get(0) {
+                let start = start.to_ascii_lowercase();
+                matches.retain(|m| {
+                    let bytes = m.string.as_bytes();
+                    let mut index = 0;
+
+                    std::iter::from_fn(move || {
+                        let start_index = index;
+                        while index < bytes.len() {
+                            let current_upper = bytes[index].is_ascii_uppercase();
+                            let has_more = index + 1 < bytes.len();
+                            let next_upper = has_more && bytes[index + 1].is_ascii_uppercase();
+
+                            index += 1;
+                            if !current_upper && next_upper {
+                                return Some(&m.string[start_index..index]);
+                            }
+                        }
+
+                        index = bytes.len();
+                        if start_index < bytes.len() {
+                            return Some(&m.string[start_index..]);
+                        }
+                        None
+                    })
+                    .flat_map(|w| w.split_inclusive('_'))
+                    .any(|w| w.as_bytes().first().map(|&b| b.to_ascii_lowercase()) == Some(start))
+                });
+            }
+        }
+
         matches.sort_unstable_by_key(|mat| {
             let completion = &self.completions[mat.candidate_id];
             (
