@@ -3611,7 +3611,9 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        dbg!("undo");
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
+            dbg!(tx_id);
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.change_selections(None, cx, |s| {
                     s.select_anchors(selections.to_vec());

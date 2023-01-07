@@ -290,6 +290,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 
     buffer.update(cx, |buf, cx| {
         buf.undo(cx);
+        buf.undo(cx);
+        buf.undo(cx);
+        buf.undo(cx);
         assert_eq!(buf.text(), "fn a() {}");
         assert!(buf.is_parsing());
     });
@@ -304,6 +307,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
     );
 
     buffer.update(cx, |buf, cx| {
+        buf.redo(cx);
+        buf.redo(cx);
+        buf.redo(cx);
         buf.redo(cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
@@ -1022,8 +1028,11 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
             .unindent()
         );
 
+        // Grouping is disabled in tests, so we need 2 undos
+        buffer.undo(cx); // Undo the auto-indent
+        buffer.undo(cx); // Undo the original edit
+
         // Insert the block at a deeper indent level. The entire block is outdented.
-        buffer.undo(cx);
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "        ")], None, cx);
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
