@@ -3,7 +3,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement, Bias, CharKind, DisplayPoint,
 };
-use gpui::{actions, impl_actions, MutableAppContext};
+use gpui::{actions, impl_actions, keymap_matcher::KeyPressed, MutableAppContext};
 use language::{Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -32,6 +32,8 @@ pub enum Motion {
     StartOfDocument,
     EndOfDocument,
     Matching,
+    FindForward { before: bool, character: char },
+    FindBackward { after: bool, character: char },
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -107,10 +109,34 @@ pub fn init(cx: &mut MutableAppContext) {
          &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
          cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
     );
+    cx.add_action(
+        |_: &mut Workspace, KeyPressed { keystroke }: &KeyPressed, cx| match Vim::read(cx)
+            .active_operator()
+        {
+            Some(Operator::FindForward { before }) => motion(
+                Motion::FindForward {
+                    before,
+                    character: keystroke.key.chars().next().unwrap(),
+                },
+                cx,
+            ),
+            Some(Operator::FindBackward { after }) => motion(
+                Motion::FindBackward {
+                    after,
+                    character: keystroke.key.chars().next().unwrap(),
+                },
+                cx,
+            ),
+            _ => cx.propagate_action(),
+        },
+    )
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut MutableAppContext) {
-    if let Some(Operator::Namespace(_)) = Vim::read(cx).active_operator() {
+    if let Some(Operator::Namespace(_))
+    | Some(Operator::FindForward { .. })
+    | Some(Operator::FindBackward { .. }) = Vim::read(cx).active_operator()
+    {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }
 
@@ -152,14 +178,16 @@ impl Motion {
             | CurrentLine
             | EndOfLine
             | NextWordEnd { .. }
-            | Matching => true,
+            | Matching
+            | FindForward { .. } => true,
             Left
             | Backspace
             | Right
             | StartOfLine
             | NextWordStart { .. }
             | PreviousWordStart { .. }
-            | FirstNonWhitespace => false,
+            | FirstNonWhitespace
+            | FindBackward { .. } => false,
         }
     }
 
@@ -196,6 +224,14 @@ impl Motion {
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (end_of_document(map, point, times), SelectionGoal::None),
             Matching => (matching(map, point), SelectionGoal::None),
+            FindForward { before, character } => (
+                find_forward(map, point, before, character, times),
+                SelectionGoal::None,
+            ),
+            FindBackward { after, character } => (
+                find_backward(map, point, after, character, times),
+                SelectionGoal::None,
+            ),
         };
 
         (new_point != point || self.infallible()).then_some((new_point, goal))
@@ -445,4 +481,51 @@ fn matching(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     } else {
         point
     }
+}
+
+fn find_forward(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    before: bool,
+    target: char,
+    mut times: usize,
+) -> DisplayPoint {
+    let mut previous_point = from;
+
+    for (ch, point) in map.chars_at(from) {
+        if ch == target && point != from {
+            times -= 1;
+            if times == 0 {
+                return if before { previous_point } else { point };
+            }
+        } else if ch == '\n' {
+            break;
+        }
+        previous_point = point;
+    }
+
+    from
+}
+
+fn find_backward(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    after: bool,
+    target: char,
+    mut times: usize,
+) -> DisplayPoint {
+    let mut previous_point = from;
+    for (ch, point) in map.reverse_chars_at(from) {
+        if ch == target && point != from {
+            times -= 1;
+            if times == 0 {
+                return if after { previous_point } else { point };
+            }
+        } else if ch == '\n' {
+            break;
+        }
+        previous_point = point;
+    }
+
+    from
 }

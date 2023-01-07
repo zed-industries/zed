@@ -7,7 +7,7 @@ use async_compat::Compat;
 #[cfg(feature = "neovim")]
 use async_trait::async_trait;
 #[cfg(feature = "neovim")]
-use gpui::keymap::Keystroke;
+use gpui::keymap_matcher::Keystroke;
 
 use language::{Point, Selection};
 

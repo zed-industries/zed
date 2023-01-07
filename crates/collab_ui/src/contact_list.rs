@@ -8,8 +8,10 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_actions, impl_internal_actions, keymap, AppContext, CursorStyle, Entity, ModelHandle,
-    MouseButton, MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    impl_actions, impl_internal_actions,
+    keymap_matcher::KeymapContext,
+    AppContext, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
+    Subscription, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
@@ -1267,7 +1269,7 @@ impl View for ContactList {
         "ContactList"
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
         cx.set.insert("menu".into());
         cx

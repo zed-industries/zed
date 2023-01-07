@@ -14,7 +14,7 @@ use gpui::{
     elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack, Text},
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
-    keymap::Keystroke,
+    keymap_matcher::{KeymapContext, Keystroke},
     AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -465,7 +465,7 @@ impl View for TerminalView {
         });
     }
 
-    fn keymap_context(&self, cx: &gpui::AppContext) -> gpui::keymap::Context {
+    fn keymap_context(&self, cx: &gpui::AppContext) -> KeymapContext {
         let mut context = Self::default_keymap_context();
 
         let mode = self.terminal.read(cx).last_content.mode;

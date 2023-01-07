@@ -28,7 +28,6 @@ use smol::prelude::*;
 pub use action::*;
 use callback_collection::CallbackCollection;
 use collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
-use keymap::MatchResult;
 use platform::Event;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_app_context::{ContextHandle, TestAppContext};
@@ -37,7 +36,7 @@ use crate::{
     elements::ElementBox,
     executor::{self, Task},
     geometry::rect::RectF,
-    keymap::{self, Binding, Keystroke},
+    keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
@@ -72,11 +71,11 @@ pub trait View: Entity + Sized {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> keymap_matcher::KeymapContext {
         Self::default_keymap_context()
     }
-    fn default_keymap_context() -> keymap::Context {
-        let mut cx = keymap::Context::default();
+    fn default_keymap_context() -> keymap_matcher::KeymapContext {
+        let mut cx = keymap_matcher::KeymapContext::default();
         cx.set.insert(Self::ui_name().into());
         cx
     }
@@ -609,7 +608,7 @@ pub struct MutableAppContext {
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
-    keystroke_matcher: keymap::Matcher,
+    keystroke_matcher: KeymapMatcher,
     next_entity_id: usize,
     next_window_id: usize,
     next_subscription_id: usize,
@@ -668,7 +667,7 @@ impl MutableAppContext {
             capture_actions: Default::default(),
             actions: Default::default(),
             global_actions: Default::default(),
-            keystroke_matcher: keymap::Matcher::default(),
+            keystroke_matcher: KeymapMatcher::default(),
             next_entity_id: 0,
             next_window_id: 0,
             next_subscription_id: 0,
@@ -1361,8 +1360,10 @@ impl MutableAppContext {
                 .views
                 .get(&(window_id, *view_id))
                 .expect("view in responder chain does not exist");
-            let cx = view.keymap_context(self.as_ref());
-            let keystrokes = self.keystroke_matcher.keystrokes_for_action(action, &cx);
+            let keymap_context = view.keymap_context(self.as_ref());
+            let keystrokes = self
+                .keystroke_matcher
+                .keystrokes_for_action(action, &keymap_context);
             if keystrokes.is_some() {
                 return keystrokes;
             }
@@ -1443,7 +1444,7 @@ impl MutableAppContext {
         })
     }
 
-    pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
+    pub fn add_bindings<T: IntoIterator<Item = Binding>>(&mut self, bindings: T) {
         self.keystroke_matcher.add_bindings(bindings);
     }
 
@@ -3139,7 +3140,7 @@ pub trait AnyView {
         window_id: usize,
         view_id: usize,
     ) -> bool;
-    fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
+    fn keymap_context(&self, cx: &AppContext) -> KeymapContext;
     fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
 
     fn text_for_range(&self, range: Range<usize>, cx: &AppContext) -> Option<String>;
@@ -3281,7 +3282,7 @@ where
         View::modifiers_changed(self, event, &mut cx)
     }
 
-    fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
+    fn keymap_context(&self, cx: &AppContext) -> KeymapContext {
         View::keymap_context(self, cx)
     }
 
@@ -6633,7 +6634,7 @@ mod tests {
 
         struct View {
             id: usize,
-            keymap_context: keymap::Context,
+            keymap_context: KeymapContext,
         }
 
         impl Entity for View {
@@ -6649,7 +6650,7 @@ mod tests {
                 "View"
             }
 
-            fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+            fn keymap_context(&self, _: &AppContext) -> KeymapContext {
                 self.keymap_context.clone()
             }
         }
@@ -6658,7 +6659,7 @@ mod tests {
             fn new(id: usize) -> Self {
                 View {
                     id,
-                    keymap_context: keymap::Context::default(),
+                    keymap_context: KeymapContext::default(),
                 }
             }
         }
@@ -6682,17 +6683,13 @@ mod tests {
 
         // This keymap's only binding dispatches an action on view 2 because that view will have
         // "a" and "b" in its context, but not "c".
-        cx.add_bindings(vec![keymap::Binding::new(
+        cx.add_bindings(vec![Binding::new(
             "a",
             Action("a".to_string()),
             Some("a && b && !c"),
         )]);
 
-        cx.add_bindings(vec![keymap::Binding::new(
-            "b",
-            Action("b".to_string()),
-            None,
-        )]);
+        cx.add_bindings(vec![Binding::new("b", Action("b".to_string()), None)]);
 
         let actions = Rc::new(RefCell::new(Vec::new()));
         cx.add_action({

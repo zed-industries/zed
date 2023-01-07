@@ -10,7 +10,8 @@ use gpui::{
         MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
-    impl_internal_actions, keymap,
+    impl_internal_actions,
+    keymap_matcher::KeymapContext,
     platform::CursorStyle,
     AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
@@ -1301,7 +1302,7 @@ impl View for ProjectPanel {
             .boxed()
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
         cx.set.insert("menu".into());
         cx

@@ -1,7 +1,7 @@
 use gpui::{
-    elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap, platform::CursorStyle,
-    Action, AnyViewHandle, AppContext, Axis, Entity, MouseButton, MutableAppContext, RenderContext,
-    SizeConstraint, Subscription, View, ViewContext,
+    elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap_matcher::KeymapContext,
+    platform::CursorStyle, Action, AnyViewHandle, AppContext, Axis, Entity, MouseButton,
+    MutableAppContext, RenderContext, SizeConstraint, Subscription, View, ViewContext,
 };
 use menu::*;
 use settings::Settings;
@@ -75,7 +75,7 @@ impl View for ContextMenu {
         "ContextMenu"
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
         cx.set.insert("menu".into());
         cx

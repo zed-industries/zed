@@ -4,7 +4,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    keymap, Action, ClipboardItem,
+    keymap_matcher::KeymapMatcher,
+    Action, ClipboardItem,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -84,7 +85,7 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     fn on_menu_command(&self, _: Box<dyn FnMut(&dyn Action)>) {}
     fn on_validate_menu_command(&self, _: Box<dyn FnMut(&dyn Action) -> bool>) {}
     fn on_will_open_menu(&self, _: Box<dyn FnMut()>) {}
-    fn set_menus(&self, _: Vec<crate::Menu>, _: &keymap::Matcher) {}
+    fn set_menus(&self, _: Vec<crate::Menu>, _: &KeymapMatcher) {}
 
     fn prompt_for_paths(
         &self,

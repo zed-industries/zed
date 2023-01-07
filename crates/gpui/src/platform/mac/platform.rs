@@ -3,7 +3,8 @@ use super::{
     FontSystem, Window,
 };
 use crate::{
-    executor, keymap,
+    executor,
+    keymap_matcher::KeymapMatcher,
     platform::{self, CursorStyle},
     Action, AppVersion, ClipboardItem, Event, Menu, MenuItem,
 };
@@ -135,7 +136,7 @@ impl MacForegroundPlatform {
         menus: Vec<Menu>,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
-        keystroke_matcher: &keymap::Matcher,
+        keystroke_matcher: &KeymapMatcher,
     ) -> id {
         let application_menu = NSMenu::new(nil).autorelease();
         application_menu.setDelegate_(delegate);
@@ -172,7 +173,7 @@ impl MacForegroundPlatform {
         item: MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
-        keystroke_matcher: &keymap::Matcher,
+        keystroke_matcher: &KeymapMatcher,
     ) -> id {
         match item {
             MenuItem::Separator => NSMenuItem::separatorItem(nil),
@@ -183,7 +184,7 @@ impl MacForegroundPlatform {
                     .map(|binding| binding.keystrokes());
 
                 let item;
-                if let Some(keystrokes) = keystrokes {
+                if let Some(keystrokes) = keystrokes.flatten() {
                     if keystrokes.len() == 1 {
                         let keystroke = &keystrokes[0];
                         let mut mask = NSEventModifierFlags::empty();
@@ -317,7 +318,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         self.0.borrow_mut().validate_menu_command = Some(callback);
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &keymap::Matcher) {
+    fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.borrow_mut();
