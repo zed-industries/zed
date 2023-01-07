@@ -290,6 +290,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 
     buffer.update(cx, |buf, cx| {
         buf.undo(cx);
+        buf.undo(cx);
+        buf.undo(cx);
+        buf.undo(cx);
         assert_eq!(buf.text(), "fn a() {}");
         assert!(buf.is_parsing());
     });
@@ -304,6 +307,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
     );
 
     buffer.update(cx, |buf, cx| {
+        buf.redo(cx);
+        buf.redo(cx);
+        buf.redo(cx);
         buf.redo(cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
@@ -1022,8 +1028,11 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
             .unindent()
         );
 
+        // Grouping is disabled in tests, so we need 2 undos
+        buffer.undo(cx); // Undo the auto-indent
+        buffer.undo(cx); // Undo the original edit
+
         // Insert the block at a deeper indent level. The entire block is outdented.
-        buffer.undo(cx);
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "        ")], None, cx);
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
@@ -1275,7 +1284,9 @@ fn test_serialization(cx: &mut gpui::MutableAppContext) {
     assert_eq!(buffer1.read(cx).text(), "abcDF");
 
     let state = buffer1.read(cx).to_proto();
-    let ops = cx.background().block(buffer1.read(cx).serialize_ops(cx));
+    let ops = cx
+        .background()
+        .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.add_model(|cx| {
         let mut buffer = Buffer::from_proto(1, state, None).unwrap();
         buffer
@@ -1316,7 +1327,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             let state = base_buffer.read(cx).to_proto();
             let ops = cx
                 .background()
-                .block(base_buffer.read(cx).serialize_ops(cx));
+                .block(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer = Buffer::from_proto(i as ReplicaId, state, None).unwrap();
             buffer
                 .apply_ops(
@@ -1413,7 +1424,9 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             }
             50..=59 if replica_ids.len() < max_peers => {
                 let old_buffer_state = buffer.read(cx).to_proto();
-                let old_buffer_ops = cx.background().block(buffer.read(cx).serialize_ops(cx));
+                let old_buffer_ops = cx
+                    .background()
+                    .block(buffer.read(cx).serialize_ops(None, cx));
                 let new_replica_id = (0..=replica_ids.len() as ReplicaId)
                     .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())
                     .choose(&mut rng)

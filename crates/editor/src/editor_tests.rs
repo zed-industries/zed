@@ -29,7 +29,11 @@ use workspace::{
 #[gpui::test]
 fn test_edit_events(cx: &mut MutableAppContext) {
     cx.set_global(Settings::test(cx));
-    let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
+    let buffer = cx.add_model(|cx| {
+        let mut buffer = language::Buffer::new(0, "123456", cx);
+        buffer.set_group_interval(Duration::from_secs(1));
+        buffer
+    });
 
     let events = Rc::new(RefCell::new(Vec::new()));
     let (_, editor1) = cx.add_window(Default::default(), {
@@ -3502,6 +3506,8 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
             ]
         );
 
+        view.undo(&Undo, cx);
+        view.undo(&Undo, cx);
         view.undo(&Undo, cx);
         assert_eq!(
             view.text(cx),

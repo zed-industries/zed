@@ -45,7 +45,7 @@ fn test_random_edits(mut rng: StdRng) {
     let mut buffer = Buffer::new(0, 0, reference_string.clone());
     LineEnding::normalize(&mut reference_string);
 
-    buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
+    buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
     let mut buffer_versions = Vec::new();
     log::info!(
         "buffer text {:?}, version: {:?}",
@@ -488,7 +488,7 @@ fn test_anchors_at_start_and_end() {
 fn test_undo_redo() {
     let mut buffer = Buffer::new(0, 0, "1234".into());
     // Set group interval to zero so as to not group edits in the undo stack.
-    buffer.history.group_interval = Duration::from_secs(0);
+    buffer.set_group_interval(Duration::from_secs(0));
 
     buffer.edit([(1..1, "abx")]);
     buffer.edit([(3..4, "yzef")]);
@@ -524,6 +524,7 @@ fn test_undo_redo() {
 fn test_history() {
     let mut now = Instant::now();
     let mut buffer = Buffer::new(0, 0, "123456".into());
+    buffer.set_group_interval(Duration::from_millis(300));
 
     let transaction_1 = buffer.start_transaction_at(now).unwrap();
     buffer.edit([(2..4, "cd")]);
@@ -535,7 +536,7 @@ fn test_history() {
     buffer.end_transaction_at(now).unwrap();
     assert_eq!(buffer.text(), "12cde6");
 
-    now += buffer.history.group_interval + Duration::from_millis(1);
+    now += buffer.transaction_group_interval() + Duration::from_millis(1);
     buffer.start_transaction_at(now);
     buffer.edit([(0..1, "a")]);
     buffer.edit([(1..1, "b")]);

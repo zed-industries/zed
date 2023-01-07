@@ -123,34 +123,6 @@ impl Database {
         .await
     }
 
-    pub async fn delete_stale_projects(
-        &self,
-        environment: &str,
-        new_server_id: ServerId,
-    ) -> Result<()> {
-        self.transaction(|tx| async move {
-            let stale_server_epochs = self
-                .stale_server_ids(environment, new_server_id, &tx)
-                .await?;
-            project_collaborator::Entity::delete_many()
-                .filter(
-                    project_collaborator::Column::ConnectionServerId
-                        .is_in(stale_server_epochs.iter().copied()),
-                )
-                .exec(&*tx)
-                .await?;
-            project::Entity::delete_many()
-                .filter(
-                    project::Column::HostConnectionServerId
-                        .is_in(stale_server_epochs.iter().copied()),
-                )
-                .exec(&*tx)
-                .await?;
-            Ok(())
-        })
-        .await
-    }
-
     pub async fn stale_room_ids(
         &self,
         environment: &str,
@@ -235,8 +207,8 @@ impl Database {
 
     pub async fn delete_stale_servers(
         &self,
-        new_server_id: ServerId,
         environment: &str,
+        new_server_id: ServerId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
             server::Entity::delete_many()
@@ -1319,15 +1291,7 @@ impl Database {
                     Condition::all()
                         .add(room_participant::Column::RoomId.eq(room_id))
                         .add(room_participant::Column::UserId.eq(user_id))
-                        .add(
-                            Condition::any()
-                                .add(room_participant::Column::AnsweringConnectionId.is_null())
-                                .add(room_participant::Column::AnsweringConnectionLost.eq(true))
-                                .add(
-                                    room_participant::Column::AnsweringConnectionServerId
-                                        .ne(connection.owner_id as i32),
-                                ),
-                        ),
+                        .add(room_participant::Column::AnsweringConnectionId.is_null()),
                 )
                 .set(room_participant::ActiveModel {
                     answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
@@ -1345,6 +1309,245 @@ impl Database {
                 let room = self.get_room(room_id, &tx).await?;
                 Ok((room_id, room))
             }
+        })
+        .await
+    }
+
+    pub async fn rejoin_room(
+        &self,
+        rejoin_room: proto::RejoinRoom,
+        user_id: UserId,
+        connection: ConnectionId,
+    ) -> Result<RoomGuard<RejoinedRoom>> {
+        self.room_transaction(|tx| async {
+            let tx = tx;
+            let room_id = RoomId::from_proto(rejoin_room.id);
+            let participant_update = room_participant::Entity::update_many()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(user_id))
+                        .add(room_participant::Column::AnsweringConnectionId.is_not_null())
+                        .add(
+                            Condition::any()
+                                .add(room_participant::Column::AnsweringConnectionLost.eq(true))
+                                .add(
+                                    room_participant::Column::AnsweringConnectionServerId
+                                        .ne(connection.owner_id as i32),
+                                ),
+                        ),
+                )
+                .set(room_participant::ActiveModel {
+                    answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                    answering_connection_server_id: ActiveValue::set(Some(ServerId(
+                        connection.owner_id as i32,
+                    ))),
+                    answering_connection_lost: ActiveValue::set(false),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+            if participant_update.rows_affected == 0 {
+                return Err(anyhow!("room does not exist or was already joined"))?;
+            }
+
+            let mut reshared_projects = Vec::new();
+            for reshared_project in &rejoin_room.reshared_projects {
+                let project_id = ProjectId::from_proto(reshared_project.project_id);
+                let project = project::Entity::find_by_id(project_id)
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("project does not exist"))?;
+                if project.host_user_id != user_id {
+                    return Err(anyhow!("no such project"))?;
+                }
+
+                let mut collaborators = project
+                    .find_related(project_collaborator::Entity)
+                    .all(&*tx)
+                    .await?;
+                let host_ix = collaborators
+                    .iter()
+                    .position(|collaborator| {
+                        collaborator.user_id == user_id && collaborator.is_host
+                    })
+                    .ok_or_else(|| anyhow!("host not found among collaborators"))?;
+                let host = collaborators.swap_remove(host_ix);
+                let old_connection_id = host.connection();
+
+                project::Entity::update(project::ActiveModel {
+                    host_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                    host_connection_server_id: ActiveValue::set(Some(ServerId(
+                        connection.owner_id as i32,
+                    ))),
+                    ..project.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+                project_collaborator::Entity::update(project_collaborator::ActiveModel {
+                    connection_id: ActiveValue::set(connection.id as i32),
+                    connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
+                    ..host.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+
+                self.update_project_worktrees(project_id, &reshared_project.worktrees, &tx)
+                    .await?;
+
+                reshared_projects.push(ResharedProject {
+                    id: project_id,
+                    old_connection_id,
+                    collaborators: collaborators
+                        .iter()
+                        .map(|collaborator| ProjectCollaborator {
+                            connection_id: collaborator.connection(),
+                            user_id: collaborator.user_id,
+                            replica_id: collaborator.replica_id,
+                            is_host: collaborator.is_host,
+                        })
+                        .collect(),
+                    worktrees: reshared_project.worktrees.clone(),
+                });
+            }
+
+            project::Entity::delete_many()
+                .filter(
+                    Condition::all()
+                        .add(project::Column::RoomId.eq(room_id))
+                        .add(project::Column::HostUserId.eq(user_id))
+                        .add(
+                            project::Column::Id
+                                .is_not_in(reshared_projects.iter().map(|project| project.id)),
+                        ),
+                )
+                .exec(&*tx)
+                .await?;
+
+            let mut rejoined_projects = Vec::new();
+            for rejoined_project in &rejoin_room.rejoined_projects {
+                let project_id = ProjectId::from_proto(rejoined_project.id);
+                let Some(project) = project::Entity::find_by_id(project_id)
+                    .one(&*tx)
+                    .await? else { continue };
+
+                let mut worktrees = Vec::new();
+                let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
+                for db_worktree in db_worktrees {
+                    let mut worktree = RejoinedWorktree {
+                        id: db_worktree.id as u64,
+                        abs_path: db_worktree.abs_path,
+                        root_name: db_worktree.root_name,
+                        visible: db_worktree.visible,
+                        updated_entries: Default::default(),
+                        removed_entries: Default::default(),
+                        diagnostic_summaries: Default::default(),
+                        scan_id: db_worktree.scan_id as u64,
+                        completed_scan_id: db_worktree.completed_scan_id as u64,
+                    };
+
+                    let rejoined_worktree = rejoined_project
+                        .worktrees
+                        .iter()
+                        .find(|worktree| worktree.id == db_worktree.id as u64);
+                    let entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
+                        worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id)
+                    } else {
+                        worktree_entry::Column::IsDeleted.eq(false)
+                    };
+
+                    let mut db_entries = worktree_entry::Entity::find()
+                        .filter(
+                            Condition::all()
+                                .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
+                                .add(entry_filter),
+                        )
+                        .stream(&*tx)
+                        .await?;
+
+                    while let Some(db_entry) = db_entries.next().await {
+                        let db_entry = db_entry?;
+                        if db_entry.is_deleted {
+                            worktree.removed_entries.push(db_entry.id as u64);
+                        } else {
+                            worktree.updated_entries.push(proto::Entry {
+                                id: db_entry.id as u64,
+                                is_dir: db_entry.is_dir,
+                                path: db_entry.path,
+                                inode: db_entry.inode as u64,
+                                mtime: Some(proto::Timestamp {
+                                    seconds: db_entry.mtime_seconds as u64,
+                                    nanos: db_entry.mtime_nanos as u32,
+                                }),
+                                is_symlink: db_entry.is_symlink,
+                                is_ignored: db_entry.is_ignored,
+                            });
+                        }
+                    }
+
+                    worktrees.push(worktree);
+                }
+
+                let language_servers = project
+                    .find_related(language_server::Entity)
+                    .all(&*tx)
+                    .await?
+                    .into_iter()
+                    .map(|language_server| proto::LanguageServer {
+                        id: language_server.id as u64,
+                        name: language_server.name,
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut collaborators = project
+                    .find_related(project_collaborator::Entity)
+                    .all(&*tx)
+                    .await?;
+                let self_collaborator = if let Some(self_collaborator_ix) = collaborators
+                    .iter()
+                    .position(|collaborator| collaborator.user_id == user_id)
+                {
+                    collaborators.swap_remove(self_collaborator_ix)
+                } else {
+                    continue;
+                };
+                let old_connection_id = self_collaborator.connection();
+                project_collaborator::Entity::update(project_collaborator::ActiveModel {
+                    connection_id: ActiveValue::set(connection.id as i32),
+                    connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
+                    ..self_collaborator.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+
+                let collaborators = collaborators
+                    .into_iter()
+                    .map(|collaborator| ProjectCollaborator {
+                        connection_id: collaborator.connection(),
+                        user_id: collaborator.user_id,
+                        replica_id: collaborator.replica_id,
+                        is_host: collaborator.is_host,
+                    })
+                    .collect::<Vec<_>>();
+
+                rejoined_projects.push(RejoinedProject {
+                    id: project_id,
+                    old_connection_id,
+                    collaborators,
+                    worktrees,
+                    language_servers,
+                });
+            }
+
+            let room = self.get_room(room_id, &tx).await?;
+            Ok((
+                room_id,
+                RejoinedRoom {
+                    room,
+                    rejoined_projects,
+                    reshared_projects,
+                },
+            ))
         })
         .await
     }
@@ -1445,10 +1648,7 @@ impl Database {
                                 host_connection_id: Default::default(),
                             });
 
-                    let collaborator_connection_id = ConnectionId {
-                        owner_id: collaborator.connection_server_id.0 as u32,
-                        id: collaborator.connection_id as u32,
-                    };
+                    let collaborator_connection_id = collaborator.connection();
                     if collaborator_connection_id != connection {
                         left_project.connection_ids.push(collaborator_connection_id);
                     }
@@ -1572,11 +1772,8 @@ impl Database {
         .await
     }
 
-    pub async fn connection_lost(
-        &self,
-        connection: ConnectionId,
-    ) -> Result<RoomGuard<Vec<LeftProject>>> {
-        self.room_transaction(|tx| async move {
+    pub async fn connection_lost(&self, connection: ConnectionId) -> Result<()> {
+        self.transaction(|tx| async move {
             let participant = room_participant::Entity::find()
                 .filter(
                     Condition::all()
@@ -1592,7 +1789,6 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("not a participant in any room"))?;
-            let room_id = participant.room_id;
 
             room_participant::Entity::update(room_participant::ActiveModel {
                 answering_connection_lost: ActiveValue::set(true),
@@ -1601,66 +1797,7 @@ impl Database {
             .exec(&*tx)
             .await?;
 
-            let collaborator_on_projects = project_collaborator::Entity::find()
-                .find_also_related(project::Entity)
-                .filter(
-                    Condition::all()
-                        .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
-                        .add(
-                            project_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .all(&*tx)
-                .await?;
-            project_collaborator::Entity::delete_many()
-                .filter(
-                    Condition::all()
-                        .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
-                        .add(
-                            project_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .exec(&*tx)
-                .await?;
-
-            let mut left_projects = Vec::new();
-            for (_, project) in collaborator_on_projects {
-                if let Some(project) = project {
-                    let collaborators = project
-                        .find_related(project_collaborator::Entity)
-                        .all(&*tx)
-                        .await?;
-                    let connection_ids = collaborators
-                        .into_iter()
-                        .map(|collaborator| ConnectionId {
-                            id: collaborator.connection_id as u32,
-                            owner_id: collaborator.connection_server_id.0 as u32,
-                        })
-                        .collect();
-
-                    left_projects.push(LeftProject {
-                        id: project.id,
-                        host_user_id: project.host_user_id,
-                        host_connection_id: project.host_connection()?,
-                        connection_ids,
-                    });
-                }
-            }
-
-            project::Entity::delete_many()
-                .filter(
-                    Condition::all()
-                        .add(project::Column::HostConnectionId.eq(connection.id as i32))
-                        .add(
-                            project::Column::HostConnectionServerId.eq(connection.owner_id as i32),
-                        ),
-                )
-                .exec(&*tx)
-                .await?;
-
-            Ok((room_id, left_projects))
+            Ok(())
         })
         .await
     }
@@ -1860,7 +1997,7 @@ impl Database {
                         root_name: ActiveValue::set(worktree.root_name.clone()),
                         visible: ActiveValue::set(worktree.visible),
                         scan_id: ActiveValue::set(0),
-                        is_complete: ActiveValue::set(false),
+                        completed_scan_id: ActiveValue::set(0),
                     }
                 }))
                 .exec(&*tx)
@@ -1930,35 +2067,7 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
 
-            if !worktrees.is_empty() {
-                worktree::Entity::insert_many(worktrees.iter().map(|worktree| {
-                    worktree::ActiveModel {
-                        id: ActiveValue::set(worktree.id as i64),
-                        project_id: ActiveValue::set(project.id),
-                        abs_path: ActiveValue::set(worktree.abs_path.clone()),
-                        root_name: ActiveValue::set(worktree.root_name.clone()),
-                        visible: ActiveValue::set(worktree.visible),
-                        scan_id: ActiveValue::set(0),
-                        is_complete: ActiveValue::set(false),
-                    }
-                }))
-                .on_conflict(
-                    OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
-                        .update_column(worktree::Column::RootName)
-                        .to_owned(),
-                )
-                .exec(&*tx)
-                .await?;
-            }
-
-            worktree::Entity::delete_many()
-                .filter(
-                    worktree::Column::ProjectId.eq(project.id).and(
-                        worktree::Column::Id
-                            .is_not_in(worktrees.iter().map(|worktree| worktree.id as i64)),
-                    ),
-                )
-                .exec(&*tx)
+            self.update_project_worktrees(project.id, worktrees, &tx)
                 .await?;
 
             let guest_connection_ids = self.project_guest_connection_ids(project.id, &tx).await?;
@@ -1966,6 +2075,41 @@ impl Database {
             Ok((project.room_id, (room, guest_connection_ids)))
         })
         .await
+    }
+
+    async fn update_project_worktrees(
+        &self,
+        project_id: ProjectId,
+        worktrees: &[proto::WorktreeMetadata],
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        if !worktrees.is_empty() {
+            worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
+                id: ActiveValue::set(worktree.id as i64),
+                project_id: ActiveValue::set(project_id),
+                abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                root_name: ActiveValue::set(worktree.root_name.clone()),
+                visible: ActiveValue::set(worktree.visible),
+                scan_id: ActiveValue::set(0),
+                completed_scan_id: ActiveValue::set(0),
+            }))
+            .on_conflict(
+                OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
+                    .update_column(worktree::Column::RootName)
+                    .to_owned(),
+            )
+            .exec(&*tx)
+            .await?;
+        }
+
+        worktree::Entity::delete_many()
+            .filter(worktree::Column::ProjectId.eq(project_id).and(
+                worktree::Column::Id.is_not_in(worktrees.iter().map(|worktree| worktree.id as i64)),
+            ))
+            .exec(&*tx)
+            .await?;
+
+        Ok(())
     }
 
     pub async fn update_worktree(
@@ -1997,7 +2141,11 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 root_name: ActiveValue::set(update.root_name.clone()),
                 scan_id: ActiveValue::set(update.scan_id as i64),
-                is_complete: ActiveValue::set(update.is_last_update),
+                completed_scan_id: if update.is_last_update {
+                    ActiveValue::set(update.scan_id as i64)
+                } else {
+                    ActiveValue::default()
+                },
                 abs_path: ActiveValue::set(update.abs_path.clone()),
                 ..Default::default()
             })
@@ -2018,6 +2166,8 @@ impl Database {
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
                         is_symlink: ActiveValue::set(entry.is_symlink),
                         is_ignored: ActiveValue::set(entry.is_ignored),
+                        is_deleted: ActiveValue::set(false),
+                        scan_id: ActiveValue::set(update.scan_id as i64),
                     }
                 }))
                 .on_conflict(
@@ -2034,6 +2184,7 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::IsSymlink,
                         worktree_entry::Column::IsIgnored,
+                        worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
                 )
@@ -2042,7 +2193,7 @@ impl Database {
             }
 
             if !update.removed_entries.is_empty() {
-                worktree_entry::Entity::delete_many()
+                worktree_entry::Entity::update_many()
                     .filter(
                         worktree_entry::Column::ProjectId
                             .eq(project_id)
@@ -2052,6 +2203,11 @@ impl Database {
                                     .is_in(update.removed_entries.iter().map(|id| *id as i64)),
                             ),
                     )
+                    .set(worktree_entry::ActiveModel {
+                        is_deleted: ActiveValue::Set(true),
+                        scan_id: ActiveValue::Set(update.scan_id as i64),
+                        ..Default::default()
+                    })
                     .exec(&*tx)
                     .await?;
             }
@@ -2230,7 +2386,7 @@ impl Database {
                             entries: Default::default(),
                             diagnostic_summaries: Default::default(),
                             scan_id: db_worktree.scan_id as u64,
-                            is_complete: db_worktree.is_complete,
+                            completed_scan_id: db_worktree.completed_scan_id as u64,
                         },
                     )
                 })
@@ -2239,7 +2395,11 @@ impl Database {
             // Populate worktree entries.
             {
                 let mut db_entries = worktree_entry::Entity::find()
-                    .filter(worktree_entry::Column::ProjectId.eq(project_id))
+                    .filter(
+                        Condition::all()
+                            .add(worktree_entry::Column::ProjectId.eq(project_id))
+                            .add(worktree_entry::Column::IsDeleted.eq(false)),
+                    )
                     .stream(&*tx)
                     .await?;
                 while let Some(db_entry) = db_entries.next().await {
@@ -2290,7 +2450,15 @@ impl Database {
 
             let room_id = project.room_id;
             let project = Project {
-                collaborators,
+                collaborators: collaborators
+                    .into_iter()
+                    .map(|collaborator| ProjectCollaborator {
+                        connection_id: collaborator.connection(),
+                        user_id: collaborator.user_id,
+                        replica_id: collaborator.replica_id,
+                        is_host: collaborator.is_host,
+                    })
+                    .collect(),
                 worktrees,
                 language_servers: language_servers
                     .into_iter()
@@ -2337,10 +2505,7 @@ impl Database {
                 .await?;
             let connection_ids = collaborators
                 .into_iter()
-                .map(|collaborator| ConnectionId {
-                    owner_id: collaborator.connection_server_id.0 as u32,
-                    id: collaborator.connection_id as u32,
-                })
+                .map(|collaborator| collaborator.connection())
                 .collect();
 
             let left_project = LeftProject {
@@ -2357,8 +2522,8 @@ impl Database {
     pub async fn project_collaborators(
         &self,
         project_id: ProjectId,
-        connection: ConnectionId,
-    ) -> Result<RoomGuard<Vec<project_collaborator::Model>>> {
+        connection_id: ConnectionId,
+    ) -> Result<RoomGuard<Vec<ProjectCollaborator>>> {
         self.room_transaction(|tx| async move {
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
@@ -2367,15 +2532,20 @@ impl Database {
             let collaborators = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
                 .all(&*tx)
-                .await?;
+                .await?
+                .into_iter()
+                .map(|collaborator| ProjectCollaborator {
+                    connection_id: collaborator.connection(),
+                    user_id: collaborator.user_id,
+                    replica_id: collaborator.replica_id,
+                    is_host: collaborator.is_host,
+                })
+                .collect::<Vec<_>>();
 
-            if collaborators.iter().any(|collaborator| {
-                let collaborator_connection = ConnectionId {
-                    owner_id: collaborator.connection_server_id.0 as u32,
-                    id: collaborator.connection_id as u32,
-                };
-                collaborator_connection == connection
-            }) {
+            if collaborators
+                .iter()
+                .any(|collaborator| collaborator.connection_id == connection_id)
+            {
                 Ok((project.room_id, collaborators))
             } else {
                 Err(anyhow!("no such project"))?
@@ -2394,18 +2564,15 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            let mut participants = project_collaborator::Entity::find()
+            let mut collaborators = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
                 .stream(&*tx)
                 .await?;
 
             let mut connection_ids = HashSet::default();
-            while let Some(participant) = participants.next().await {
-                let participant = participant?;
-                connection_ids.insert(ConnectionId {
-                    owner_id: participant.connection_server_id.0 as u32,
-                    id: participant.connection_id as u32,
-                });
+            while let Some(collaborator) = collaborators.next().await {
+                let collaborator = collaborator?;
+                connection_ids.insert(collaborator.connection());
             }
 
             if connection_ids.contains(&connection_id) {
@@ -2422,7 +2589,7 @@ impl Database {
         project_id: ProjectId,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<ConnectionId>> {
-        let mut participants = project_collaborator::Entity::find()
+        let mut collaborators = project_collaborator::Entity::find()
             .filter(
                 project_collaborator::Column::ProjectId
                     .eq(project_id)
@@ -2432,12 +2599,9 @@ impl Database {
             .await?;
 
         let mut guest_connection_ids = Vec::new();
-        while let Some(participant) = participants.next().await {
-            let participant = participant?;
-            guest_connection_ids.push(ConnectionId {
-                owner_id: participant.connection_server_id.0 as u32,
-                id: participant.connection_id as u32,
-            });
+        while let Some(collaborator) = collaborators.next().await {
+            let collaborator = collaborator?;
+            guest_connection_ids.push(collaborator.connection());
         }
         Ok(guest_connection_ids)
     }
@@ -2849,6 +3013,40 @@ id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
 
+pub struct RejoinedRoom {
+    pub room: proto::Room,
+    pub rejoined_projects: Vec<RejoinedProject>,
+    pub reshared_projects: Vec<ResharedProject>,
+}
+
+pub struct ResharedProject {
+    pub id: ProjectId,
+    pub old_connection_id: ConnectionId,
+    pub collaborators: Vec<ProjectCollaborator>,
+    pub worktrees: Vec<proto::WorktreeMetadata>,
+}
+
+pub struct RejoinedProject {
+    pub id: ProjectId,
+    pub old_connection_id: ConnectionId,
+    pub collaborators: Vec<ProjectCollaborator>,
+    pub worktrees: Vec<RejoinedWorktree>,
+    pub language_servers: Vec<proto::LanguageServer>,
+}
+
+#[derive(Debug)]
+pub struct RejoinedWorktree {
+    pub id: u64,
+    pub abs_path: String,
+    pub root_name: String,
+    pub visible: bool,
+    pub updated_entries: Vec<proto::Entry>,
+    pub removed_entries: Vec<u64>,
+    pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
+    pub scan_id: u64,
+    pub completed_scan_id: u64,
+}
+
 pub struct LeftRoom {
     pub room: proto::Room,
     pub left_projects: HashMap<ProjectId, LeftProject>,
@@ -2862,11 +3060,29 @@ pub struct RefreshedRoom {
 }
 
 pub struct Project {
-    pub collaborators: Vec<project_collaborator::Model>,
+    pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
+pub struct ProjectCollaborator {
+    pub connection_id: ConnectionId,
+    pub user_id: UserId,
+    pub replica_id: ReplicaId,
+    pub is_host: bool,
+}
+
+impl ProjectCollaborator {
+    pub fn to_proto(&self) -> proto::Collaborator {
+        proto::Collaborator {
+            peer_id: Some(self.connection_id.into()),
+            replica_id: self.replica_id.0 as u32,
+            user_id: self.user_id.to_proto(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct LeftProject {
     pub id: ProjectId,
     pub host_user_id: UserId,
@@ -2882,7 +3098,7 @@ pub struct Worktree {
     pub entries: Vec<proto::Entry>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub scan_id: u64,
-    pub is_complete: bool,
+    pub completed_scan_id: u64,
 }
 
 #[cfg(test)]

@@ -524,7 +524,7 @@ async fn location_links_from_proto(
             Some(origin) => {
                 let buffer = project
                     .update(&mut cx, |this, cx| {
-                        this.wait_for_buffer(origin.buffer_id, cx)
+                        this.wait_for_remote_buffer(origin.buffer_id, cx)
                     })
                     .await?;
                 let start = origin
@@ -549,7 +549,7 @@ async fn location_links_from_proto(
         let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
         let buffer = project
             .update(&mut cx, |this, cx| {
-                this.wait_for_buffer(target.buffer_id, cx)
+                this.wait_for_remote_buffer(target.buffer_id, cx)
             })
             .await?;
         let start = target
@@ -814,7 +814,7 @@ impl LspCommand for GetReferences {
         for location in message.locations {
             let target_buffer = project
                 .update(&mut cx, |this, cx| {
-                    this.wait_for_buffer(location.buffer_id, cx)
+                    this.wait_for_remote_buffer(location.buffer_id, cx)
                 })
                 .await?;
             let start = location

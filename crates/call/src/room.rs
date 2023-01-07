@@ -7,11 +7,13 @@ use client::{
     proto::{self, PeerId},
     Client, TypedEnvelope, User, UserStore,
 };
-use collections::{BTreeMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
+use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
+use language::LanguageRegistry;
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
 use project::Project;
@@ -43,6 +45,8 @@ pub struct Room {
     id: u64,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
+    shared_projects: HashSet<WeakModelHandle<Project>>,
+    joined_projects: HashSet<WeakModelHandle<Project>>,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<u64, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
@@ -62,7 +66,7 @@ impl Entity for Room {
     fn release(&mut self, _: &mut MutableAppContext) {
         if self.status.is_online() {
             log::info!("room was released, sending leave message");
-            self.client.send(proto::LeaveRoom {}).log_err();
+            let _ = self.client.send(proto::LeaveRoom {});
         }
     }
 }
@@ -132,6 +136,8 @@ impl Room {
             id,
             live_kit: live_kit_room,
             status: RoomStatus::Online,
+            shared_projects: Default::default(),
+            joined_projects: Default::default(),
             participant_user_ids: Default::default(),
             local_participant: Default::default(),
             remote_participants: Default::default(),
@@ -234,6 +240,22 @@ impl Room {
         cx.notify();
         cx.emit(Event::Left);
         log::info!("leaving room");
+
+        for project in self.shared_projects.drain() {
+            if let Some(project) = project.upgrade(cx) {
+                project.update(cx, |project, cx| {
+                    project.unshare(cx).log_err();
+                });
+            }
+        }
+        for project in self.joined_projects.drain() {
+            if let Some(project) = project.upgrade(cx) {
+                project.update(cx, |project, cx| {
+                    project.disconnected_from_host(cx);
+                });
+            }
+        }
+
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
         self.pending_participants.clear();
@@ -257,16 +279,15 @@ impl Room {
                 .next()
                 .await
                 .map_or(false, |s| s.is_connected());
+
             // Even if we're initially connected, any future change of the status means we momentarily disconnected.
             if !is_connected || client_status.next().await.is_some() {
                 log::info!("detected client disconnection");
-                let room_id = this
-                    .upgrade(&cx)
+                this.upgrade(&cx)
                     .ok_or_else(|| anyhow!("room was dropped"))?
                     .update(&mut cx, |this, cx| {
                         this.status = RoomStatus::Rejoining;
                         cx.notify();
-                        this.id
                     });
 
                 // Wait for client to re-establish a connection to the server.
@@ -279,31 +300,21 @@ impl Room {
                                 "waiting for client status change, remaining attempts {}",
                                 remaining_attempts
                             );
-                            if let Some(status) = client_status.next().await {
-                                if status.is_connected() {
-                                    log::info!("client reconnected, attempting to rejoin room");
-                                    let rejoin_room = async {
-                                        let response =
-                                            client.request(proto::JoinRoom { id: room_id }).await?;
-                                        let room_proto =
-                                            response.room.ok_or_else(|| anyhow!("invalid room"))?;
-                                        this.upgrade(&cx)
-                                            .ok_or_else(|| anyhow!("room was dropped"))?
-                                            .update(&mut cx, |this, cx| {
-                                                this.status = RoomStatus::Online;
-                                                this.apply_room_update(room_proto, cx)
-                                            })?;
-                                        anyhow::Ok(())
-                                    };
+                            let Some(status) = client_status.next().await else { break };
+                            if status.is_connected() {
+                                log::info!("client reconnected, attempting to rejoin room");
 
-                                    if rejoin_room.await.log_err().is_some() {
-                                        return true;
-                                    } else {
-                                        remaining_attempts -= 1;
-                                    }
+                                let Some(this) = this.upgrade(&cx) else { break };
+                                if this
+                                    .update(&mut cx, |this, cx| this.rejoin(cx))
+                                    .await
+                                    .log_err()
+                                    .is_some()
+                                {
+                                    return true;
+                                } else {
+                                    remaining_attempts -= 1;
                                 }
-                            } else {
-                                return false;
                             }
                         }
                         false
@@ -338,6 +349,82 @@ impl Room {
                 ));
             }
         }
+    }
+
+    fn rejoin(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let mut projects = HashMap::default();
+        let mut reshared_projects = Vec::new();
+        let mut rejoined_projects = Vec::new();
+        self.shared_projects.retain(|project| {
+            if let Some(handle) = project.upgrade(cx) {
+                let project = handle.read(cx);
+                if let Some(project_id) = project.remote_id() {
+                    projects.insert(project_id, handle.clone());
+                    reshared_projects.push(proto::UpdateProject {
+                        project_id,
+                        worktrees: project.worktree_metadata_protos(cx),
+                    });
+                    return true;
+                }
+            }
+            false
+        });
+        self.joined_projects.retain(|project| {
+            if let Some(handle) = project.upgrade(cx) {
+                let project = handle.read(cx);
+                if let Some(project_id) = project.remote_id() {
+                    projects.insert(project_id, handle.clone());
+                    rejoined_projects.push(proto::RejoinProject {
+                        id: project_id,
+                        worktrees: project
+                            .worktrees(cx)
+                            .map(|worktree| {
+                                let worktree = worktree.read(cx);
+                                proto::RejoinWorktree {
+                                    id: worktree.id().to_proto(),
+                                    scan_id: worktree.completed_scan_id() as u64,
+                                }
+                            })
+                            .collect(),
+                    });
+                }
+                return true;
+            }
+            false
+        });
+
+        let response = self.client.request(proto::RejoinRoom {
+            id: self.id,
+            reshared_projects,
+            rejoined_projects,
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let response = response.await?;
+            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+            this.update(&mut cx, |this, cx| {
+                this.status = RoomStatus::Online;
+                this.apply_room_update(room_proto, cx)?;
+
+                for reshared_project in response.reshared_projects {
+                    if let Some(project) = projects.get(&reshared_project.id) {
+                        project.update(cx, |project, cx| {
+                            project.reshared(reshared_project, cx).log_err();
+                        });
+                    }
+                }
+
+                for rejoined_project in response.rejoined_projects {
+                    if let Some(project) = projects.get(&rejoined_project.id) {
+                        project.update(cx, |project, cx| {
+                            project.rejoined(rejoined_project, cx).log_err();
+                        });
+                    }
+                }
+
+                anyhow::Ok(())
+            })
+        })
     }
 
     pub fn id(&self) -> u64 {
@@ -454,6 +541,20 @@ impl Room {
                         }
 
                         for unshared_project_id in old_projects.difference(&new_projects) {
+                            this.joined_projects.retain(|project| {
+                                if let Some(project) = project.upgrade(cx) {
+                                    project.update(cx, |project, cx| {
+                                        if project.remote_id() == Some(*unshared_project_id) {
+                                            project.disconnected_from_host(cx);
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    })
+                                } else {
+                                    false
+                                }
+                            });
                             cx.emit(Event::RemoteProjectUnshared {
                                 project_id: *unshared_project_id,
                             });
@@ -630,6 +731,32 @@ impl Room {
         })
     }
 
+    pub fn join_project(
+        &mut self,
+        id: u64,
+        language_registry: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Project>>> {
+        let client = self.client.clone();
+        let user_store = self.user_store.clone();
+        cx.spawn(|this, mut cx| async move {
+            let project =
+                Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+            this.update(&mut cx, |this, cx| {
+                this.joined_projects.retain(|project| {
+                    if let Some(project) = project.upgrade(cx) {
+                        !project.read(cx).is_read_only()
+                    } else {
+                        false
+                    }
+                });
+                this.joined_projects.insert(project.downgrade());
+            });
+            Ok(project)
+        })
+    }
+
     pub(crate) fn share_project(
         &mut self,
         project: ModelHandle<Project>,
@@ -641,31 +768,18 @@ impl Room {
 
         let request = self.client.request(proto::ShareProject {
             room_id: self.id(),
-            worktrees: project
-                .read(cx)
-                .worktrees(cx)
-                .map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    proto::WorktreeMetadata {
-                        id: worktree.id().to_proto(),
-                        root_name: worktree.root_name().into(),
-                        visible: worktree.is_visible(),
-                        abs_path: worktree.abs_path().to_string_lossy().into(),
-                    }
-                })
-                .collect(),
+            worktrees: project.read(cx).worktree_metadata_protos(cx),
         });
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
 
             project.update(&mut cx, |project, cx| {
-                project
-                    .shared(response.project_id, cx)
-                    .detach_and_log_err(cx)
-            });
+                project.shared(response.project_id, cx)
+            })?;
 
             // If the user's location is in this project, it changes from UnsharedProject to SharedProject.
             this.update(&mut cx, |this, cx| {
+                this.shared_projects.insert(project.downgrade());
                 let active_project = this.local_participant.active_project.as_ref();
                 if active_project.map_or(false, |location| *location == project) {
                     this.set_location(Some(&project), cx)

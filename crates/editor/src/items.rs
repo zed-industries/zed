@@ -1114,7 +1114,7 @@ fn path_for_buffer<'a>(
     cx: &'a AppContext,
 ) -> Option<Cow<'a, Path>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
-    path_for_file(file, height, include_filename, cx)
+    path_for_file(file.as_ref(), height, include_filename, cx)
 }
 
 fn path_for_file<'a>(

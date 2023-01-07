@@ -494,6 +494,27 @@ impl Peer {
         Ok(())
     }
 
+    pub fn respond_with_unhandled_message(
+        &self,
+        envelope: Box<dyn AnyTypedEnvelope>,
+    ) -> Result<()> {
+        let connection = self.connection_state(envelope.sender_id())?;
+        let response = proto::Error {
+            message: format!("message {} was not handled", envelope.payload_type_name()),
+        };
+        let message_id = connection
+            .next_message_id
+            .fetch_add(1, atomic::Ordering::SeqCst);
+        connection
+            .outgoing_tx
+            .unbounded_send(proto::Message::Envelope(response.into_envelope(
+                message_id,
+                Some(envelope.message_id()),
+                None,
+            )))?;
+        Ok(())
+    }
+
     fn connection_state(&self, connection_id: ConnectionId) -> Result<ConnectionState> {
         let connections = self.connections.read();
         let connection = connections

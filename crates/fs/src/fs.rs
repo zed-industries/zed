@@ -389,6 +389,7 @@ pub struct FakeFs {
 struct FakeFsState {
     root: Arc<Mutex<FakeFsEntry>>,
     next_inode: u64,
+    next_mtime: SystemTime,
     event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
 }
 
@@ -517,10 +518,11 @@ impl FakeFs {
             state: Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
-                    mtime: SystemTime::now(),
+                    mtime: SystemTime::UNIX_EPOCH,
                     entries: Default::default(),
                     git_repo_state: None,
                 })),
+                next_mtime: SystemTime::UNIX_EPOCH,
                 next_inode: 1,
                 event_txs: Default::default(),
             }),
@@ -531,10 +533,12 @@ impl FakeFs {
         let mut state = self.state.lock().await;
         let path = path.as_ref();
         let inode = state.next_inode;
+        let mtime = state.next_mtime;
         state.next_inode += 1;
+        state.next_mtime += Duration::from_nanos(1);
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
-            mtime: SystemTime::now(),
+            mtime,
             content,
         }));
         state
@@ -629,6 +633,21 @@ impl FakeFs {
         } else {
             panic!("not a directory");
         }
+    }
+
+    pub async fn paths(&self) -> Vec<PathBuf> {
+        let mut result = Vec::new();
+        let mut queue = collections::VecDeque::new();
+        queue.push_back((PathBuf::from("/"), self.state.lock().await.root.clone()));
+        while let Some((path, entry)) = queue.pop_front() {
+            if let FakeFsEntry::Dir { entries, .. } = &*entry.lock().await {
+                for (name, entry) in entries {
+                    queue.push_back((path.join(name), entry.clone()));
+                }
+            }
+            result.push(path);
+        }
+        result
     }
 
     pub async fn directories(&self) -> Vec<PathBuf> {
@@ -726,6 +745,8 @@ impl Fs for FakeFs {
             }
 
             let inode = state.next_inode;
+            let mtime = state.next_mtime;
+            state.next_mtime += Duration::from_nanos(1);
             state.next_inode += 1;
             state
                 .write_path(&cur_path, |entry| {
@@ -733,7 +754,7 @@ impl Fs for FakeFs {
                         created_dirs.push(cur_path.clone());
                         Arc::new(Mutex::new(FakeFsEntry::Dir {
                             inode,
-                            mtime: SystemTime::now(),
+                            mtime,
                             entries: Default::default(),
                             git_repo_state: None,
                         }))
@@ -751,10 +772,12 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
         let inode = state.next_inode;
+        let mtime = state.next_mtime;
+        state.next_mtime += Duration::from_nanos(1);
         state.next_inode += 1;
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
-            mtime: SystemTime::now(),
+            mtime,
             content: String::new(),
         }));
         state
@@ -816,6 +839,9 @@ impl Fs for FakeFs {
         let source = normalize_path(source);
         let target = normalize_path(target);
         let mut state = self.state.lock().await;
+        let mtime = state.next_mtime;
+        let inode = util::post_inc(&mut state.next_inode);
+        state.next_mtime += Duration::from_nanos(1);
         let source_entry = state.read_path(&source).await?;
         let content = source_entry.lock().await.file_content(&source)?.clone();
         let entry = state
@@ -831,8 +857,8 @@ impl Fs for FakeFs {
                 }
                 btree_map::Entry::Vacant(e) => Ok(Some(
                     e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
-                        inode: 0,
-                        mtime: SystemTime::now(),
+                        inode,
+                        mtime,
                         content: String::new(),
                     })))
                     .clone(),

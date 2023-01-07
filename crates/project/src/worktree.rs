@@ -36,7 +36,7 @@ use std::{
     any::Any,
     cmp::{self, Ordering},
     convert::TryFrom,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt,
     future::Future,
     mem,
@@ -94,7 +94,7 @@ pub struct Snapshot {
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
     scan_id: usize,
-    is_complete: bool,
+    completed_scan_id: usize,
 }
 
 #[derive(Clone)]
@@ -125,7 +125,6 @@ pub struct LocalSnapshot {
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
-    extension_counts: HashMap<OsString, usize>,
 }
 
 impl Clone for LocalSnapshot {
@@ -136,7 +135,6 @@ impl Clone for LocalSnapshot {
             removed_entry_ids: self.removed_entry_ids.clone(),
             next_entry_id: self.next_entry_id.clone(),
             snapshot: self.snapshot.clone(),
-            extension_counts: self.extension_counts.clone(),
         }
     }
 }
@@ -168,6 +166,7 @@ enum ScanState {
 struct ShareState {
     project_id: u64,
     snapshots_tx: watch::Sender<LocalSnapshot>,
+    resume_updates: watch::Sender<()>,
     _maintain_remote_snapshot: Task<Option<()>>,
 }
 
@@ -231,7 +230,7 @@ impl Worktree {
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
             scan_id: 0,
-            is_complete: false,
+            completed_scan_id: 0,
         };
 
         let (updates_tx, mut updates_rx) = mpsc::unbounded();
@@ -345,6 +344,13 @@ impl Worktree {
         }
     }
 
+    pub fn completed_scan_id(&self) -> usize {
+        match self {
+            Worktree::Local(worktree) => worktree.snapshot.completed_scan_id,
+            Worktree::Remote(worktree) => worktree.snapshot.completed_scan_id,
+        }
+    }
+
     pub fn is_visible(&self) -> bool {
         match self {
             Worktree::Local(worktree) => worktree.visible,
@@ -425,9 +431,8 @@ impl LocalWorktree {
                     entries_by_path: Default::default(),
                     entries_by_id: Default::default(),
                     scan_id: 0,
-                    is_complete: true,
+                    completed_scan_id: 0,
                 },
-                extension_counts: Default::default(),
             };
             if let Some(metadata) = metadata {
                 let entry = Entry::new(
@@ -957,8 +962,9 @@ impl LocalWorktree {
                     if let Some(old_path) = old_path {
                         snapshot.remove_path(&old_path);
                     }
+                    snapshot.scan_started();
                     inserted_entry = snapshot.insert_entry(entry, fs.as_ref());
-                    snapshot.scan_id += 1;
+                    snapshot.scan_completed();
                 }
                 this.poll_snapshot(true, cx);
                 Ok(inserted_entry)
@@ -969,10 +975,12 @@ impl LocalWorktree {
     pub fn share(&mut self, project_id: u64, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
         let (share_tx, share_rx) = oneshot::channel();
 
-        if self.share.is_some() {
-            let _ = share_tx.send(Ok(()));
+        if let Some(share) = self.share.as_mut() {
+            let _ = share_tx.send(());
+            *share.resume_updates.borrow_mut() = ();
         } else {
             let (snapshots_tx, mut snapshots_rx) = watch::channel_with(self.snapshot());
+            let (resume_updates_tx, mut resume_updates_rx) = watch::channel();
             let worktree_id = cx.model_id() as u64;
 
             for (path, summary) in self.diagnostic_summaries.iter() {
@@ -985,47 +993,49 @@ impl LocalWorktree {
                 }
             }
 
-            let maintain_remote_snapshot = cx.background().spawn({
-                let rpc = self.client.clone();
+            let _maintain_remote_snapshot = cx.background().spawn({
+                let client = self.client.clone();
                 async move {
-                    let mut prev_snapshot = match snapshots_rx.recv().await {
-                        Some(snapshot) => {
-                            let update = proto::UpdateWorktree {
-                                project_id,
-                                worktree_id,
-                                abs_path: snapshot.abs_path().to_string_lossy().into(),
-                                root_name: snapshot.root_name().to_string(),
-                                updated_entries: snapshot
-                                    .entries_by_path
-                                    .iter()
-                                    .map(Into::into)
-                                    .collect(),
-                                removed_entries: Default::default(),
-                                scan_id: snapshot.scan_id as u64,
-                                is_last_update: true,
-                            };
-                            if let Err(error) = send_worktree_update(&rpc, update).await {
-                                let _ = share_tx.send(Err(error));
-                                return Err(anyhow!("failed to send initial update worktree"));
-                            } else {
-                                let _ = share_tx.send(Ok(()));
-                                snapshot
+                    let mut share_tx = Some(share_tx);
+                    let mut prev_snapshot = LocalSnapshot {
+                        ignores_by_parent_abs_path: Default::default(),
+                        git_repositories: Default::default(),
+                        removed_entry_ids: Default::default(),
+                        next_entry_id: Default::default(),
+                        snapshot: Snapshot {
+                            id: WorktreeId(worktree_id as usize),
+                            abs_path: Path::new("").into(),
+                            root_name: Default::default(),
+                            root_char_bag: Default::default(),
+                            entries_by_path: Default::default(),
+                            entries_by_id: Default::default(),
+                            scan_id: 0,
+                            completed_scan_id: 0,
+                        },
+                    };
+                    while let Some(snapshot) = snapshots_rx.recv().await {
+                        #[cfg(any(test, feature = "test-support"))]
+                        const MAX_CHUNK_SIZE: usize = 2;
+                        #[cfg(not(any(test, feature = "test-support")))]
+                        const MAX_CHUNK_SIZE: usize = 256;
+
+                        let update =
+                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, true);
+                        for update in proto::split_worktree_update(update, MAX_CHUNK_SIZE) {
+                            let _ = resume_updates_rx.try_recv();
+                            while let Err(error) = client.request(update.clone()).await {
+                                log::error!("failed to send worktree update: {}", error);
+                                log::info!("waiting to resume updates");
+                                if resume_updates_rx.next().await.is_none() {
+                                    return Ok(());
+                                }
                             }
                         }
-                        None => {
-                            share_tx
-                                .send(Err(anyhow!("worktree dropped before share completed")))
-                                .ok();
-                            return Err(anyhow!("failed to send initial update worktree"));
-                        }
-                    };
 
-                    while let Some(snapshot) = snapshots_rx.recv().await {
-                        send_worktree_update(
-                            &rpc,
-                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, true),
-                        )
-                        .await?;
+                        if let Some(share_tx) = share_tx.take() {
+                            let _ = share_tx.send(());
+                        }
+
                         prev_snapshot = snapshot;
                     }
 
@@ -1037,15 +1047,13 @@ impl LocalWorktree {
             self.share = Some(ShareState {
                 project_id,
                 snapshots_tx,
-                _maintain_remote_snapshot: maintain_remote_snapshot,
+                resume_updates: resume_updates_tx,
+                _maintain_remote_snapshot,
             });
         }
 
-        cx.foreground().spawn(async move {
-            share_rx
-                .await
-                .unwrap_or_else(|_| Err(anyhow!("share ended")))
-        })
+        cx.foreground()
+            .spawn(async move { share_rx.await.map_err(|_| anyhow!("share ended")) })
     }
 
     pub fn unshare(&mut self) {
@@ -1083,7 +1091,7 @@ impl RemoteWorktree {
     }
 
     fn observed_snapshot(&self, scan_id: usize) -> bool {
-        self.scan_id > scan_id || (self.scan_id == scan_id && self.is_complete)
+        self.completed_scan_id >= scan_id
     }
 
     fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
@@ -1246,7 +1254,9 @@ impl Snapshot {
         self.entries_by_path.edit(entries_by_path_edits, &());
         self.entries_by_id.edit(entries_by_id_edits, &());
         self.scan_id = update.scan_id as usize;
-        self.is_complete = update.is_last_update;
+        if update.is_last_update {
+            self.completed_scan_id = update.scan_id as usize;
+        }
 
         Ok(())
     }
@@ -1335,6 +1345,14 @@ impl Snapshot {
         &self.root_name
     }
 
+    pub fn scan_started(&mut self) {
+        self.scan_id += 1;
+    }
+
+    pub fn scan_completed(&mut self) {
+        self.completed_scan_id = self.scan_id;
+    }
+
     pub fn scan_id(&self) -> usize {
         self.scan_id
     }
@@ -1363,10 +1381,6 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub fn extension_counts(&self) -> &HashMap<OsString, usize> {
-        &self.extension_counts
-    }
-
     // Gives the most specific git repository for a given path
     pub(crate) fn repo_for(&self, path: &Path) -> Option<GitRepositoryEntry> {
         self.git_repositories
@@ -1462,7 +1476,7 @@ impl LocalSnapshot {
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,
-            is_last_update: true,
+            is_last_update: self.completed_scan_id == self.scan_id,
         }
     }
 
@@ -1496,9 +1510,9 @@ impl LocalSnapshot {
             }
         }
 
-        self.entries_by_path.insert_or_replace(entry.clone(), &());
         let scan_id = self.scan_id;
-        let removed_entry = self.entries_by_id.insert_or_replace(
+        self.entries_by_path.insert_or_replace(entry.clone(), &());
+        self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -1507,11 +1521,6 @@ impl LocalSnapshot {
             },
             &(),
         );
-
-        if let Some(removed_entry) = removed_entry {
-            self.dec_extension_count(&removed_entry.path, removed_entry.is_ignored);
-        }
-        self.inc_extension_count(&entry.path, entry.is_ignored);
 
         entry
     }
@@ -1573,7 +1582,6 @@ impl LocalSnapshot {
 
         for mut entry in entries {
             self.reuse_entry_id(&mut entry);
-            self.inc_extension_count(&entry.path, entry.is_ignored);
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -1584,33 +1592,7 @@ impl LocalSnapshot {
         }
 
         self.entries_by_path.edit(entries_by_path_edits, &());
-        let removed_entries = self.entries_by_id.edit(entries_by_id_edits, &());
-
-        for removed_entry in removed_entries {
-            self.dec_extension_count(&removed_entry.path, removed_entry.is_ignored);
-        }
-    }
-
-    fn inc_extension_count(&mut self, path: &Path, ignored: bool) {
-        if !ignored {
-            if let Some(extension) = path.extension() {
-                if let Some(count) = self.extension_counts.get_mut(extension) {
-                    *count += 1;
-                } else {
-                    self.extension_counts.insert(extension.into(), 1);
-                }
-            }
-        }
-    }
-
-    fn dec_extension_count(&mut self, path: &Path, ignored: bool) {
-        if !ignored {
-            if let Some(extension) = path.extension() {
-                if let Some(count) = self.extension_counts.get_mut(extension) {
-                    *count -= 1;
-                }
-            }
-        }
+        self.entries_by_id.edit(entries_by_id_edits, &());
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
@@ -1640,7 +1622,6 @@ impl LocalSnapshot {
                 .or_insert(entry.id);
             *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
             entries_by_id_edits.push(Edit::Remove(entry.id));
-            self.dec_extension_count(&entry.path, entry.is_ignored);
         }
         self.entries_by_id.edit(entries_by_id_edits, &());
 
@@ -2010,7 +1991,7 @@ impl File {
         })
     }
 
-    pub fn from_dyn(file: Option<&dyn language::File>) -> Option<&Self> {
+    pub fn from_dyn(file: Option<&Arc<dyn language::File>>) -> Option<&Self> {
         file.and_then(|f| f.as_any().downcast_ref())
     }
 
@@ -2277,7 +2258,8 @@ impl BackgroundScanner {
         let is_dir;
         let next_entry_id;
         {
-            let snapshot = self.snapshot.lock();
+            let mut snapshot = self.snapshot.lock();
+            snapshot.scan_started();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
             root_inode = snapshot.root_entry().map(|e| e.inode);
@@ -2343,6 +2325,8 @@ impl BackgroundScanner {
                     }
                 })
                 .await;
+
+            self.snapshot.lock().scan_completed();
         }
 
         Ok(())
@@ -2470,7 +2454,8 @@ impl BackgroundScanner {
         let root_abs_path;
         let next_entry_id;
         {
-            let snapshot = self.snapshot.lock();
+            let mut snapshot = self.snapshot.lock();
+            snapshot.scan_started();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
             next_entry_id = snapshot.next_entry_id.clone();
@@ -2495,7 +2480,6 @@ impl BackgroundScanner {
         let (scan_queue_tx, scan_queue_rx) = channel::unbounded();
         {
             let mut snapshot = self.snapshot.lock();
-            snapshot.scan_id += 1;
             for event in &events {
                 if let Ok(path) = event.path.strip_prefix(&root_canonical_path) {
                     snapshot.remove_path(path);
@@ -2582,6 +2566,7 @@ impl BackgroundScanner {
 
         self.update_ignore_statuses().await;
         self.update_git_repositories();
+        self.snapshot.lock().scan_completed();
         true
     }
 
@@ -2974,19 +2959,6 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             ))
         }
     }
-}
-
-async fn send_worktree_update(client: &Arc<Client>, update: proto::UpdateWorktree) -> Result<()> {
-    #[cfg(any(test, feature = "test-support"))]
-    const MAX_CHUNK_SIZE: usize = 2;
-    #[cfg(not(any(test, feature = "test-support")))]
-    const MAX_CHUNK_SIZE: usize = 256;
-
-    for update in proto::split_worktree_update(update, MAX_CHUNK_SIZE) {
-        client.request(update).await?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -3479,9 +3451,8 @@ mod tests {
                 root_name: Default::default(),
                 root_char_bag: Default::default(),
                 scan_id: 0,
-                is_complete: true,
+                completed_scan_id: 0,
             },
-            extension_counts: Default::default(),
         };
         initial_snapshot.insert_entry(
             Entry::new(
@@ -3763,15 +3734,6 @@ mod tests {
                     .entry_for_path(ignore_parent_path.join(&*GITIGNORE))
                     .is_some());
             }
-
-            // Ensure extension counts are correct.
-            let mut expected_extension_counts = HashMap::default();
-            for extension in self.entries(false).filter_map(|e| e.path.extension()) {
-                *expected_extension_counts
-                    .entry(extension.into())
-                    .or_insert(0) += 1;
-            }
-            assert_eq!(self.extension_counts, expected_extension_counts);
         }
 
         fn to_vec(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {

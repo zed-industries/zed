@@ -21,6 +21,8 @@ message Envelope {
         CreateRoomResponse create_room_response = 10;
         JoinRoom join_room = 11;
         JoinRoomResponse join_room_response = 12;
+        RejoinRoom rejoin_room = 108;
+        RejoinRoomResponse rejoin_room_response = 109;
         LeaveRoom leave_room = 13;
         Call call = 14;
         IncomingCall incoming_call = 15;
@@ -37,6 +39,7 @@ message Envelope {
         JoinProjectResponse join_project_response = 25;
         LeaveProject leave_project = 26;
         AddProjectCollaborator add_project_collaborator = 27;
+        UpdateProjectCollaborator update_project_collaborator = 110;
         RemoveProjectCollaborator remove_project_collaborator = 28;
 
         GetDefinition get_definition = 29;
@@ -76,6 +79,8 @@ message Envelope {
         BufferReloaded buffer_reloaded = 61;
         ReloadBuffers reload_buffers = 62;
         ReloadBuffersResponse reload_buffers_response = 63;
+        SynchronizeBuffers synchronize_buffers = 200;
+        SynchronizeBuffersResponse synchronize_buffers_response = 201;
         FormatBuffers format_buffers = 64;
         FormatBuffersResponse format_buffers_response = 65;
         GetCompletions get_completions = 66;
@@ -159,6 +164,40 @@ message JoinRoom {
 message JoinRoomResponse {
     Room room = 1;
     optional LiveKitConnectionInfo live_kit_connection_info = 2;
+}
+
+message RejoinRoom {
+    uint64 id = 1;
+    repeated UpdateProject reshared_projects = 2;
+    repeated RejoinProject rejoined_projects = 3;
+}
+
+message RejoinProject {
+    uint64 id = 1;
+    repeated RejoinWorktree worktrees = 2;
+}
+
+message RejoinWorktree {
+    uint64 id = 1;
+    uint64 scan_id = 2;
+}
+
+message RejoinRoomResponse {
+    Room room = 1;
+    repeated ResharedProject reshared_projects = 2;
+    repeated RejoinedProject rejoined_projects = 3;
+}
+
+message ResharedProject {
+    uint64 id = 1;
+    repeated Collaborator collaborators = 2;
+}
+
+message RejoinedProject {
+    uint64 id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+    repeated Collaborator collaborators = 3;
+    repeated LanguageServer language_servers = 4;
 }
 
 message LeaveRoom {}
@@ -320,6 +359,12 @@ message ProjectEntryResponse {
 message AddProjectCollaborator {
     uint64 project_id = 1;
     Collaborator collaborator = 2;
+}
+
+message UpdateProjectCollaborator {
+    uint64 project_id = 1;
+    PeerId old_peer_id = 2;
+    PeerId new_peer_id = 3;
 }
 
 message RemoveProjectCollaborator {
@@ -492,6 +537,20 @@ message ReloadBuffers {
 
 message ReloadBuffersResponse {
     ProjectTransaction transaction = 1;
+}
+
+message SynchronizeBuffers {
+    uint64 project_id = 1;
+    repeated BufferVersion buffers = 2;
+}
+
+message SynchronizeBuffersResponse {
+    repeated BufferVersion buffers = 1;
+}
+
+message BufferVersion {
+    uint64 id = 1;
+    repeated VectorClockEntry version = 2;
 }
 
 enum FormatTrigger {

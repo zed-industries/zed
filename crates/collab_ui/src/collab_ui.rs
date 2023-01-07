@@ -7,10 +7,10 @@ mod incoming_call_notification;
 mod notifications;
 mod project_shared_notification;
 
+use anyhow::anyhow;
 use call::ActiveCall;
 pub use collab_titlebar_item::{CollabTitlebarItem, ToggleCollaborationMenu};
 use gpui::MutableAppContext;
-use project::Project;
 use std::sync::Arc;
 use workspace::{AppState, JoinProject, ToggleFollow, Workspace};
 
@@ -39,15 +39,20 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             let workspace = if let Some(existing_workspace) = existing_workspace {
                 existing_workspace
             } else {
-                let project = Project::remote(
-                    project_id,
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
-                    cx.clone(),
-                )
-                .await?;
+                let active_call = cx.read(ActiveCall::global);
+                let room = active_call
+                    .read_with(&cx, |call, _| call.room().cloned())
+                    .ok_or_else(|| anyhow!("not in a call"))?;
+                let project = room
+                    .update(&mut cx, |room, cx| {
+                        room.join_project(
+                            project_id,
+                            app_state.languages.clone(),
+                            app_state.fs.clone(),
+                            cx,
+                        )
+                    })
+                    .await?;
 
                 let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                     let mut workspace = Workspace::new(

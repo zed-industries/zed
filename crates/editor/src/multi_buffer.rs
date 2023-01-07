@@ -1311,7 +1311,7 @@ impl MultiBuffer {
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a dyn File; 2]> {
+    pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a Arc<dyn File>; 2]> {
         let buffers = self.buffers.borrow();
         buffers
             .values()
@@ -3651,7 +3651,7 @@ mod tests {
             let state = host_buffer.read(cx).to_proto();
             let ops = cx
                 .background()
-                .block(host_buffer.read(cx).serialize_ops(cx));
+                .block(host_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer = Buffer::from_proto(1, state, None).unwrap();
             buffer
                 .apply_ops(

@@ -115,6 +115,10 @@ impl History {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             transaction_depth: 0,
+            // Don't group transactions in tests unless we opt in, because it's a footgun.
+            #[cfg(any(test, feature = "test-support"))]
+            group_interval: Duration::ZERO,
+            #[cfg(not(any(test, feature = "test-support")))]
             group_interval: Duration::from_millis(300),
         }
     }

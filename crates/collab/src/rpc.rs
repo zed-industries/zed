@@ -95,6 +95,7 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+    executor: Executor,
 }
 
 impl Session {
@@ -184,6 +185,7 @@ impl Server {
             .add_request_handler(ping)
             .add_request_handler(create_room)
             .add_request_handler(join_room)
+            .add_request_handler(rejoin_room)
             .add_message_handler(leave_room)
             .add_request_handler(call)
             .add_request_handler(cancel_call)
@@ -215,6 +217,7 @@ impl Server {
             .add_request_handler(forward_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_project_request::<proto::PerformRename>)
             .add_request_handler(forward_project_request::<proto::ReloadBuffers>)
+            .add_request_handler(forward_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_project_request::<proto::FormatBuffers>)
             .add_request_handler(forward_project_request::<proto::CreateProjectEntry>)
             .add_request_handler(forward_project_request::<proto::RenameProjectEntry>)
@@ -249,16 +252,6 @@ impl Server {
         let live_kit_client = self.app_state.live_kit_client.clone();
 
         let span = info_span!("start server");
-        let span_enter = span.enter();
-
-        tracing::info!("begin deleting stale projects");
-        app_state
-            .db
-            .delete_stale_projects(&app_state.config.zed_environment, server_id)
-            .await?;
-        tracing::info!("finish deleting stale projects");
-
-        drop(span_enter);
         self.executor.spawn_detached(
             async move {
                 tracing::info!("waiting for cleanup timeout");
@@ -354,7 +347,7 @@ impl Server {
 
                 app_state
                     .db
-                    .delete_stale_servers(server_id, &app_state.config.zed_environment)
+                    .delete_stale_servers(&app_state.config.zed_environment, server_id)
                     .await
                     .trace_err();
             }
@@ -529,7 +522,8 @@ impl Server {
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
-                live_kit_client: this.app_state.live_kit_client.clone()
+                live_kit_client: this.app_state.live_kit_client.clone(),
+                executor: executor.clone(),
             };
             update_user_contacts(user_id, &session).await?;
 
@@ -586,7 +580,7 @@ impl Server {
 
             drop(foreground_message_handlers);
             tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
-            if let Err(error) = sign_out(session, teardown, executor).await {
+            if let Err(error) = connection_lost(session, teardown, executor).await {
                 tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
@@ -678,15 +672,17 @@ impl<'a> Drop for ConnectionPoolGuard<'a> {
 }
 
 fn broadcast<F>(
-    sender_id: ConnectionId,
+    sender_id: Option<ConnectionId>,
     receiver_ids: impl IntoIterator<Item = ConnectionId>,
     mut f: F,
 ) where
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
-        if receiver_id != sender_id {
-            f(receiver_id).trace_err();
+        if Some(receiver_id) != sender_id {
+            if let Err(error) = f(receiver_id) {
+                tracing::error!("failed to send to {:?} {}", receiver_id, error);
+            }
         }
     }
 }
@@ -787,7 +783,7 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
 }
 
 #[instrument(err, skip(executor))]
-async fn sign_out(
+async fn connection_lost(
     session: Session,
     mut teardown: watch::Receiver<()>,
     executor: Executor,
@@ -798,17 +794,12 @@ async fn sign_out(
         .await
         .remove_connection(session.connection_id)?;
 
-    if let Some(mut left_projects) = session
+    session
         .db()
         .await
         .connection_lost(session.connection_id)
         .await
-        .trace_err()
-    {
-        for left_project in mem::take(&mut *left_projects) {
-            project_left(&left_project, &session);
-        }
-    }
+        .trace_err();
 
     futures::select_biased! {
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
@@ -936,6 +927,164 @@ async fn join_room(
         room: Some(room),
         live_kit_connection_info,
     })?;
+
+    update_user_contacts(session.user_id, &session).await?;
+    Ok(())
+}
+
+async fn rejoin_room(
+    request: proto::RejoinRoom,
+    response: Response<proto::RejoinRoom>,
+    session: Session,
+) -> Result<()> {
+    {
+        let mut rejoined_room = session
+            .db()
+            .await
+            .rejoin_room(request, session.user_id, session.connection_id)
+            .await?;
+
+        response.send(proto::RejoinRoomResponse {
+            room: Some(rejoined_room.room.clone()),
+            reshared_projects: rejoined_room
+                .reshared_projects
+                .iter()
+                .map(|project| proto::ResharedProject {
+                    id: project.id.to_proto(),
+                    collaborators: project
+                        .collaborators
+                        .iter()
+                        .map(|collaborator| collaborator.to_proto())
+                        .collect(),
+                })
+                .collect(),
+            rejoined_projects: rejoined_room
+                .rejoined_projects
+                .iter()
+                .map(|rejoined_project| proto::RejoinedProject {
+                    id: rejoined_project.id.to_proto(),
+                    worktrees: rejoined_project
+                        .worktrees
+                        .iter()
+                        .map(|worktree| proto::WorktreeMetadata {
+                            id: worktree.id,
+                            root_name: worktree.root_name.clone(),
+                            visible: worktree.visible,
+                            abs_path: worktree.abs_path.clone(),
+                        })
+                        .collect(),
+                    collaborators: rejoined_project
+                        .collaborators
+                        .iter()
+                        .map(|collaborator| collaborator.to_proto())
+                        .collect(),
+                    language_servers: rejoined_project.language_servers.clone(),
+                })
+                .collect(),
+        })?;
+        room_updated(&rejoined_room.room, &session.peer);
+
+        for project in &rejoined_room.reshared_projects {
+            for collaborator in &project.collaborators {
+                session
+                    .peer
+                    .send(
+                        collaborator.connection_id,
+                        proto::UpdateProjectCollaborator {
+                            project_id: project.id.to_proto(),
+                            old_peer_id: Some(project.old_connection_id.into()),
+                            new_peer_id: Some(session.connection_id.into()),
+                        },
+                    )
+                    .trace_err();
+            }
+
+            broadcast(
+                Some(session.connection_id),
+                project
+                    .collaborators
+                    .iter()
+                    .map(|collaborator| collaborator.connection_id),
+                |connection_id| {
+                    session.peer.forward_send(
+                        session.connection_id,
+                        connection_id,
+                        proto::UpdateProject {
+                            project_id: project.id.to_proto(),
+                            worktrees: project.worktrees.clone(),
+                        },
+                    )
+                },
+            );
+        }
+
+        for project in &rejoined_room.rejoined_projects {
+            for collaborator in &project.collaborators {
+                session
+                    .peer
+                    .send(
+                        collaborator.connection_id,
+                        proto::UpdateProjectCollaborator {
+                            project_id: project.id.to_proto(),
+                            old_peer_id: Some(project.old_connection_id.into()),
+                            new_peer_id: Some(session.connection_id.into()),
+                        },
+                    )
+                    .trace_err();
+            }
+        }
+
+        for project in &mut rejoined_room.rejoined_projects {
+            for worktree in mem::take(&mut project.worktrees) {
+                #[cfg(any(test, feature = "test-support"))]
+                const MAX_CHUNK_SIZE: usize = 2;
+                #[cfg(not(any(test, feature = "test-support")))]
+                const MAX_CHUNK_SIZE: usize = 256;
+
+                // Stream this worktree's entries.
+                let message = proto::UpdateWorktree {
+                    project_id: project.id.to_proto(),
+                    worktree_id: worktree.id,
+                    abs_path: worktree.abs_path.clone(),
+                    root_name: worktree.root_name,
+                    updated_entries: worktree.updated_entries,
+                    removed_entries: worktree.removed_entries,
+                    scan_id: worktree.scan_id,
+                    is_last_update: worktree.completed_scan_id == worktree.scan_id,
+                };
+                for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+                    session.peer.send(session.connection_id, update.clone())?;
+                }
+
+                // Stream this worktree's diagnostics.
+                for summary in worktree.diagnostic_summaries {
+                    session.peer.send(
+                        session.connection_id,
+                        proto::UpdateDiagnosticSummary {
+                            project_id: project.id.to_proto(),
+                            worktree_id: worktree.id,
+                            summary: Some(summary),
+                        },
+                    )?;
+                }
+            }
+
+            for language_server in &project.language_servers {
+                session.peer.send(
+                    session.connection_id,
+                    proto::UpdateLanguageServer {
+                        project_id: project.id.to_proto(),
+                        language_server_id: language_server.id,
+                        variant: Some(
+                            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                                proto::LspDiskBasedDiagnosticsUpdated {},
+                            ),
+                        ),
+                    },
+                )?;
+            }
+        }
+    }
 
     update_user_contacts(session.user_id, &session).await?;
     Ok(())
@@ -1132,7 +1281,7 @@ async fn unshare_project(message: proto::UnshareProject, session: Session) -> Re
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
@@ -1160,18 +1309,8 @@ async fn join_project(
     let collaborators = project
         .collaborators
         .iter()
-        .map(|collaborator| {
-            let peer_id = proto::PeerId {
-                owner_id: collaborator.connection_server_id.0 as u32,
-                id: collaborator.connection_id as u32,
-            };
-            proto::Collaborator {
-                peer_id: Some(peer_id),
-                replica_id: collaborator.replica_id.0 as u32,
-                user_id: collaborator.user_id.to_proto(),
-            }
-        })
-        .filter(|collaborator| collaborator.peer_id != Some(session.connection_id.into()))
+        .filter(|collaborator| collaborator.connection_id != session.connection_id)
+        .map(|collaborator| collaborator.to_proto())
         .collect::<Vec<_>>();
     let worktrees = project
         .worktrees
@@ -1224,7 +1363,7 @@ async fn join_project(
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
-            is_last_update: worktree.is_complete,
+            is_last_update: worktree.scan_id == worktree.completed_scan_id,
         };
         for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
             session.peer.send(session.connection_id, update.clone())?;
@@ -1293,7 +1432,7 @@ async fn update_project(
         .update_project(project_id, session.connection_id, &request.worktrees)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1319,7 +1458,7 @@ async fn update_worktree(
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1342,7 +1481,7 @@ async fn update_diagnostic_summary(
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1365,7 +1504,7 @@ async fn start_language_server(
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         guest_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1380,6 +1519,7 @@ async fn update_language_server(
     request: proto::UpdateLanguageServer,
     session: Session,
 ) -> Result<()> {
+    session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.project_id);
     let project_connection_ids = session
         .db()
@@ -1387,7 +1527,7 @@ async fn update_language_server(
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1406,6 +1546,7 @@ async fn forward_project_request<T>(
 where
     T: EntityMessage + RequestMessage,
 {
+    session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.remote_entity_id());
     let host_connection_id = {
         let collaborators = session
@@ -1413,14 +1554,11 @@ where
             .await
             .project_collaborators(project_id, session.connection_id)
             .await?;
-        let host = collaborators
+        collaborators
             .iter()
             .find(|collaborator| collaborator.is_host)
-            .ok_or_else(|| anyhow!("host not found"))?;
-        ConnectionId {
-            owner_id: host.connection_server_id.0 as u32,
-            id: host.connection_id as u32,
-        }
+            .ok_or_else(|| anyhow!("host not found"))?
+            .connection_id
     };
 
     let payload = session
@@ -1444,14 +1582,11 @@ async fn save_buffer(
             .await
             .project_collaborators(project_id, session.connection_id)
             .await?;
-        let host = collaborators
+        collaborators
             .iter()
             .find(|collaborator| collaborator.is_host)
-            .ok_or_else(|| anyhow!("host not found"))?;
-        ConnectionId {
-            owner_id: host.connection_server_id.0 as u32,
-            id: host.connection_id as u32,
-        }
+            .ok_or_else(|| anyhow!("host not found"))?
+            .connection_id
     };
     let response_payload = session
         .peer
@@ -1463,22 +1598,19 @@ async fn save_buffer(
         .await
         .project_collaborators(project_id, session.connection_id)
         .await?;
-    collaborators.retain(|collaborator| {
-        let collaborator_connection = ConnectionId {
-            owner_id: collaborator.connection_server_id.0 as u32,
-            id: collaborator.connection_id as u32,
-        };
-        collaborator_connection != session.connection_id
-    });
-    let project_connection_ids = collaborators.iter().map(|collaborator| ConnectionId {
-        owner_id: collaborator.connection_server_id.0 as u32,
-        id: collaborator.connection_id as u32,
-    });
-    broadcast(host_connection_id, project_connection_ids, |conn_id| {
-        session
-            .peer
-            .forward_send(host_connection_id, conn_id, response_payload.clone())
-    });
+    collaborators.retain(|collaborator| collaborator.connection_id != session.connection_id);
+    let project_connection_ids = collaborators
+        .iter()
+        .map(|collaborator| collaborator.connection_id);
+    broadcast(
+        Some(host_connection_id),
+        project_connection_ids,
+        |conn_id| {
+            session
+                .peer
+                .forward_send(host_connection_id, conn_id, response_payload.clone())
+        },
+    );
     response.send(response_payload)?;
     Ok(())
 }
@@ -1487,6 +1619,7 @@ async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
     session: Session,
 ) -> Result<()> {
+    session.executor.record_backtrace();
     let peer_id = request.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?;
     session
         .peer
@@ -1499,6 +1632,7 @@ async fn update_buffer(
     response: Response<proto::UpdateBuffer>,
     session: Session,
 ) -> Result<()> {
+    session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.project_id);
     let project_connection_ids = session
         .db()
@@ -1506,8 +1640,10 @@ async fn update_buffer(
         .project_connection_ids(project_id, session.connection_id)
         .await?;
 
+    session.executor.record_backtrace();
+
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1528,7 +1664,7 @@ async fn update_buffer_file(request: proto::UpdateBufferFile, session: Session) 
         .await?;
 
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1547,7 +1683,7 @@ async fn buffer_reloaded(request: proto::BufferReloaded, session: Session) -> Re
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1566,7 +1702,7 @@ async fn buffer_saved(request: proto::BufferSaved, session: Session) -> Result<(
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1858,7 +1994,7 @@ async fn update_diff_base(request: proto::UpdateDiffBase, session: Session) -> R
         .project_connection_ids(project_id, session.connection_id)
         .await?;
     broadcast(
-        session.connection_id,
+        Some(session.connection_id),
         project_connection_ids.iter().copied(),
         |connection_id| {
             session
@@ -1968,21 +2104,20 @@ fn contact_for_user(
 }
 
 fn room_updated(room: &proto::Room, peer: &Peer) {
-    for participant in &room.participants {
-        if let Some(peer_id) = participant
-            .peer_id
-            .ok_or_else(|| anyhow!("invalid participant peer id"))
-            .trace_err()
-        {
+    broadcast(
+        None,
+        room.participants
+            .iter()
+            .filter_map(|participant| Some(participant.peer_id?.into())),
+        |peer_id| {
             peer.send(
                 peer_id.into(),
                 proto::RoomUpdated {
                     room: Some(room.clone()),
                 },
             )
-            .trace_err();
-        }
-    }
+        },
+    );
 }
 
 async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> {
@@ -2103,16 +2238,6 @@ fn project_left(project: &db::LeftProject, session: &Session) {
                 .trace_err();
         }
     }
-
-    session
-        .peer
-        .send(
-            session.connection_id,
-            proto::UnshareProject {
-                project_id: project.id.to_proto(),
-            },
-        )
-        .trace_err();
 }
 
 pub trait ResultExt {

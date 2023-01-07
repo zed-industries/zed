@@ -1,7 +1,10 @@
 use crate::{
-    elements::Empty, executor, platform, util::CwdBacktrace, Element, ElementBox, Entity,
-    FontCache, Handle, LeakDetector, MutableAppContext, Platform, RenderContext, Subscription,
-    TestAppContext, View,
+    elements::Empty,
+    executor::{self, ExecutorEvent},
+    platform,
+    util::CwdBacktrace,
+    Element, ElementBox, Entity, FontCache, Handle, LeakDetector, MutableAppContext, Platform,
+    RenderContext, Subscription, TestAppContext, View,
 };
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -62,7 +65,7 @@ pub fn run_test(
             let platform = Arc::new(platform::test::platform());
             let font_system = platform.fonts();
             let font_cache = Arc::new(FontCache::new(font_system));
-            let mut prev_runnable_history: Option<Vec<usize>> = None;
+            let mut prev_runnable_history: Option<Vec<ExecutorEvent>> = None;
 
             for _ in 0..num_iterations {
                 let seed = atomic_seed.load(SeqCst);
@@ -73,6 +76,7 @@ pub fn run_test(
 
                 let deterministic = executor::Deterministic::new(seed);
                 if detect_nondeterminism {
+                    deterministic.set_previous_execution_history(prev_runnable_history.clone());
                     deterministic.enable_runnable_backtrace();
                 }
 
@@ -98,7 +102,7 @@ pub fn run_test(
                 leak_detector.lock().detect();
 
                 if detect_nondeterminism {
-                    let curr_runnable_history = deterministic.runnable_history();
+                    let curr_runnable_history = deterministic.execution_history();
                     if let Some(prev_runnable_history) = prev_runnable_history {
                         let mut prev_entries = prev_runnable_history.iter().fuse();
                         let mut curr_entries = curr_runnable_history.iter().fuse();
@@ -138,7 +142,7 @@ pub fn run_test(
 
                             let last_common_backtrace = common_history_prefix
                                 .last()
-                                .map(|runnable_id| deterministic.runnable_backtrace(*runnable_id));
+                                .map(|event| deterministic.runnable_backtrace(event.id()));
 
                             writeln!(
                                 &mut error,
