@@ -15,6 +15,7 @@ use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Project, ProjectPath};
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::{
     env,
     ops::Range,
@@ -28,17 +29,19 @@ use util::ResultExt;
 async fn test_random_collaboration(
     cx: &mut TestAppContext,
     deterministic: Arc<Deterministic>,
-    mut rng: StdRng,
+    rng: StdRng,
 ) {
     deterministic.forbid_parking();
 
     let max_peers = env::var("MAX_PEERS")
         .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
-        .unwrap_or(5);
-
+        .unwrap_or(3);
     let max_operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
+
+    let plan_load_path = path_env_var("LOAD_PLAN");
+    let plan_save_path = path_env_var("SAVE_PLAN");
 
     let mut server = TestServer::start(&deterministic).await;
     let db = server.app_state.db.clone();
@@ -64,6 +67,7 @@ async fn test_random_collaboration(
             username,
             online: false,
             next_root_id: 0,
+            operation_ix: 0,
         });
     }
 
@@ -84,15 +88,12 @@ async fn test_random_collaboration(
         }
     }
 
-    let plan = Arc::new(Mutex::new(TestPlan {
-        allow_server_restarts: rng.gen_bool(0.7),
-        allow_client_reconnection: rng.gen_bool(0.7),
-        allow_client_disconnection: rng.gen_bool(0.1),
-        operation_ix: 0,
-        max_operations,
-        users,
-        rng,
-    }));
+    let plan = Arc::new(Mutex::new(TestPlan::new(rng, users, max_operations)));
+
+    if let Some(path) = &plan_load_path {
+        eprintln!("loaded plan from path {:?}", path);
+        plan.lock().load(path);
+    }
 
     let mut clients = Vec::new();
     let mut client_tasks = Vec::new();
@@ -249,6 +250,11 @@ async fn test_random_collaboration(
     futures::future::join_all(client_tasks).await;
     deterministic.finish_waiting();
     deterministic.run_until_parked();
+
+    if let Some(path) = &plan_save_path {
+        eprintln!("saved test plan to path {:?}", path);
+        plan.lock().save(path);
+    }
 
     for (client, client_cx) in &clients {
         for guest_project in client.remote_projects().iter() {
@@ -760,12 +766,14 @@ async fn apply_client_operation(
 
         ClientOperation::SearchProject {
             project_root_name,
+            is_local,
             query,
             detach,
         } => {
             log::info!(
-                "{}: search project {} for {:?}{}",
+                "{}: search {} project {} for {:?}{}",
                 client.username,
+                if is_local { "local" } else { "remote" },
                 project_root_name,
                 query,
                 if detach { ", detaching" } else { ", awaiting" }
@@ -811,6 +819,8 @@ async fn apply_client_operation(
 
 struct TestPlan {
     rng: StdRng,
+    replay: bool,
+    stored_operations: Vec<StoredOperation>,
     max_operations: usize,
     operation_ix: usize,
     users: Vec<UserTestPlan>,
@@ -823,10 +833,21 @@ struct UserTestPlan {
     user_id: UserId,
     username: String,
     next_root_id: usize,
+    operation_ix: usize,
     online: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StoredOperation {
+    Server(Operation),
+    Client {
+        user_id: UserId,
+        operation: ClientOperation,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum Operation {
     AddConnection {
         user_id: UserId,
@@ -844,7 +865,7 @@ enum Operation {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum ClientOperation {
     AcceptIncomingCall,
     RejectIncomingCall,
@@ -873,6 +894,7 @@ enum ClientOperation {
     },
     SearchProject {
         project_root_name: String,
+        is_local: bool,
         query: String,
         detach: bool,
     },
@@ -913,7 +935,7 @@ enum ClientOperation {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum LspRequestKind {
     Rename,
     Completion,
@@ -923,7 +945,101 @@ enum LspRequestKind {
 }
 
 impl TestPlan {
+    fn new(mut rng: StdRng, users: Vec<UserTestPlan>, max_operations: usize) -> Self {
+        Self {
+            replay: false,
+            allow_server_restarts: rng.gen_bool(0.7),
+            allow_client_reconnection: rng.gen_bool(0.7),
+            allow_client_disconnection: rng.gen_bool(0.1),
+            stored_operations: Vec::new(),
+            operation_ix: 0,
+            max_operations,
+            users,
+            rng,
+        }
+    }
+
+    fn load(&mut self, path: &Path) {
+        let json = std::fs::read_to_string(path).unwrap();
+        self.replay = true;
+        self.stored_operations = serde_json::from_str(&json).unwrap();
+    }
+
+    fn save(&mut self, path: &Path) {
+        // Format each operation as one line
+        let mut json = Vec::new();
+        json.push(b'[');
+        for (i, stored_operation) in self.stored_operations.iter().enumerate() {
+            if i > 0 {
+                json.push(b',');
+            }
+            json.extend_from_slice(b"\n  ");
+            serde_json::to_writer(&mut json, stored_operation).unwrap();
+        }
+        json.extend_from_slice(b"\n]\n");
+        std::fs::write(path, &json).unwrap();
+    }
+
     async fn next_operation(
+        &mut self,
+        clients: &[(Rc<TestClient>, TestAppContext)],
+    ) -> Option<Operation> {
+        if self.replay {
+            while let Some(stored_operation) = self.stored_operations.get(self.operation_ix) {
+                self.operation_ix += 1;
+                if let StoredOperation::Server(operation) = stored_operation {
+                    return Some(operation.clone());
+                }
+            }
+            None
+        } else {
+            let operation = self.generate_operation(clients).await;
+            if let Some(operation) = &operation {
+                self.stored_operations
+                    .push(StoredOperation::Server(operation.clone()))
+            }
+            operation
+        }
+    }
+
+    async fn next_client_operation(
+        &mut self,
+        client: &TestClient,
+        cx: &TestAppContext,
+    ) -> Option<ClientOperation> {
+        let current_user_id = client.current_user_id(cx);
+        let user_ix = self
+            .users
+            .iter()
+            .position(|user| user.user_id == current_user_id)
+            .unwrap();
+        let user_plan = &mut self.users[user_ix];
+
+        if self.replay {
+            while let Some(stored_operation) = self.stored_operations.get(user_plan.operation_ix) {
+                user_plan.operation_ix += 1;
+                if let StoredOperation::Client { user_id, operation } = stored_operation {
+                    if user_id == &current_user_id {
+                        return Some(operation.clone());
+                    }
+                }
+            }
+            None
+        } else {
+            let operation = self
+                .generate_client_operation(current_user_id, client, cx)
+                .await;
+            if let Some(operation) = &operation {
+                self.stored_operations.push(StoredOperation::Client {
+                    user_id: current_user_id,
+                    operation: operation.clone(),
+                })
+            }
+            operation
+        }
+    }
+
+    async fn generate_operation(
         &mut self,
         clients: &[(Rc<TestClient>, TestAppContext)],
     ) -> Option<Operation> {
@@ -931,7 +1047,7 @@ impl TestPlan {
             return None;
         }
 
-        let operation = loop {
+        Some(loop {
             break match self.rng.gen_range(0..100) {
                 0..=29 if clients.len() < self.users.len() => {
                     let user = self
@@ -980,12 +1096,12 @@ impl TestPlan {
                 }
                 _ => continue,
             };
-        };
-        Some(operation)
+        })
     }
 
-    async fn next_client_operation(
+    async fn generate_client_operation(
         &mut self,
+        user_id: UserId,
         client: &TestClient,
         cx: &TestAppContext,
     ) -> Option<ClientOperation> {
@@ -993,9 +1109,9 @@ impl TestPlan {
             return None;
         }
 
-        let user_id = client.current_user_id(cx);
+        self.operation_ix += 1;
         let call = cx.read(ActiveCall::global);
-        let operation = loop {
+        Some(loop {
             match self.rng.gen_range(0..100_u32) {
                 // Mutate the call
                 0..=29 => {
@@ -1237,6 +1353,7 @@ impl TestPlan {
                             let detach = self.rng.gen_bool(0.3);
                             break ClientOperation::SearchProject {
                                 project_root_name,
+                                is_local,
                                 query,
                                 detach,
                             };
@@ -1293,9 +1410,7 @@ impl TestPlan {
                     break ClientOperation::CreateFsEntry { path, is_dir };
                 }
             }
-        };
-        self.operation_ix += 1;
-        Some(operation)
+        })
     }
 
     fn next_root_dir_name(&mut self, user_id: UserId) -> String {
@@ -1571,4 +1686,17 @@ fn gen_file_name(rng: &mut StdRng) -> String {
         name.push(letter);
     }
     name
+}
+
+fn path_env_var(name: &str) -> Option<PathBuf> {
+    let value = env::var(name).ok()?;
+    let mut path = PathBuf::from(value);
+    if path.is_relative() {
+        let mut abs_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        abs_path.pop();
+        abs_path.pop();
+        abs_path.push(path);
+        path = abs_path
+    }
+    Some(path)
 }
