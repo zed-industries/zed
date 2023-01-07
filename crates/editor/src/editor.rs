@@ -830,33 +830,41 @@ impl CompletionsMenu {
 
         //Remove all candidates where the query's start does not match the start of any word in the candidate
         if let Some(query) = query {
-            if let Some(&start) = query.as_bytes().get(0) {
-                let start = start.to_ascii_lowercase();
-                matches.retain(|m| {
-                    let bytes = m.string.as_bytes();
+            if let Some(query_start) = query.chars().next() {
+                matches.retain(|string_match| {
+                    let text = &string_match.string;
+
                     let mut index = 0;
+                    let mut codepoints = text.char_indices().peekable();
 
                     std::iter::from_fn(move || {
                         let start_index = index;
-                        while index < bytes.len() {
-                            let current_upper = bytes[index].is_ascii_uppercase();
-                            let has_more = index + 1 < bytes.len();
-                            let next_upper = has_more && bytes[index + 1].is_ascii_uppercase();
+                        while let Some((new_index, codepoint)) = codepoints.next() {
+                            index = new_index + codepoint.len_utf8();
+                            let current_upper = codepoint.is_uppercase();
+                            let next_upper = codepoints
+                                .peek()
+                                .map(|(_, c)| c.is_uppercase())
+                                .unwrap_or(false);
 
-                            index += 1;
                             if !current_upper && next_upper {
-                                return Some(&m.string[start_index..index]);
+                                return Some(&text[start_index..index]);
                             }
                         }
 
-                        index = bytes.len();
-                        if start_index < bytes.len() {
-                            return Some(&m.string[start_index..]);
+                        index = text.len();
+                        if start_index < text.len() {
+                            return Some(&text[start_index..]);
                         }
                         None
                     })
-                    .flat_map(|w| w.split_inclusive('_'))
-                    .any(|w| w.as_bytes().first().map(|&b| b.to_ascii_lowercase()) == Some(start))
+                    .flat_map(|word| word.split_inclusive('_'))
+                    .any(|word| {
+                        word.chars()
+                            .flat_map(|codepoint| codepoint.to_lowercase())
+                            .zip(query_start.to_lowercase())
+                            .all(|(word_cp, query_cp)| word_cp == query_cp)
+                    })
                 });
             }
         }
