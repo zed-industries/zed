@@ -5189,20 +5189,27 @@ impl Project {
 
                     let operations = buffer.serialize_ops(Some(remote_version), cx);
                     let client = this.client.clone();
-                    let file = buffer.file().cloned();
+                    if let Some(file) = buffer.file() {
+                        client
+                            .send(proto::UpdateBufferFile {
+                                project_id,
+                                buffer_id: buffer_id as u64,
+                                file: Some(file.to_proto()),
+                            })
+                            .log_err();
+                    }
+
+                    client
+                        .send(proto::UpdateDiffBase {
+                            project_id,
+                            buffer_id: buffer_id as u64,
+                            diff_base: buffer.diff_base().map(Into::into),
+                        })
+                        .log_err();
+
                     cx.background()
                         .spawn(
                             async move {
-                                if let Some(file) = file {
-                                    client
-                                        .send(proto::UpdateBufferFile {
-                                            project_id,
-                                            buffer_id: buffer_id as u64,
-                                            file: Some(file.to_proto()),
-                                        })
-                                        .log_err();
-                                }
-
                                 let operations = operations.await;
                                 for chunk in split_operations(operations) {
                                     client
