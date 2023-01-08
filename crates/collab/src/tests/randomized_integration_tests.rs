@@ -14,8 +14,11 @@ use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf1
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Project};
-use rand::prelude::*;
-use std::{env, path::PathBuf, sync::Arc};
+use rand::{
+    distributions::{Alphanumeric, DistString},
+    prelude::*,
+};
+use std::{env, ffi::OsStr, path::PathBuf, sync::Arc};
 
 #[gpui::test(iterations = 100)]
 async fn test_random_collaboration(
@@ -382,9 +385,15 @@ async fn test_random_collaboration(
                         );
                     }
                     (None, None) => {}
-                    (None, _) => panic!("host's file is None, guest's isn't "),
-                    (_, None) => panic!("guest's file is None, hosts's isn't "),
+                    (None, _) => panic!("host's file is None, guest's isn't"),
+                    (_, None) => panic!("guest's file is None, hosts's isn't"),
                 }
+
+                let host_diff_base =
+                    host_buffer.read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
+                let guest_diff_base = guest_buffer
+                    .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
+                assert_eq!(guest_diff_base, host_diff_base);
             }
         }
     }
@@ -543,9 +552,10 @@ async fn randomly_mutate_client(
         50..=59 if !client.local_projects.is_empty() || !client.remote_projects.is_empty() => {
             randomly_mutate_worktrees(client, &rng, cx).await?;
         }
-        60..=84 if !client.local_projects.is_empty() || !client.remote_projects.is_empty() => {
+        60..=74 if !client.local_projects.is_empty() || !client.remote_projects.is_empty() => {
             randomly_query_and_mutate_buffers(client, &rng, cx).await?;
         }
+        75..=84 => randomly_mutate_git(client, &rng).await,
         _ => randomly_mutate_fs(client, &rng).await,
     }
 
@@ -603,6 +613,54 @@ async fn randomly_mutate_active_call(
     }
 
     Ok(())
+}
+
+async fn randomly_mutate_git(client: &mut TestClient, rng: &Mutex<StdRng>) {
+    let directories = client.fs.directories().await;
+    let mut dir_path = directories.choose(&mut *rng.lock()).unwrap().clone();
+    if dir_path.file_name() == Some(OsStr::new(".git")) {
+        dir_path.pop();
+    }
+    let mut git_dir_path = dir_path.clone();
+    git_dir_path.push(".git");
+
+    if !directories.contains(&git_dir_path) {
+        log::info!(
+            "{}: creating git directory at {:?}",
+            client.username,
+            git_dir_path
+        );
+        client.fs.create_dir(&git_dir_path).await.unwrap();
+    }
+
+    let mut child_paths = client.fs.read_dir(&dir_path).await.unwrap();
+    let mut child_file_paths = Vec::new();
+    while let Some(child_path) = child_paths.next().await {
+        let child_path = child_path.unwrap();
+        if client.fs.is_file(&child_path).await {
+            child_file_paths.push(child_path);
+        }
+    }
+    let count = rng.lock().gen_range(0..=child_file_paths.len());
+    child_file_paths.shuffle(&mut *rng.lock());
+    child_file_paths.truncate(count);
+
+    let mut new_index = Vec::new();
+    for abs_child_file_path in &child_file_paths {
+        let child_file_path = abs_child_file_path.strip_prefix(&dir_path).unwrap();
+        let new_base = Alphanumeric.sample_string(&mut *rng.lock(), 16);
+        new_index.push((child_file_path, new_base));
+    }
+    log::info!(
+        "{}: updating Git index at {:?}: {:#?}",
+        client.username,
+        git_dir_path,
+        new_index
+    );
+    client
+        .fs
+        .set_index_for_repo(&git_dir_path, &new_index)
+        .await;
 }
 
 async fn randomly_mutate_fs(client: &mut TestClient, rng: &Mutex<StdRng>) {
