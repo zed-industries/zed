@@ -682,7 +682,6 @@ impl Buffer {
         task
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn diff_base(&self) -> Option<&str> {
         self.diff_base.as_deref()
     }
