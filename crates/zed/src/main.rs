@@ -14,6 +14,7 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
+
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -41,7 +42,7 @@ use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
-use zed::{self, build_window_options, feedback_popover, initialize_workspace, languages, menus};
+use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();
@@ -110,12 +111,12 @@ fn main() {
 
         cx.set_global(client.clone());
 
-        feedback_popover::init(cx);
         context_menu::init(cx);
         project::Project::init(&client);
         client::init(client.clone(), cx);
         command_palette::init(cx);
         editor::init(cx);
+        feedback::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
         outline::init(cx);

@@ -230,6 +230,12 @@ impl View for FeedbackPopover {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         enum SubmitFeedback {}
 
+        // I'd like to just define:
+
+        // 1. Overall popover width x height dimensions (done)
+        // 2. Submit Feedback button height dimensions
+        // 3. Allow editor to dynamically fill in the remaining space
+
         let theme = cx.global::<Settings>().theme.clone();
         let submit_feedback_text_button_height = 20.0;
 

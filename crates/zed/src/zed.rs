@@ -1,10 +1,7 @@
-pub mod feedback_popover;
 pub mod languages;
 pub mod menus;
-pub mod system_specs;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
@@ -22,7 +19,7 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, ClipboardItem, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -34,7 +31,6 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{env, path::Path, str, sync::Arc};
-use system_specs::SystemSpecs;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
@@ -69,9 +65,6 @@ actions!(
         ResetBufferFontSize,
         InstallCommandLineInterface,
         ResetDatabase,
-        CopySystemSpecsIntoClipboard,
-        RequestFeature,
-        FileBugReport
     ]
 );
 
@@ -250,41 +243,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
 
-    cx.add_action(
-        |_: &mut Workspace, _: &CopySystemSpecsIntoClipboard, cx: &mut ViewContext<Workspace>| {
-            let system_specs = SystemSpecs::new(cx).to_string();
-            let item = ClipboardItem::new(system_specs.clone());
-            cx.prompt(
-                gpui::PromptLevel::Info,
-                &format!("Copied into clipboard:\n\n{system_specs}"),
-                &["OK"],
-            );
-            cx.write_to_clipboard(item);
-        },
-    );
-
-    cx.add_action(
-        |_: &mut Workspace, _: &RequestFeature, cx: &mut ViewContext<Workspace>| {
-            let url = "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
-            cx.dispatch_action(OpenBrowser {
-                url: url.into(),
-            });
-        },
-    );
-
-    cx.add_action(
-        |_: &mut Workspace, _: &FileBugReport, cx: &mut ViewContext<Workspace>| {
-            let system_specs_text = SystemSpecs::new(cx).to_string();
-            let url = format!(
-                "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
-                urlencoding::encode(&system_specs_text)
-            );
-            cx.dispatch_action(OpenBrowser {
-                url: url.into(),
-            });
-        },
-    );
-
     activity_indicator::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
@@ -369,12 +327,12 @@ pub fn initialize_workspace(
     let activity_indicator =
         activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    let feedback_link = cx.add_view(|_| feedback_popover::FeedbackButton::new());
+    let feedback_button = cx.add_view(|_| feedback::feedback_popover::FeedbackButton::new());
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
         status_bar.add_right_item(cursor_position, cx);
-        status_bar.add_right_item(feedback_link, cx);
+        status_bar.add_right_item(feedback_button, cx);
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
