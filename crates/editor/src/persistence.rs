@@ -15,8 +15,13 @@ define_connection!(
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                 ON DELETE CASCADE
                 ON UPDATE CASCADE
-        ) STRICT;
-    )];
+            ) STRICT;
+        ),
+        sql! (
+            ALTER TABLE editors ADD COLUMN scroll_top_row INTEGER;
+            ALTER TABLE editors ADD COLUMN scroll_vertical_offset REAL;
+            ALTER TABLE editors ADD COLUMN scroll_horizontal_offset REAL;
+        )];
 );
 
 impl EditorDb {
