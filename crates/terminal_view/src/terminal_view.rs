@@ -706,8 +706,7 @@ impl Item for TerminalView {
         let window_id = cx.window_id();
         cx.spawn(|pane, mut cx| async move {
             let cwd = TERMINAL_DB
-                .take_working_directory(item_id, workspace_id)
-                .await
+                .get_working_directory(item_id, workspace_id)
                 .log_err()
                 .flatten();
 
