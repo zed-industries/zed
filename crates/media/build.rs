@@ -3,7 +3,7 @@ use std::{env, path::PathBuf, process::Command};
 fn main() {
     let sdk_path = String::from_utf8(
         Command::new("xcrun")
-            .args(&["--sdk", "macosx", "--show-sdk-path"])
+            .args(["--sdk", "macosx", "--show-sdk-path"])
             .output()
             .unwrap()
             .stdout,

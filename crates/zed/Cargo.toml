@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.68.0"
+version = "0.69.0"
 
 [lib]
 name = "zed"
@@ -30,6 +30,7 @@ clock = { path = "../clock" }
 diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
+human_bytes = "0.4.1"
 search = { path = "../search" }
 fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
@@ -48,6 +49,7 @@ recent_projects = { path = "../recent_projects" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
+sysinfo = "0.27.1"
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }
 theme = { path = "../theme" }
@@ -108,6 +110,7 @@ tree-sitter-html = "0.19.0"
 tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"}
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a"}
 url = "2.2"
+urlencoding = "2.1.2"
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

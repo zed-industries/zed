@@ -1131,6 +1131,7 @@ async fn test_unshare_project(
         .unwrap();
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
     project_b
@@ -1160,6 +1161,7 @@ async fn test_unshare_project(
         .await
         .unwrap();
     let project_c2 = client_c.build_remote_project(project_id, cx_c).await;
+    deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
     project_c2
         .update(cx_c, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -1213,6 +1215,7 @@ async fn test_host_disconnect(
         .unwrap();
 
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
     let (_, workspace_b) = cx_b.add_window(|cx| {
@@ -1467,7 +1470,7 @@ async fn test_project_reconnect(
         .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
     let worktree3_id = worktree_a3.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().is_shared());
+        assert!(!tree.as_local().unwrap().is_shared());
         tree.id()
     });
     deterministic.run_until_parked();
@@ -1489,6 +1492,7 @@ async fn test_project_reconnect(
     deterministic.run_until_parked();
     project_a1.read_with(cx_a, |project, cx| {
         assert!(project.is_shared());
+        assert!(worktree_a1.read(cx).as_local().unwrap().is_shared());
         assert_eq!(
             worktree_a1
                 .read(cx)
@@ -1510,6 +1514,7 @@ async fn test_project_reconnect(
                 "subdir2/i.txt"
             ]
         );
+        assert!(worktree_a3.read(cx).as_local().unwrap().is_shared());
         assert_eq!(
             worktree_a3
                 .read(cx)

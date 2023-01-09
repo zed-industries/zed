@@ -44,6 +44,8 @@ actions!(
         ActivateLastItem,
         CloseActiveItem,
         CloseInactiveItems,
+        CloseCleanItems,
+        CloseAllItems,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -122,6 +124,8 @@ pub fn init(cx: &mut MutableAppContext) {
     });
     cx.add_async_action(Pane::close_active_item);
     cx.add_async_action(Pane::close_inactive_items);
+    cx.add_async_action(Pane::close_clean_items);
+    cx.add_async_action(Pane::close_all_items);
     cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
         let pane = action.pane.upgrade(cx)?;
         let task = Pane::close_item(workspace, pane, action.item_id, cx);
@@ -256,6 +260,13 @@ pub enum ReorderBehavior {
     None,
     MoveAfterActive,
     MoveToIndex(usize),
+}
+
+enum ItemType {
+    Active,
+    Inactive,
+    Clean,
+    All,
 }
 
 impl Pane {
@@ -696,20 +707,7 @@ impl Pane {
         _: &CloseActiveItem,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-        if pane.items.is_empty() {
-            None
-        } else {
-            let item_id_to_close = pane.items[pane.active_item_index].id();
-            let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-                item_id == item_id_to_close
-            });
-            Some(cx.foreground().spawn(async move {
-                task.await?;
-                Ok(())
-            }))
-        }
+        Self::close_main(workspace, ItemType::Active, cx)
     }
 
     pub fn close_inactive_items(
@@ -717,19 +715,59 @@ impl Pane {
         _: &CloseInactiveItems,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
+        Self::close_main(workspace, ItemType::Inactive, cx)
+    }
+
+    pub fn close_all_items(
+        workspace: &mut Workspace,
+        _: &CloseAllItems,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        Self::close_main(workspace, ItemType::All, cx)
+    }
+
+    pub fn close_clean_items(
+        workspace: &mut Workspace,
+        _: &CloseCleanItems,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        Self::close_main(workspace, ItemType::Clean, cx)
+    }
+
+    fn close_main(
+        workspace: &mut Workspace,
+        close_item_type: ItemType,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
         let pane_handle = workspace.active_pane().clone();
         let pane = pane_handle.read(cx);
         if pane.items.is_empty() {
-            None
-        } else {
-            let active_item_id = pane.items[pane.active_item_index].id();
-            let task =
-                Self::close_items(workspace, pane_handle, cx, move |id| id != active_item_id);
-            Some(cx.foreground().spawn(async move {
-                task.await?;
-                Ok(())
-            }))
+            return None;
         }
+
+        let active_item_id = pane.items[pane.active_item_index].id();
+        let clean_item_ids: Vec<_> = pane
+            .items()
+            .filter(|item| !item.is_dirty(cx))
+            .map(|item| item.id())
+            .collect();
+        let task =
+            Self::close_items(
+                workspace,
+                pane_handle,
+                cx,
+                move |item_id| match close_item_type {
+                    ItemType::Active => item_id == active_item_id,
+                    ItemType::Inactive => item_id != active_item_id,
+                    ItemType::Clean => clean_item_ids.contains(&item_id),
+                    ItemType::All => true,
+                },
+            );
+
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
     }
 
     pub fn close_item(

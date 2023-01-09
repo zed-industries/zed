@@ -36,6 +36,7 @@ use gpui::{
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
+    keymap_matcher::KeymapContext,
     platform::CursorStyle,
     serde_json::json,
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
@@ -464,7 +465,7 @@ pub struct Editor {
     searchable: bool,
     cursor_shape: CursorShape,
     workspace_id: Option<WorkspaceId>,
-    keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
+    keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
     remote_id: Option<ViewId>,
@@ -827,6 +828,23 @@ impl CompletionsMenu {
                 })
                 .collect()
         };
+
+        //Remove all candidates where the query's start does not match the start of any word in the candidate
+        if let Some(query) = query {
+            if let Some(query_start) = query.chars().next() {
+                matches.retain(|string_match| {
+                    split_words(&string_match.string).any(|word| {
+                        //Check that the first codepoint of the word as lowercase matches the first
+                        //codepoint of the query as lowercase
+                        word.chars()
+                            .flat_map(|codepoint| codepoint.to_lowercase())
+                            .zip(query_start.to_lowercase())
+                            .all(|(word_cp, query_cp)| word_cp == query_cp)
+                    })
+                });
+            }
+        }
+
         matches.sort_unstable_by_key(|mat| {
             let completion = &self.completions[mat.candidate_id];
             (
@@ -1225,7 +1243,7 @@ impl Editor {
         }
     }
 
-    pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: gpui::keymap::Context) {
+    pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: KeymapContext) {
         self.keymap_context_layers
             .insert(TypeId::of::<Tag>(), context);
     }
@@ -3611,7 +3629,9 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        dbg!("undo");
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
+            dbg!(tx_id);
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.change_selections(None, cx, |s| {
                     s.select_anchors(selections.to_vec());
@@ -6245,7 +6265,7 @@ impl View for Editor {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut context = Self::default_keymap_context();
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
@@ -6797,6 +6817,34 @@ pub fn styled_runs_for_code_label<'a>(
 
             runs
         })
+}
+
+pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
+    let mut index = 0;
+    let mut codepoints = text.char_indices().peekable();
+
+    std::iter::from_fn(move || {
+        let start_index = index;
+        while let Some((new_index, codepoint)) = codepoints.next() {
+            index = new_index + codepoint.len_utf8();
+            let current_upper = codepoint.is_uppercase();
+            let next_upper = codepoints
+                .peek()
+                .map(|(_, c)| c.is_uppercase())
+                .unwrap_or(false);
+
+            if !current_upper && next_upper {
+                return Some(&text[start_index..index]);
+            }
+        }
+
+        index = text.len();
+        if start_index < text.len() {
+            return Some(&text[start_index..]);
+        }
+        None
+    })
+    .flat_map(|word| word.split_inclusive('_'))
 }
 
 trait RangeExt<T> {

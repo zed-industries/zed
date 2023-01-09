@@ -15,7 +15,10 @@ use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf1
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Project, ProjectPath};
-use rand::prelude::*;
+use rand::{
+    distributions::{Alphanumeric, DistString},
+    prelude::*,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -293,9 +296,15 @@ async fn test_random_collaboration(
                         );
                     }
                     (None, None) => {}
-                    (None, _) => panic!("host's file is None, guest's isn't "),
-                    (_, None) => panic!("guest's file is None, hosts's isn't "),
+                    (None, _) => panic!("host's file is None, guest's isn't"),
+                    (_, None) => panic!("guest's file is None, hosts's isn't"),
                 }
+
+                let host_diff_base =
+                    host_buffer.read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
+                let guest_diff_base = guest_buffer
+                    .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
+                assert_eq!(guest_diff_base, host_diff_base);
             }
         }
     }
@@ -918,6 +927,37 @@ async fn apply_client_operation(
                     .unwrap();
             }
         }
+
+        ClientOperation::WriteGitIndex {
+            repo_path,
+            contents,
+        } => {
+            if !client
+                .fs
+                .metadata(&repo_path)
+                .await?
+                .map_or(false, |m| m.is_dir)
+            {
+                return Ok(false);
+            }
+
+            log::info!(
+                "{}: writing git index for repo {:?}: {:?}",
+                client.username,
+                repo_path,
+                contents
+            );
+
+            let dot_git_dir = repo_path.join(".git");
+            let contents = contents
+                .iter()
+                .map(|(path, contents)| (path.as_path(), contents.clone()))
+                .collect::<Vec<_>>();
+            if client.fs.metadata(&dot_git_dir).await?.is_none() {
+                client.fs.create_dir(&dot_git_dir).await?;
+            }
+            client.fs.set_index_for_repo(&dot_git_dir, &contents).await;
+        }
     }
     Ok(true)
 }
@@ -1037,6 +1077,10 @@ enum ClientOperation {
     CreateFsEntry {
         path: PathBuf,
         is_dir: bool,
+    },
+    WriteGitIndex {
+        repo_path: PathBuf,
+        contents: Vec<(PathBuf, String)>,
     },
 }
 
@@ -1221,6 +1265,7 @@ impl TestPlan {
             return None;
         }
 
+        let executor = cx.background();
         self.operation_ix += 1;
         let call = cx.read(ActiveCall::global);
         Some(loop {
@@ -1337,7 +1382,7 @@ impl TestPlan {
                                 .choose(&mut self.rng)
                                 .cloned() else { continue };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let mut paths = cx.background().block(client.fs.paths());
+                            let mut paths = executor.block(client.fs.paths());
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || self.rng.gen() {
                                 Path::new("/").join(&self.next_root_dir_name(user_id))
@@ -1385,7 +1430,7 @@ impl TestPlan {
                 },
 
                 // Query and mutate buffers
-                60..=95 => {
+                60..=90 => {
                     let Some(project) = choose_random_project(client, &mut self.rng) else { continue };
                     let project_root_name = root_name_for_project(&project, cx);
                     let is_local = project.read_with(cx, |project, _| project.is_local());
@@ -1503,6 +1548,39 @@ impl TestPlan {
                             };
                         }
                     }
+                }
+
+                // Update a git index
+                91..=95 => {
+                    let repo_path = executor
+                        .block(client.fs.directories())
+                        .choose(&mut self.rng)
+                        .unwrap()
+                        .clone();
+
+                    let mut file_paths = executor
+                        .block(client.fs.files())
+                        .into_iter()
+                        .filter(|path| path.starts_with(&repo_path))
+                        .collect::<Vec<_>>();
+                    let count = self.rng.gen_range(0..=file_paths.len());
+                    file_paths.shuffle(&mut self.rng);
+                    file_paths.truncate(count);
+
+                    let mut contents = Vec::new();
+                    for abs_child_file_path in &file_paths {
+                        let child_file_path = abs_child_file_path
+                            .strip_prefix(&repo_path)
+                            .unwrap()
+                            .to_path_buf();
+                        let new_base = Alphanumeric.sample_string(&mut self.rng, 16);
+                        contents.push((child_file_path, new_base));
+                    }
+
+                    break ClientOperation::WriteGitIndex {
+                        repo_path,
+                        contents,
+                    };
                 }
 
                 // Create a file or directory

@@ -36,7 +36,7 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
     if s.len() > max_chars {
-        format!("{}…", truncate(&s, max_chars.saturating_sub(3)))
+        format!("{}…", truncate(s, max_chars.saturating_sub(3)))
     } else {
         s.to_string()
     }

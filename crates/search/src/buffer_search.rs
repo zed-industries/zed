@@ -106,73 +106,79 @@ impl View for BufferSearchBar {
             .with_child(
                 Flex::row()
                     .with_child(
-                        ChildView::new(&self.query_editor, cx)
-                            .aligned()
-                            .left()
-                            .flex(1., true)
-                            .boxed(),
-                    )
-                    .with_children(self.active_searchable_item.as_ref().and_then(
-                        |searchable_item| {
-                            let matches = self
-                                .seachable_items_with_matches
-                                .get(&searchable_item.downgrade())?;
-                            let message = if let Some(match_ix) = self.active_match_index {
-                                format!("{}/{}", match_ix + 1, matches.len())
-                            } else {
-                                "No matches".to_string()
-                            };
-
-                            Some(
-                                Label::new(message, theme.search.match_index.text.clone())
-                                    .contained()
-                                    .with_style(theme.search.match_index.container)
+                        Flex::row()
+                            .with_child(
+                                ChildView::new(&self.query_editor, cx)
                                     .aligned()
+                                    .left()
+                                    .flex(1., true)
                                     .boxed(),
                             )
-                        },
-                    ))
-                    .contained()
-                    .with_style(editor_container)
-                    .aligned()
-                    .constrained()
-                    .with_min_width(theme.search.editor.min_width)
-                    .with_max_width(theme.search.editor.max_width)
-                    .flex(1., false)
+                            .with_children(self.active_searchable_item.as_ref().and_then(
+                                |searchable_item| {
+                                    let matches = self
+                                        .seachable_items_with_matches
+                                        .get(&searchable_item.downgrade())?;
+                                    let message = if let Some(match_ix) = self.active_match_index {
+                                        format!("{}/{}", match_ix + 1, matches.len())
+                                    } else {
+                                        "No matches".to_string()
+                                    };
+
+                                    Some(
+                                        Label::new(message, theme.search.match_index.text.clone())
+                                            .contained()
+                                            .with_style(theme.search.match_index.container)
+                                            .aligned()
+                                            .boxed(),
+                                    )
+                                },
+                            ))
+                            .contained()
+                            .with_style(editor_container)
+                            .aligned()
+                            .constrained()
+                            .with_min_width(theme.search.editor.min_width)
+                            .with_max_width(theme.search.editor.max_width)
+                            .flex(1., false)
+                            .boxed(),
+                    )
+                    .with_child(
+                        Flex::row()
+                            .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                            .with_child(self.render_nav_button(">", Direction::Next, cx))
+                            .aligned()
+                            .boxed(),
+                    )
+                    .with_child(
+                        Flex::row()
+                            .with_children(self.render_search_option(
+                                supported_options.case,
+                                "Case",
+                                SearchOption::CaseSensitive,
+                                cx,
+                            ))
+                            .with_children(self.render_search_option(
+                                supported_options.word,
+                                "Word",
+                                SearchOption::WholeWord,
+                                cx,
+                            ))
+                            .with_children(self.render_search_option(
+                                supported_options.regex,
+                                "Regex",
+                                SearchOption::Regex,
+                                cx,
+                            ))
+                            .contained()
+                            .with_style(theme.search.option_button_group)
+                            .aligned()
+                            .boxed(),
+                    )
+                    .flex(1., true)
                     .boxed(),
             )
-            .with_child(
-                Flex::row()
-                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                    .with_child(self.render_nav_button(">", Direction::Next, cx))
-                    .aligned()
-                    .boxed(),
-            )
-            .with_child(
-                Flex::row()
-                    .with_children(self.render_search_option(
-                        supported_options.case,
-                        "Case",
-                        SearchOption::CaseSensitive,
-                        cx,
-                    ))
-                    .with_children(self.render_search_option(
-                        supported_options.word,
-                        "Word",
-                        SearchOption::WholeWord,
-                        cx,
-                    ))
-                    .with_children(self.render_search_option(
-                        supported_options.regex,
-                        "Regex",
-                        SearchOption::Regex,
-                        cx,
-                    ))
-                    .contained()
-                    .with_style(theme.search.option_button_group)
-                    .aligned()
-                    .boxed(),
-            )
+            .with_child(self.render_close_button(&theme.search, cx))
             .contained()
             .with_style(theme.search.container)
             .named("search bar")
@@ -325,7 +331,7 @@ impl BufferSearchBar {
         let is_active = self.is_search_option_enabled(option);
         Some(
             MouseEventHandler::<Self>::new(option as usize, cx, |state, cx| {
-                let style = &cx
+                let style = cx
                     .global::<Settings>()
                     .theme
                     .search
@@ -373,7 +379,7 @@ impl BufferSearchBar {
 
         enum NavButton {}
         MouseEventHandler::<NavButton>::new(direction as usize, cx, |state, cx| {
-            let style = &cx
+            let style = cx
                 .global::<Settings>()
                 .theme
                 .search
@@ -396,6 +402,38 @@ impl BufferSearchBar {
             tooltip_style,
             cx,
         )
+        .boxed()
+    }
+
+    fn render_close_button(
+        &self,
+        theme: &theme::Search,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let action = Box::new(Dismiss);
+        let tooltip = "Dismiss Buffer Search";
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+
+        enum CloseButton {}
+        MouseEventHandler::<CloseButton>::new(0, cx, |state, _| {
+            let style = theme.dismiss_button.style_for(state, false);
+            Svg::new("icons/x_mark_8.svg")
+                .with_color(style.color)
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .on_click(MouseButton::Left, {
+            let action = action.boxed_clone();
+            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<CloseButton, _>(0, tooltip.to_string(), Some(action), tooltip_style, cx)
         .boxed()
     }
 

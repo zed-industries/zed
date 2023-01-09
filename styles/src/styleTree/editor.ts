@@ -257,7 +257,6 @@ export default function editor(colorScheme: ColorScheme) {
         right: 6,
       },
       hover: {
-        color: foreground(layer, "on", "hovered"),
         background: background(layer, "on", "hovered"),
       },
     },

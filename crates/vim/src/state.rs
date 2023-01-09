@@ -1,4 +1,4 @@
-use gpui::keymap::Context;
+use gpui::keymap_matcher::KeymapContext;
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,8 @@ pub enum Operator {
     Delete,
     Yank,
     Object { around: bool },
+    FindForward { before: bool },
+    FindBackward { after: bool },
 }
 
 #[derive(Default)]
@@ -54,6 +56,10 @@ impl VimState {
 
     pub fn vim_controlled(&self) -> bool {
         !matches!(self.mode, Mode::Insert)
+            || matches!(
+                self.operator_stack.last(),
+                Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. })
+            )
     }
 
     pub fn clip_at_line_end(&self) -> bool {
@@ -64,8 +70,8 @@ impl VimState {
         !matches!(self.mode, Mode::Visual { .. })
     }
 
-    pub fn keymap_context_layer(&self) -> Context {
-        let mut context = Context::default();
+    pub fn keymap_context_layer(&self) -> KeymapContext {
+        let mut context = KeymapContext::default();
         context.map.insert(
             "vim_mode".to_string(),
             match self.mode {
@@ -81,34 +87,48 @@ impl VimState {
         }
 
         let active_operator = self.operator_stack.last();
-        if matches!(active_operator, Some(Operator::Object { .. })) {
-            context.set.insert("VimObject".to_string());
+
+        if let Some(active_operator) = active_operator {
+            for context_flag in active_operator.context_flags().into_iter() {
+                context.set.insert(context_flag.to_string());
+            }
         }
 
-        Operator::set_context(active_operator, &mut context);
+        context.map.insert(
+            "vim_operator".to_string(),
+            active_operator
+                .map(|op| op.id())
+                .unwrap_or_else(|| "none")
+                .to_string(),
+        );
 
         context
     }
 }
 
 impl Operator {
-    pub fn set_context(operator: Option<&Operator>, context: &mut Context) {
-        let operator_context = match operator {
-            Some(Operator::Number(_)) => "n",
-            Some(Operator::Namespace(Namespace::G)) => "g",
-            Some(Operator::Namespace(Namespace::Z)) => "z",
-            Some(Operator::Object { around: false }) => "i",
-            Some(Operator::Object { around: true }) => "a",
-            Some(Operator::Change) => "c",
-            Some(Operator::Delete) => "d",
-            Some(Operator::Yank) => "y",
-
-            None => "none",
+    pub fn id(&self) -> &'static str {
+        match self {
+            Operator::Number(_) => "n",
+            Operator::Namespace(Namespace::G) => "g",
+            Operator::Namespace(Namespace::Z) => "z",
+            Operator::Object { around: false } => "i",
+            Operator::Object { around: true } => "a",
+            Operator::Change => "c",
+            Operator::Delete => "d",
+            Operator::Yank => "y",
+            Operator::FindForward { before: false } => "f",
+            Operator::FindForward { before: true } => "t",
+            Operator::FindBackward { after: false } => "F",
+            Operator::FindBackward { after: true } => "T",
         }
-        .to_owned();
+    }
 
-        context
-            .map
-            .insert("vim_operator".to_string(), operator_context);
+    pub fn context_flags(&self) -> &'static [&'static str] {
+        match self {
+            Operator::Object { .. } => &["VimObject"],
+            Operator::FindForward { .. } | Operator::FindBackward { .. } => &["VimWaiting"],
+            _ => &[],
+        }
     }
 }

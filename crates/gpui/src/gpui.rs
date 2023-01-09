@@ -25,7 +25,7 @@ pub mod executor;
 pub use executor::Task;
 pub mod color;
 pub mod json;
-pub mod keymap;
+pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::test;
 pub use platform::*;

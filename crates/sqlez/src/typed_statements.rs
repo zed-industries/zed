@@ -8,7 +8,7 @@ use crate::{
 
 impl Connection {
     pub fn exec<'a>(&'a self, query: &str) -> Result<impl 'a + FnMut() -> Result<()>> {
-        let mut statement = Statement::prepare(&self, query)?;
+        let mut statement = Statement::prepare(self, query)?;
         Ok(move || statement.exec())
     }
 
@@ -16,7 +16,7 @@ impl Connection {
         &'a self,
         query: &str,
     ) -> Result<impl 'a + FnMut(B) -> Result<()>> {
-        let mut statement = Statement::prepare(&self, query)?;
+        let mut statement = Statement::prepare(self, query)?;
         Ok(move |bindings| statement.with_bindings(bindings)?.exec())
     }
 
@@ -24,7 +24,7 @@ impl Connection {
         &'a self,
         query: &str,
     ) -> Result<impl 'a + FnMut() -> Result<Vec<C>>> {
-        let mut statement = Statement::prepare(&self, query)?;
+        let mut statement = Statement::prepare(self, query)?;
         Ok(move || statement.rows::<C>())
     }
 
@@ -32,7 +32,7 @@ impl Connection {
         &'a self,
         query: &str,
     ) -> Result<impl 'a + FnMut(B) -> Result<Vec<C>>> {
-        let mut statement = Statement::prepare(&self, query)?;
+        let mut statement = Statement::prepare(self, query)?;
         Ok(move |bindings| statement.with_bindings(bindings)?.rows::<C>())
     }
 
@@ -40,7 +40,7 @@ impl Connection {
         &'a self,
         query: &str,
     ) -> Result<impl 'a + FnMut() -> Result<Option<C>>> {
-        let mut statement = Statement::prepare(&self, query)?;
+        let mut statement = Statement::prepare(self, query)?;
         Ok(move || statement.maybe_row::<C>())
     }
 
@@ -48,7 +48,7 @@ impl Connection {
         &'a self,
         query: &str,
     ) -> Result<impl 'a + FnMut(B) -> Result<Option<C>>> {
-        let mut statement = Statement::prepare(&self, query)?;
+        let mut statement = Statement::prepare(self, query)?;
         Ok(move |bindings| {
             statement
                 .with_bindings(bindings)

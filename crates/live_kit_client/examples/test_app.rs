@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use gpui::{actions, keymap::Binding, Menu, MenuItem};
+use gpui::{actions, keymap_matcher::Binding, Menu, MenuItem};
 use live_kit_client::{LocalVideoTrack, RemoteVideoTrackUpdate, Room};
 use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;

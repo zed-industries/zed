@@ -33,6 +33,7 @@ use gpui::{
     actions,
     elements::*,
     impl_actions, impl_internal_actions,
+    keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
@@ -95,7 +96,7 @@ actions!(
         ToggleLeftSidebar,
         ToggleRightSidebar,
         NewTerminal,
-        NewSearch,
+        NewSearch
     ]
 );
 
@@ -2142,7 +2143,6 @@ impl Workspace {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(leader_id)?;
-
         let mut items_to_add = Vec::new();
         match participant.location {
             call::ParticipantLocation::SharedProject { project_id } => {
@@ -2153,6 +2153,12 @@ impl Workspace {
                             .and_then(|id| state.items_by_leader_view_id.get(&id))
                         {
                             items_to_add.push((pane.clone(), item.boxed_clone()));
+                        } else {
+                            if let Some(shared_screen) =
+                                self.shared_screen_for_peer(leader_id, pane, cx)
+                            {
+                                items_to_add.push((pane.clone(), Box::new(shared_screen)));
+                            }
                         }
                     }
                 }
@@ -2588,7 +2594,7 @@ impl View for Workspace {
         }
     }
 
-    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut keymap = Self::default_keymap_context();
         if self.active_pane() == self.dock_pane() {
             keymap.set.insert("Dock".into());

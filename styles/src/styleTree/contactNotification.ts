@@ -32,13 +32,13 @@ export default function contactNotification(colorScheme: ColorScheme): Object {
       },
     },
     dismissButton: {
-      color: foreground(layer, "on"),
+      color: foreground(layer, "variant"),
       iconWidth: 8,
       iconHeight: 8,
       buttonWidth: 8,
       buttonHeight: 8,
       hover: {
-        color: foreground(layer, "on", "hovered"),
+        color: foreground(layer, "hovered"),
       },
     },
   };

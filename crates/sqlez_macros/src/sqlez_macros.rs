@@ -33,14 +33,14 @@ fn create_error(
         .skip_while(|(offset, _)| offset <= &error_offset)
         .map(|(_, span)| span)
         .next()
-        .unwrap_or(Span::call_site());
+        .unwrap_or_else(Span::call_site);
     let error_text = format!("Sql Error: {}\nFor Query: {}", error, formatted_sql);
     TokenStream::from(Error::new(error_span.into(), error_text).into_compile_error())
 }
 
 fn make_sql(tokens: TokenStream) -> (Vec<(usize, Span)>, String) {
     let mut sql_tokens = vec![];
-    flatten_stream(tokens.clone(), &mut sql_tokens);
+    flatten_stream(tokens, &mut sql_tokens);
     // Lookup of spans by offset at the end of the token
     let mut spans: Vec<(usize, Span)> = Vec::new();
     let mut sql = String::new();
@@ -67,7 +67,7 @@ fn flatten_stream(tokens: TokenStream, result: &mut Vec<(String, Span)>) {
                 result.push((close_delimiter(group.delimiter()), group.span()));
             }
             TokenTree::Ident(ident) => {
-                result.push((format!("{} ", ident.to_string()), ident.span()));
+                result.push((format!("{} ", ident), ident.span()));
             }
             leaf_tree => result.push((leaf_tree.to_string(), leaf_tree.span())),
         }

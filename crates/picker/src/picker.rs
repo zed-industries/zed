@@ -2,7 +2,7 @@ use editor::Editor;
 use gpui::{
     elements::*,
     geometry::vector::{vec2f, Vector2F},
-    keymap,
+    keymap_matcher::KeymapContext,
     platform::CursorStyle,
     AnyViewHandle, AppContext, Axis, Entity, MouseButton, MouseState, MutableAppContext,
     RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -124,7 +124,7 @@ impl<D: PickerDelegate> View for Picker<D> {
             .named("picker")
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
         cx.set.insert("menu".into());
         cx

@@ -1,6 +1,7 @@
 mod feedback;
 pub mod languages;
 pub mod menus;
+pub mod system_specs;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -21,7 +22,7 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, ClipboardItem, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -33,6 +34,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{env, path::Path, str, sync::Arc};
+use system_specs::SystemSpecs;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
@@ -67,6 +69,9 @@ actions!(
         ResetBufferFontSize,
         InstallCommandLineInterface,
         ResetDatabase,
+        CopySystemSpecsIntoClipboard,
+        RequestFeature,
+        FileBugReport
     ]
 );
 
@@ -245,6 +250,41 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
 
+    cx.add_action(
+        |_: &mut Workspace, _: &CopySystemSpecsIntoClipboard, cx: &mut ViewContext<Workspace>| {
+            let system_specs = SystemSpecs::new(cx).to_string();
+            let item = ClipboardItem::new(system_specs.clone());
+            cx.prompt(
+                gpui::PromptLevel::Info,
+                &format!("Copied into clipboard:\n\n{system_specs}"),
+                &["OK"],
+            );
+            cx.write_to_clipboard(item);
+        },
+    );
+
+    cx.add_action(
+        |_: &mut Workspace, _: &RequestFeature, cx: &mut ViewContext<Workspace>| {
+            let url = "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
+            cx.dispatch_action(OpenBrowser {
+                url: url.into(),
+            });
+        },
+    );
+
+    cx.add_action(
+        |_: &mut Workspace, _: &FileBugReport, cx: &mut ViewContext<Workspace>| {
+            let system_specs_text = SystemSpecs::new(cx).to_string();
+            let url = format!(
+                "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
+                urlencoding::encode(&system_specs_text)
+            );
+            cx.dispatch_action(OpenBrowser {
+                url: url.into(),
+            });
+        },
+    );
+
     activity_indicator::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
@@ -298,11 +338,11 @@ pub fn initialize_workspace(
                 },
                 "schemas": [
                     {
-                        "fileMatch": [schema_file_match(&*paths::SETTINGS)],
+                        "fileMatch": [schema_file_match(&paths::SETTINGS)],
                         "schema": settings_file_json_schema(theme_names, language_names),
                     },
                     {
-                        "fileMatch": [schema_file_match(&*paths::KEYMAP)],
+                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
                         "schema": keymap_file_json_schema(&action_names),
                     }
                 ]
@@ -606,7 +646,7 @@ fn open_bundled_config_file(
     cx: &mut ViewContext<Workspace>,
 ) {
     workspace
-        .with_local_workspace(&app_state.clone(), cx, |workspace, cx| {
+        .with_local_workspace(&app_state, cx, |workspace, cx| {
             let project = workspace.project().clone();
             let buffer = project.update(cx, |project, cx| {
                 let text = Assets::get(asset_path).unwrap().data;
