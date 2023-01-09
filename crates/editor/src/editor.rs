@@ -832,34 +832,9 @@ impl CompletionsMenu {
         if let Some(query) = query {
             if let Some(query_start) = query.chars().next() {
                 matches.retain(|string_match| {
-                    let text = &string_match.string;
-
-                    let mut index = 0;
-                    let mut codepoints = text.char_indices().peekable();
-
-                    std::iter::from_fn(move || {
-                        let start_index = index;
-                        while let Some((new_index, codepoint)) = codepoints.next() {
-                            index = new_index + codepoint.len_utf8();
-                            let current_upper = codepoint.is_uppercase();
-                            let next_upper = codepoints
-                                .peek()
-                                .map(|(_, c)| c.is_uppercase())
-                                .unwrap_or(false);
-
-                            if !current_upper && next_upper {
-                                return Some(&text[start_index..index]);
-                            }
-                        }
-
-                        index = text.len();
-                        if start_index < text.len() {
-                            return Some(&text[start_index..]);
-                        }
-                        None
-                    })
-                    .flat_map(|word| word.split_inclusive('_'))
-                    .any(|word| {
+                    split_words(&string_match.string).any(|word| {
+                        //Check that the first codepoint of the word as lowercase matches the first
+                        //codepoint of the query as lowercase
                         word.chars()
                             .flat_map(|codepoint| codepoint.to_lowercase())
                             .zip(query_start.to_lowercase())
@@ -6839,6 +6814,34 @@ pub fn styled_runs_for_code_label<'a>(
 
             runs
         })
+}
+
+pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
+    let mut index = 0;
+    let mut codepoints = text.char_indices().peekable();
+
+    std::iter::from_fn(move || {
+        let start_index = index;
+        while let Some((new_index, codepoint)) = codepoints.next() {
+            index = new_index + codepoint.len_utf8();
+            let current_upper = codepoint.is_uppercase();
+            let next_upper = codepoints
+                .peek()
+                .map(|(_, c)| c.is_uppercase())
+                .unwrap_or(false);
+
+            if !current_upper && next_upper {
+                return Some(&text[start_index..index]);
+            }
+        }
+
+        index = text.len();
+        if start_index < text.len() {
+            return Some(&text[start_index..]);
+        }
+        None
+    })
+    .flat_map(|word| word.split_inclusive('_'))
 }
 
 trait RangeExt<T> {
