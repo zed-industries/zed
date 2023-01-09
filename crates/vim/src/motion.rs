@@ -3,7 +3,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement, Bias, CharKind, DisplayPoint,
 };
-use gpui::{actions, impl_actions, keymap_matcher::KeyPressed, MutableAppContext};
+use gpui::{actions, impl_actions, MutableAppContext};
 use language::{Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -109,27 +109,6 @@ pub fn init(cx: &mut MutableAppContext) {
          &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
          cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
     );
-    cx.add_action(
-        |_: &mut Workspace, KeyPressed { keystroke }: &KeyPressed, cx| match Vim::read(cx)
-            .active_operator()
-        {
-            Some(Operator::FindForward { before }) => motion(
-                Motion::FindForward {
-                    before,
-                    character: keystroke.key.chars().next().unwrap(),
-                },
-                cx,
-            ),
-            Some(Operator::FindBackward { after }) => motion(
-                Motion::FindBackward {
-                    after,
-                    character: keystroke.key.chars().next().unwrap(),
-                },
-                cx,
-            ),
-            _ => cx.propagate_action(),
-        },
-    )
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut MutableAppContext) {

@@ -424,6 +424,25 @@ fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Edito
     }
 }
 
+pub(crate) fn normal_replace(text: &str, cx: &mut MutableAppContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                editor.change_selections(None, cx, |s| {
+                    s.move_with(|map, selection| {
+                        *selection.end.column_mut() += 1;
+                        selection.end = map.clip_point(selection.end, Bias::Right);
+                    });
+                });
+                editor.insert(text, cx);
+                editor.set_clip_at_line_ends(true, cx);
+            });
+        });
+        vim.pop_operator(cx)
+    });
+}
+
 #[cfg(test)]
 mod test {
     use indoc::indoc;

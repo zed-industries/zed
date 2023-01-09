@@ -313,6 +313,40 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
     });
 }
 
+pub(crate) fn visual_replace(text: &str, line: bool, cx: &mut MutableAppContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                let mut new_selections = Vec::new();
+                editor.buffer().update(cx, |buffer, cx| {
+                    let mut edits = Vec::new();
+                    for selection in selections.iter() {
+                        let mut selection = selection.clone();
+                        if !line && !selection.reversed {
+                            // Head is at the end of the selection. Adjust the end position to
+                            // to include the character under the cursor.
+                            *selection.end.column_mut() = selection.end.column() + 1;
+                            selection.end = display_map.clip_point(selection.end, Bias::Right);
+                        }
+
+                        let range = selection
+                            .map(|p| p.to_offset(&display_map, Bias::Right))
+                            .range();
+                        new_selections.push(range.start..range.start);
+                        let text = text.repeat(range.len());
+                        edits.push((range, text));
+                    }
+
+                    buffer.edit(edits, None, cx);
+                });
+                editor.change_selections(None, cx, |s| s.select_ranges(new_selections));
+            });
+        });
+        vim.pop_operator(cx)
+    });
+}
+
 #[cfg(test)]
 mod test {
     use indoc::indoc;

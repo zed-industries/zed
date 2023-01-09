@@ -209,6 +209,10 @@
             "ctrl-e": [
                 "vim::Scroll",
                 "LineDown"
+            ],
+            "r": [
+                "vim::PushOperator",
+                "Replace"
             ]
         }
     },
@@ -294,7 +298,11 @@
             "d": "vim::VisualDelete",
             "x": "vim::VisualDelete",
             "y": "vim::VisualYank",
-            "p": "vim::VisualPaste"
+            "p": "vim::VisualPaste",
+            "r": [
+                "vim::PushOperator",
+                "Replace"
+            ]
         }
     },
     {
