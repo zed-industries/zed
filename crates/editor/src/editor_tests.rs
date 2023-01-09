@@ -5445,6 +5445,20 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     );
 }
 
+#[test]
+fn test_split_words() {
+    fn split<'a>(text: &'a str) -> Vec<&'a str> {
+        split_words(text).collect()
+    }
+
+    assert_eq!(split("HelloWorld"), &["Hello", "World"]);
+    assert_eq!(split("hello_world"), &["hello_", "world"]);
+    assert_eq!(split("_hello_world_"), &["_", "hello_", "world_"]);
+    assert_eq!(split("Hello_World"), &["Hello_", "World"]);
+    assert_eq!(split("helloWOrld"), &["hello", "WOrld"]);
+    assert_eq!(split("helloworld"), &["helloworld"]);
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
