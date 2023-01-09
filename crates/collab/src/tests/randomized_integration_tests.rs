@@ -597,6 +597,7 @@ async fn apply_client_operation(
                 .unwrap();
             cx.update(|_| {
                 client.remote_projects_mut().remove(ix);
+                client.buffers().retain(|project, _| project != project);
                 drop(project);
             });
         }
