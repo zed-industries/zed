@@ -2143,7 +2143,6 @@ impl Workspace {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(leader_id)?;
-
         let mut items_to_add = Vec::new();
         match participant.location {
             call::ParticipantLocation::SharedProject { project_id } => {
@@ -2154,6 +2153,12 @@ impl Workspace {
                             .and_then(|id| state.items_by_leader_view_id.get(&id))
                         {
                             items_to_add.push((pane.clone(), item.boxed_clone()));
+                        } else {
+                            if let Some(shared_screen) =
+                                self.shared_screen_for_peer(leader_id, pane, cx)
+                            {
+                                items_to_add.push((pane.clone(), Box::new(shared_screen)));
+                            }
                         }
                     }
                 }
