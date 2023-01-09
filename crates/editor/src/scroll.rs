@@ -11,11 +11,14 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     Axis, MutableAppContext, Task, ViewContext,
 };
-use language::Bias;
+use language::{Bias, Point};
+use util::ResultExt;
+use workspace::WorkspaceId;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
+    persistence::DB,
     Anchor, DisplayPoint, Editor, EditorMode, Event, MultiBufferSnapshot, ToPoint,
 };
 
@@ -170,37 +173,68 @@ impl ScrollManager {
         scroll_position: Vector2F,
         map: &DisplaySnapshot,
         local: bool,
+        workspace_id: Option<i64>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let new_anchor = if scroll_position.y() <= 0. {
-            ScrollAnchor {
-                top_anchor: Anchor::min(),
-                offset: scroll_position.max(vec2f(0., 0.)),
-            }
+        let (new_anchor, top_row) = if scroll_position.y() <= 0. {
+            (
+                ScrollAnchor {
+                    top_anchor: Anchor::min(),
+                    offset: scroll_position.max(vec2f(0., 0.)),
+                },
+                0,
+            )
         } else {
-            let scroll_top_buffer_offset =
-                DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
+            let scroll_top_buffer_point =
+                DisplayPoint::new(scroll_position.y() as u32, 0).to_point(&map);
             let top_anchor = map
                 .buffer_snapshot
-                .anchor_at(scroll_top_buffer_offset, Bias::Right);
+                .anchor_at(scroll_top_buffer_point, Bias::Right);
 
-            ScrollAnchor {
-                top_anchor,
-                offset: vec2f(
-                    scroll_position.x(),
-                    scroll_position.y() - top_anchor.to_display_point(&map).row() as f32,
-                ),
-            }
+            (
+                ScrollAnchor {
+                    top_anchor,
+                    offset: vec2f(
+                        scroll_position.x(),
+                        scroll_position.y() - top_anchor.to_display_point(&map).row() as f32,
+                    ),
+                },
+                scroll_top_buffer_point.row,
+            )
         };
 
-        self.set_anchor(new_anchor, local, cx);
+        self.set_anchor(new_anchor, top_row, local, workspace_id, cx);
     }
 
-    fn set_anchor(&mut self, anchor: ScrollAnchor, local: bool, cx: &mut ViewContext<Editor>) {
+    fn set_anchor(
+        &mut self,
+        anchor: ScrollAnchor,
+        top_row: u32,
+        local: bool,
+        workspace_id: Option<i64>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         self.anchor = anchor;
         cx.emit(Event::ScrollPositionChanged { local });
         self.show_scrollbar(cx);
         self.autoscroll_request.take();
+        if let Some(workspace_id) = workspace_id {
+            let item_id = cx.view_id();
+
+            cx.background()
+                .spawn(async move {
+                    DB.save_scroll_position(
+                        item_id,
+                        workspace_id,
+                        top_row,
+                        anchor.offset.x(),
+                        anchor.offset.y(),
+                    )
+                    .await
+                    .log_err()
+                })
+                .detach()
+        }
         cx.notify();
     }
 
@@ -274,8 +308,13 @@ impl Editor {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         hide_hover(self, cx);
-        self.scroll_manager
-            .set_scroll_position(scroll_position, &map, local, cx);
+        self.scroll_manager.set_scroll_position(
+            scroll_position,
+            &map,
+            local,
+            self.workspace_id,
+            cx,
+        );
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
@@ -285,7 +324,12 @@ impl Editor {
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
         hide_hover(self, cx);
-        self.scroll_manager.set_anchor(scroll_anchor, true, cx);
+        let top_row = scroll_anchor
+            .top_anchor
+            .to_point(&self.buffer().read(cx).snapshot(cx))
+            .row;
+        self.scroll_manager
+            .set_anchor(scroll_anchor, top_row, true, self.workspace_id, cx);
     }
 
     pub(crate) fn set_scroll_anchor_remote(
@@ -294,7 +338,12 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         hide_hover(self, cx);
-        self.scroll_manager.set_anchor(scroll_anchor, false, cx);
+        let top_row = scroll_anchor
+            .top_anchor
+            .to_point(&self.buffer().read(cx).snapshot(cx))
+            .row;
+        self.scroll_manager
+            .set_anchor(scroll_anchor, top_row, false, self.workspace_id, cx);
     }
 
     pub fn scroll_screen(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) {
@@ -344,5 +393,26 @@ impl Editor {
         }
 
         Ordering::Greater
+    }
+
+    pub fn read_scroll_position_from_db(
+        &mut self,
+        item_id: usize,
+        workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let scroll_position = DB.get_scroll_position(item_id, workspace_id);
+        if let Ok(Some((top_row, x, y))) = scroll_position {
+            let top_anchor = self
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_at(Point::new(top_row as u32, 0), Bias::Left);
+            let scroll_anchor = ScrollAnchor {
+                offset: Vector2F::new(x, y),
+                top_anchor,
+            };
+            self.set_scroll_anchor(scroll_anchor, cx);
+        }
     }
 }
