@@ -44,6 +44,7 @@ use language::LanguageRegistry;
 use std::{
     any::TypeId,
     borrow::Cow,
+    cmp,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -1415,29 +1416,21 @@ impl Workspace {
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
-        let next_pane = {
-            let panes = self.center.panes();
-            let ix = panes
-                .iter()
-                .position(|pane| **pane == self.active_pane)
-                .unwrap();
+        let panes = self.center.panes();
+        if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let next_ix = (ix + 1) % panes.len();
-            panes[next_ix].clone()
-        };
-        cx.focus(next_pane);
+            let next_pane = panes[next_ix].clone();
+            cx.focus(next_pane);
+        }
     }
 
     pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
-        let prev_pane = {
-            let panes = self.center.panes();
-            let ix = panes
-                .iter()
-                .position(|pane| **pane == self.active_pane)
-                .unwrap();
-            let prev_ix = if ix == 0 { panes.len() - 1 } else { ix - 1 };
-            panes[prev_ix].clone()
-        };
-        cx.focus(prev_pane);
+        let panes = self.center.panes();
+        if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
+            let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
+            let prev_pane = panes[prev_ix].clone();
+            cx.focus(prev_pane);
+        }
     }
 
     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
