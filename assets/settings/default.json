@@ -79,6 +79,13 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
+    // Control what info Zed sends to our servers
+    "telemetry": {
+        // Send debug info like crash reports.
+        "diagnostics": true,
+        // Send anonymized usage data like what languages you're using Zed with.
+        "metrics": true
+    },
     // Git gutter behavior configuration.
     "git": {
         // Control whether the git gutter is shown. May take 2 values:

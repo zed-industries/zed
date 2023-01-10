@@ -18,7 +18,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task, ViewContext};
+use gpui::{App, AssetSource, AsyncAppContext, MutableAppContext, Task, ViewContext};
 use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -50,10 +50,13 @@ fn main() {
 
     log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
+
     let app_version = ZED_APP_VERSION
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
-    init_panic_hook(app_version, http.clone(), app.background());
+    init_panic_hook(app_version);
+
+    app.background();
 
     load_embedded_fonts(&app);
 
@@ -61,7 +64,6 @@ fn main() {
 
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
-
     let config_files = load_config_files(&app, fs.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
@@ -88,6 +90,18 @@ fn main() {
         cx.set_global(*RELEASE_CHANNEL);
         cx.set_global(HomeDir(paths::HOME.to_path_buf()));
 
+        let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
+
+        //Setup settings global before binding actions
+        cx.set_global(SettingsFile::new(
+            &paths::SETTINGS,
+            settings_file_content.clone(),
+            fs.clone(),
+        ));
+
+        watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
+        upload_previous_panics(http.clone(), cx);
+
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
@@ -97,15 +111,6 @@ fn main() {
             .spawn(languages::init(languages.clone(), cx.background().clone()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
-        let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
-
-        //Setup settings global before binding actions
-        cx.set_global(SettingsFile::new(
-            &paths::SETTINGS,
-            settings_file_content.clone(),
-            fs.clone(),
-        ));
-        watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
         context_menu::init(cx);
@@ -251,65 +256,7 @@ fn init_logger() {
     }
 }
 
-fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: Arc<Background>) {
-    background
-        .spawn({
-            async move {
-                let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-                let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
-                while let Some(child) = children.next().await {
-                    let child = child?;
-                    let child_path = child.path();
-                    if child_path.extension() != Some(OsStr::new("panic")) {
-                        continue;
-                    }
-                    let filename = if let Some(filename) = child_path.file_name() {
-                        filename.to_string_lossy()
-                    } else {
-                        continue;
-                    };
-
-                    let mut components = filename.split('-');
-                    if components.next() != Some("zed") {
-                        continue;
-                    }
-                    let version = if let Some(version) = components.next() {
-                        version
-                    } else {
-                        continue;
-                    };
-
-                    let text = smol::fs::read_to_string(&child_path)
-                        .await
-                        .context("error reading panic file")?;
-                    let body = serde_json::to_string(&json!({
-                        "text": text,
-                        "version": version,
-                        "token": ZED_SECRET_CLIENT_TOKEN,
-                    }))
-                    .unwrap();
-                    let request = Request::post(&panic_report_url)
-                        .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                        .header("Content-Type", "application/json")
-                        .body(body.into())?;
-                    let response = http.send(request).await.context("error sending panic")?;
-                    if response.status().is_success() {
-                        std::fs::remove_file(child_path)
-                            .context("error removing panic after sending it successfully")
-                            .log_err();
-                    } else {
-                        return Err(anyhow!(
-                            "error uploading panic to server: {}",
-                            response.status()
-                        ));
-                    }
-                }
-                Ok::<_, anyhow::Error>(())
-            }
-            .log_err()
-        })
-        .detach();
-
+fn init_panic_hook(app_version: String) {
     let is_pty = stdout_is_a_pty();
     panic::set_hook(Box::new(move |info| {
         let backtrace = Backtrace::new();
@@ -356,6 +303,69 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
             log::error!(target: "panic", "{}", message);
         }
     }));
+}
+
+fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut MutableAppContext) {
+    let diagnostics_telemetry = cx.global::<Settings>().telemetry_diagnostics();
+
+    cx.background()
+        .spawn({
+            async move {
+                let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+                let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+                while let Some(child) = children.next().await {
+                    let child = child?;
+                    let child_path = child.path();
+
+                    if child_path.extension() != Some(OsStr::new("panic")) {
+                        continue;
+                    }
+                    let filename = if let Some(filename) = child_path.file_name() {
+                        filename.to_string_lossy()
+                    } else {
+                        continue;
+                    };
+
+                    let mut components = filename.split('-');
+                    if components.next() != Some("zed") {
+                        continue;
+                    }
+                    let version = if let Some(version) = components.next() {
+                        version
+                    } else {
+                        continue;
+                    };
+
+                    if diagnostics_telemetry {
+                        let text = smol::fs::read_to_string(&child_path)
+                            .await
+                            .context("error reading panic file")?;
+                        let body = serde_json::to_string(&json!({
+                            "text": text,
+                            "version": version,
+                            "token": ZED_SECRET_CLIENT_TOKEN,
+                        }))
+                        .unwrap();
+                        let request = Request::post(&panic_report_url)
+                            .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                            .header("Content-Type", "application/json")
+                            .body(body.into())?;
+                        let response = http.send(request).await.context("error sending panic")?;
+                        if !response.status().is_success() {
+                            log::error!("Error uploading panic to server: {}", response.status());
+                        }
+                    }
+
+                    // We've done what we can, delete the file
+                    std::fs::remove_file(child_path)
+                        .context("error removing panic")
+                        .log_err();
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .log_err()
+        })
+        .detach();
 }
 
 async fn load_login_shell_environment() -> Result<()> {
