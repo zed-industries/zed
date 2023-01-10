@@ -6087,10 +6087,11 @@ impl Editor {
             let extension = Path::new(file.file_name(cx))
                 .extension()
                 .and_then(|e| e.to_str());
-            project
-                .read(cx)
-                .client()
-                .report_event(name, json!({ "File Extension": extension }));
+            project.read(cx).client().report_event(
+                name,
+                json!({ "File Extension": extension }),
+                cx.global::<Settings>().telemetry(),
+            );
         }
     }
 }

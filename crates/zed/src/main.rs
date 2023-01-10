@@ -148,7 +148,11 @@ fn main() {
         .detach();
 
         client.start_telemetry();
-        client.report_event("start app", Default::default());
+        client.report_event(
+            "start app",
+            Default::default(),
+            cx.global::<Settings>().telemetry(),
+        );
 
         let app_state = Arc::new(AppState {
             languages,

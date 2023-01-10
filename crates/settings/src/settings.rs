@@ -62,6 +62,15 @@ pub struct TelemetrySettings {
     metrics: Option<bool>,
 }
 
+impl TelemetrySettings {
+    pub fn metrics(&self) -> bool {
+        self.metrics.unwrap()
+    }
+    pub fn diagnostics(&self) -> bool {
+        self.diagnostics.unwrap()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FeatureFlags {
     pub experimental_themes: bool,
@@ -501,6 +510,13 @@ impl Settings {
             .or_else(|| f(&self.terminal_defaults))
             .cloned()
             .unwrap_or_else(|| R::default())
+    }
+
+    pub fn telemetry(&self) -> TelemetrySettings {
+        TelemetrySettings {
+            diagnostics: Some(self.telemetry_diagnostics()),
+            metrics: Some(self.telemetry_metrics()),
+        }
     }
 
     pub fn telemetry_diagnostics(&self) -> bool {
