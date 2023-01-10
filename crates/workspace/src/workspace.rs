@@ -2680,8 +2680,8 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
-    DB.last_workspace().log_err().flatten()
+pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+    DB.last_workspace().await.log_err().flatten()
 }
 
 #[allow(clippy::type_complexity)]
