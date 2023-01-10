@@ -8,6 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use futures::FutureExt;
+
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -765,6 +766,7 @@ impl Item for Editor {
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
         let item_id = cx.view_id();
+        self.workspace_id = Some(workspace_id);
 
         fn serialize(
             buffer: ModelHandle<Buffer>,
@@ -836,7 +838,11 @@ impl Item for Editor {
                         .context("Project item at stored path was not a buffer")?;
 
                     Ok(cx.update(|cx| {
-                        cx.add_view(pane, |cx| Editor::for_buffer(buffer, Some(project), cx))
+                        cx.add_view(pane, |cx| {
+                            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+                            editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                            editor
+                        })
                     }))
                 })
             })
