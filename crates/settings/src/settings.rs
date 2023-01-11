@@ -584,7 +584,10 @@ impl Settings {
             lsp: Default::default(),
             projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
-            telemetry_defaults: Default::default(),
+            telemetry_defaults: TelemetrySettings {
+                diagnostics: Some(true),
+                metrics: Some(true),
+            },
             telemetry_overrides: Default::default(),
             staff_mode: false,
         }

@@ -18,6 +18,7 @@ use rand::{
     distributions::{Alphanumeric, DistString},
     prelude::*,
 };
+use settings::Settings;
 use std::{env, ffi::OsStr, path::PathBuf, sync::Arc};
 
 #[gpui::test(iterations = 100)]
@@ -104,6 +105,8 @@ async fn test_random_collaboration(
                     cx.function_name.clone(),
                 );
 
+                client_cx.update(|cx| cx.set_global(Settings::test(cx)));
+
                 let op_start_signal = futures::channel::mpsc::unbounded();
                 let client = server.create_client(&mut client_cx, &username).await;
                 user_ids.push(client.current_user_id(&client_cx));
@@ -173,6 +176,7 @@ async fn test_random_collaboration(
                 available_users.push((removed_user_id, client.username.clone()));
                 client_cx.update(|cx| {
                     cx.clear_globals();
+                    cx.set_global(Settings::test(cx));
                     drop(client);
                 });
 
@@ -401,6 +405,7 @@ async fn test_random_collaboration(
     for (client, mut cx) in clients {
         cx.update(|cx| {
             cx.clear_globals();
+            cx.set_global(Settings::test(cx));
             drop(client);
         });
     }
