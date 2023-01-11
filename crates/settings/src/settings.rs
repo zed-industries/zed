@@ -51,7 +51,24 @@ pub struct Settings {
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
+    pub telemetry_defaults: TelemetrySettings,
+    pub telemetry_overrides: TelemetrySettings,
     pub staff_mode: bool,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct TelemetrySettings {
+    diagnostics: Option<bool>,
+    metrics: Option<bool>,
+}
+
+impl TelemetrySettings {
+    pub fn metrics(&self) -> bool {
+        self.metrics.unwrap()
+    }
+    pub fn diagnostics(&self) -> bool {
+        self.diagnostics.unwrap()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -302,6 +319,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
+    pub telemetry: TelemetrySettings,
+    #[serde(default)]
     pub staff_mode: Option<bool>,
 }
 
@@ -312,6 +331,7 @@ pub struct LspSettings {
 }
 
 impl Settings {
+    /// Fill out the settings corresponding to the default.json file, overrides will be set later
     pub fn defaults(
         assets: impl AssetSource,
         font_cache: &FontCache,
@@ -363,11 +383,13 @@ impl Settings {
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
-
+            telemetry_defaults: defaults.telemetry,
+            telemetry_overrides: Default::default(),
             staff_mode: false,
         }
     }
 
+    // Fill out the overrride and etc. settings from the user's settings.json
     pub fn set_user_settings(
         &mut self,
         data: SettingsFileContent,
@@ -419,6 +441,7 @@ impl Settings {
         self.terminal_overrides.copy_on_select = data.terminal.copy_on_select;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
+        self.telemetry_overrides = data.telemetry;
         self.lsp = data.lsp;
     }
 
@@ -489,6 +512,27 @@ impl Settings {
             .unwrap_or_else(|| R::default())
     }
 
+    pub fn telemetry(&self) -> TelemetrySettings {
+        TelemetrySettings {
+            diagnostics: Some(self.telemetry_diagnostics()),
+            metrics: Some(self.telemetry_metrics()),
+        }
+    }
+
+    pub fn telemetry_diagnostics(&self) -> bool {
+        self.telemetry_overrides
+            .diagnostics
+            .or(self.telemetry_defaults.diagnostics)
+            .expect("missing default")
+    }
+
+    pub fn telemetry_metrics(&self) -> bool {
+        self.telemetry_overrides
+            .metrics
+            .or(self.telemetry_defaults.metrics)
+            .expect("missing default")
+    }
+
     pub fn terminal_scroll(&self) -> AlternateScroll {
         self.terminal_setting(|terminal_setting| terminal_setting.alternate_scroll.as_ref())
     }
@@ -540,6 +584,11 @@ impl Settings {
             lsp: Default::default(),
             projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
+            telemetry_defaults: TelemetrySettings {
+                diagnostics: Some(true),
+                metrics: Some(true),
+            },
+            telemetry_overrides: Default::default(),
             staff_mode: false,
         }
     }

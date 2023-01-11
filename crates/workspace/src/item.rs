@@ -919,7 +919,7 @@ pub(crate) mod test {
         }
 
         fn serialized_item_kind() -> Option<&'static str> {
-            None
+            Some("TestItem")
         }
 
         fn deserialize(
