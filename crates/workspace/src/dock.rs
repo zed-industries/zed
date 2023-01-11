@@ -470,7 +470,7 @@ mod tests {
     use super::*;
     use crate::{
         dock,
-        item::test::TestItem,
+        item::{self, test::TestItem},
         persistence::model::{
             SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
         },
@@ -492,7 +492,7 @@ mod tests {
         Settings::test_async(cx);
 
         cx.update(|cx| {
-            register_deserializable_item::<TestItem>(cx);
+            register_deserializable_item::<item::test::TestItem>(cx);
         });
 
         let serialized_workspace = SerializedWorkspace {
@@ -508,7 +508,7 @@ mod tests {
                 children: vec![SerializedItem {
                     active: true,
                     item_id: 0,
-                    kind: "test".into(),
+                    kind: "TestItem".into(),
                 }],
             },
             left_sidebar_open: false,
