@@ -623,6 +623,20 @@ mod tests {
         cx.assert_dock_pane_active();
     }
 
+    #[gpui::test]
+    async fn test_activate_next_and_prev_pane(cx: &mut TestAppContext) {
+        let mut cx = DockTestContext::new(cx).await;
+
+        cx.move_dock(DockAnchor::Right);
+        cx.assert_dock_pane_active();
+
+        cx.update_workspace(|workspace, cx| workspace.activate_next_pane(cx));
+        cx.assert_dock_pane_active();
+
+        cx.update_workspace(|workspace, cx| workspace.activate_previous_pane(cx));
+        cx.assert_dock_pane_active();
+    }
+
     struct DockTestContext<'a> {
         pub cx: &'a mut TestAppContext,
         pub window_id: usize,
