@@ -807,6 +807,55 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
+async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::TestAppContext) {
+    cx.foreground().forbid_parking();
+
+    let mut language = Language::new(
+        LanguageConfig {
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-lsp",
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Before restarting the server, report diagnostics with an unknown buffer version.
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        version: Some(10000),
+        diagnostics: Vec::new(),
+    });
+    cx.foreground().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+    });
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await
+        .text_document;
+    assert_eq!(notification.version, 0);
+}
+
+#[gpui::test]
 async fn test_toggling_enable_language_server(
     deterministic: Arc<Deterministic>,
     cx: &mut gpui::TestAppContext,
