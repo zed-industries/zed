@@ -429,14 +429,42 @@ pub(crate) fn normal_replace(text: &str, cx: &mut MutableAppContext) {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(None, cx, |s| {
-                    s.move_with(|map, selection| {
-                        *selection.end.column_mut() += 1;
-                        selection.end = map.clip_point(selection.end, Bias::Right);
-                    });
+                let (map, display_selections) = editor.selections.all_display(cx);
+                // Selections are biased right at the start. So we need to store
+                // anchors that are biased left so that we can restore the selections
+                // after the change
+                let stable_anchors = editor
+                    .selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| {
+                        let start = selection.start.bias_left(&map.buffer_snapshot);
+                        start..start
+                    })
+                    .collect::<Vec<_>>();
+
+                let edits = display_selections
+                    .into_iter()
+                    .map(|selection| {
+                        let mut range = selection.range();
+                        *range.end.column_mut() += 1;
+                        range.end = map.clip_point(range.end, Bias::Right);
+
+                        (
+                            range.start.to_offset(&map, Bias::Left)
+                                ..range.end.to_offset(&map, Bias::Left),
+                            text,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                editor.buffer().update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
                 });
-                editor.insert(text, cx);
                 editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(None, cx, |s| {
+                    s.select_anchor_ranges(stable_anchors);
+                });
             });
         });
         vim.pop_operator(cx)
@@ -486,6 +514,16 @@ mod test {
         })
         .await;
     }
+
+    // #[gpui::test]
+    // async fn test_enter(cx: &mut gpui::TestAppContext) {
+    //     let mut cx = NeovimBackedTestContext::new(cx).await.binding(["enter"]);
+    //     cx.assert_all(indoc! {"
+    //         ˇThe qˇuick broˇwn
+    //         ˇfox jumps"
+    //     })
+    //     .await;
+    // }
 
     #[gpui::test]
     async fn test_k(cx: &mut gpui::TestAppContext) {
