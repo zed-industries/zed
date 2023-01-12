@@ -799,7 +799,6 @@ async fn apply_client_operation(
                 anyhow::Ok(())
             });
             if detach {
-                log::info!("{}: detaching save request", client.username);
                 cx.update(|cx| save.detach_and_log_err(cx));
             } else {
                 save.await?;
@@ -900,7 +899,6 @@ async fn apply_client_operation(
                     .map_err(|err| anyhow!("search request failed: {:?}", err))
             });
             if detach {
-                log::info!("{}: detaching save request", client.username);
                 cx.update(|cx| search.detach_and_log_err(cx));
             } else {
                 search.await?;
