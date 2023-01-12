@@ -43,7 +43,7 @@ impl Keymap {
     pub(crate) fn add_bindings<T: IntoIterator<Item = Binding>>(&mut self, bindings: T) {
         for binding in bindings {
             self.binding_indices_by_action_type
-                .entry(binding.action().type_id())
+                .entry(binding.action().as_any().type_id())
                 .or_default()
                 .push(self.bindings.len());
             self.bindings.push(binding);
