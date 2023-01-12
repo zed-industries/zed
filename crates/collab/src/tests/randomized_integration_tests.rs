@@ -105,7 +105,6 @@ async fn test_random_collaboration(
     let mut clients = Vec::new();
     let mut client_tasks = Vec::new();
     let mut operation_channels = Vec::new();
-    let mut next_entity_id = 100000;
 
     loop {
         let Some((next_operation, skipped)) = plan.lock().next_server_operation(&clients) else { break };
@@ -115,7 +114,6 @@ async fn test_random_collaboration(
             &mut clients,
             &mut client_tasks,
             &mut operation_channels,
-            &mut next_entity_id,
             plan.clone(),
             next_operation,
             cx,
@@ -323,7 +321,6 @@ async fn apply_server_operation(
     clients: &mut Vec<(Rc<TestClient>, TestAppContext)>,
     client_tasks: &mut Vec<Task<()>>,
     operation_channels: &mut Vec<futures::channel::mpsc::UnboundedSender<usize>>,
-    next_entity_id: &mut usize,
     plan: Arc<Mutex<TestPlan>>,
     operation: Operation,
     cx: &mut TestAppContext,
@@ -341,15 +338,15 @@ async fn apply_server_operation(
                 username = user.username.clone();
             };
             log::info!("Adding new connection for {}", username);
-            *next_entity_id += 100000;
+            let next_entity_id = (user_id.0 * 10_000) as usize;
             let mut client_cx = TestAppContext::new(
                 cx.foreground_platform(),
                 cx.platform(),
-                deterministic.build_foreground(*next_entity_id),
+                deterministic.build_foreground(user_id.0 as usize),
                 deterministic.build_background(),
                 cx.font_cache(),
                 cx.leak_detector(),
-                *next_entity_id,
+                next_entity_id,
                 cx.function_name.clone(),
             );
 
