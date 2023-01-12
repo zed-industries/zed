@@ -13,11 +13,18 @@ mod visual;
 use collections::HashMap;
 use command_palette::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor};
-use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
+use gpui::{
+    impl_actions,
+    keymap_matcher::{KeyPressed, Keystroke},
+    MutableAppContext, Subscription, ViewContext, WeakViewHandle,
+};
 use language::CursorShape;
+use motion::Motion;
+use normal::normal_replace;
 use serde::Deserialize;
 use settings::Settings;
 use state::{Mode, Operator, VimState};
+use visual::visual_replace;
 use workspace::{self, Workspace};
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -51,6 +58,11 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_number(n, cx));
     });
+    cx.add_action(
+        |_: &mut Workspace, KeyPressed { keystroke }: &KeyPressed, cx| {
+            Vim::key_pressed(keystroke, cx);
+        },
+    );
 
     // Editor Actions
     cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
@@ -206,6 +218,27 @@ impl Vim {
 
     fn active_operator(&self) -> Option<Operator> {
         self.state.operator_stack.last().copied()
+    }
+
+    fn key_pressed(keystroke: &Keystroke, cx: &mut ViewContext<Workspace>) {
+        match Vim::read(cx).active_operator() {
+            Some(Operator::FindForward { before }) => {
+                if let Some(character) = keystroke.key.chars().next() {
+                    motion::motion(Motion::FindForward { before, character }, cx)
+                }
+            }
+            Some(Operator::FindBackward { after }) => {
+                if let Some(character) = keystroke.key.chars().next() {
+                    motion::motion(Motion::FindBackward { after, character }, cx)
+                }
+            }
+            Some(Operator::Replace) => match Vim::read(cx).state.mode {
+                Mode::Normal => normal_replace(&keystroke.key, cx),
+                Mode::Visual { line } => visual_replace(&keystroke.key, line, cx),
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            _ => cx.propagate_action(),
+        }
     }
 
     fn set_enabled(&mut self, enabled: bool, cx: &mut MutableAppContext) {

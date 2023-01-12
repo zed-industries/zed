@@ -28,6 +28,7 @@ pub enum Operator {
     Change,
     Delete,
     Yank,
+    Replace,
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
@@ -117,6 +118,7 @@ impl Operator {
             Operator::Change => "c",
             Operator::Delete => "d",
             Operator::Yank => "y",
+            Operator::Replace => "r",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
@@ -127,7 +129,9 @@ impl Operator {
     pub fn context_flags(&self) -> &'static [&'static str] {
         match self {
             Operator::Object { .. } => &["VimObject"],
-            Operator::FindForward { .. } | Operator::FindBackward { .. } => &["VimWaiting"],
+            Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace => {
+                &["VimWaiting"]
+            }
             _ => &[],
         }
     }
