@@ -24,13 +24,11 @@ jobs:
   discourse_release:
     runs-on: ubuntu-latest
     steps:
-    - uses: roots/discourse-topic-github-release-action@main
-      with:
-        discourse-api-key: ${{ secrets.DISCOURSE_RELEASES_API_KEY }}
-        discourse-base-url: ${{ secrets.DISCOURSE_BASE_URL }}
-        discourse-category: 8
-        discourse-tags:
-          release
+      - name: Install Node
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '16'
+      - run: script/discourse_release ${{ secrets.DISCOURSE_RELEASES_API_KEY }} ${{ github.event.release.tag_name }} ${{ github.event.release.body }}
   mixpanel_release:
     runs-on: ubuntu-latest
     steps:
