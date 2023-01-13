@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install Node
-      - uses: actions/setup-node@v2
+        uses: actions/setup-node@v2
         with:
           node-version: '16'
       - run: script/discourse_release ${{ secrets.DISCOURSE_RELEASES_API_KEY }} ${{ github.event.release.tag_name }} ${{ github.event.release.body }}
