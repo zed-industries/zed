@@ -7,7 +7,7 @@ async function main() {
   const zedVersion = process.argv[3]
   const releaseNotes = process.argv[4]
   const postBody = `
-    📣 Zed v0.68.1 was just released!
+    📣 Zed ${zedVersion} was just released!
     
     Restart your Zed or head to the [releases page](https://zed.dev/releases/latest) to grab it.
     
