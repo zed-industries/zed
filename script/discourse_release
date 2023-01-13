@@ -9,7 +9,7 @@ async function main() {
   const postBody = `
     📣 Zed v0.68.1 was just released!
     
-    Restart your Zed or head to https://zed.dev/releases/latest to grab it.
+    Restart your Zed or head to the [releases page](https://zed.dev/releases/latest) to grab it.
     
     ---
     
