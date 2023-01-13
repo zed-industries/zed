@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
-use collections::{BTreeMap, HashSet};
+use collections::BTreeMap;
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
 use futures::StreamExt as _;
@@ -490,12 +490,12 @@ async fn apply_client_operation(
     client: &TestClient,
     operation: ClientOperation,
     cx: &mut TestAppContext,
-) -> Result<bool> {
+) -> Result<(), TestError> {
     match operation {
         ClientOperation::AcceptIncomingCall => {
             let active_call = cx.read(ActiveCall::global);
             if active_call.read_with(cx, |call, _| call.incoming().borrow().is_none()) {
-                return Ok(false);
+                Err(TestError::Inapplicable)?;
             }
 
             log::info!("{}: accepting incoming call", client.username);
@@ -507,7 +507,7 @@ async fn apply_client_operation(
         ClientOperation::RejectIncomingCall => {
             let active_call = cx.read(ActiveCall::global);
             if active_call.read_with(cx, |call, _| call.incoming().borrow().is_none()) {
-                return Ok(false);
+                Err(TestError::Inapplicable)?;
             }
 
             log::info!("{}: declining incoming call", client.username);
@@ -517,7 +517,7 @@ async fn apply_client_operation(
         ClientOperation::LeaveCall => {
             let active_call = cx.read(ActiveCall::global);
             if active_call.read_with(cx, |call, _| call.room().is_none()) {
-                return Ok(false);
+                Err(TestError::Inapplicable)?;
             }
 
             log::info!("{}: hanging up", client.username);
@@ -557,9 +557,8 @@ async fn apply_client_operation(
             project_root_name,
             new_root_path,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false)
-            };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: finding/creating local worktree at {:?} to project with root path {}",
@@ -581,9 +580,8 @@ async fn apply_client_operation(
         }
 
         ClientOperation::CloseRemoteProject { project_root_name } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false)
-            };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: closing remote project with root path {}",
@@ -608,29 +606,28 @@ async fn apply_client_operation(
             first_root_name,
         } => {
             let active_call = cx.read(ActiveCall::global);
-            let project = active_call.update(cx, |call, cx| {
-                let room = call.room().cloned()?;
-                let participant = room
-                    .read(cx)
-                    .remote_participants()
-                    .get(&host_id.to_proto())?;
-                let project_id = participant
-                    .projects
-                    .iter()
-                    .find(|project| project.worktree_root_names[0] == first_root_name)?
-                    .id;
-                Some(room.update(cx, |room, cx| {
-                    room.join_project(
-                        project_id,
-                        client.language_registry.clone(),
-                        FakeFs::new(cx.background().clone()),
-                        cx,
-                    )
-                }))
-            });
-            let Some(project) = project else {
-                return Ok(false)
-            };
+            let project = active_call
+                .update(cx, |call, cx| {
+                    let room = call.room().cloned()?;
+                    let participant = room
+                        .read(cx)
+                        .remote_participants()
+                        .get(&host_id.to_proto())?;
+                    let project_id = participant
+                        .projects
+                        .iter()
+                        .find(|project| project.worktree_root_names[0] == first_root_name)?
+                        .id;
+                    Some(room.update(cx, |room, cx| {
+                        room.join_project(
+                            project_id,
+                            client.language_registry.clone(),
+                            FakeFs::new(cx.background().clone()),
+                            cx,
+                        )
+                    }))
+                })
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: joining remote project of user {}, root name {}",
@@ -649,12 +646,10 @@ async fn apply_client_operation(
             full_path,
             is_dir,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false);
-            };
-            let Some(project_path) = project_path_for_full_path(&project, &full_path, cx) else {
-                return Ok(false);
-            };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
+            let project_path = project_path_for_full_path(&project, &full_path, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: creating {} at path {:?} in {} project {}",
@@ -677,12 +672,10 @@ async fn apply_client_operation(
             is_local,
             full_path,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false);
-            };
-            let Some(project_path) = project_path_for_full_path(&project, &full_path, cx) else {
-                return Ok(false);
-            };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
+            let project_path = project_path_for_full_path(&project, &full_path, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: opening buffer {:?} in {} project {}",
@@ -705,13 +698,10 @@ async fn apply_client_operation(
             full_path,
             edits,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false);
-            };
-            let Some(buffer) =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx) else {
-                    return Ok(false);
-                };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
+            let buffer = buffer_for_full_path(client, &project, &full_path, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: editing buffer {:?} in {} project {} with {:?}",
@@ -742,13 +732,10 @@ async fn apply_client_operation(
             is_local,
             full_path,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false);
-            };
-            let Some(buffer) =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx) else {
-                    return Ok(false);
-                };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
+            let buffer = buffer_for_full_path(client, &project, &full_path, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: closing buffer {:?} in {} project {}",
@@ -771,13 +758,10 @@ async fn apply_client_operation(
             full_path,
             detach,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false);
-            };
-            let Some(buffer) =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx) else {
-                    return Ok(false);
-                };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
+            let buffer = buffer_for_full_path(client, &project, &full_path, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: saving buffer {:?} in {} project {}{}",
@@ -813,13 +797,10 @@ async fn apply_client_operation(
             kind,
             detach,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false);
-            };
-            let Some(buffer) =
-                buffer_for_full_path(&*client.buffers_for_project(&project), &full_path, cx) else {
-                    return Ok(false);
-                };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
+            let buffer = buffer_for_full_path(client, &project, &full_path, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: request LSP {:?} for buffer {:?} in {} project {}{}",
@@ -877,9 +858,8 @@ async fn apply_client_operation(
             query,
             detach,
         } => {
-            let Some(project) = project_for_root_name(client, &project_root_name, cx) else {
-                return Ok(false);
-            };
+            let project = project_for_root_name(client, &project_root_name, cx)
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: search {} project {} for {:?}{}",
@@ -906,9 +886,11 @@ async fn apply_client_operation(
         }
 
         ClientOperation::CreateFsEntry { path, is_dir } => {
-            if client.fs.metadata(&path.parent().unwrap()).await?.is_none() {
-                return Ok(false);
-            }
+            client
+                .fs
+                .metadata(&path.parent().unwrap())
+                .await?
+                .ok_or(TestError::Inapplicable)?;
 
             log::info!(
                 "{}: creating {} at {:?}",
@@ -938,7 +920,7 @@ async fn apply_client_operation(
                 .await?
                 .map_or(false, |m| m.is_dir)
             {
-                return Ok(false);
+                Err(TestError::Inapplicable)?;
             }
 
             log::info!(
@@ -959,7 +941,7 @@ async fn apply_client_operation(
             client.fs.set_index_for_repo(&dot_git_dir, &contents).await;
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 struct TestPlan {
@@ -1096,6 +1078,17 @@ enum LspRequestKind {
     CodeAction,
     Definition,
     Highlights,
+}
+
+enum TestError {
+    Inapplicable,
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for TestError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Other(value)
+    }
 }
 
 impl TestPlan {
@@ -1782,13 +1775,10 @@ async fn simulate_client(
     while let Some(batch_id) = operation_rx.next().await {
         let Some((operation, skipped)) = plan.lock().next_client_operation(&client, batch_id, &cx) else { break };
         match apply_client_operation(&client, operation, &mut cx).await {
-            Err(error) => {
+            Ok(()) => {}
+            Err(TestError::Inapplicable) => skipped.store(true, SeqCst),
+            Err(TestError::Other(error)) => {
                 log::error!("{} error: {}", client.username, error);
-            }
-            Ok(applied) => {
-                if !applied {
-                    skipped.store(true, SeqCst);
-                }
             }
         }
         cx.background().simulate_random_delay().await;
@@ -1797,11 +1787,13 @@ async fn simulate_client(
 }
 
 fn buffer_for_full_path(
-    buffers: &HashSet<ModelHandle<language::Buffer>>,
+    client: &TestClient,
+    project: &ModelHandle<Project>,
     full_path: &PathBuf,
     cx: &TestAppContext,
 ) -> Option<ModelHandle<language::Buffer>> {
-    buffers
+    client
+        .buffers_for_project(project)
         .iter()
         .find(|buffer| {
             buffer.read_with(cx, |buffer, cx| {
