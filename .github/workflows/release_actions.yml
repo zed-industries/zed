@@ -21,6 +21,16 @@ jobs:
           
           ${{ github.event.release.body }}
           ```
+  discourse_release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: roots/discourse-topic-github-release-action@main
+      with:
+        discourse-api-key: ${{ secrets.DISCOURSE_RELEASES_API_KEY }}
+        discourse-base-url: ${{ secrets.DISCOURSE_BASE_URL }}
+        discourse-category: 8
+        discourse-tags:
+          release
   mixpanel_release:
     runs-on: ubuntu-latest
     steps:
