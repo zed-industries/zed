@@ -1452,7 +1452,11 @@ impl View for Pane {
                                     0,
                                     self.active_item_index + 1,
                                     false,
-                                    Some(100.),
+                                    if self.docked.is_some() {
+                                        None
+                                    } else {
+                                        Some(100.)
+                                    },
                                     cx,
                                     {
                                         let toolbar = self.toolbar.clone();
