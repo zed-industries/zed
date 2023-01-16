@@ -231,54 +231,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         workspace.toggle_sidebar(SidebarSide::Right, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
-    cx.add_action(
-        |workspace: &mut Workspace,
-         SplitWithItem {
-             from,
-             pane_to_split,
-             item_id_to_move,
-             split_direction,
-         }: &_,
-         cx| {
-            workspace.split_pane_with_item(
-                from.clone(),
-                pane_to_split.clone(),
-                *item_id_to_move,
-                *split_direction,
-                cx,
-            )
-        },
-    );
-
-    cx.add_async_action(
-        |workspace: &mut Workspace,
-         SplitWithProjectEntry {
-             pane_to_split,
-             split_direction,
-             project_entry,
-         }: &_,
-         cx| {
-            pane_to_split.upgrade(cx).and_then(|pane_to_split| {
-                let new_pane = workspace.add_pane(cx);
-                workspace
-                    .center
-                    .split(&pane_to_split, &new_pane, *split_direction)
-                    .unwrap();
-
-                workspace
-                    .project
-                    .read(cx)
-                    .path_for_entry(*project_entry, cx)
-                    .map(|path| {
-                        let task = workspace.open_path(path, Some(new_pane.downgrade()), true, cx);
-                        cx.foreground().spawn(async move {
-                            task.await?;
-                            Ok(())
-                        })
-                    })
-            })
-        },
-    );
+    cx.add_action(Workspace::split_pane_with_item);
+    cx.add_action(Workspace::split_pane_with_project_entry);
 
     cx.add_async_action(
         |workspace: &mut Workspace,
@@ -1525,38 +1479,64 @@ impl Workspace {
             return None;
         }
 
-        pane.read(cx).active_item().map(|item| {
-            let new_pane = self.add_pane(cx);
-            if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
-                Pane::add_item(self, &new_pane, clone, true, true, None, cx);
-            }
-            self.center.split(&pane, &new_pane, direction).unwrap();
-            cx.notify();
-            new_pane
-        })
+        let item = pane.read(cx).active_item()?;
+        let new_pane = self.add_pane(cx);
+        if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
+            Pane::add_item(self, &new_pane, clone, true, true, None, cx);
+        }
+        self.center.split(&pane, &new_pane, direction).unwrap();
+        cx.notify();
+        Some(new_pane)
     }
 
-    pub fn split_pane_with_item(
-        &mut self,
-        from: WeakViewHandle<Pane>,
-        pane_to_split: WeakViewHandle<Pane>,
-        item_id_to_move: usize,
-        split_direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some((pane_to_split, from)) = pane_to_split.upgrade(cx).zip(from.upgrade(cx)) {
-            if &pane_to_split == self.dock_pane() {
-                warn!("Can't split dock pane.");
-                return;
-            }
-
-            let new_pane = self.add_pane(cx);
-            Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
-            self.center
-                .split(&pane_to_split, &new_pane, split_direction)
-                .unwrap();
-            cx.notify();
+    pub fn split_pane_with_item(&mut self, action: &SplitWithItem, cx: &mut ViewContext<Self>) {
+        let Some(pane_to_split) = action.pane_to_split.upgrade(cx) else { return; };
+        let Some(from) = action.from.upgrade(cx) else { return; };
+        if &pane_to_split == self.dock_pane() {
+            warn!("Can't split dock pane.");
+            return;
         }
+
+        let new_pane = self.add_pane(cx);
+        Pane::move_item(
+            self,
+            from.clone(),
+            new_pane.clone(),
+            action.item_id_to_move,
+            0,
+            cx,
+        );
+        self.center
+            .split(&pane_to_split, &new_pane, action.split_direction)
+            .unwrap();
+        cx.notify();
+    }
+
+    pub fn split_pane_with_project_entry(
+        &mut self,
+        action: &SplitWithProjectEntry,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let pane_to_split = action.pane_to_split.upgrade(cx)?;
+        if &pane_to_split == self.dock_pane() {
+            warn!("Can't split dock pane.");
+            return None;
+        }
+
+        let new_pane = self.add_pane(cx);
+        self.center
+            .split(&pane_to_split, &new_pane, action.split_direction)
+            .unwrap();
+
+        let path = self
+            .project
+            .read(cx)
+            .path_for_entry(action.project_entry, cx)?;
+        let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
     }
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
