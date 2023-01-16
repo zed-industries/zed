@@ -75,6 +75,7 @@ fn main() {
     };
 
     let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
+    let (open_paths_tx, open_paths_rx) = mpsc::unbounded();
     app.on_open_urls(move |urls, _| {
         if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
             if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
@@ -83,6 +84,16 @@ fn main() {
                     .map_err(|_| anyhow!("no listener for cli connections"))
                     .log_err();
             };
+        } else {
+            let paths: Vec<_> = urls
+                .iter()
+                .flat_map(|url| url.strip_prefix("file://"))
+                .map(|path| PathBuf::from(path))
+                .collect();
+            open_paths_tx
+                .unbounded_send(paths)
+                .map_err(|_| anyhow!("no listener for open urls requests"))
+                .log_err();
         }
     });
 
@@ -174,6 +185,9 @@ fn main() {
         collab_ui::init(app_state.clone(), cx);
 
         cx.set_menus(menus::menus());
+
+        cx.spawn(|cx| handle_open_paths(open_paths_rx, app_state.clone(), cx))
+            .detach();
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);
@@ -498,6 +512,17 @@ fn load_config_files(
         })
         .detach();
     rx
+}
+
+async fn handle_open_paths(
+    mut rx: mpsc::UnboundedReceiver<Vec<PathBuf>>,
+    app_state: Arc<AppState>,
+    mut cx: AsyncAppContext,
+) {
+    while let Some(paths) = rx.next().await {
+        cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
+            .detach();
+    }
 }
 
 fn connect_to_cli(
