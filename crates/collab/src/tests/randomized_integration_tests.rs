@@ -197,13 +197,17 @@ async fn test_random_collaboration(
                             assert_eq!(
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
-                                "{} has different snapshot than the host for worktree {} ({:?}) and project {:?}",
+                                "{} has different snapshot than the host for worktree {:?} and project {:?}",
                                 client.username,
-                                id,
                                 host_snapshot.abs_path(),
                                 host_project.read_with(host_cx, |project, _| project.remote_id())
                             );
-                            assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
+                            assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id(),
+                                "{} has different scan id than the host for worktree {:?} and project {:?}",
+                                client.username,
+                                host_snapshot.abs_path(),
+                                host_project.read_with(host_cx, |project, _| project.remote_id())
+                            );
                         }
                     }
                 }
@@ -812,39 +816,32 @@ async fn apply_client_operation(
                 if detach { ", detaching" } else { ", awaiting" }
             );
 
+            use futures::{FutureExt as _, TryFutureExt as _};
             let offset = buffer.read_with(cx, |b, _| b.clip_offset(offset, Bias::Left));
-            let request = match kind {
-                LspRequestKind::Rename => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.prepare_rename(buffer, offset, cx))
-                        .await?;
-                    anyhow::Ok(())
-                }),
-                LspRequestKind::Completion => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.completions(&buffer, offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-                LspRequestKind::CodeAction => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.code_actions(&buffer, offset..offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-                LspRequestKind::Definition => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.definition(&buffer, offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-                LspRequestKind::Highlights => cx.spawn(|mut cx| async move {
-                    project
-                        .update(&mut cx, |p, cx| p.document_highlights(&buffer, offset, cx))
-                        .await?;
-                    Ok(())
-                }),
-            };
+            let request = cx.foreground().spawn(project.update(cx, |project, cx| {
+                match kind {
+                    LspRequestKind::Rename => project
+                        .prepare_rename(buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::Completion => project
+                        .completions(&buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::CodeAction => project
+                        .code_actions(&buffer, offset..offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::Definition => project
+                        .definition(&buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::Highlights => project
+                        .document_highlights(&buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                }
+            }));
             if detach {
                 request.detach();
             } else {
@@ -873,6 +870,7 @@ async fn apply_client_operation(
             let search = project.update(cx, |project, cx| {
                 project.search(SearchQuery::text(query, false, false), cx)
             });
+            drop(project);
             let search = cx.background().spawn(async move {
                 search
                     .await
