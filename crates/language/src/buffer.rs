@@ -385,6 +385,11 @@ impl Buffer {
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
+        this.saved_version_fingerprint = message.saved_version_fingerprint;
+        this.saved_mtime = message
+            .saved_mtime
+            .ok_or_else(|| anyhow!("invalid saved_mtime"))?
+            .into();
         Ok(this)
     }
 
@@ -395,6 +400,8 @@ impl Buffer {
             base_text: self.base_text().to_string(),
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
+            saved_version_fingerprint: self.saved_version_fingerprint.clone(),
+            saved_mtime: Some(self.saved_mtime.into()),
         }
     }
 
