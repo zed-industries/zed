@@ -995,12 +995,17 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         .unindent();
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
+        // When this text was copied, both of the quotation marks were at the same
+        // indent level, but the indentation of the first line was not included in
+        // the copied text. This information is retained in the
+        // 'original_indent_columns' vector.
+        let original_indent_columns = vec![4];
         let inserted_text = r#"
             "
-              c
-                d
-                  e
-            "
+                  c
+                    d
+                      e
+                "
         "#
         .unindent();
 
@@ -1009,7 +1014,7 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
             Some(AutoindentMode::Block {
-                original_indent_columns: vec![0],
+                original_indent_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1037,7 +1042,7 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: vec![0],
+                original_indent_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1051,6 +1056,84 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
                     d
                       e
                 "
+            }
+            "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut MutableAppContext) {
+    cx.set_global(Settings::test(cx));
+    cx.add_model(|cx| {
+        let text = r#"
+            fn a() {
+                if b() {
+
+                }
+            }
+        "#
+        .unindent();
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        // The original indent columns are not known, so this text is
+        // auto-indented in a block as if the first line was copied in
+        // its entirety.
+        let original_indent_columns = Vec::new();
+        let inserted_text = "    c\n        .d()\n        .e();";
+
+        // Insert the block at column zero. The entire block is indented
+        // so that the first line matches the previous line's indentation.
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            Some(AutoindentMode::Block {
+                original_indent_columns: original_indent_columns.clone(),
+            }),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            r#"
+            fn a() {
+                if b() {
+                    c
+                        .d()
+                        .e();
+                }
+            }
+            "#
+            .unindent()
+        );
+
+        // Grouping is disabled in tests, so we need 2 undos
+        buffer.undo(cx); // Undo the auto-indent
+        buffer.undo(cx); // Undo the original edit
+
+        // Insert the block at a deeper indent level. The entire block is outdented.
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), " ".repeat(12))],
+            None,
+            cx,
+        );
+        buffer.edit(
+            [(Point::new(2, 12)..Point::new(2, 12), inserted_text)],
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            r#"
+            fn a() {
+                if b() {
+                    c
+                        .d()
+                        .e();
+                }
             }
             "#
             .unindent()
