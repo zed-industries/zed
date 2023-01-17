@@ -975,6 +975,9 @@ message BufferState {
     string base_text = 3;
     optional string diff_base = 4;
     LineEnding line_ending = 5;
+    repeated VectorClockEntry saved_version = 6;
+    string saved_version_fingerprint = 7;
+    Timestamp saved_mtime = 8;
 }
 
 message BufferChunk {

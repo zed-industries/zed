@@ -5209,6 +5209,19 @@ impl Project {
                         })
                         .log_err();
 
+                    client
+                        .send(proto::BufferReloaded {
+                            project_id,
+                            buffer_id,
+                            version: language::proto::serialize_version(buffer.saved_version()),
+                            mtime: Some(buffer.saved_mtime().into()),
+                            fingerprint: buffer.saved_version_fingerprint().into(),
+                            line_ending: language::proto::serialize_line_ending(
+                                buffer.line_ending(),
+                            ) as i32,
+                        })
+                        .log_err();
+
                     cx.background()
                         .spawn(
                             async move {
