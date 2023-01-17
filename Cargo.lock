@@ -2563,7 +2563,6 @@ dependencies = [
  "sum_tree",
  "time 0.3.17",
  "tiny-skia",
- "tree-sitter",
  "usvg",
  "util",
  "waker-fn",
