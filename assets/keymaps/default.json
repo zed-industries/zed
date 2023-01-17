@@ -186,10 +186,10 @@
         }
     },
     {
-        "context": "BufferSearchBar",
+        "context": "BufferSearchBar > Editor",
         "bindings": {
             "escape": "buffer_search::Dismiss",
-            "cmd-f": "buffer_search::FocusEditor",
+            "tab": "buffer_search::FocusEditor",
             "enter": "search::SelectNextMatch",
             "shift-enter": "search::SelectPrevMatch"
         }

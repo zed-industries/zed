@@ -41,24 +41,24 @@ impl Binding {
         })
     }
 
-    fn match_context(&self, context: &KeymapContext) -> bool {
+    fn match_context(&self, contexts: &[KeymapContext]) -> bool {
         self.context_predicate
             .as_ref()
-            .map(|predicate| predicate.eval(context))
+            .map(|predicate| predicate.eval(contexts))
             .unwrap_or(true)
     }
 
     pub fn match_keys_and_context(
         &self,
         pending_keystrokes: &Vec<Keystroke>,
-        context: &KeymapContext,
+        contexts: &[KeymapContext],
     ) -> BindingMatchResult {
         if self
             .keystrokes
             .as_ref()
             .map(|keystrokes| keystrokes.starts_with(&pending_keystrokes))
             .unwrap_or(true)
-            && self.match_context(context)
+            && self.match_context(contexts)
         {
             // If the binding is completed, push it onto the matches list
             if self
@@ -79,9 +79,9 @@ impl Binding {
     pub fn keystrokes_for_action(
         &self,
         action: &dyn Action,
-        context: &KeymapContext,
+        contexts: &[KeymapContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
-        if self.action.eq(action) && self.match_context(context) {
+        if self.action.eq(action) && self.match_context(contexts) {
             self.keystrokes.clone()
         } else {
             None
