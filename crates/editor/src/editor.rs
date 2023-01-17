@@ -2020,7 +2020,9 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| (s.start..s.end, text.clone())),
-                    Some(AutoindentMode::EachLine),
+                    Some(AutoindentMode::Block {
+                        original_indent_columns: Vec::new(),
+                    }),
                     cx,
                 );
                 anchors
