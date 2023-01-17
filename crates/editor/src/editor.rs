@@ -4799,7 +4799,7 @@ impl Editor {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         let mut new_selection = s.newest_anchor().clone();
                         new_selection.collapse_to(jump_to, SelectionGoal::None);
                         s.select_anchors(vec![new_selection.clone()]);
@@ -4845,7 +4845,7 @@ impl Editor {
 
             if let Some((primary_range, group_id)) = group {
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
                             start: primary_range.start,
@@ -4920,7 +4920,7 @@ impl Editor {
                 .dedup();
 
             if let Some(hunk) = hunks.next() {
-                this.change_selections(Some(Autoscroll::center()), cx, |s| {
+                this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     let row = hunk.start_display_row();
                     let point = DisplayPoint::new(row, 0);
                     s.select_display_ranges([point..point]);
@@ -5018,7 +5018,7 @@ impl Editor {
                 if editor_handle != target_editor_handle {
                     pane.update(cx, |pane, _| pane.disable_history());
                 }
-                target_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
 
