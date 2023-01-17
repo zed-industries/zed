@@ -353,6 +353,7 @@ pub struct CreateInviteFromCodeParams {
     invite_code: String,
     email_address: String,
     device_id: Option<String>,
+    #[serde(default)]
     added_to_mailing_list: bool,
 }
 
