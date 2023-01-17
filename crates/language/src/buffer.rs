@@ -1349,13 +1349,6 @@ impl Buffer {
         let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
-            let (start_columns, is_block_mode) = match mode {
-                AutoindentMode::Block {
-                    original_indent_columns: start_columns,
-                } => (start_columns, true),
-                AutoindentMode::EachLine => (Default::default(), false),
-            };
-
             let mut delta = 0isize;
             let entries = edits
                 .into_iter()
@@ -1369,7 +1362,7 @@ impl Buffer {
 
                     let mut range_of_insertion_to_indent = 0..new_text_len;
                     let mut first_line_is_new = false;
-                    let mut start_column = None;
+                    let mut original_indent_column = None;
 
                     // When inserting an entire line at the beginning of an existing line,
                     // treat the insertion as new.
@@ -1381,14 +1374,23 @@ impl Buffer {
 
                     // When inserting text starting with a newline, avoid auto-indenting the
                     // previous line.
-                    if new_text[range_of_insertion_to_indent.clone()].starts_with('\n') {
+                    if new_text.starts_with('\n') {
                         range_of_insertion_to_indent.start += 1;
                         first_line_is_new = true;
                     }
 
                     // Avoid auto-indenting after the insertion.
-                    if is_block_mode {
-                        start_column = start_columns.get(ix).copied();
+                    if let AutoindentMode::Block {
+                        original_indent_columns,
+                    } = &mode
+                    {
+                        original_indent_column =
+                            Some(original_indent_columns.get(ix).copied().unwrap_or_else(|| {
+                                indent_size_for_text(
+                                    new_text[range_of_insertion_to_indent.clone()].chars(),
+                                )
+                                .len
+                            }));
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
@@ -1396,7 +1398,7 @@ impl Buffer {
 
                     AutoindentRequestEntry {
                         first_line_is_new,
-                        original_indent_column: start_column,
+                        original_indent_column,
                         indent_size: before_edit.language_indent_size_at(range.start, cx),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
@@ -1407,7 +1409,7 @@ impl Buffer {
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
                 entries,
-                is_block_mode,
+                is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
             }));
         }
 
@@ -2414,7 +2416,7 @@ impl BufferSnapshot {
     }
 }
 
-pub fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
+fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
     indent_size_for_text(text.chars_at(Point::new(row, 0)))
 }
 
