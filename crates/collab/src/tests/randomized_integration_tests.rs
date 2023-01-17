@@ -404,6 +404,25 @@ async fn test_random_collaboration(
                     .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
                 assert_eq!(guest_diff_base, host_diff_base);
 
+                let host_saved_version =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
+                let guest_saved_version =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
+                assert_eq!(guest_saved_version, host_saved_version);
+
+                let host_saved_version_fingerprint = host_buffer
+                    .read_with(host_cx, |b, _| b.saved_version_fingerprint().to_string());
+                let guest_saved_version_fingerprint = host_buffer
+                    .read_with(host_cx, |b, _| b.saved_version_fingerprint().to_string());
+                assert_eq!(
+                    guest_saved_version_fingerprint,
+                    host_saved_version_fingerprint
+                );
+
+                let host_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
+                let guest_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
+                assert_eq!(guest_saved_mtime, host_saved_mtime);
+
                 let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
                 let guest_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
                 assert_eq!(guest_is_dirty, host_is_dirty);
