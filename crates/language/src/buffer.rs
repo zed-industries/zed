@@ -385,6 +385,7 @@ impl Buffer {
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
+        this.saved_version = proto::deserialize_version(message.saved_version);
         this.saved_version_fingerprint = message.saved_version_fingerprint;
         this.saved_mtime = message
             .saved_mtime
@@ -400,6 +401,7 @@ impl Buffer {
             base_text: self.base_text().to_string(),
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
+            saved_version: proto::serialize_version(&self.saved_version),
             saved_version_fingerprint: self.saved_version_fingerprint.clone(),
             saved_mtime: Some(self.saved_mtime.into()),
         }
@@ -554,6 +556,14 @@ impl Buffer {
 
     pub fn saved_version(&self) -> &clock::Global {
         &self.saved_version
+    }
+
+    pub fn saved_version_fingerprint(&self) -> &str {
+        &self.saved_version_fingerprint
+    }
+
+    pub fn saved_mtime(&self) -> SystemTime {
+        self.saved_mtime
     }
 
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
