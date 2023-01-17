@@ -25,6 +25,7 @@ pub struct KeyPressed {
 impl_actions!(gpui, [KeyPressed]);
 
 pub struct KeymapMatcher {
+    pub contexts: Vec<KeymapContext>,
     pending_views: HashMap<usize, KeymapContext>,
     pending_keystrokes: Vec<Keystroke>,
     keymap: Keymap,
@@ -33,6 +34,7 @@ pub struct KeymapMatcher {
 impl KeymapMatcher {
     pub fn new(keymap: Keymap) -> Self {
         Self {
+            contexts: Vec::new(),
             pending_views: Default::default(),
             pending_keystrokes: Vec::new(),
             keymap,
@@ -70,7 +72,7 @@ impl KeymapMatcher {
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,
-        dispatch_path: Vec<(usize, KeymapContext)>,
+        mut dispatch_path: Vec<(usize, KeymapContext)>,
     ) -> MatchResult {
         let mut any_pending = false;
         let mut matched_bindings: Vec<(usize, Box<dyn Action>)> = Vec::new();
@@ -78,7 +80,11 @@ impl KeymapMatcher {
         let first_keystroke = self.pending_keystrokes.is_empty();
         self.pending_keystrokes.push(keystroke.clone());
 
-        for (view_id, context) in dispatch_path {
+        self.contexts.clear();
+        self.contexts
+            .extend(dispatch_path.iter_mut().map(|e| std::mem::take(&mut e.1)));
+
+        for (i, (view_id, _)) in dispatch_path.into_iter().enumerate() {
             // Don't require pending view entry if there are no pending keystrokes
             if !first_keystroke && !self.pending_views.contains_key(&view_id) {
                 continue;
@@ -87,14 +93,15 @@ impl KeymapMatcher {
             // If there is a previous view context, invalidate that view if it
             // has changed
             if let Some(previous_view_context) = self.pending_views.remove(&view_id) {
-                if previous_view_context != context {
+                if previous_view_context != self.contexts[i] {
                     continue;
                 }
             }
 
             // Find the bindings which map the pending keystrokes and current context
             for binding in self.keymap.bindings().iter().rev() {
-                match binding.match_keys_and_context(&self.pending_keystrokes, &context) {
+                match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
+                {
                     BindingMatchResult::Complete(mut action) => {
                         // Swap in keystroke for special KeyPressed action
                         if action.name() == "KeyPressed" && action.namespace() == "gpui" {
@@ -105,7 +112,7 @@ impl KeymapMatcher {
                         matched_bindings.push((view_id, action))
                     }
                     BindingMatchResult::Partial => {
-                        self.pending_views.insert(view_id, context.clone());
+                        self.pending_views.insert(view_id, self.contexts[i].clone());
                         any_pending = true;
                     }
                     _ => {}
@@ -129,13 +136,13 @@ impl KeymapMatcher {
     pub fn keystrokes_for_action(
         &self,
         action: &dyn Action,
-        context: &KeymapContext,
+        contexts: &[KeymapContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.keymap
             .bindings()
             .iter()
             .rev()
-            .find_map(|binding| binding.keystrokes_for_action(action, context))
+            .find_map(|binding| binding.keystrokes_for_action(action, contexts))
     }
 }
 
@@ -349,27 +356,70 @@ mod tests {
     }
 
     #[test]
-    fn test_context_predicate_eval() -> Result<()> {
-        let predicate = KeymapContextPredicate::parse("a && b || c == d")?;
+    fn test_context_predicate_eval() {
+        let predicate = KeymapContextPredicate::parse("a && b || c == d").unwrap();
 
         let mut context = KeymapContext::default();
         context.set.insert("a".into());
-        assert!(!predicate.eval(&context));
+        assert!(!predicate.eval(&[context]));
 
+        let mut context = KeymapContext::default();
+        context.set.insert("a".into());
         context.set.insert("b".into());
-        assert!(predicate.eval(&context));
+        assert!(predicate.eval(&[context]));
 
-        context.set.remove("b");
+        let mut context = KeymapContext::default();
+        context.set.insert("a".into());
         context.map.insert("c".into(), "x".into());
-        assert!(!predicate.eval(&context));
+        assert!(!predicate.eval(&[context]));
 
+        let mut context = KeymapContext::default();
+        context.set.insert("a".into());
         context.map.insert("c".into(), "d".into());
-        assert!(predicate.eval(&context));
+        assert!(predicate.eval(&[context]));
 
-        let predicate = KeymapContextPredicate::parse("!a")?;
-        assert!(predicate.eval(&KeymapContext::default()));
+        let predicate = KeymapContextPredicate::parse("!a").unwrap();
+        assert!(predicate.eval(&[KeymapContext::default()]));
+    }
 
-        Ok(())
+    #[test]
+    fn test_context_child_predicate_eval() {
+        let predicate = KeymapContextPredicate::parse("a && b > c").unwrap();
+        let contexts = [
+            context_set(&["e", "f"]),
+            context_set(&["c", "d"]), // match this context
+            context_set(&["a", "b"]),
+        ];
+
+        assert!(!predicate.eval(&contexts[0..]));
+        assert!(predicate.eval(&contexts[1..]));
+        assert!(!predicate.eval(&contexts[2..]));
+
+        let predicate = KeymapContextPredicate::parse("a && b > c && !d > e").unwrap();
+        let contexts = [
+            context_set(&["f"]),
+            context_set(&["e"]), // only match this context
+            context_set(&["c"]),
+            context_set(&["a", "b"]),
+            context_set(&["e"]),
+            context_set(&["c", "d"]),
+            context_set(&["a", "b"]),
+        ];
+
+        assert!(!predicate.eval(&contexts[0..]));
+        assert!(predicate.eval(&contexts[1..]));
+        assert!(!predicate.eval(&contexts[2..]));
+        assert!(!predicate.eval(&contexts[3..]));
+        assert!(!predicate.eval(&contexts[4..]));
+        assert!(!predicate.eval(&contexts[5..]));
+        assert!(!predicate.eval(&contexts[6..]));
+
+        fn context_set(names: &[&str]) -> KeymapContext {
+            KeymapContext {
+                set: names.iter().copied().map(str::to_string).collect(),
+                ..Default::default()
+            }
+        }
     }
 
     #[test]

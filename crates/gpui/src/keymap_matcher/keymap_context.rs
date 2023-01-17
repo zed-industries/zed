@@ -23,6 +23,7 @@ pub enum KeymapContextPredicate {
     Identifier(String),
     Equal(String, String),
     NotEqual(String, String),
+    Child(Box<KeymapContextPredicate>, Box<KeymapContextPredicate>),
     Not(Box<KeymapContextPredicate>),
     And(Box<KeymapContextPredicate>, Box<KeymapContextPredicate>),
     Or(Box<KeymapContextPredicate>, Box<KeymapContextPredicate>),
@@ -39,7 +40,8 @@ impl KeymapContextPredicate {
         }
     }
 
-    pub fn eval(&self, context: &KeymapContext) -> bool {
+    pub fn eval(&self, contexts: &[KeymapContext]) -> bool {
+        let Some(context) = contexts.first() else { return false };
         match self {
             Self::Identifier(name) => context.set.contains(name.as_str()),
             Self::Equal(left, right) => context
@@ -52,16 +54,14 @@ impl KeymapContextPredicate {
                 .get(left)
                 .map(|value| value != right)
                 .unwrap_or(true),
-            Self::Not(pred) => !pred.eval(context),
-            Self::And(left, right) => left.eval(context) && right.eval(context),
-            Self::Or(left, right) => left.eval(context) || right.eval(context),
+            Self::Not(pred) => !pred.eval(contexts),
+            Self::Child(parent, child) => parent.eval(&contexts[1..]) && child.eval(contexts),
+            Self::And(left, right) => left.eval(contexts) && right.eval(contexts),
+            Self::Or(left, right) => left.eval(contexts) || right.eval(contexts),
         }
     }
 
-    fn parse_expr(
-        mut source: &str,
-        min_precedence: u32,
-    ) -> anyhow::Result<(KeymapContextPredicate, &str)> {
+    fn parse_expr(mut source: &str, min_precedence: u32) -> anyhow::Result<(Self, &str)> {
         type Op =
             fn(KeymapContextPredicate, KeymapContextPredicate) -> Result<KeymapContextPredicate>;
 
@@ -70,10 +70,11 @@ impl KeymapContextPredicate {
 
         'parse: loop {
             for (operator, precedence, constructor) in [
-                ("&&", PRECEDENCE_AND, KeymapContextPredicate::new_and as Op),
-                ("||", PRECEDENCE_OR, KeymapContextPredicate::new_or as Op),
-                ("==", PRECEDENCE_EQ, KeymapContextPredicate::new_eq as Op),
-                ("!=", PRECEDENCE_EQ, KeymapContextPredicate::new_neq as Op),
+                (">", PRECEDENCE_CHILD, Self::new_child as Op),
+                ("&&", PRECEDENCE_AND, Self::new_and as Op),
+                ("||", PRECEDENCE_OR, Self::new_or as Op),
+                ("==", PRECEDENCE_EQ, Self::new_eq as Op),
+                ("!=", PRECEDENCE_EQ, Self::new_neq as Op),
             ] {
                 if source.starts_with(operator) && precedence >= min_precedence {
                     source = Self::skip_whitespace(&source[operator.len()..]);
@@ -89,7 +90,7 @@ impl KeymapContextPredicate {
         Ok((predicate, source))
     }
 
-    fn parse_primary(mut source: &str) -> anyhow::Result<(KeymapContextPredicate, &str)> {
+    fn parse_primary(mut source: &str) -> anyhow::Result<(Self, &str)> {
         let next = source
             .chars()
             .next()
@@ -140,6 +141,10 @@ impl KeymapContextPredicate {
         Ok(Self::And(Box::new(self), Box::new(other)))
     }
 
+    fn new_child(self, other: Self) -> Result<Self> {
+        Ok(Self::Child(Box::new(self), Box::new(other)))
+    }
+
     fn new_eq(self, other: Self) -> Result<Self> {
         if let (Self::Identifier(left), Self::Identifier(right)) = (self, other) {
             Ok(Self::Equal(left, right))
@@ -157,10 +162,11 @@ impl KeymapContextPredicate {
     }
 }
 
-const PRECEDENCE_OR: u32 = 1;
-const PRECEDENCE_AND: u32 = 2;
-const PRECEDENCE_EQ: u32 = 3;
-const PRECEDENCE_NOT: u32 = 4;
+const PRECEDENCE_CHILD: u32 = 1;
+const PRECEDENCE_OR: u32 = 2;
+const PRECEDENCE_AND: u32 = 3;
+const PRECEDENCE_EQ: u32 = 4;
+const PRECEDENCE_NOT: u32 = 5;
 
 #[cfg(test)]
 mod tests {

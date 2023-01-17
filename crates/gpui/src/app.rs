@@ -1349,21 +1349,24 @@ impl MutableAppContext {
 
     /// Return keystrokes that would dispatch the given action closest to the focused view, if there are any.
     pub(crate) fn keystrokes_for_action(
-        &self,
+        &mut self,
         window_id: usize,
-        dispatch_path: &[usize],
+        view_stack: &[usize],
         action: &dyn Action,
     ) -> Option<SmallVec<[Keystroke; 2]>> {
-        for view_id in dispatch_path.iter().rev() {
+        self.keystroke_matcher.contexts.clear();
+        for view_id in view_stack.iter().rev() {
             let view = self
                 .cx
                 .views
                 .get(&(window_id, *view_id))
                 .expect("view in responder chain does not exist");
-            let keymap_context = view.keymap_context(self.as_ref());
+            self.keystroke_matcher
+                .contexts
+                .push(view.keymap_context(self.as_ref()));
             let keystrokes = self
                 .keystroke_matcher
-                .keystrokes_for_action(action, &keymap_context);
+                .keystrokes_for_action(action, &self.keystroke_matcher.contexts);
             if keystrokes.is_some() {
                 return keystrokes;
             }
@@ -6681,7 +6684,7 @@ mod tests {
             view_3
         });
 
-        // This keymap's only binding dispatches an action on view 2 because that view will have
+        // This binding only dispatches an action on view 2 because that view will have
         // "a" and "b" in its context, but not "c".
         cx.add_bindings(vec![Binding::new(
             "a",
@@ -6691,16 +6694,31 @@ mod tests {
 
         cx.add_bindings(vec![Binding::new("b", Action("b".to_string()), None)]);
 
+        // This binding only dispatches an action on views 2 and 3, because they have
+        // a parent view with a in its context
+        cx.add_bindings(vec![Binding::new(
+            "c",
+            Action("c".to_string()),
+            Some("b > c"),
+        )]);
+
+        // This binding only dispatches an action on view 2, because they have
+        // a parent view with a in its context
+        cx.add_bindings(vec![Binding::new(
+            "d",
+            Action("d".to_string()),
+            Some("a && !b > b"),
+        )]);
+
         let actions = Rc::new(RefCell::new(Vec::new()));
         cx.add_action({
             let actions = actions.clone();
             move |view: &mut View, action: &Action, cx| {
-                if action.0 == "a" {
-                    actions.borrow_mut().push(format!("{} a", view.id));
-                } else {
-                    actions
-                        .borrow_mut()
-                        .push(format!("{} {}", view.id, action.0));
+                actions
+                    .borrow_mut()
+                    .push(format!("{} {}", view.id, action.0));
+
+                if action.0 == "b" {
                     cx.propagate_action();
                 }
             }
@@ -6714,14 +6732,20 @@ mod tests {
         });
 
         cx.dispatch_keystroke(window_id, &Keystroke::parse("a").unwrap());
-
         assert_eq!(&*actions.borrow(), &["2 a"]);
-
         actions.borrow_mut().clear();
 
         cx.dispatch_keystroke(window_id, &Keystroke::parse("b").unwrap());
-
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
+        actions.borrow_mut().clear();
+
+        cx.dispatch_keystroke(window_id, &Keystroke::parse("c").unwrap());
+        assert_eq!(&*actions.borrow(), &["3 c"]);
+        actions.borrow_mut().clear();
+
+        cx.dispatch_keystroke(window_id, &Keystroke::parse("d").unwrap());
+        assert_eq!(&*actions.borrow(), &["2 d"]);
+        actions.borrow_mut().clear();
     }
 
     #[crate::test(self)]

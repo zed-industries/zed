@@ -573,7 +573,7 @@ pub struct LayoutContext<'a> {
 
 impl<'a> LayoutContext<'a> {
     pub(crate) fn keystrokes_for_action(
-        &self,
+        &mut self,
         action: &dyn Action,
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.app
