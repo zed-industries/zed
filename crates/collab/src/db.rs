@@ -882,6 +882,7 @@ impl Database {
         code: &str,
         email_address: &str,
         device_id: Option<&str>,
+        added_to_mailing_list: bool,
     ) -> Result<Invite> {
         self.transaction(|tx| async move {
             let existing_user = user::Entity::find()
@@ -933,6 +934,7 @@ impl Database {
                 platform_windows: ActiveValue::set(false),
                 platform_unknown: ActiveValue::set(true),
                 device_id: ActiveValue::set(device_id.map(|device_id| device_id.into())),
+                added_to_mailing_list: ActiveValue::set(added_to_mailing_list),
                 ..Default::default()
             })
             .on_conflict(
