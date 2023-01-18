@@ -1861,7 +1861,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
-                .with_project_entry_ids(&[1], cx);
+                .with_project_items(&[(1, "one.txt")], cx);
 
             Pane::add_item(
                 workspace,
@@ -1880,7 +1880,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
-                .with_project_entry_ids(&[1], cx);
+                .with_project_items(&[(1, "1.txt")], cx);
 
             Pane::add_item(
                 workspace,
@@ -1899,7 +1899,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 2")
-                .with_project_entry_ids(&[2], cx);
+                .with_project_items(&[(2, "2.txt")], cx);
 
             Pane::add_item(
                 workspace,
@@ -1918,7 +1918,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1")
-                .with_project_entry_ids(&[1], cx);
+                .with_project_items(&[(1, "1.txt")], cx);
 
             Pane::add_item(
                 workspace,
@@ -1937,7 +1937,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1b")
-                .with_project_entry_ids(&[1], cx);
+                .with_project_items(&[(1, "1.txt")], cx);
 
             Pane::add_item(
                 workspace,

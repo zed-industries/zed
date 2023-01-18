@@ -722,11 +722,12 @@ pub(crate) mod test {
         elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
         RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
     };
-    use project::{Project, ProjectEntryId, ProjectPath};
-    use std::{any::Any, borrow::Cow, cell::Cell};
+    use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+    use std::{any::Any, borrow::Cow, cell::Cell, path::Path};
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
+        pub project_path: Option<ProjectPath>,
     }
 
     pub struct TestItem {
@@ -740,7 +741,6 @@ pub(crate) mod test {
         pub is_singleton: bool,
         pub has_conflict: bool,
         pub project_items: Vec<ModelHandle<TestProjectItem>>,
-        pub project_path: Option<ProjectPath>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
         pub tab_detail: Cell<Option<usize>>,
@@ -756,7 +756,7 @@ pub(crate) mod test {
         }
 
         fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-            None
+            self.project_path.clone()
         }
     }
 
@@ -776,7 +776,6 @@ pub(crate) mod test {
                 is_singleton: self.is_singleton,
                 has_conflict: self.has_conflict,
                 project_items: self.project_items.clone(),
-                project_path: self.project_path.clone(),
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
@@ -796,7 +795,6 @@ pub(crate) mod test {
                 is_dirty: false,
                 has_conflict: false,
                 project_items: Vec::new(),
-                project_path: None,
                 is_singleton: true,
                 nav_history: None,
                 tab_descriptions: None,
@@ -831,15 +829,21 @@ pub(crate) mod test {
             self
         }
 
-        pub fn with_project_entry_ids(
+        pub fn with_project_items(
             mut self,
-            project_entry_ids: &[u64],
+            items: &[(u64, &str)],
             cx: &mut MutableAppContext,
         ) -> Self {
             self.project_items
-                .extend(project_entry_ids.iter().copied().map(|id| {
+                .extend(items.iter().copied().map(|(id, path)| {
                     let id = ProjectEntryId::from_proto(id);
-                    cx.add_model(|_| TestProjectItem { entry_id: Some(id) })
+                    cx.add_model(|_| TestProjectItem {
+                        entry_id: Some(id),
+                        project_path: Some(ProjectPath {
+                            worktree_id: WorktreeId::from_usize(0),
+                            path: Path::new(path).into(),
+                        }),
+                    })
                 }));
             self
         }

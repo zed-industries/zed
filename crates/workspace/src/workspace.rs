@@ -2834,15 +2834,11 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.add_view(&workspace, |_| {
-            let mut item = TestItem::new();
-            item.project_path = Some((worktree_id, "one.txt").into());
-            item
+        let item1 = cx.add_view(&workspace, |cx| {
+            TestItem::new().with_project_items(&[(1, "one.txt")], cx)
         });
-        let item2 = cx.add_view(&workspace, |_| {
-            let mut item = TestItem::new();
-            item.project_path = Some((worktree_id, "two.txt").into());
-            item
+        let item2 = cx.add_view(&workspace, |cx| {
+            TestItem::new().with_project_items(&[(2, "two.txt")], cx)
         });
 
         // Add an item to an empty pane
@@ -2947,7 +2943,7 @@ mod tests {
         let item3 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
-                .with_project_entry_ids(&[1], cx)
+                .with_project_items(&[(1, "1.txt")], cx)
         });
         workspace.update(cx, |w, cx| {
             w.add_item(Box::new(item2.clone()), cx);
@@ -2975,19 +2971,19 @@ mod tests {
         let item1 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
-                .with_project_entry_ids(&[1], cx)
+                .with_project_items(&[(1, "1.txt")], cx)
         });
         let item2 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_entry_ids(&[2], cx)
+                .with_project_items(&[(2, "2.txt")], cx)
         });
         let item3 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_entry_ids(&[3], cx)
+                .with_project_items(&[(3, "3.txt")], cx)
         });
         let item4 = cx.add_view(&workspace, |_| TestItem::new().with_dirty(true));
         let pane = workspace.update(cx, |workspace, cx| {
@@ -3067,10 +3063,10 @@ mod tests {
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
                 cx.add_view(&workspace, |cx| {
-                    TestItem::new()
-                        .with_dirty(true)
-                        .with_singleton(true)
-                        .with_project_entry_ids(&[project_entry_id], cx)
+                    TestItem::new().with_dirty(true).with_project_items(
+                        &[(project_entry_id, &format!("{project_entry_id}.txt"))],
+                        cx,
+                    )
                 })
             })
             .collect::<Vec<_>>();
@@ -3078,13 +3074,13 @@ mod tests {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
-                .with_project_entry_ids(&[2, 3], cx)
+                .with_project_items(&[(2, "2.txt"), (3, "3.txt")], cx)
         });
         let item_3_4 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
-                .with_project_entry_ids(&[3, 4], cx)
+                .with_project_items(&[(3, "3.txt"), (4, "4.txt")], cx)
         });
 
         // Create two panes that contain the following project entries:
@@ -3163,7 +3159,7 @@ mod tests {
         });
 
         let item = cx.add_view(&workspace, |cx| {
-            TestItem::new().with_project_entry_ids(&[1], cx)
+            TestItem::new().with_project_items(&[(1, "1.txt")], cx)
         });
         let item_id = item.id();
         workspace.update(cx, |workspace, cx| {
@@ -3282,7 +3278,7 @@ mod tests {
         });
 
         let item = cx.add_view(&workspace, |cx| {
-            TestItem::new().with_project_entry_ids(&[1], cx)
+            TestItem::new().with_project_items(&[(1, "1.txt")], cx)
         });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let toolbar = pane.read_with(cx, |pane, _| pane.toolbar().clone());
