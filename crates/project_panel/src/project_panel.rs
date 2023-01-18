@@ -1176,13 +1176,15 @@ impl ProjectPanel {
             )
         })
         .on_click(MouseButton::Left, move |e, cx| {
-            if kind == EntryKind::Dir {
-                cx.dispatch_action(ToggleExpanded(entry_id))
-            } else {
-                cx.dispatch_action(Open {
-                    entry_id,
-                    change_focus: e.click_count > 1,
-                })
+            if !show_editor {
+                if kind == EntryKind::Dir {
+                    cx.dispatch_action(ToggleExpanded(entry_id))
+                } else {
+                    cx.dispatch_action(Open {
+                        entry_id,
+                        change_focus: e.click_count > 1,
+                    })
+                }
             }
         })
         .on_down(MouseButton::Right, move |e, cx| {
