@@ -7,7 +7,7 @@ edition = "2021"
 path = "src/rope.rs"
 
 [dependencies]
-bromberg_sl2 = "0.6"
+bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "dac565a90e8f9245f48ff46225c915dc50f76920" }
 smallvec = { version = "1.6", features = ["union"] }
 sum_tree = { path = "../sum_tree" }
 arrayvec = "0.7.1"

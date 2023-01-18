@@ -739,8 +739,7 @@ dependencies = [
 [[package]]
 name = "bromberg_sl2"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ed88064f69518b7e3ea50ecfc1b61d43f19248618a377b95ae5c8b611134d4d"
+source = "git+https://github.com/zed-industries/bromberg_sl2?rev=dac565a90e8f9245f48ff46225c915dc50f76920#dac565a90e8f9245f48ff46225c915dc50f76920"
 dependencies = [
  "digest 0.9.0",
  "lazy_static",

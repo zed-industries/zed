@@ -4,7 +4,7 @@ mod point_utf16;
 mod unclipped;
 
 use arrayvec::ArrayString;
-use bromberg_sl2::{DigestString, HashMatrix};
+use bromberg_sl2::HashMatrix;
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
@@ -24,6 +24,8 @@ const CHUNK_BASE: usize = 6;
 
 #[cfg(not(test))]
 const CHUNK_BASE: usize = 16;
+
+pub type RopeFingerprint = HashMatrix;
 
 #[derive(Clone, Default, Debug)]
 pub struct Rope {
@@ -361,8 +363,8 @@ impl Rope {
             .column
     }
 
-    pub fn fingerprint(&self) -> String {
-        self.chunks.summary().fingerprint.to_hex()
+    pub fn fingerprint(&self) -> RopeFingerprint {
+        self.chunks.summary().fingerprint
     }
 }
 
