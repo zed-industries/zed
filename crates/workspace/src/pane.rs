@@ -806,7 +806,7 @@ impl Pane {
         cx.spawn(|workspace, mut cx| async move {
             let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
-                // Find the item's current index and its set of project entries. Avoid
+                // Find the item's current index and its set of project item models. Avoid
                 // storing these in advance, in case they have changed since this task
                 // was started.
                 let (item_ix, mut project_item_ids) = pane.read_with(&cx, |pane, cx| {
@@ -818,11 +818,9 @@ impl Pane {
                     continue;
                 };
 
-                // If an item hasn't yet been associated with a project entry, then always
-                // prompt to save it before closing it. Otherwise, check if the item has
-                // any project entries that are not open anywhere else in the workspace,
-                // AND that the user has not already been prompted to save. If there are
-                // any such project entries, prompt the user to save this item.
+                // Check if this view has any project items that are not open anywhere else
+                // in the workspace, AND that the user has not already been prompted to save.
+                // If there are any such project entries, prompt the user to save this item.
                 workspace.read_with(&cx, |workspace, cx| {
                     for item in workspace.items(cx) {
                         if !items_to_close
