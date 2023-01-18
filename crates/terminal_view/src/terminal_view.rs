@@ -18,10 +18,9 @@ use gpui::{
     AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{LocalWorktree, Project, ProjectPath};
+use project::{LocalWorktree, Project};
 use serde::Deserialize;
 use settings::{Settings, TerminalBlink, WorkingDirectory};
-use smallvec::SmallVec;
 use smol::Timer;
 use terminal::{
     alacritty_terminal::{
@@ -616,13 +615,7 @@ impl Item for TerminalView {
         None
     }
 
-    fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
-        None
-    }
-
-    fn project_entry_ids(&self, _cx: &gpui::AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
-        SmallVec::new()
-    }
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
 
     fn is_singleton(&self, _cx: &gpui::AppContext) -> bool {
         false

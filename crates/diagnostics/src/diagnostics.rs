@@ -21,7 +21,6 @@ use language::{
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
 use settings::Settings;
-use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -521,12 +520,8 @@ impl Item for ProjectDiagnosticsEditor {
         )
     }
 
-    fn project_path(&self, _: &AppContext) -> Option<project::ProjectPath> {
-        None
-    }
-
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
-        self.editor.project_entry_ids(cx)
+    fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
+        self.editor.for_each_project_item(cx, f)
     }
 
     fn is_singleton(&self, _: &AppContext) -> bool {

@@ -32,7 +32,9 @@ use std::{
     sync::Arc,
 };
 use unindent::Unindent as _;
-use workspace::{item::Item, shared_screen::SharedScreen, SplitDirection, ToggleFollow, Workspace};
+use workspace::{
+    item::ItemHandle as _, shared_screen::SharedScreen, SplitDirection, ToggleFollow, Workspace,
+};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -5602,7 +5604,7 @@ async fn test_following(
     });
     assert!(cx_b.read(|cx| editor_b2.is_focused(cx)));
     assert_eq!(
-        editor_b2.read_with(cx_b, |editor, cx| editor.project_path(cx)),
+        cx_b.read(|cx| editor_b2.project_path(cx)),
         Some((worktree_id, "2.txt").into())
     );
     assert_eq!(

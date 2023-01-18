@@ -8,12 +8,11 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AppContext, Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::Project;
 use settings::Settings;
-use smallvec::SmallVec;
 use std::{
     path::PathBuf,
     sync::{Arc, Weak},
@@ -106,7 +105,7 @@ impl Item for SharedScreen {
         &self,
         _: Option<usize>,
         style: &theme::Tab,
-        _: &gpui::AppContext,
+        _: &AppContext,
     ) -> gpui::ElementBox {
         Flex::row()
             .with_child(
@@ -130,15 +129,9 @@ impl Item for SharedScreen {
             .boxed()
     }
 
-    fn project_path(&self, _: &gpui::AppContext) -> Option<project::ProjectPath> {
-        Default::default()
-    }
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
 
-    fn project_entry_ids(&self, _: &gpui::AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
-        Default::default()
-    }
-
-    fn is_singleton(&self, _: &gpui::AppContext) -> bool {
+    fn is_singleton(&self, _: &AppContext) -> bool {
         false
     }
 
@@ -155,7 +148,7 @@ impl Item for SharedScreen {
         Some(Self::new(&track, self.peer_id, self.user.clone(), cx))
     }
 
-    fn can_save(&self, _: &gpui::AppContext) -> bool {
+    fn can_save(&self, _: &AppContext) -> bool {
         false
     }
 

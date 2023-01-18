@@ -67,8 +67,9 @@ use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
 pub use fs::*;
 pub use worktree::*;
 
-pub trait Item: Entity {
+pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
 // Language server state is stored across 3 collections:
@@ -6400,5 +6401,12 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
 impl Item for Buffer {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
         File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
+    }
+
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        File::from_dyn(self.file()).map(|file| ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
     }
 }

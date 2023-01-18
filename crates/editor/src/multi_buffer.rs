@@ -9,11 +9,10 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
-    DiagnosticEntry, File, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem,
+    DiagnosticEntry, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem,
     Point, PointUtf16, Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _,
     ToPointUtf16 as _, TransactionId, Unclipped,
 };
-use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cell::{Ref, RefCell},
@@ -1311,12 +1310,11 @@ impl MultiBuffer {
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a Arc<dyn File>; 2]> {
-        let buffers = self.buffers.borrow();
-        buffers
+    pub fn for_each_buffer(&self, mut f: impl FnMut(&ModelHandle<Buffer>)) {
+        self.buffers
+            .borrow()
             .values()
-            .filter_map(|buffer| buffer.buffer.read(cx).file())
-            .collect()
+            .for_each(|state| f(&state.buffer))
     }
 
     pub fn title<'a>(&'a self, cx: &'a AppContext) -> Cow<'a, str> {
