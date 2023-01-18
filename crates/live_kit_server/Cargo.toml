@@ -3,6 +3,7 @@ name = "live_kit_server"
 version = "0.1.0"
 edition = "2021"
 description = "SDK for the LiveKit server API"
+publish = false
 
 [lib]
 path = "src/live_kit_server.rs"

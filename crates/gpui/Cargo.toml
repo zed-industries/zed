@@ -4,6 +4,7 @@ edition = "2021"
 name = "gpui"
 version = "0.1.0"
 description = "A GPU-accelerated UI framework"
+publish = false
 
 [lib]
 path = "src/gpui.rs"
