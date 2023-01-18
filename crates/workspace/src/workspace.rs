@@ -32,12 +32,13 @@ use futures::{
 use gpui::{
     actions,
     elements::*,
+    geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, SizeConstraint,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -2471,7 +2472,16 @@ impl View for Workspace {
                                         if self.left_sidebar.read(cx).active_item().is_some() {
                                             Some(
                                                 ChildView::new(&self.left_sidebar, cx)
-                                                    .flex(0.8, false)
+                                                    .constrained()
+                                                    .dynamically(|constraint, cx| {
+                                                        SizeConstraint::new(
+                                                            Vector2F::new(20., constraint.min.y()),
+                                                            Vector2F::new(
+                                                                cx.window_size.x() * 0.8,
+                                                                constraint.max.y(),
+                                                            ),
+                                                        )
+                                                    })
                                                     .boxed(),
                                             )
                                         } else {
@@ -2508,7 +2518,16 @@ impl View for Workspace {
                                         if self.right_sidebar.read(cx).active_item().is_some() {
                                             Some(
                                                 ChildView::new(&self.right_sidebar, cx)
-                                                    .flex(0.8, false)
+                                                    .constrained()
+                                                    .dynamically(|constraint, cx| {
+                                                        SizeConstraint::new(
+                                                            Vector2F::new(20., constraint.min.y()),
+                                                            Vector2F::new(
+                                                                cx.window_size.x() * 0.8,
+                                                                constraint.max.y(),
+                                                            ),
+                                                        )
+                                                    })
                                                     .boxed(),
                                             )
                                         } else {
