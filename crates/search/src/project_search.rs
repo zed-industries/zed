@@ -18,6 +18,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -67,6 +68,7 @@ struct ProjectSearch {
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
+    search_id: usize,
 }
 
 pub struct ProjectSearchView {
@@ -78,6 +80,7 @@ pub struct ProjectSearchView {
     regex: bool,
     query_contains_error: bool,
     active_match_index: Option<usize>,
+    search_id: usize,
 }
 
 pub struct ProjectSearchBar {
@@ -98,6 +101,7 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
+            search_id: 0,
         }
     }
 
@@ -110,6 +114,7 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
+            search_id: self.search_id,
         })
     }
 
@@ -117,21 +122,25 @@ impl ProjectSearch {
         let search = self
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
+        self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
             let matches = search.await.log_err()?;
-            if let Some(this) = this.upgrade(&cx) {
+            let this = this.upgrade(&cx)?;
+            let mut matches = matches.into_iter().collect::<Vec<_>>();
+            this.update(&mut cx, |this, cx| {
+                this.match_ranges.clear();
+                matches.sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
+                this.excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
+            });
+
+            for matches_chunk in matches.chunks(100) {
                 this.update(&mut cx, |this, cx| {
-                    this.match_ranges.clear();
-                    let mut matches = matches.into_iter().collect::<Vec<_>>();
-                    matches
-                        .sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
                     this.excerpts.update(cx, |excerpts, cx| {
-                        excerpts.clear(cx);
-                        for (buffer, buffer_matches) in matches {
+                        for (buffer, buffer_matches) in matches_chunk {
                             let ranges_to_highlight = excerpts.push_excerpts_with_context_lines(
-                                buffer,
+                                buffer.clone(),
                                 buffer_matches.clone(),
                                 1,
                                 cx,
@@ -139,10 +148,19 @@ impl ProjectSearch {
                             this.match_ranges.extend(ranges_to_highlight);
                         }
                     });
-                    this.pending_search.take();
+
                     cx.notify();
                 });
+
+                // Don't starve the main thread when adding lots of excerpts.
+                smol::future::yield_now().await;
             }
+
+            this.update(&mut cx, |this, cx| {
+                this.pending_search.take();
+                cx.notify();
+            });
+
             None
         }));
         cx.notify();
@@ -398,7 +416,7 @@ impl ProjectSearchView {
                 whole_word = active_query.whole_word();
             }
         }
-        cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
+        cx.observe(&model, |this, _, cx| this.model_changed(cx))
             .detach();
 
         let query_editor = cx.add_view(|cx| {
@@ -433,6 +451,7 @@ impl ProjectSearchView {
         .detach();
 
         let mut this = ProjectSearchView {
+            search_id: model.read(cx).search_id,
             model,
             query_editor,
             results_editor,
@@ -442,7 +461,7 @@ impl ProjectSearchView {
             query_contains_error: false,
             active_match_index: None,
         };
-        this.model_changed(false, cx);
+        this.model_changed(cx);
         this
     }
 
@@ -562,11 +581,13 @@ impl ProjectSearchView {
         cx.focus(&self.results_editor);
     }
 
-    fn model_changed(&mut self, reset_selections: bool, cx: &mut ViewContext<Self>) {
+    fn model_changed(&mut self, cx: &mut ViewContext<Self>) {
         let match_ranges = self.model.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
             self.active_match_index = None;
         } else {
+            let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
+            let reset_selections = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if reset_selections {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
