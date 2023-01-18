@@ -565,12 +565,14 @@ impl Item for Editor {
     }
 
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-        self.buffer
-            .read(cx)
-            .files(cx)
-            .into_iter()
-            .filter_map(|file| File::from_dyn(Some(file))?.project_entry_id(cx))
-            .collect()
+        let mut result = SmallVec::new();
+        self.buffer.read(cx).for_each_buffer(|buffer| {
+            let buffer = buffer.read(cx);
+            if let Some(file) = File::from_dyn(buffer.file()) {
+                result.extend(file.project_entry_id(cx));
+            }
+        });
+        result
     }
 
     fn is_singleton(&self, cx: &AppContext) -> bool {

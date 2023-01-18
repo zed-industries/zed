@@ -482,7 +482,7 @@ impl Pane {
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
             for (index, item) in pane.items.iter().enumerate() {
-                if item.project_path(cx).is_some()
+                if item.is_singleton(cx)
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
