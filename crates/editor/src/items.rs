@@ -14,11 +14,10 @@ use gpui::{
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::proto::serialize_anchor as serialize_text_anchor;
-use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
-use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
+use language::{Bias, Buffer, OffsetRangeExt, Point, SelectionGoal};
+use project::{FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
-use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -555,24 +554,10 @@ impl Item for Editor {
             .boxed()
     }
 
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        let buffer = self.buffer.read(cx).as_singleton()?;
-        let file = buffer.read(cx).file();
-        File::from_dyn(file).map(|file| ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        })
-    }
-
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-        let mut result = SmallVec::new();
-        self.buffer.read(cx).for_each_buffer(|buffer| {
-            let buffer = buffer.read(cx);
-            if let Some(file) = File::from_dyn(buffer.file()) {
-                result.extend(file.project_entry_id(cx));
-            }
-        });
-        result
+    fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
+        self.buffer
+            .read(cx)
+            .for_each_buffer(|buffer| f(buffer.id(), buffer.read(cx)));
     }
 
     fn is_singleton(&self, cx: &AppContext) -> bool {
@@ -609,7 +594,12 @@ impl Item for Editor {
     }
 
     fn can_save(&self, cx: &AppContext) -> bool {
-        !self.buffer().read(cx).is_singleton() || self.project_path(cx).is_some()
+        let buffer = &self.buffer().read(cx);
+        if let Some(buffer) = buffer.as_singleton() {
+            buffer.read(cx).project_path(cx).is_some()
+        } else {
+            true
+        }
     }
 
     fn save(
