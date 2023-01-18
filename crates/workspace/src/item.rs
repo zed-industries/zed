@@ -784,6 +784,27 @@ pub(crate) mod test {
         }
     }
 
+    impl TestProjectItem {
+        pub fn new(id: u64, path: &str, cx: &mut MutableAppContext) -> ModelHandle<Self> {
+            let entry_id = Some(ProjectEntryId::from_proto(id));
+            let project_path = Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: Path::new(path).into(),
+            });
+            cx.add_model(|_| Self {
+                entry_id,
+                project_path,
+            })
+        }
+
+        pub fn new_untitled(cx: &mut MutableAppContext) -> ModelHandle<Self> {
+            cx.add_model(|_| Self {
+                project_path: None,
+                entry_id: None,
+            })
+        }
+    }
+
     impl TestItem {
         pub fn new() -> Self {
             Self {
@@ -829,22 +850,9 @@ pub(crate) mod test {
             self
         }
 
-        pub fn with_project_items(
-            mut self,
-            items: &[(u64, &str)],
-            cx: &mut MutableAppContext,
-        ) -> Self {
-            self.project_items
-                .extend(items.iter().copied().map(|(id, path)| {
-                    let id = ProjectEntryId::from_proto(id);
-                    cx.add_model(|_| TestProjectItem {
-                        entry_id: Some(id),
-                        project_path: Some(ProjectPath {
-                            worktree_id: WorktreeId::from_usize(0),
-                            path: Path::new(path).into(),
-                        }),
-                    })
-                }));
+        pub fn with_project_items(mut self, items: &[ModelHandle<TestProjectItem>]) -> Self {
+            self.project_items.clear();
+            self.project_items.extend(items.iter().cloned());
             self
         }
 
@@ -938,8 +946,12 @@ pub(crate) mod test {
             self.has_conflict
         }
 
-        fn can_save(&self, _: &AppContext) -> bool {
+        fn can_save(&self, cx: &AppContext) -> bool {
             !self.project_items.is_empty()
+                && self
+                    .project_items
+                    .iter()
+                    .all(|item| item.read(cx).entry_id.is_some())
         }
 
         fn save(

@@ -2727,7 +2727,7 @@ pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<(
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::item::test::{TestItem, TestItemEvent};
+    use crate::item::test::{TestItem, TestItemEvent, TestProjectItem};
 
     use super::*;
     use fs::FakeFs;
@@ -2835,10 +2835,10 @@ mod tests {
         });
 
         let item1 = cx.add_view(&workspace, |cx| {
-            TestItem::new().with_project_items(&[(1, "one.txt")], cx)
+            TestItem::new().with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
         let item2 = cx.add_view(&workspace, |cx| {
-            TestItem::new().with_project_items(&[(2, "two.txt")], cx)
+            TestItem::new().with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
         // Add an item to an empty pane
@@ -2943,7 +2943,7 @@ mod tests {
         let item3 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
-                .with_project_items(&[(1, "1.txt")], cx)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         workspace.update(cx, |w, cx| {
             w.add_item(Box::new(item2.clone()), cx);
@@ -2971,21 +2971,25 @@ mod tests {
         let item1 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
-                .with_project_items(&[(1, "1.txt")], cx)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item2 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_items(&[(2, "2.txt")], cx)
+                .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
         });
         let item3 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_items(&[(3, "3.txt")], cx)
+                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
-        let item4 = cx.add_view(&workspace, |_| TestItem::new().with_dirty(true));
+        let item4 = cx.add_view(&workspace, |cx| {
+            TestItem::new()
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new_untitled(cx)])
+        });
         let pane = workspace.update(cx, |workspace, cx| {
             workspace.add_item(Box::new(item1.clone()), cx);
             workspace.add_item(Box::new(item2.clone()), cx);
@@ -3007,15 +3011,20 @@ mod tests {
                 [item1_id, item3_id, item4_id].contains(&id)
             })
         });
-
         cx.foreground().run_until_parked();
+
+        // There's a prompt to save item 1.
         pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
+        assert!(cx.has_pending_prompt(window_id));
 
+        // Confirm saving item 1.
         cx.simulate_prompt_answer(window_id, 0);
         cx.foreground().run_until_parked();
+
+        // Item 1 is saved. There's a prompt to save item 3.
         pane.read_with(cx, |pane, cx| {
             assert_eq!(item1.read(cx).save_count, 1);
             assert_eq!(item1.read(cx).save_as_count, 0);
@@ -3023,9 +3032,13 @@ mod tests {
             assert_eq!(pane.items_len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
+        assert!(cx.has_pending_prompt(window_id));
 
+        // Cancel saving item 3.
         cx.simulate_prompt_answer(window_id, 1);
         cx.foreground().run_until_parked();
+
+        // Item 3 is reloaded. There's a prompt to save item 4.
         pane.read_with(cx, |pane, cx| {
             assert_eq!(item3.read(cx).save_count, 0);
             assert_eq!(item3.read(cx).save_as_count, 0);
@@ -3033,11 +3046,17 @@ mod tests {
             assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
+        assert!(cx.has_pending_prompt(window_id));
 
+        // Confirm saving item 4.
         cx.simulate_prompt_answer(window_id, 0);
         cx.foreground().run_until_parked();
+
+        // There's a prompt for a path for item 4.
         cx.simulate_new_path_selection(|_| Some(Default::default()));
         close_items.await.unwrap();
+
+        // The requested items are closed.
         pane.read_with(cx, |pane, cx| {
             assert_eq!(item4.read(cx).save_count, 0);
             assert_eq!(item4.read(cx).save_as_count, 1);
@@ -3063,10 +3082,13 @@ mod tests {
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
                 cx.add_view(&workspace, |cx| {
-                    TestItem::new().with_dirty(true).with_project_items(
-                        &[(project_entry_id, &format!("{project_entry_id}.txt"))],
-                        cx,
-                    )
+                    TestItem::new()
+                        .with_dirty(true)
+                        .with_project_items(&[TestProjectItem::new(
+                            project_entry_id,
+                            &format!("{project_entry_id}.txt"),
+                            cx,
+                        )])
                 })
             })
             .collect::<Vec<_>>();
@@ -3074,13 +3096,19 @@ mod tests {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
-                .with_project_items(&[(2, "2.txt"), (3, "3.txt")], cx)
+                .with_project_items(&[
+                    single_entry_items[2].read(cx).project_items[0].clone(),
+                    single_entry_items[3].read(cx).project_items[0].clone(),
+                ])
         });
         let item_3_4 = cx.add_view(&workspace, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
-                .with_project_items(&[(3, "3.txt"), (4, "4.txt")], cx)
+                .with_project_items(&[
+                    single_entry_items[3].read(cx).project_items[0].clone(),
+                    single_entry_items[4].read(cx).project_items[0].clone(),
+                ])
         });
 
         // Create two panes that contain the following project entries:
@@ -3159,7 +3187,7 @@ mod tests {
         });
 
         let item = cx.add_view(&workspace, |cx| {
-            TestItem::new().with_project_items(&[(1, "1.txt")], cx)
+            TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.id();
         workspace.update(cx, |workspace, cx| {
@@ -3278,7 +3306,7 @@ mod tests {
         });
 
         let item = cx.add_view(&workspace, |cx| {
-            TestItem::new().with_project_items(&[(1, "1.txt")], cx)
+            TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let toolbar = pane.read_with(cx, |pane, _| pane.toolbar().clone());

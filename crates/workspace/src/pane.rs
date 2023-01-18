@@ -804,7 +804,7 @@ impl Pane {
         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
         cx.spawn(|workspace, mut cx| async move {
-            let mut saved_project_entry_ids = HashSet::default();
+            let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
                 // Find the item's current index and its set of project entries. Avoid
                 // storing these in advance, in case they have changed since this task
@@ -836,7 +836,7 @@ impl Pane {
                 });
                 let should_save = project_item_ids
                     .iter()
-                    .any(|id| saved_project_entry_ids.insert(*id));
+                    .any(|id| saved_project_items_ids.insert(*id));
 
                 if should_save
                     && !Self::save_item(project.clone(), &pane, item_ix, &*item, true, &mut cx)
@@ -1672,7 +1672,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::item::test::TestItem;
+    use crate::item::test::{TestItem, TestProjectItem};
     use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
 
@@ -1861,7 +1861,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
-                .with_project_items(&[(1, "one.txt")], cx);
+                .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1880,7 +1880,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
-                .with_project_items(&[(1, "1.txt")], cx);
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1899,7 +1899,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 2")
-                .with_project_items(&[(2, "2.txt")], cx);
+                .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1918,7 +1918,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1")
-                .with_project_items(&[(1, "1.txt")], cx);
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1937,7 +1937,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1b")
-                .with_project_items(&[(1, "1.txt")], cx);
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
             Pane::add_item(
                 workspace,
