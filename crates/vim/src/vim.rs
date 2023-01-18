@@ -12,7 +12,7 @@ mod visual;
 
 use collections::HashMap;
 use command_palette::CommandPaletteFilter;
-use editor::{Bias, Cancel, Editor};
+use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
     impl_actions,
     keymap_matcher::{KeyPressed, Keystroke},
@@ -267,7 +267,7 @@ impl Vim {
         for editor in self.editors.values() {
             if let Some(editor) = editor.upgrade(cx) {
                 editor.update(cx, |editor, cx| {
-                    if self.enabled {
+                    if self.enabled && editor.mode() == EditorMode::Full {
                         editor.set_cursor_shape(cursor_shape, cx);
                         editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
                         editor.set_input_enabled(!state.vim_controlled());
