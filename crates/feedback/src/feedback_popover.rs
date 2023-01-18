@@ -2,24 +2,30 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN};
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use futures::AsyncReadExt;
 use gpui::{
     actions,
-    elements::{
-        AnchorCorner, ChildView, Flex, MouseEventHandler, Overlay, OverlayFitMode, ParentElement,
-        Stack, Text,
-    },
-    serde_json, CursorStyle, Element, ElementBox, Entity, MouseButton, MutableAppContext,
-    RenderContext, View, ViewContext, ViewHandle,
+    elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
+    serde_json, CursorStyle, Element, ElementBox, Entity, ModelHandle, MouseButton,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use isahc::Request;
+
 use lazy_static::lazy_static;
+use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Serialize;
 use settings::Settings;
-use workspace::{item::ItemHandle, StatusItemView};
+use smallvec::SmallVec;
+use workspace::{
+    item::{Item, ItemHandle},
+    StatusItemView, Workspace,
+};
 
-use crate::{feedback_popover, system_specs::SystemSpecs};
+use crate::system_specs::SystemSpecs;
+
+// TODO FEEDBACK: Rename this file to feedback editor?
+// TODO FEEDBACK: Where is the backend code for air table?
 
 lazy_static! {
     pub static ref ZED_SERVER_URL: String =
@@ -31,36 +37,14 @@ const FEEDBACK_CHAR_COUNT_RANGE: Range<usize> = Range {
     end: 1000,
 };
 
-actions!(feedback, [ToggleFeedbackPopover, SubmitFeedback]);
+actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(FeedbackButton::toggle_feedback);
-    cx.add_action(FeedbackPopover::submit_feedback);
+    // cx.add_action(FeedbackView::submit_feedback);
+    cx.add_action(FeedbackEditor::deploy);
 }
 
-pub struct FeedbackButton {
-    feedback_popover: Option<ViewHandle<FeedbackPopover>>,
-}
-
-impl FeedbackButton {
-    pub fn new() -> Self {
-        Self {
-            feedback_popover: None,
-        }
-    }
-
-    pub fn toggle_feedback(&mut self, _: &ToggleFeedbackPopover, cx: &mut ViewContext<Self>) {
-        match self.feedback_popover.take() {
-            Some(_) => {}
-            None => {
-                let popover_view = cx.add_view(|_cx| FeedbackPopover::new(_cx));
-                self.feedback_popover = Some(popover_view.clone());
-            }
-        }
-
-        cx.notify();
-    }
-}
+pub struct FeedbackButton;
 
 impl Entity for FeedbackButton {
     type Event = ();
@@ -80,26 +64,80 @@ impl View for FeedbackButton {
 
                     Text::new(
                         "Give Feedback".to_string(),
-                        theme
-                            .style_for(state, self.feedback_popover.is_some())
-                            .clone(),
+                        theme.style_for(state, true).clone(),
                     )
                     .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(ToggleFeedbackPopover)
-                })
+                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(GiveFeedback))
                 .boxed(),
             )
-            .with_children(self.feedback_popover.as_ref().map(|popover| {
-                Overlay::new(ChildView::new(popover, cx).contained().boxed())
-                    .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                    .with_anchor_corner(AnchorCorner::TopLeft)
-                    .with_z_index(999)
-                    .boxed()
-            }))
             .boxed()
+    }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {}
+
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {}
+
+    fn key_down(&mut self, _: &gpui::KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
+
+    fn key_up(&mut self, _: &gpui::KeyUpEvent, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
+
+    fn modifiers_changed(
+        &mut self,
+        _: &gpui::ModifiersChangedEvent,
+        _: &mut ViewContext<Self>,
+    ) -> bool {
+        false
+    }
+
+    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap_matcher::KeymapContext {
+        Self::default_keymap_context()
+    }
+
+    fn default_keymap_context() -> gpui::keymap_matcher::KeymapContext {
+        let mut cx = gpui::keymap_matcher::KeymapContext::default();
+        cx.set.insert(Self::ui_name().into());
+        cx
+    }
+
+    fn debug_json(&self, _: &gpui::AppContext) -> gpui::serde_json::Value {
+        gpui::serde_json::Value::Null
+    }
+
+    fn text_for_range(&self, _: Range<usize>, _: &gpui::AppContext) -> Option<String> {
+        None
+    }
+
+    fn selected_text_range(&self, _: &gpui::AppContext) -> Option<Range<usize>> {
+        None
+    }
+
+    fn marked_text_range(&self, _: &gpui::AppContext) -> Option<Range<usize>> {
+        None
+    }
+
+    fn unmark_text(&mut self, _: &mut ViewContext<Self>) {}
+
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: &mut ViewContext<Self>,
+    ) {
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: Option<Range<usize>>,
+        _: &mut ViewContext<Self>,
+    ) {
     }
 }
 
@@ -113,14 +151,9 @@ impl StatusItemView for FeedbackButton {
     }
 }
 
-pub struct FeedbackPopover {
-    feedback_editor: ViewHandle<Editor>,
-    // _subscriptions: Vec<Subscription>,
-}
-
-impl Entity for FeedbackPopover {
-    type Event = ();
-}
+// impl Entity for FeedbackView {
+//     type Event = ();
+// }
 
 #[derive(Serialize)]
 struct FeedbackRequestBody<'a> {
@@ -130,40 +163,34 @@ struct FeedbackRequestBody<'a> {
     token: &'a str,
 }
 
-impl FeedbackPopover {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let feedback_editor = cx.add_view(|cx| {
-            let editor = Editor::multi_line(
-                Some(Arc::new(|theme| theme.feedback.feedback_editor.clone())),
-                cx,
-            );
+struct FeedbackEditor {
+    editor: ViewHandle<Editor>,
+}
+
+impl FeedbackEditor {
+    fn new(
+        project_handle: ModelHandle<Project>,
+        _: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        // TODO FEEDBACK: Get rid of this expect
+        let buffer = project_handle
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .expect("Could not open feedback window");
+
+        let editor = cx.add_view(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project_handle.clone()), cx);
+            editor.set_vertical_scroll_margin(5, cx);
+            editor.set_placeholder_text("Enter your feedback here, save to submit feedback", cx);
             editor
         });
 
-        cx.focus(&feedback_editor);
-
-        cx.subscribe(&feedback_editor, |this, _, event, cx| {
-            if let editor::Event::BufferEdited = event {
-                let buffer_len = this.feedback_editor.read(cx).buffer().read(cx).len(cx);
-                let feedback_chars_remaining = FEEDBACK_CHAR_COUNT_RANGE.end - buffer_len;
-                dbg!(feedback_chars_remaining);
-            }
-        })
-        .detach();
-
-        // let active_call = ActiveCall::global(cx);
-        // let mut subscriptions = Vec::new();
-        // subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
-        // subscriptions.push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
-        let this = Self {
-            feedback_editor, // _subscriptions: subscriptions,
-        };
-        // this.update_entries(cx);
+        let this = Self { editor };
         this
     }
 
-    fn submit_feedback(&mut self, _: &SubmitFeedback, cx: &mut ViewContext<'_, Self>) {
-        let feedback_text = self.feedback_editor.read(cx).text(cx);
+    fn submit_feedback(&mut self, cx: &mut ViewContext<'_, Self>) {
+        let feedback_text = self.editor.read(cx).text(cx);
         let zed_client = cx.global::<Arc<Client>>();
         let system_specs = SystemSpecs::new(cx);
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
@@ -222,66 +249,129 @@ impl FeedbackPopover {
     }
 }
 
-impl View for FeedbackPopover {
+impl FeedbackEditor {
+    pub fn deploy(workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>) {
+        // if let Some(existing) = workspace.item_of_type::<FeedbackEditor>(cx) {
+        //     workspace.activate_item(&existing, cx);
+        // } else {
+        let workspace_handle = cx.weak_handle();
+        let feedback_editor = cx
+            .add_view(|cx| FeedbackEditor::new(workspace.project().clone(), workspace_handle, cx));
+        workspace.add_item(Box::new(feedback_editor), cx);
+    }
+    // }
+}
+
+// struct FeedbackView {
+//     editor: Editor,
+// }
+
+impl View for FeedbackEditor {
     fn ui_name() -> &'static str {
-        "FeedbackPopover"
+        "Feedback"
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        enum SubmitFeedback {}
+        // let theme = cx.global::<Settings>().theme.clone();
+        // let submit_feedback_text_button_height = 20.0;
 
-        // I'd like to just define:
-
-        // 1. Overall popover width x height dimensions (done)
-        // 2. Submit Feedback button height dimensions
-        // 3. Allow editor to dynamically fill in the remaining space
-
-        let theme = cx.global::<Settings>().theme.clone();
-        let submit_feedback_text_button_height = 20.0;
-
-        Flex::column()
-            .with_child(
-                Flex::row()
-                    .with_child(
-                        ChildView::new(self.feedback_editor.clone(), cx)
-                            .contained()
-                            .with_style(theme.feedback.feedback_editor.container)
-                            .flex(1., true)
-                            .boxed(),
-                    )
-                    .constrained()
-                    .with_width(theme.feedback.feedback_popover.width)
-                    .with_height(
-                        theme.feedback.feedback_popover.height - submit_feedback_text_button_height,
-                    )
-                    .boxed(),
-            )
-            .with_child(
-                MouseEventHandler::<SubmitFeedback>::new(0, cx, |state, _| {
-                    let theme = &theme.workspace.status_bar.feedback;
-
-                    Text::new(
-                        "Submit Feedback".to_string(),
-                        theme.style_for(state, true).clone(),
-                    )
-                    .constrained()
-                    .with_height(submit_feedback_text_button_height)
-                    .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(feedback_popover::SubmitFeedback)
-                })
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(feedback_popover::ToggleFeedbackPopover)
-                })
-                .boxed(),
-            )
-            .contained()
-            .with_style(theme.feedback.feedback_popover.container)
-            .constrained()
-            .with_width(theme.feedback.feedback_popover.width)
-            .with_height(theme.feedback.feedback_popover.height)
-            .boxed()
+        ChildView::new(&self.editor, cx).boxed()
     }
 }
+
+impl Entity for FeedbackEditor {
+    type Event = ();
+}
+
+impl Item for FeedbackEditor {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        style: &theme::Tab,
+        _: &gpui::AppContext,
+    ) -> ElementBox {
+        Flex::row()
+            .with_child(
+                Label::new("Feedback".to_string(), style.label.clone())
+                    .aligned()
+                    .contained()
+                    .boxed(),
+            )
+            .boxed()
+    }
+
+    fn to_item_events(_: &Self::Event) -> Vec<workspace::item::ItemEvent> {
+        Vec::new()
+    }
+
+    fn project_path(&self, _: &gpui::AppContext) -> Option<ProjectPath> {
+        None
+    }
+
+    fn project_entry_ids(&self, _: &gpui::AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+        SmallVec::new()
+    }
+
+    fn is_singleton(&self, _: &gpui::AppContext) -> bool {
+        true
+    }
+
+    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
+
+    fn can_save(&self, _: &gpui::AppContext) -> bool {
+        true
+    }
+
+    fn save(
+        &mut self,
+        _: gpui::ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        cx.prompt(
+            gpui::PromptLevel::Info,
+            &format!("You are trying to to submit this feedbac"),
+            &["OK"],
+        );
+
+        self.submit_feedback(cx);
+        Task::ready(Ok(()))
+    }
+
+    fn save_as(
+        &mut self,
+        _: gpui::ModelHandle<Project>,
+        _: std::path::PathBuf,
+        _: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        unreachable!("save_as should not have been called");
+    }
+
+    fn reload(
+        &mut self,
+        _: gpui::ModelHandle<Project>,
+        _: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        unreachable!("should not have been called")
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
+
+    fn deserialize(
+        _: gpui::ModelHandle<Project>,
+        _: gpui::WeakViewHandle<Workspace>,
+        _: workspace::WorkspaceId,
+        _: workspace::ItemId,
+        _: &mut ViewContext<workspace::Pane>,
+    ) -> Task<anyhow::Result<ViewHandle<Self>>> {
+        unreachable!()
+    }
+}
+
+// TODO FEEDBACK: Add placeholder text
+// TODO FEEDBACK: act_as_type (max mentionedt this)
+// TODO FEEDBACK: focus
+// TODO FEEDBACK: markdown highlighting
+// TODO FEEDBACK: save prompts and accepting closes
+// TODO FEEDBACK: multiple tabs?

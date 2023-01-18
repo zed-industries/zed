@@ -18,9 +18,12 @@ gpui = { path = "../gpui" }
 human_bytes = "0.4.1"
 isahc = "1.7"
 lazy_static = "1.4.0"
+project = { path = "../project" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 settings = { path = "../settings" }
+smallvec = { version = "1.6", features = ["union"] }
 sysinfo = "0.27.1"
+theme = { path = "../theme" }
 urlencoding = "2.1.2"
 util = { path = "../util" }
 workspace = { path = "../workspace" }

@@ -42,7 +42,7 @@ impl Display for SystemSpecs {
             None => format!("OS: {}", self.os_name),
         };
         let system_specs = [
-            format!("Zed: {} ({})", self.app_version, self.release_channel),
+            format!("Zed: v{} ({})", self.app_version, self.release_channel),
             os_information,
             format!("Memory: {}", human_bytes(self.memory as f64)),
             format!("Architecture: {}", self.architecture),

@@ -327,7 +327,7 @@ pub fn initialize_workspace(
     let activity_indicator =
         activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    let feedback_button = cx.add_view(|_| feedback::feedback_popover::FeedbackButton::new());
+    let feedback_button = cx.add_view(|_| feedback::feedback_popover::FeedbackButton {});
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);

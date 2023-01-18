@@ -59,4 +59,7 @@ pub fn init(cx: &mut gpui::MutableAppContext) {
             });
         },
     );
+
+    // TODO FEEDBACK: Should I put Give Feedback action here?
+    // TODO FEEDBACK: Disble buffer search?
 }

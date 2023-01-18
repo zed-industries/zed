@@ -122,17 +122,17 @@ pub struct ContactList {
 
 #[derive(Deserialize, Default)]
 pub struct Feedback {
-    pub feedback_popover: FeedbackPopover,
+    // pub feedback_popover: FeedbackPopover,
     pub feedback_editor: FieldEditor,
 }
 
-#[derive(Deserialize, Default)]
-pub struct FeedbackPopover {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub height: f32,
-    pub width: f32,
-}
+// #[derive(Deserialize, Default)]
+// pub struct FeedbackPopover {
+//     #[serde(flatten)]
+//     pub container: ContainerStyle,
+//     pub height: f32,
+//     pub width: f32,
+// }
 
 #[derive(Deserialize, Default)]
 pub struct ProjectRow {
