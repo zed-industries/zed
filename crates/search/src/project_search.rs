@@ -130,7 +130,7 @@ impl ProjectSearch {
             let matches = search.await.log_err()?;
             let this = this.upgrade(&cx)?;
             let mut matches = matches.into_iter().collect::<Vec<_>>();
-            let (_rebuild, mut match_ranges) = this.update(&mut cx, |this, cx| {
+            let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
                 matches.sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
                 this.excerpts.update(cx, |excerpts, cx| {

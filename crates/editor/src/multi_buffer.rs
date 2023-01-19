@@ -3676,6 +3676,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use gpui::{MutableAppContext, TestAppContext};
     use language::{Buffer, Rope};
     use rand::prelude::*;
@@ -4062,6 +4063,44 @@ mod tests {
         });
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(
+            snapshot.text(),
+            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\nrrr\n"
+        );
+
+        assert_eq!(
+            anchor_ranges
+                .iter()
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>(),
+            vec![
+                Point::new(2, 2)..Point::new(3, 2),
+                Point::new(6, 1)..Point::new(6, 3),
+                Point::new(12, 0)..Point::new(12, 0)
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(20, 3, 'a'), cx));
+        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let (task, anchor_ranges) = multibuffer.update(cx, |multibuffer, cx| {
+            let snapshot = buffer.read(cx);
+            let ranges = vec![
+                snapshot.anchor_before(Point::new(3, 2))..snapshot.anchor_before(Point::new(4, 2)),
+                snapshot.anchor_before(Point::new(7, 1))..snapshot.anchor_before(Point::new(7, 3)),
+                snapshot.anchor_before(Point::new(15, 0))
+                    ..snapshot.anchor_before(Point::new(15, 0)),
+            ];
+            multibuffer.stream_excerpts_with_context_lines(vec![(buffer.clone(), ranges)], 2, cx)
+        });
+
+        let anchor_ranges = anchor_ranges.collect::<Vec<_>>().await;
+        // Ensure task is finished when stream completes.
+        task.await;
+
+        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         assert_eq!(
             snapshot.text(),
             "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\nrrr\n"
