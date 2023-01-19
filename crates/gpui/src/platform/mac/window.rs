@@ -443,6 +443,7 @@ impl Window {
                 scene_to_render: Default::default(),
                 renderer: Renderer::new(true, fonts),
                 last_fresh_keydown: None,
+                accepts_first_mouse: matches!(options.kind, WindowKind::PopUp),
                 traffic_light_position: options
                     .titlebar
                     .as_ref()

@@ -156,6 +156,7 @@ impl Presenter {
             self.cursor_regions = scene.cursor_regions();
             self.mouse_regions = scene.mouse_regions();
 
+            // window.is_topmost for the mouse moved event's postion?
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
                     self.dispatch_event(event, true, cx);

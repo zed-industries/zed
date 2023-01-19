@@ -31,14 +31,18 @@ use futures::{
 };
 use gpui::{
     actions,
+    color::Color,
     elements::*,
-    geometry::vector::Vector2F,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, SizeConstraint,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowBounds, WindowKind,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -98,7 +102,8 @@ actions!(
         ToggleLeftSidebar,
         ToggleRightSidebar,
         NewTerminal,
-        NewSearch
+        NewSearch,
+        ShowNotif,
     ]
 );
 
