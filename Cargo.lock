@@ -5510,6 +5510,7 @@ dependencies = [
  "anyhow",
  "collections",
  "editor",
+ "futures 0.3.25",
  "gpui",
  "language",
  "log",

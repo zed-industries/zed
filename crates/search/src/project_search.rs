@@ -7,6 +7,7 @@ use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
     SelectAll, MAX_TAB_TITLE_LEN,
 };
+use futures::StreamExt;
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
     Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
@@ -129,31 +130,23 @@ impl ProjectSearch {
             let matches = search.await.log_err()?;
             let this = this.upgrade(&cx)?;
             let mut matches = matches.into_iter().collect::<Vec<_>>();
-            this.update(&mut cx, |this, cx| {
+            let (_rebuild, mut match_ranges) = this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
                 matches.sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
-                this.excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
+                this.excerpts.update(cx, |excerpts, cx| {
+                    excerpts.clear(cx);
+                    excerpts.stream_excerpts_with_context_lines(matches, 1, cx)
+                })
             });
 
-            for matches_chunk in matches.chunks(100) {
+            while let Some(match_range) = match_ranges.next().await {
                 this.update(&mut cx, |this, cx| {
-                    this.excerpts.update(cx, |excerpts, cx| {
-                        for (buffer, buffer_matches) in matches_chunk {
-                            let ranges_to_highlight = excerpts.push_excerpts_with_context_lines(
-                                buffer.clone(),
-                                buffer_matches.clone(),
-                                1,
-                                cx,
-                            );
-                            this.match_ranges.extend(ranges_to_highlight);
-                        }
-                    });
-
+                    this.match_ranges.push(match_range);
+                    while let Ok(Some(match_range)) = match_ranges.try_next() {
+                        this.match_ranges.push(match_range);
+                    }
                     cx.notify();
                 });
-
-                // Don't starve the main thread when adding lots of excerpts.
-                smol::future::yield_now().await;
             }
 
             this.update(&mut cx, |this, cx| {
