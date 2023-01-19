@@ -29,6 +29,7 @@ use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
     WorkingDirectory,
 };
+use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
@@ -269,8 +270,12 @@ fn init_logger() {
             .append(true)
             .open(&*paths::LOG)
             .expect("could not open logfile");
-        simplelog::WriteLogger::init(level, simplelog::Config::default(), log_file)
-            .expect("could not initialize logger");
+
+        let config = ConfigBuilder::new()
+            .set_time_format_str("%Y-%m-%dT%T") //All timestamps are UTC
+            .build();
+
+        simplelog::WriteLogger::init(level, config, log_file).expect("could not initialize logger");
     }
 }
 
