@@ -949,13 +949,13 @@ impl ToolbarItemView for ProjectSearchBar {
 mod tests {
     use super::*;
     use editor::DisplayPoint;
-    use gpui::{color::Color, TestAppContext};
+    use gpui::{color::Color, executor::Deterministic, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
     use std::sync::Arc;
 
     #[gpui::test]
-    async fn test_project_search(cx: &mut TestAppContext) {
+    async fn test_project_search(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
         theme.search.match_background = Color::red();
@@ -987,7 +987,7 @@ mod tests {
                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
             search_view.search(cx);
         });
-        search_view.next_notification(cx).await;
+        deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
             assert_eq!(
                 search_view
