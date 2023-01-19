@@ -6,12 +6,11 @@ use gpui::{
         Padding, ParentElement,
     },
     fonts::TextStyle,
-    Border, Element, Entity, ModelHandle, MutableAppContext, Quad, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Border, Element, Entity, ModelHandle, MutableAppContext, Quad, RenderContext, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::Project;
 use settings::Settings;
-use smallvec::SmallVec;
 use theme::{ColorScheme, Layer, Style, StyleSet};
 use workspace::{
     item::{Item, ItemEvent},
@@ -306,7 +305,7 @@ impl Item for ThemeTestbench {
         &self,
         _: Option<usize>,
         style: &theme::Tab,
-        _: &gpui::AppContext,
+        _: &AppContext,
     ) -> gpui::ElementBox {
         Label::new("Theme Testbench".into(), style.label.clone())
             .aligned()
@@ -314,21 +313,15 @@ impl Item for ThemeTestbench {
             .boxed()
     }
 
-    fn project_path(&self, _: &gpui::AppContext) -> Option<ProjectPath> {
-        None
-    }
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
 
-    fn project_entry_ids(&self, _: &gpui::AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-        SmallVec::new()
-    }
-
-    fn is_singleton(&self, _: &gpui::AppContext) -> bool {
+    fn is_singleton(&self, _: &AppContext) -> bool {
         false
     }
 
     fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
 
-    fn can_save(&self, _: &gpui::AppContext) -> bool {
+    fn can_save(&self, _: &AppContext) -> bool {
         false
     }
 

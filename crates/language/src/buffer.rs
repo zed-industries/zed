@@ -2169,8 +2169,6 @@ impl BufferSnapshot {
                 continue;
             }
 
-            // TODO - move later, after processing captures
-
             let mut text = String::new();
             let mut name_ranges = Vec::new();
             let mut highlight_ranges = Vec::new();
@@ -2184,7 +2182,13 @@ impl BufferSnapshot {
                     continue;
                 }
 
-                let range = capture.node.start_byte()..capture.node.end_byte();
+                let mut range = capture.node.start_byte()..capture.node.end_byte();
+                let start = capture.node.start_position();
+                if capture.node.end_position().row > start.row {
+                    range.end =
+                        range.start + self.line_len(start.row as u32) as usize - start.column;
+                }
+
                 if !text.is_empty() {
                     text.push(' ');
                 }

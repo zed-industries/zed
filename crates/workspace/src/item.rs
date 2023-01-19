@@ -49,8 +49,7 @@ pub trait Item: View {
     }
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
         -> ElementBox;
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item));
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
@@ -147,6 +146,8 @@ pub trait ItemHandle: 'static + fmt::Debug {
         -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item));
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
@@ -240,11 +241,36 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.read(cx).project_path(cx)
+        let this = self.read(cx);
+        let mut result = None;
+        if this.is_singleton(cx) {
+            this.for_each_project_item(cx, &mut |_, item| {
+                result = item.project_path(cx);
+            });
+        }
+        result
     }
 
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-        self.read(cx).project_entry_ids(cx)
+        let mut result = SmallVec::new();
+        self.read(cx).for_each_project_item(cx, &mut |_, item| {
+            if let Some(id) = item.entry_id(cx) {
+                result.push(id);
+            }
+        });
+        result
+    }
+
+    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]> {
+        let mut result = SmallVec::new();
+        self.read(cx).for_each_project_item(cx, &mut |id, _| {
+            result.push(id);
+        });
+        result
+    }
+
+    fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
+        self.read(cx).for_each_project_item(cx, f)
     }
 
     fn is_singleton(&self, cx: &AppContext) -> bool {
@@ -582,7 +608,7 @@ impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
 }
 
 pub trait ProjectItem: Item {
-    type Item: project::Item;
+    type Item: project::Item + gpui::Entity;
 
     fn for_project_item(
         project: ModelHandle<Project>,
@@ -690,18 +716,19 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 
 #[cfg(test)]
 pub(crate) mod test {
-    use std::{any::Any, borrow::Cow, cell::Cell};
-
-    use gpui::{
-        elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext, Task,
-        View, ViewContext, ViewHandle, WeakViewHandle,
-    };
-    use project::{Project, ProjectEntryId, ProjectPath};
-    use smallvec::SmallVec;
-
-    use crate::{sidebar::SidebarItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
-
     use super::{Item, ItemEvent};
+    use crate::{sidebar::SidebarItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use gpui::{
+        elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
+        RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    };
+    use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+    use std::{any::Any, borrow::Cow, cell::Cell, path::Path};
+
+    pub struct TestProjectItem {
+        pub entry_id: Option<ProjectEntryId>,
+        pub project_path: Option<ProjectPath>,
+    }
 
     pub struct TestItem {
         pub workspace_id: WorkspaceId,
@@ -713,11 +740,24 @@ pub(crate) mod test {
         pub is_dirty: bool,
         pub is_singleton: bool,
         pub has_conflict: bool,
-        pub project_entry_ids: Vec<ProjectEntryId>,
-        pub project_path: Option<ProjectPath>,
+        pub project_items: Vec<ModelHandle<TestProjectItem>>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
         pub tab_detail: Cell<Option<usize>>,
+    }
+
+    impl Entity for TestProjectItem {
+        type Event = ();
+    }
+
+    impl project::Item for TestProjectItem {
+        fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+            self.entry_id
+        }
+
+        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            self.project_path.clone()
+        }
     }
 
     pub enum TestItemEvent {
@@ -735,13 +775,33 @@ pub(crate) mod test {
                 is_dirty: self.is_dirty,
                 is_singleton: self.is_singleton,
                 has_conflict: self.has_conflict,
-                project_entry_ids: self.project_entry_ids.clone(),
-                project_path: self.project_path.clone(),
+                project_items: self.project_items.clone(),
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
                 workspace_id: self.workspace_id,
             }
+        }
+    }
+
+    impl TestProjectItem {
+        pub fn new(id: u64, path: &str, cx: &mut MutableAppContext) -> ModelHandle<Self> {
+            let entry_id = Some(ProjectEntryId::from_proto(id));
+            let project_path = Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: Path::new(path).into(),
+            });
+            cx.add_model(|_| Self {
+                entry_id,
+                project_path,
+            })
+        }
+
+        pub fn new_untitled(cx: &mut MutableAppContext) -> ModelHandle<Self> {
+            cx.add_model(|_| Self {
+                project_path: None,
+                entry_id: None,
+            })
         }
     }
 
@@ -755,8 +815,7 @@ pub(crate) mod test {
                 reload_count: 0,
                 is_dirty: false,
                 has_conflict: false,
-                project_entry_ids: Vec::new(),
-                project_path: None,
+                project_items: Vec::new(),
                 is_singleton: true,
                 nav_history: None,
                 tab_descriptions: None,
@@ -781,13 +840,19 @@ pub(crate) mod test {
             self
         }
 
-        pub fn with_project_entry_ids(mut self, project_entry_ids: &[u64]) -> Self {
-            self.project_entry_ids.extend(
-                project_entry_ids
-                    .iter()
-                    .copied()
-                    .map(ProjectEntryId::from_proto),
-            );
+        pub fn with_dirty(mut self, dirty: bool) -> Self {
+            self.is_dirty = dirty;
+            self
+        }
+
+        pub fn with_conflict(mut self, has_conflict: bool) -> Self {
+            self.has_conflict = has_conflict;
+            self
+        }
+
+        pub fn with_project_items(mut self, items: &[ModelHandle<TestProjectItem>]) -> Self {
+            self.project_items.clear();
+            self.project_items.extend(items.iter().cloned());
             self
         }
 
@@ -830,12 +895,14 @@ pub(crate) mod test {
             Empty::new().boxed()
         }
 
-        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-            self.project_path.clone()
-        }
-
-        fn project_entry_ids(&self, _: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-            self.project_entry_ids.iter().copied().collect()
+        fn for_each_project_item(
+            &self,
+            cx: &AppContext,
+            f: &mut dyn FnMut(usize, &dyn project::Item),
+        ) {
+            self.project_items
+                .iter()
+                .for_each(|item| f(item.id(), item.read(cx)))
         }
 
         fn is_singleton(&self, _: &AppContext) -> bool {
@@ -879,8 +946,12 @@ pub(crate) mod test {
             self.has_conflict
         }
 
-        fn can_save(&self, _: &AppContext) -> bool {
-            !self.project_entry_ids.is_empty()
+        fn can_save(&self, cx: &AppContext) -> bool {
+            !self.project_items.is_empty()
+                && self
+                    .project_items
+                    .iter()
+                    .all(|item| item.read(cx).entry_id.is_some())
         }
 
         fn save(
