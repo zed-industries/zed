@@ -1086,6 +1086,8 @@ impl Editor {
 
         let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
+        let soft_wrap_mode_override =
+            (mode == EditorMode::SingleLine).then(|| settings::SoftWrap::None);
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1101,7 +1103,7 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
-            soft_wrap_mode_override: None,
+            soft_wrap_mode_override,
             get_field_editor_theme,
             project,
             focused: false,
