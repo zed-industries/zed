@@ -8,13 +8,14 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use futures::FutureExt;
-
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::proto::serialize_anchor as serialize_text_anchor;
-use language::{Bias, Buffer, OffsetRangeExt, Point, SelectionGoal};
+use language::{
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
+    SelectionGoal,
+};
 use project::{FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
@@ -1157,9 +1158,11 @@ fn path_for_file<'a>(
 mod tests {
     use super::*;
     use gpui::MutableAppContext;
+    use language::RopeFingerprint;
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
+        time::SystemTime,
     };
 
     #[gpui::test]
@@ -1189,7 +1192,7 @@ mod tests {
             todo!()
         }
 
-        fn mtime(&self) -> std::time::SystemTime {
+        fn mtime(&self) -> SystemTime {
             todo!()
         }
 
@@ -1208,7 +1211,7 @@ mod tests {
             _: clock::Global,
             _: project::LineEnding,
             _: &mut MutableAppContext,
-        ) -> gpui::Task<anyhow::Result<(clock::Global, String, std::time::SystemTime)>> {
+        ) -> gpui::Task<anyhow::Result<(clock::Global, RopeFingerprint, SystemTime)>> {
             todo!()
         }
 

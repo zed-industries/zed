@@ -410,10 +410,10 @@ async fn test_random_collaboration(
                     guest_buffer.read_with(client_cx, |b, _| b.saved_version().clone());
                 assert_eq!(guest_saved_version, host_saved_version);
 
-                let host_saved_version_fingerprint = host_buffer
-                    .read_with(host_cx, |b, _| b.saved_version_fingerprint().to_string());
-                let guest_saved_version_fingerprint = guest_buffer
-                    .read_with(client_cx, |b, _| b.saved_version_fingerprint().to_string());
+                let host_saved_version_fingerprint =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version_fingerprint());
+                let guest_saved_version_fingerprint =
+                    guest_buffer.read_with(client_cx, |b, _| b.saved_version_fingerprint());
                 assert_eq!(
                     guest_saved_version_fingerprint,
                     host_saved_version_fingerprint

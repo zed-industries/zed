@@ -22,8 +22,8 @@ use gpui::{
 use language::{
     point_to_lsp,
     proto::{
-        deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
-        serialize_version,
+        deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
+        serialize_anchor, serialize_version,
     },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
@@ -5124,7 +5124,7 @@ impl Project {
             buffer_id,
             version: serialize_version(&saved_version),
             mtime: Some(mtime.into()),
-            fingerprint,
+            fingerprint: language::proto::serialize_fingerprint(fingerprint),
         })
     }
 
@@ -5216,7 +5216,9 @@ impl Project {
                             buffer_id,
                             version: language::proto::serialize_version(buffer.saved_version()),
                             mtime: Some(buffer.saved_mtime().into()),
-                            fingerprint: buffer.saved_version_fingerprint().into(),
+                            fingerprint: language::proto::serialize_fingerprint(
+                                buffer.saved_version_fingerprint(),
+                            ),
                             line_ending: language::proto::serialize_line_ending(
                                 buffer.line_ending(),
                             ) as i32,
@@ -5971,6 +5973,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
+        let fingerprint = deserialize_fingerprint(&envelope.payload.fingerprint)?;
         let version = deserialize_version(envelope.payload.version);
         let mtime = envelope
             .payload
@@ -5985,7 +5988,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, envelope.payload.fingerprint, mtime, None, cx);
+                    buffer.did_save(version, fingerprint, mtime, None, cx);
                 });
             }
             Ok(())
@@ -6000,6 +6003,7 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(payload.version);
+        let fingerprint = deserialize_fingerprint(&payload.fingerprint)?;
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
@@ -6015,7 +6019,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, payload.fingerprint, line_ending, mtime, cx);
+                    buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
                 });
             }
             Ok(())

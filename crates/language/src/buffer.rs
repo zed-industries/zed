@@ -60,7 +60,7 @@ pub struct Buffer {
     git_diff_status: GitDiffStatus,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
-    saved_version_fingerprint: String,
+    saved_version_fingerprint: RopeFingerprint,
     saved_mtime: SystemTime,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
@@ -221,7 +221,7 @@ pub trait File: Send + Sync {
         version: clock::Global,
         line_ending: LineEnding,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, String, SystemTime)>>;
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>>;
 
     fn as_any(&self) -> &dyn Any;
 
@@ -238,7 +238,7 @@ pub trait LocalFile: File {
         &self,
         buffer_id: u64,
         version: &clock::Global,
-        fingerprint: String,
+        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut MutableAppContext,
@@ -386,7 +386,8 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(message.saved_version);
-        this.saved_version_fingerprint = message.saved_version_fingerprint;
+        this.saved_version_fingerprint =
+            proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
@@ -402,7 +403,7 @@ impl Buffer {
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
-            saved_version_fingerprint: self.saved_version_fingerprint.clone(),
+            saved_version_fingerprint: proto::serialize_fingerprint(self.saved_version_fingerprint),
             saved_mtime: Some(self.saved_mtime.into()),
         }
     }
@@ -530,7 +531,7 @@ impl Buffer {
     pub fn save(
         &mut self,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(clock::Global, String, SystemTime)>> {
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
         let file = if let Some(file) = self.file.as_ref() {
             file
         } else {
@@ -548,7 +549,7 @@ impl Buffer {
         cx.spawn(|this, mut cx| async move {
             let (version, fingerprint, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), fingerprint.clone(), mtime, None, cx);
+                this.did_save(version.clone(), fingerprint, mtime, None, cx);
             });
             Ok((version, fingerprint, mtime))
         })
@@ -558,8 +559,8 @@ impl Buffer {
         &self.saved_version
     }
 
-    pub fn saved_version_fingerprint(&self) -> &str {
-        &self.saved_version_fingerprint
+    pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
+        self.saved_version_fingerprint
     }
 
     pub fn saved_mtime(&self) -> SystemTime {
@@ -581,7 +582,7 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
-        fingerprint: String,
+        fingerprint: RopeFingerprint,
         mtime: SystemTime,
         new_file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
@@ -630,7 +631,7 @@ impl Buffer {
     pub fn did_reload(
         &mut self,
         version: clock::Global,
-        fingerprint: String,
+        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut ModelContext<Self>,
@@ -643,7 +644,7 @@ impl Buffer {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.saved_version_fingerprint.clone(),
+                self.saved_version_fingerprint,
                 self.line_ending(),
                 self.saved_mtime,
                 cx,

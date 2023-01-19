@@ -11,6 +11,15 @@ use text::*;
 
 pub use proto::{BufferState, Operation};
 
+pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
+    fingerprint.to_hex()
+}
+
+pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
+    RopeFingerprint::from_hex(fingerprint)
+        .map_err(|error| anyhow!("invalid fingerprint: {}", error))
+}
+
 pub fn deserialize_line_ending(message: proto::LineEnding) -> fs::LineEnding {
     match message {
         proto::LineEnding::Unix => fs::LineEnding::Unix,

@@ -7,6 +7,7 @@ use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
     SelectAll, MAX_TAB_TITLE_LEN,
 };
+use futures::StreamExt;
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
     Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
@@ -17,6 +18,7 @@ use project::{search::SearchQuery, Project};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
+    mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -66,6 +68,7 @@ struct ProjectSearch {
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
+    search_id: usize,
 }
 
 pub struct ProjectSearchView {
@@ -77,6 +80,7 @@ pub struct ProjectSearchView {
     regex: bool,
     query_contains_error: bool,
     active_match_index: Option<usize>,
+    search_id: usize,
 }
 
 pub struct ProjectSearchBar {
@@ -97,6 +101,7 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
+            search_id: 0,
         }
     }
 
@@ -109,6 +114,7 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
+            search_id: self.search_id,
         })
     }
 
@@ -116,32 +122,37 @@ impl ProjectSearch {
         let search = self
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
+        self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
             let matches = search.await.log_err()?;
-            if let Some(this) = this.upgrade(&cx) {
+            let this = this.upgrade(&cx)?;
+            let mut matches = matches.into_iter().collect::<Vec<_>>();
+            let (_task, mut match_ranges) = this.update(&mut cx, |this, cx| {
+                this.match_ranges.clear();
+                matches.sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
+                this.excerpts.update(cx, |excerpts, cx| {
+                    excerpts.clear(cx);
+                    excerpts.stream_excerpts_with_context_lines(matches, 1, cx)
+                })
+            });
+
+            while let Some(match_range) = match_ranges.next().await {
                 this.update(&mut cx, |this, cx| {
-                    this.match_ranges.clear();
-                    let mut matches = matches.into_iter().collect::<Vec<_>>();
-                    matches
-                        .sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
-                    this.excerpts.update(cx, |excerpts, cx| {
-                        excerpts.clear(cx);
-                        for (buffer, buffer_matches) in matches {
-                            let ranges_to_highlight = excerpts.push_excerpts_with_context_lines(
-                                buffer,
-                                buffer_matches.clone(),
-                                1,
-                                cx,
-                            );
-                            this.match_ranges.extend(ranges_to_highlight);
-                        }
-                    });
-                    this.pending_search.take();
+                    this.match_ranges.push(match_range);
+                    while let Ok(Some(match_range)) = match_ranges.try_next() {
+                        this.match_ranges.push(match_range);
+                    }
                     cx.notify();
                 });
             }
+
+            this.update(&mut cx, |this, cx| {
+                this.pending_search.take();
+                cx.notify();
+            });
+
             None
         }));
         cx.notify();
@@ -393,7 +404,7 @@ impl ProjectSearchView {
                 whole_word = active_query.whole_word();
             }
         }
-        cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
+        cx.observe(&model, |this, _, cx| this.model_changed(cx))
             .detach();
 
         let query_editor = cx.add_view(|cx| {
@@ -428,6 +439,7 @@ impl ProjectSearchView {
         .detach();
 
         let mut this = ProjectSearchView {
+            search_id: model.read(cx).search_id,
             model,
             query_editor,
             results_editor,
@@ -437,7 +449,7 @@ impl ProjectSearchView {
             query_contains_error: false,
             active_match_index: None,
         };
-        this.model_changed(false, cx);
+        this.model_changed(cx);
         this
     }
 
@@ -557,11 +569,13 @@ impl ProjectSearchView {
         cx.focus(&self.results_editor);
     }
 
-    fn model_changed(&mut self, reset_selections: bool, cx: &mut ViewContext<Self>) {
+    fn model_changed(&mut self, cx: &mut ViewContext<Self>) {
         let match_ranges = self.model.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
             self.active_match_index = None;
         } else {
+            let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
+            let reset_selections = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if reset_selections {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -935,13 +949,13 @@ impl ToolbarItemView for ProjectSearchBar {
 mod tests {
     use super::*;
     use editor::DisplayPoint;
-    use gpui::{color::Color, TestAppContext};
+    use gpui::{color::Color, executor::Deterministic, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
     use std::sync::Arc;
 
     #[gpui::test]
-    async fn test_project_search(cx: &mut TestAppContext) {
+    async fn test_project_search(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
         theme.search.match_background = Color::red();
@@ -973,7 +987,7 @@ mod tests {
                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
             search_view.search(cx);
         });
-        search_view.next_notification(cx).await;
+        deterministic.run_until_parked();
         search_view.update(cx, |search_view, cx| {
             assert_eq!(
                 search_view
