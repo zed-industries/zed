@@ -1127,6 +1127,41 @@ fn splice_included_ranges(
     ranges
 }
 
+impl<'a> SyntaxLayerInfo<'a> {
+    pub(crate) fn override_id(&self, offset: usize, text: &text::BufferSnapshot) -> Option<u32> {
+        let text = TextProvider(text.as_rope());
+        let config = self.language.grammar.as_ref()?.override_config.as_ref()?;
+
+        let mut query_cursor = QueryCursorHandle::new();
+        query_cursor.set_byte_range(offset..offset);
+
+        let mut smallest_match: Option<(u32, Range<usize>)> = None;
+        for mat in query_cursor.matches(&config.query, self.node, text) {
+            for capture in mat.captures {
+                if !config.values.contains_key(&capture.index) {
+                    continue;
+                }
+
+                let range = capture.node.byte_range();
+                if offset <= range.start || offset >= range.end {
+                    continue;
+                }
+
+                if let Some((_, smallest_range)) = &smallest_match {
+                    if range.len() < smallest_range.len() {
+                        smallest_match = Some((capture.index, range))
+                    }
+                    continue;
+                }
+
+                smallest_match = Some((capture.index, range));
+            }
+        }
+
+        smallest_match.map(|(index, _)| index)
+    }
+}
+
 impl std::ops::Deref for SyntaxMap {
     type Target = SyntaxSnapshot;
 
