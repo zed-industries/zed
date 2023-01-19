@@ -456,6 +456,32 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
+    let text = r#"
+        impl A for B<
+            C
+        > {
+        };
+    "#
+    .unindent();
+
+    let buffer =
+        cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx));
+    let outline = buffer
+        .read_with(cx, |buffer, _| buffer.snapshot().outline(None))
+        .unwrap();
+
+    assert_eq!(
+        outline
+            .items
+            .iter()
+            .map(|item| (item.text.as_str(), item.depth))
+            .collect::<Vec<_>>(),
+        &[("impl A for B<", 0)]
+    );
+}
+
+#[gpui::test]
 async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     let text = r#"
         impl Person {
