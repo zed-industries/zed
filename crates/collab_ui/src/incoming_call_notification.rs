@@ -48,6 +48,7 @@ pub fn init(cx: &mut MutableAppContext) {
                         },
                         |_| IncomingCallNotification::new(incoming_call.clone()),
                     );
+                    cx.activate_window(window_id);
                     notification_windows.push(window_id);
                 }
             }
