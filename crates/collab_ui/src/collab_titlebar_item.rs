@@ -417,9 +417,13 @@ impl CollabTitlebarItem {
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let is_followed = peer.map_or(false, |(peer_id, _, _)| {
-            workspace.read(cx).is_following(peer_id)
+        let (is_followed, is_following) = peer.map_or((false, false), |(peer_id, _, _)| {
+            (
+                workspace.read(cx).is_following(peer_id),
+                workspace.read(cx).is_followed(peer_id),
+            )
         });
+        // my color, around their avatar.
 
         let mut avatar_style;
         if let Some((_, _, location)) = peer.as_ref() {
@@ -442,6 +446,10 @@ impl CollabTitlebarItem {
             replica_color = Some(color);
             if is_followed {
                 avatar_style.border = Border::all(1.0, color);
+            } else if is_following {
+                let our_id = workspace.read(cx).project().read(cx).replica_id();
+                let our_color = theme.editor.replica_selection_style(our_id).cursor;
+                avatar_style.border = Border::all(1.0, our_color);
             }
         }
 
