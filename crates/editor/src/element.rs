@@ -190,6 +190,9 @@ impl EditorElement {
                         }
                     }
                 })
+                .on_move_out(|e, cx| {
+                    println!("on move out");
+                })
                 .on_scroll({
                     let position_map = position_map.clone();
                     move |e, cx| {
