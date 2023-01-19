@@ -1737,7 +1737,7 @@ impl Editor {
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
         {
-            if let Some(language) = snapshot.language_config_at(selection.head()) {
+            if let Some(language) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
@@ -1898,7 +1898,7 @@ impl Editor {
                         let end = selection.end;
 
                         let mut insert_extra_newline = false;
-                        if let Some(language) = buffer.language_config_at(start) {
+                        if let Some(language) = buffer.language_scope_at(start) {
                             let leading_whitespace_len = buffer
                                 .reversed_chars_at(start)
                                 .take_while(|c| c.is_whitespace() && *c != '\n')
@@ -4535,7 +4535,7 @@ impl Editor {
             for selection in &mut selections {
                 let start_column = snapshot.indent_size_for_line(selection.start.row).len;
                 let language = if let Some(language) =
-                    snapshot.language_config_at(Point::new(selection.start.row, start_column))
+                    snapshot.language_scope_at(Point::new(selection.start.row, start_column))
                 {
                     language
                 } else {

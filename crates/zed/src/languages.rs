@@ -173,6 +173,11 @@ pub(crate) fn language(
             .with_injection_query(query.as_ref())
             .expect("failed to load injection query");
     }
+    if let Some(query) = load_query(name, "/overrides") {
+        language = language
+            .with_override_query(query.as_ref())
+            .expect("failed to load override query");
+    }
     if let Some(lsp_adapter) = lsp_adapter {
         language = language.with_lsp_adapter(lsp_adapter)
     }

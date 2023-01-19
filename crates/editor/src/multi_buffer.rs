@@ -10,9 +10,9 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
-    DiagnosticEntry, IndentSize, Language, LanguageConfigYeet, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
-    ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
+    DiagnosticEntry, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _,
+    ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use std::{
     borrow::Cow,
@@ -2691,9 +2691,9 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
-    pub fn language_config_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageConfigYeet> {
+    pub fn language_scope_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageScope> {
         self.point_to_buffer_offset(point)
-            .and_then(|(buffer, offset)| buffer.language_config_at(offset))
+            .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
 
     pub fn is_dirty(&self) -> bool {

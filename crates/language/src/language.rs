@@ -22,10 +22,7 @@ use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use regex::Regex;
-use serde::{
-    de::{self},
-    Deserialize, Deserializer,
-};
+use serde::{de, Deserialize, Deserializer};
 use serde_json::Value;
 use std::{
     any::Any,
@@ -251,20 +248,22 @@ pub struct LanguageConfig {
 }
 
 #[derive(Clone)]
-pub struct LanguageConfigYeet {
+pub struct LanguageScope {
     language: Arc<Language>,
     override_id: Option<u32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default, Debug)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comment: Override<Arc<str>>,
     #[serde(default)]
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
+    #[serde(default)]
+    pub brackets: Override<Vec<BracketPair>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum Override<T> {
     Remove { remove: bool },
@@ -278,11 +277,11 @@ impl<T> Default for Override<T> {
 }
 
 impl<T> Override<T> {
-    fn as_option<'a>(this: Option<&'a Self>, original: &'a Option<T>) -> Option<&'a T> {
+    fn as_option<'a>(this: Option<&'a Self>, original: Option<&'a T>) -> Option<&'a T> {
         match this {
             Some(Self::Set(value)) => Some(value),
             Some(Self::Remove { remove: true }) => None,
-            Some(Self::Remove { remove: false }) | None => original.as_ref(),
+            Some(Self::Remove { remove: false }) | None => original,
         }
     }
 }
@@ -966,40 +965,39 @@ impl Language {
     }
 }
 
-impl LanguageConfigYeet {
+impl LanguageScope {
     pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
         Override::as_option(
-            self.over_ride().map(|o| &o.line_comment),
-            &self.language.config.line_comment,
+            self.config_override().map(|o| &o.line_comment),
+            self.language.config.line_comment.as_ref(),
         )
     }
 
     pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
         Override::as_option(
-            self.over_ride().map(|o| &o.block_comment),
-            &self.language.config.block_comment,
+            self.config_override().map(|o| &o.block_comment),
+            self.language.config.block_comment.as_ref(),
         )
         .map(|e| (&e.0, &e.1))
     }
 
     pub fn brackets(&self) -> &[BracketPair] {
-        &self.language.config.brackets
+        Override::as_option(
+            self.config_override().map(|o| &o.brackets),
+            Some(&self.language.config.brackets),
+        )
+        .map_or(&[], Vec::as_slice)
     }
 
     pub fn should_autoclose_before(&self, c: char) -> bool {
         c.is_whitespace() || self.language.config.autoclose_before.contains(c)
     }
 
-    fn over_ride(&self) -> Option<&LanguageConfigOverride> {
-        self.override_id.and_then(|id| {
-            self.language
-                .grammar
-                .as_ref()?
-                .override_config
-                .as_ref()?
-                .values
-                .get(&id)
-        })
+    fn config_override(&self) -> Option<&LanguageConfigOverride> {
+        let id = self.override_id?;
+        let grammar = self.language.grammar.as_ref()?;
+        let override_config = grammar.override_config.as_ref()?;
+        override_config.values.get(&id)
     }
 }
 

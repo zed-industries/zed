@@ -9,7 +9,7 @@ use crate::{
     syntax_map::{
         SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot, ToTreeSitterPoint,
     },
-    CodeLabel, LanguageConfigYeet, Outline,
+    CodeLabel, LanguageScope, Outline,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -2015,7 +2015,7 @@ impl BufferSnapshot {
             .or(self.language.as_ref())
     }
 
-    pub fn language_config_at<D: ToOffset>(&self, position: D) -> Option<LanguageConfigYeet> {
+    pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
 
         if let Some(layer_info) = self
@@ -2024,12 +2024,12 @@ impl BufferSnapshot {
             .filter(|l| l.node.end_byte() > offset)
             .last()
         {
-            Some(LanguageConfigYeet {
+            Some(LanguageScope {
                 language: layer_info.language.clone(),
                 override_id: layer_info.override_id(offset, &self.text),
             })
         } else {
-            self.language.clone().map(|language| LanguageConfigYeet {
+            self.language.clone().map(|language| LanguageScope {
                 language,
                 override_id: None,
             })

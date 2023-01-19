@@ -1370,6 +1370,89 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
+fn test_language_config_at(cx: &mut MutableAppContext) {
+    cx.set_global(Settings::test(cx));
+    cx.add_model(|cx| {
+        let language = Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                line_comment: Some("// ".into()),
+                brackets: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "'".into(),
+                        end: "'".into(),
+                        close: true,
+                        newline: false,
+                    },
+                ],
+                overrides: [
+                    (
+                        "element".into(),
+                        LanguageConfigOverride {
+                            line_comment: Override::Remove { remove: true },
+                            block_comment: Override::Set(("{/*".into(), "*/}".into())),
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "string".into(),
+                        LanguageConfigOverride {
+                            brackets: Override::Set(vec![BracketPair {
+                                start: "{".into(),
+                                end: "}".into(),
+                                close: true,
+                                newline: false,
+                            }]),
+                            ..Default::default()
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            },
+            Some(tree_sitter_javascript::language()),
+        )
+        .with_override_query(
+            r#"
+                (jsx_element) @override.element
+                (string) @override.string
+            "#,
+        )
+        .unwrap();
+
+        let text = r#"a["b"] = <C d="e"></C>;"#;
+
+        let buffer = Buffer::new(0, text, cx).with_language(Arc::new(language), cx);
+        let snapshot = buffer.snapshot();
+
+        let config = snapshot.language_scope_at(0).unwrap();
+        assert_eq!(config.line_comment_prefix().unwrap().as_ref(), "// ");
+        assert_eq!(config.brackets().len(), 2);
+
+        let string_config = snapshot.language_scope_at(3).unwrap();
+        assert_eq!(config.line_comment_prefix().unwrap().as_ref(), "// ");
+        assert_eq!(string_config.brackets().len(), 1);
+
+        let element_config = snapshot.language_scope_at(10).unwrap();
+        assert_eq!(element_config.line_comment_prefix(), None);
+        assert_eq!(
+            element_config.block_comment_delimiters(),
+            Some((&"{/*".into(), &"*/}".into()))
+        );
+        assert_eq!(element_config.brackets().len(), 2);
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_serialization(cx: &mut gpui::MutableAppContext) {
     let mut now = Instant::now();
 
