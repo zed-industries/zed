@@ -25,6 +25,10 @@ const CHUNK_BASE: usize = 6;
 #[cfg(not(test))]
 const CHUNK_BASE: usize = 16;
 
+/// Type alias to [HashMatrix], an implementation of a homomorphic hash function. Two [Rope] instances
+/// containing the same text will produce the same fingerprint. This hash function is special in that
+/// it allows us to hash individual chunks and aggregate them up the [Rope]'s tree, with the resulting
+/// hash being equivalent to hashing all the text contained in the [Rope] at once.
 pub type RopeFingerprint = HashMatrix;
 
 #[derive(Clone, Default, Debug)]
@@ -858,7 +862,7 @@ impl sum_tree::Item for Chunk {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChunkSummary {
     text: TextSummary,
-    fingerprint: HashMatrix,
+    fingerprint: RopeFingerprint,
 }
 
 impl<'a> From<&'a str> for ChunkSummary {
