@@ -156,6 +156,7 @@ pub struct WindowOptions<'a> {
     pub kind: WindowKind,
     pub is_movable: bool,
     pub screen: Option<Rc<dyn Screen>>,
+    pub accepts_first_mouse: bool,
 }
 
 #[derive(Debug)]
@@ -301,6 +302,7 @@ impl<'a> Default for WindowOptions<'a> {
             kind: WindowKind::Normal,
             is_movable: true,
             screen: None,
+            accepts_first_mouse: false,
         }
     }
 }

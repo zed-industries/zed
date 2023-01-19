@@ -408,6 +408,7 @@ pub fn build_window_options() -> WindowOptions<'static> {
         kind: WindowKind::Normal,
         is_movable: true,
         screen: None,
+        accepts_first_mouse: false,
     }
 }
 

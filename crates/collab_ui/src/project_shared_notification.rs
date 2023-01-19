@@ -44,6 +44,7 @@ pub fn init(cx: &mut MutableAppContext) {
                         kind: WindowKind::PopUp,
                         is_movable: false,
                         screen: Some(screen),
+                        accepts_first_mouse: true,
                     },
                     |_| {
                         ProjectSharedNotification::new(

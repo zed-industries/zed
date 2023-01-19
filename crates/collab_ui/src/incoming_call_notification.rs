@@ -45,10 +45,11 @@ pub fn init(cx: &mut MutableAppContext) {
                             kind: WindowKind::PopUp,
                             is_movable: false,
                             screen: Some(screen),
+                            accepts_first_mouse: true,
                         },
                         |_| IncomingCallNotification::new(incoming_call.clone()),
                     );
-                    cx.activate_window(window_id);
+
                     notification_windows.push(window_id);
                 }
             }
@@ -226,6 +227,7 @@ impl View for IncomingCallNotification {
             .theme
             .incoming_call_notification
             .background;
+
         Flex::row()
             .with_child(self.render_caller(cx))
             .with_child(self.render_buttons(cx))
