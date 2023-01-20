@@ -476,6 +476,21 @@ impl LanguageRegistry {
             .cloned()
     }
 
+    pub fn language_for_extension(&self, extension: &str) -> Option<Arc<Language>> {
+        let extension = UniCase::new(extension);
+        self.languages
+            .read()
+            .iter()
+            .find(|language| {
+                language
+                    .config
+                    .path_suffixes
+                    .iter()
+                    .any(|suffix| UniCase::new(suffix) == extension)
+            })
+            .cloned()
+    }
+
     pub fn to_vec(&self) -> Vec<Arc<Language>> {
         self.languages.read().iter().cloned().collect()
     }

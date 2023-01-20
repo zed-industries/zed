@@ -1015,8 +1015,10 @@ fn get_injections(
                 });
 
             if let Some(language_name) = language_name {
-                if let Some(language) = language_registry.language_for_name(language_name.as_ref())
-                {
+                let language = language_registry
+                    .language_for_name(&language_name)
+                    .or_else(|| language_registry.language_for_extension(&language_name));
+                if let Some(language) = language {
                     result = true;
                     let range = text.anchor_before(content_range.start)
                         ..text.anchor_after(content_range.end);
@@ -2255,6 +2257,7 @@ mod tests {
         registry.add(Arc::new(ruby_lang()));
         registry.add(Arc::new(html_lang()));
         registry.add(Arc::new(erb_lang()));
+        registry.add(Arc::new(markdown_lang()));
         let language = registry.language_for_name(language_name).unwrap();
         let mut buffer = Buffer::new(0, 0, Default::default());
 
@@ -2388,6 +2391,26 @@ mod tests {
                 (macro_invocation
                     (token_tree) @content
                     (#set! "language" "rust"))
+            "#,
+        )
+        .unwrap()
+    }
+
+    fn markdown_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            Some(tree_sitter_markdown::language()),
+        )
+        .with_injection_query(
+            r#"
+                (fenced_code_block
+                (info_string
+                    (language) @language)
+                (code_fence_content) @content)
             "#,
         )
         .unwrap()
