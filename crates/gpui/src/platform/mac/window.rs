@@ -66,6 +66,14 @@ const NSNormalWindowLevel: NSInteger = 0;
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
 #[allow(non_upper_case_globals)]
+const NSTrackingMouseEnteredAndExited: NSUInteger = 0x01;
+#[allow(non_upper_case_globals)]
+const NSTrackingMouseMoved: NSUInteger = 0x02;
+#[allow(non_upper_case_globals)]
+const NSTrackingActiveAlways: NSUInteger = 0x80;
+#[allow(non_upper_case_globals)]
+const NSTrackingInVisibleRect: NSUInteger = 0x200;
+#[allow(non_upper_case_globals)]
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 
 #[repr(C)]
@@ -162,6 +170,10 @@ unsafe fn build_classes() {
         );
         decl.add_method(
             sel!(mouseMoved:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(mouseExited:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
@@ -470,8 +482,6 @@ impl Window {
                 native_window.setTitlebarAppearsTransparent_(YES);
             }
 
-            native_window.setAcceptsMouseMovedEvents_(YES);
-
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
 
@@ -494,8 +504,25 @@ impl Window {
             }
 
             match options.kind {
-                WindowKind::Normal => native_window.setLevel_(NSNormalWindowLevel),
+                WindowKind::Normal => {
+                    native_window.setLevel_(NSNormalWindowLevel);
+                    native_window.setAcceptsMouseMovedEvents_(YES);
+                }
                 WindowKind::PopUp => {
+                    // Use a tracking area to allow receiving MouseMoved events even when
+                    // the window or application aren't active, which is often the case
+                    // e.g. for notification windows.
+                    let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
+                    let _: () = msg_send![
+                        tracking_area,
+                        initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
+                        options: NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
+                        owner: native_view
+                        userInfo: nil
+                    ];
+                    let _: () =
+                        msg_send![native_view, addTrackingArea: tracking_area.autorelease()];
+
                     native_window.setLevel_(NSPopUpWindowLevel);
                     let _: () = msg_send![
                         native_window,
@@ -965,7 +992,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
     let window_height = window_state_borrow.content_size().y();
     let event = unsafe { Event::from_native(native_event, Some(window_height)) };
-
     if let Some(event) = event {
         match &event {
             Event::MouseMoved(
