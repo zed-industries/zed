@@ -243,6 +243,47 @@ pub struct LanguageConfig {
     pub line_comment: Option<Arc<str>>,
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
+    #[serde(default)]
+    pub overrides: HashMap<String, LanguageConfigOverride>,
+}
+
+#[derive(Clone)]
+pub struct LanguageScope {
+    language: Arc<Language>,
+    override_id: Option<u32>,
+}
+
+#[derive(Deserialize, Default, Debug)]
+pub struct LanguageConfigOverride {
+    #[serde(default)]
+    pub line_comment: Override<Arc<str>>,
+    #[serde(default)]
+    pub block_comment: Override<(Arc<str>, Arc<str>)>,
+    #[serde(default)]
+    pub brackets: Override<Vec<BracketPair>>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum Override<T> {
+    Remove { remove: bool },
+    Set(T),
+}
+
+impl<T> Default for Override<T> {
+    fn default() -> Self {
+        Override::Remove { remove: false }
+    }
+}
+
+impl<T> Override<T> {
+    fn as_option<'a>(this: Option<&'a Self>, original: Option<&'a T>) -> Option<&'a T> {
+        match this {
+            Some(Self::Set(value)) => Some(value),
+            Some(Self::Remove { remove: true }) => None,
+            Some(Self::Remove { remove: false }) | None => original,
+        }
+    }
 }
 
 impl Default for LanguageConfig {
@@ -257,6 +298,7 @@ impl Default for LanguageConfig {
             autoclose_before: Default::default(),
             line_comment: Default::default(),
             block_comment: Default::default(),
+            overrides: Default::default(),
         }
     }
 }
@@ -311,6 +353,7 @@ pub struct Grammar {
     pub(crate) indents_config: Option<IndentConfig>,
     pub(crate) outline_config: Option<OutlineConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
+    pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -334,6 +377,11 @@ struct InjectionConfig {
     content_capture_ix: u32,
     language_capture_ix: Option<u32>,
     patterns: Vec<InjectionPatternConfig>,
+}
+
+struct OverrideConfig {
+    query: Query,
+    values: HashMap<u32, LanguageConfigOverride>,
 }
 
 #[derive(Default, Clone)]
@@ -635,6 +683,7 @@ impl Language {
                     outline_config: None,
                     indents_config: None,
                     injection_config: None,
+                    override_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -775,6 +824,34 @@ impl Language {
         Ok(self)
     }
 
+    pub fn with_override_query(mut self, source: &str) -> Result<Self> {
+        let query = Query::new(self.grammar_mut().ts_language, source)?;
+
+        let mut values = HashMap::default();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if !name.starts_with('_') {
+                let value = self.config.overrides.remove(name).ok_or_else(|| {
+                    anyhow!(
+                        "language {:?} has override in query but not in config: {name:?}",
+                        self.config.name
+                    )
+                })?;
+                values.insert(ix as u32, value);
+            }
+        }
+
+        if !self.config.overrides.is_empty() {
+            let keys = self.config.overrides.keys().collect::<Vec<_>>();
+            Err(anyhow!(
+                "language {:?} has overrides in config not in query: {keys:?}",
+                self.config.name
+            ))?;
+        }
+
+        self.grammar_mut().override_config = Some(OverrideConfig { query, values });
+        Ok(self)
+    }
+
     fn grammar_mut(&mut self) -> &mut Grammar {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
@@ -798,17 +875,6 @@ impl Language {
 
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
-    }
-
-    pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
-        self.config.line_comment.as_ref()
-    }
-
-    pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
-        self.config
-            .block_comment
-            .as_ref()
-            .map(|(start, end)| (start, end))
     }
 
     pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
@@ -886,10 +952,6 @@ impl Language {
         result
     }
 
-    pub fn brackets(&self) -> &[BracketPair] {
-        &self.config.brackets
-    }
-
     pub fn path_suffixes(&self) -> &[String] {
         &self.config.path_suffixes
     }
@@ -909,6 +971,42 @@ impl Language {
 
     pub fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.grammar.as_ref()
+    }
+}
+
+impl LanguageScope {
+    pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
+        Override::as_option(
+            self.config_override().map(|o| &o.line_comment),
+            self.language.config.line_comment.as_ref(),
+        )
+    }
+
+    pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
+        Override::as_option(
+            self.config_override().map(|o| &o.block_comment),
+            self.language.config.block_comment.as_ref(),
+        )
+        .map(|e| (&e.0, &e.1))
+    }
+
+    pub fn brackets(&self) -> &[BracketPair] {
+        Override::as_option(
+            self.config_override().map(|o| &o.brackets),
+            Some(&self.language.config.brackets),
+        )
+        .map_or(&[], Vec::as_slice)
+    }
+
+    pub fn should_autoclose_before(&self, c: char) -> bool {
+        c.is_whitespace() || self.language.config.autoclose_before.contains(c)
+    }
+
+    fn config_override(&self) -> Option<&LanguageConfigOverride> {
+        let id = self.override_id?;
+        let grammar = self.language.grammar.as_ref()?;
+        let override_config = grammar.override_config.as_ref()?;
+        override_config.values.get(&id)
     }
 }
 

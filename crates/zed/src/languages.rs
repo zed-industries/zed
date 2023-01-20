@@ -1,3 +1,4 @@
+use anyhow::Context;
 use gpui::executor::Background;
 pub use language::*;
 use lazy_static::lazy_static;
@@ -145,7 +146,9 @@ pub(crate) fn language(
             .unwrap()
             .data,
     )
+    .with_context(|| format!("failed to load config.toml for language {name:?}"))
     .unwrap();
+
     let mut language = Language::new(config, Some(grammar));
 
     if let Some(query) = load_query(name, "/highlights") {
@@ -172,6 +175,11 @@ pub(crate) fn language(
         language = language
             .with_injection_query(query.as_ref())
             .expect("failed to load injection query");
+    }
+    if let Some(query) = load_query(name, "/overrides") {
+        language = language
+            .with_override_query(query.as_ref())
+            .expect("failed to load override query");
     }
     if let Some(lsp_adapter) = lsp_adapter {
         language = language.with_lsp_adapter(lsp_adapter)

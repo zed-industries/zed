@@ -9,7 +9,7 @@ use crate::{
     syntax_map::{
         SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot, ToTreeSitterPoint,
     },
-    CodeLabel, Outline,
+    CodeLabel, LanguageScope, Outline,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -2013,6 +2013,27 @@ impl BufferSnapshot {
             .last()
             .map(|info| info.language)
             .or(self.language.as_ref())
+    }
+
+    pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
+        let offset = position.to_offset(self);
+
+        if let Some(layer_info) = self
+            .syntax
+            .layers_for_range(offset..offset, &self.text)
+            .filter(|l| l.node.end_byte() > offset)
+            .last()
+        {
+            Some(LanguageScope {
+                language: layer_info.language.clone(),
+                override_id: layer_info.override_id(offset, &self.text),
+            })
+        } else {
+            self.language.clone().map(|language| LanguageScope {
+                language,
+                override_id: None,
+            })
+        }
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {

@@ -7,3 +7,9 @@ brackets = [
     { start = "[", end = "]", close = true, newline = true },
     { start = "\"", end = "\"", close = true, newline = false },
 ]
+
+[overrides.string]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+]
