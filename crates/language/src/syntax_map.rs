@@ -976,7 +976,7 @@ fn get_injections(
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
-            if let Some(language) = language_registry.get_language(language_name) {
+            if let Some(language) = language_registry.language_for_name(language_name) {
                 combined_injection_ranges.insert(language, Vec::new());
             }
         }
@@ -1015,7 +1015,8 @@ fn get_injections(
                 });
 
             if let Some(language_name) = language_name {
-                if let Some(language) = language_registry.get_language(language_name.as_ref()) {
+                if let Some(language) = language_registry.language_for_name(language_name.as_ref())
+                {
                     result = true;
                     let range = text.anchor_before(content_range.start)
                         ..text.anchor_after(content_range.end);
@@ -2254,7 +2255,7 @@ mod tests {
         registry.add(Arc::new(ruby_lang()));
         registry.add(Arc::new(html_lang()));
         registry.add(Arc::new(erb_lang()));
-        let language = registry.get_language(language_name).unwrap();
+        let language = registry.language_for_name(language_name).unwrap();
         let mut buffer = Buffer::new(0, 0, Default::default());
 
         let mut mutated_syntax_map = SyntaxMap::new();

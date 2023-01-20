@@ -466,7 +466,7 @@ impl LanguageRegistry {
         self.language_server_download_dir = Some(path.into());
     }
 
-    pub fn get_language(&self, name: &str) -> Option<Arc<Language>> {
+    pub fn language_for_name(&self, name: &str) -> Option<Arc<Language>> {
         self.languages
             .read()
             .iter()
