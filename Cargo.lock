@@ -2037,6 +2037,7 @@ dependencies = [
  "lazy_static",
  "postage",
  "project",
+ "search",
  "serde",
  "settings",
  "smallvec",

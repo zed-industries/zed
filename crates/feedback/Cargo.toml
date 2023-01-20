@@ -21,6 +21,7 @@ isahc = "1.7"
 lazy_static = "1.4.0"
 postage = { version = "0.4", features = ["futures-traits"] }
 project = { path = "../project" }
+search = { path = "../search" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 settings = { path = "../settings" }
 smallvec = { version = "1.6", features = ["union"] }

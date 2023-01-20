@@ -9,10 +9,9 @@ use gpui::{
     elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
     serde_json, AnyViewHandle, CursorStyle, Element, ElementBox, Entity, ModelHandle, MouseButton,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
 };
 use isahc::Request;
-use language::{Language, LanguageConfig};
+use language::Buffer;
 use postage::prelude::Stream;
 
 use lazy_static::lazy_static;
@@ -162,43 +161,44 @@ struct FeedbackRequestBody<'a> {
 #[derive(Clone)]
 struct FeedbackEditor {
     editor: ViewHandle<Editor>,
+    project: ModelHandle<Project>,
 }
 
 impl FeedbackEditor {
-    fn new(
-        project_handle: ModelHandle<Project>,
-        _: WeakViewHandle<Workspace>,
+    fn new_with_buffer(
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        const FEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here in the form of Markdown. Save the tab to submit your feedback.";
+
+        let editor = cx.add_view(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
+            editor.set_vertical_scroll_margin(5, cx);
+            editor.set_placeholder_text(FEDBACK_PLACEHOLDER_TEXT, cx);
+            editor
+        });
+
+        let this = Self { editor, project };
+        this
+    }
+
+    fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         // TODO FEEDBACK: This doesn't work like I expected it would
         // let markdown_language = Arc::new(Language::new(
         //     LanguageConfig::default(),
         //     Some(tree_sitter_markdown::language()),
         // ));
 
-        let markdown_language = project_handle
-            .read(cx)
-            .languages()
-            .get_language("Markdown")
-            .unwrap();
+        let markdown_language = project.read(cx).languages().get_language("Markdown");
 
-        let buffer = project_handle
+        let buffer = project
             .update(cx, |project, cx| {
-                project.create_buffer("", Some(markdown_language), cx)
+                project.create_buffer("", markdown_language, cx)
             })
             .expect("creating buffers on a local workspace always succeeds");
 
-        const FEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here in the form of Markdown. Save the tab to submit your feedback.";
-
-        let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(project_handle.clone()), cx);
-            editor.set_vertical_scroll_margin(5, cx);
-            editor.set_placeholder_text(FEDBACK_PLACEHOLDER_TEXT, cx);
-            editor
-        });
-
-        let this = Self { editor };
-        this
+        Self::new_with_buffer(project, buffer, cx)
     }
 
     fn handle_save(
@@ -297,7 +297,7 @@ impl FeedbackEditor {
                     bail!("Feedback API failed with: {}", response_status)
                 }
 
-                this.read_with(&async_cx, |this, cx| -> anyhow::Result<()> {
+                this.read_with(&async_cx, |_this, _cx| -> anyhow::Result<()> {
                     bail!("Error")
                 })?;
 
@@ -326,9 +326,8 @@ impl FeedbackEditor {
         // if let Some(existing) = workspace.item_of_type::<FeedbackEditor>(cx) {
         //     workspace.activate_item(&existing, cx);
         // } else {
-        let workspace_handle = cx.weak_handle();
-        let feedback_editor = cx
-            .add_view(|cx| FeedbackEditor::new(workspace.project().clone(), workspace_handle, cx));
+        let feedback_editor =
+            cx.add_view(|cx| FeedbackEditor::new(workspace.project().clone(), cx));
         workspace.add_item(Box::new(feedback_editor), cx);
         // }
     }
@@ -395,19 +394,19 @@ impl Item for FeedbackEditor {
 
     fn save(
         &mut self,
-        project_handle: gpui::ModelHandle<Project>,
+        project: gpui::ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(project_handle, cx)
+        self.handle_save(project, cx)
     }
 
     fn save_as(
         &mut self,
-        project_handle: gpui::ModelHandle<Project>,
+        project: gpui::ModelHandle<Project>,
         _: std::path::PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(project_handle, cx)
+        self.handle_save(project, cx)
     }
 
     fn reload(
@@ -426,9 +425,19 @@ impl Item for FeedbackEditor {
     where
         Self: Sized,
     {
-        // TODO FEEDBACK: split is busted
-        // Some(self.clone())
-        None
+        let buffer = self
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("Feedback buffer is only ever singleton");
+
+        Some(Self::new_with_buffer(
+            self.project.clone(),
+            buffer.clone(),
+            cx,
+        ))
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
@@ -445,6 +454,51 @@ impl Item for FeedbackEditor {
         unreachable!()
     }
 }
+
+// impl SearchableItem for FeedbackEditor {
+//     type Match = <Editor as SearchableItem>::Match;
+
+//     fn to_search_event(event: &Self::Event) -> Option<workspace::searchable::SearchEvent> {
+//         Editor::to_search_event(event)
+//     }
+
+//     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+//         self.
+//     }
+
+//     fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+//         todo!()
+//     }
+
+//     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+//         todo!()
+//     }
+
+//     fn activate_match(
+//         &mut self,
+//         index: usize,
+//         matches: Vec<Self::Match>,
+//         cx: &mut ViewContext<Self>,
+//     ) {
+//         todo!()
+//     }
+
+//     fn find_matches(
+//         &mut self,
+//         query: project::search::SearchQuery,
+//         cx: &mut ViewContext<Self>,
+//     ) -> Task<Vec<Self::Match>> {
+//         todo!()
+//     }
+
+//     fn active_match_index(
+//         &mut self,
+//         matches: Vec<Self::Match>,
+//         cx: &mut ViewContext<Self>,
+//     ) -> Option<usize> {
+//         todo!()
+//     }
+// }
 
 // TODO FEEDBACK: search buffer?
 // TODO FEEDBACK: warnings
