@@ -316,6 +316,7 @@ enum ImeState {
 struct WindowState {
     id: usize,
     native_window: id,
+    kind: WindowKind,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
@@ -337,7 +338,6 @@ struct WindowState {
     ime_state: ImeState,
     //Retains the last IME Text
     ime_text: Option<String>,
-    accepts_first_mouse: bool,
 }
 
 struct InsertText {
@@ -422,6 +422,7 @@ impl Window {
             let window = Self(Rc::new(RefCell::new(WindowState {
                 id,
                 native_window,
+                kind: options.kind,
                 event_callback: None,
                 resize_callback: None,
                 should_close_callback: None,
@@ -437,7 +438,6 @@ impl Window {
                 scene_to_render: Default::default(),
                 renderer: Renderer::new(true, fonts),
                 last_fresh_keydown: None,
-                accepts_first_mouse: options.kind == WindowKind::PopUp,
                 traffic_light_position: options
                     .titlebar
                     .as_ref()
@@ -985,7 +985,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     .detach();
             }
 
-            Event::MouseMoved(_) if !is_active => return,
+            Event::MouseMoved(_)
+                if !(is_active || window_state_borrow.kind == WindowKind::PopUp) =>
+            {
+                return
+            }
 
             Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
@@ -1408,7 +1412,7 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     unsafe {
         let state = get_window_state(this);
         let state_borrow = state.as_ref().borrow();
-        return state_borrow.accepts_first_mouse as BOOL;
+        return state_borrow.kind == WindowKind::PopUp;
     }
 }
 
