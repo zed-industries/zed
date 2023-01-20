@@ -12,3 +12,21 @@ brackets = [
     { start = "`", end = "`", close = true, newline = false },
     { start = "/*", end = " */", close = true, newline = false },
 ]
+
+[overrides.comment]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
+
+[overrides.string]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
+
+[overrides.element]
+line_comment = { remove = true }
+block_comment = ["{/* ", " */}"]

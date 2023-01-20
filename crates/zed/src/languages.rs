@@ -1,3 +1,4 @@
+use anyhow::Context;
 use gpui::executor::Background;
 pub use language::*;
 use lazy_static::lazy_static;
@@ -145,7 +146,9 @@ pub(crate) fn language(
             .unwrap()
             .data,
     )
+    .with_context(|| format!("failed to load config.toml for language {name:?}"))
     .unwrap();
+
     let mut language = Language::new(config, Some(grammar));
 
     if let Some(query) = load_query(name, "/highlights") {

@@ -830,13 +830,22 @@ impl Language {
         let mut values = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if let Some(override_name) = name.strip_prefix("override.") {
-                let value = self
-                    .config
-                    .overrides
-                    .remove(override_name)
-                    .ok_or_else(|| anyhow!("no such override {override_name}"))?;
+                let value = self.config.overrides.remove(override_name).ok_or_else(|| {
+                    anyhow!(
+                        "language {:?} has override in query but not in config: {override_name:?}",
+                        self.config.name
+                    )
+                })?;
                 values.insert(ix as u32, value);
             }
+        }
+
+        if !self.config.overrides.is_empty() {
+            let keys = self.config.overrides.keys().collect::<Vec<_>>();
+            Err(anyhow!(
+                "language {:?} has overrides in config not in query: {keys:?}",
+                self.config.name
+            ))?;
         }
 
         self.grammar_mut().override_config = Some(OverrideConfig { query, values });
