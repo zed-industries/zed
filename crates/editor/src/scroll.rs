@@ -17,7 +17,7 @@ use workspace::WorkspaceId;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    hover_popover::hide_hover,
+    hover_popover::{hide_hover, HideHover},
     persistence::DB,
     Anchor, DisplayPoint, Editor, EditorMode, Event, MultiBufferSnapshot, ToPoint,
 };
@@ -307,7 +307,7 @@ impl Editor {
     ) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        hide_hover(self, cx);
+        hide_hover(self, &HideHover, cx);
         self.scroll_manager.set_scroll_position(
             scroll_position,
             &map,
@@ -323,7 +323,7 @@ impl Editor {
     }
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
-        hide_hover(self, cx);
+        hide_hover(self, &HideHover, cx);
         let top_row = scroll_anchor
             .top_anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
@@ -337,7 +337,7 @@ impl Editor {
         scroll_anchor: ScrollAnchor,
         cx: &mut ViewContext<Self>,
     ) {
-        hide_hover(self, cx);
+        hide_hover(self, &HideHover, cx);
         let top_row = scroll_anchor
             .top_anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
