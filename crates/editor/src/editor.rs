@@ -62,7 +62,7 @@ pub use multi_buffer::{
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
-use project::{FormatTrigger, LocationLink, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -5012,13 +5012,15 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let pane = workspace.active_pane().clone();
-        for definition in definitions {
+        // If there is one definition, just open it directly
+        if let [definition] = definitions.as_slice() {
             let range = definition
                 .target
                 .range
                 .to_offset(definition.target.buffer.read(cx));
 
-            let target_editor_handle = workspace.open_project_item(definition.target.buffer, cx);
+            let target_editor_handle =
+                workspace.open_project_item(definition.target.buffer.clone(), cx);
             target_editor_handle.update(cx, |target_editor, cx| {
                 // When selecting a definition in a different buffer, disable the nav history
                 // to avoid creating a history entry at the previous cursor location.
@@ -5031,6 +5033,28 @@ impl Editor {
 
                 pane.update(cx, |pane, _| pane.enable_history());
             });
+        } else {
+            let replica_id = editor_handle.read(cx).replica_id(cx);
+            let title = definitions
+                .iter()
+                .find(|definition| definition.origin.is_some())
+                .and_then(|definition| {
+                    definition.origin.as_ref().map(|origin| {
+                        let buffer = origin.buffer.read(cx);
+                        format!(
+                            "Definitions for {}",
+                            buffer
+                                .text_for_range(origin.range.clone())
+                                .collect::<String>()
+                        )
+                    })
+                })
+                .unwrap_or("Definitions".to_owned());
+            let locations = definitions
+                .into_iter()
+                .map(|definition| definition.target)
+                .collect();
+            Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
         }
     }
 
@@ -5051,62 +5075,85 @@ impl Editor {
         let project = workspace.project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         Some(cx.spawn(|workspace, mut cx| async move {
-            let mut locations = references.await?;
+            let locations = references.await?;
             if locations.is_empty() {
                 return Ok(());
             }
 
-            locations.sort_by_key(|location| location.buffer.id());
-            let mut locations = locations.into_iter().peekable();
-            let mut ranges_to_highlight = Vec::new();
-
-            let excerpt_buffer = cx.add_model(|cx| {
-                let mut symbol_name = None;
-                let mut multibuffer = MultiBuffer::new(replica_id);
-                while let Some(location) = locations.next() {
-                    let buffer = location.buffer.read(cx);
-                    let mut ranges_for_buffer = Vec::new();
-                    let range = location.range.to_offset(buffer);
-                    ranges_for_buffer.push(range.clone());
-                    if symbol_name.is_none() {
-                        symbol_name = Some(buffer.text_for_range(range).collect::<String>());
-                    }
-
-                    while let Some(next_location) = locations.peek() {
-                        if next_location.buffer == location.buffer {
-                            ranges_for_buffer.push(next_location.range.to_offset(buffer));
-                            locations.next();
-                        } else {
-                            break;
-                        }
-                    }
-
-                    ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
-                    ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
-                        location.buffer.clone(),
-                        ranges_for_buffer,
-                        1,
-                        cx,
-                    ));
-                }
-                multibuffer.with_title(format!("References to `{}`", symbol_name.unwrap()))
-            });
-
             workspace.update(&mut cx, |workspace, cx| {
-                let editor =
-                    cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-                editor.update(cx, |editor, cx| {
-                    editor.highlight_background::<Self>(
-                        ranges_to_highlight,
-                        |theme| theme.editor.highlighted_line_background,
-                        cx,
-                    );
-                });
-                workspace.add_item(Box::new(editor), cx);
+                let title = locations
+                    .first()
+                    .as_ref()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        format!(
+                            "References to `{}`",
+                            buffer
+                                .text_for_range(location.range.clone())
+                                .collect::<String>()
+                        )
+                    })
+                    .unwrap();
+                Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx);
             });
 
             Ok(())
         }))
+    }
+
+    /// Opens a multibuffer with the given project locations in it
+    pub fn open_locations_in_multibuffer(
+        workspace: &mut Workspace,
+        mut locations: Vec<Location>,
+        replica_id: ReplicaId,
+        title: String,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        // If there are multiple definitions, open them in a multibuffer
+        locations.sort_by_key(|location| location.buffer.id());
+        let mut locations = locations.into_iter().peekable();
+        let mut ranges_to_highlight = Vec::new();
+
+        let excerpt_buffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(replica_id);
+            while let Some(location) = locations.next() {
+                let buffer = location.buffer.read(cx);
+                let mut ranges_for_buffer = Vec::new();
+                let range = location.range.to_offset(buffer);
+                ranges_for_buffer.push(range.clone());
+
+                while let Some(next_location) = locations.peek() {
+                    if next_location.buffer == location.buffer {
+                        ranges_for_buffer.push(next_location.range.to_offset(buffer));
+                        locations.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
+                    location.buffer.clone(),
+                    ranges_for_buffer,
+                    1,
+                    cx,
+                ))
+            }
+
+            multibuffer.with_title(title)
+        });
+
+        let editor = cx.add_view(|cx| {
+            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.highlight_background::<Self>(
+                ranges_to_highlight,
+                |theme| theme.editor.highlighted_line_background,
+                cx,
+            );
+        });
+        workspace.add_item(Box::new(editor), cx);
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
