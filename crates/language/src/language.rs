@@ -829,10 +829,10 @@ impl Language {
 
         let mut values = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
-            if let Some(override_name) = name.strip_prefix("override.") {
-                let value = self.config.overrides.remove(override_name).ok_or_else(|| {
+            if !name.starts_with('_') {
+                let value = self.config.overrides.remove(name).ok_or_else(|| {
                     anyhow!(
-                        "language {:?} has override in query but not in config: {override_name:?}",
+                        "language {:?} has override in query but not in config: {name:?}",
                         self.config.name
                     )
                 })?;

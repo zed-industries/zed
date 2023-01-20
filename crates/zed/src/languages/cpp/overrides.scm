@@ -1,2 +1,2 @@
-(comment) @override.comment
-(string_literal) @override.string
+(comment) @comment
+(string_literal) @string

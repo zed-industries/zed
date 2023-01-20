@@ -1,2 +1,2 @@
-(comment) @override.comment
-[(string) (charlist)] @override.string
+(comment) @comment
+[(string) (charlist)] @string

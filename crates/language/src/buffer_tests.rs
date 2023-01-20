@@ -1421,8 +1421,8 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
         )
         .with_override_query(
             r#"
-                (jsx_element) @override.element
-                (string) @override.string
+                (jsx_element) @element
+                (string) @string
             "#,
         )
         .unwrap();

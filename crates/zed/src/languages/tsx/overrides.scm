@@ -3,5 +3,5 @@
   (jsx_fragment)
   (jsx_self_closing_element)
   (jsx_expression)
-] @override.element
-(string) @override.string
+] @element
+(string) @string

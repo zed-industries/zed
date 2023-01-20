@@ -1,2 +1,1 @@
-(comment) @comment
-(string) @override.string
+(string) @string

@@ -1,8 +1,8 @@
 [
   (string_literal)
   (raw_string_literal)
-] @override.string
+] @string
 [
   (line_comment)
   (block_comment)
-] @override.comment
+] @comment
