@@ -989,7 +989,7 @@ impl MutableAppContext {
         window.toggle_full_screen();
     }
 
-    fn prompt(
+    pub fn prompt(
         &self,
         window_id: usize,
         level: PromptLevel,
