@@ -246,6 +246,11 @@ unsafe fn build_classes() {
             do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
         );
 
+        decl.add_method(
+            sel!(acceptsFirstMouse:),
+            accepts_first_mouse as extern "C" fn(&Object, Sel, id) -> BOOL,
+        );
+
         decl.register()
     };
 }
@@ -332,6 +337,7 @@ struct WindowState {
     ime_state: ImeState,
     //Retains the last IME Text
     ime_text: Option<String>,
+    accepts_first_mouse: bool,
 }
 
 struct InsertText {
@@ -431,6 +437,7 @@ impl Window {
                 scene_to_render: Default::default(),
                 renderer: Renderer::new(true, fonts),
                 last_fresh_keydown: None,
+                accepts_first_mouse: options.kind == WindowKind::PopUp,
                 traffic_light_position: options
                     .titlebar
                     .as_ref()
@@ -1394,6 +1401,14 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
             callback();
             state.borrow_mut().appearance_changed_callback = Some(callback);
         }
+    }
+}
+
+extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
+    unsafe {
+        let state = get_window_state(this);
+        let state_borrow = state.as_ref().borrow();
+        return state_borrow.accepts_first_mouse as BOOL;
     }
 }
 

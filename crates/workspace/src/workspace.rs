@@ -98,7 +98,8 @@ actions!(
         ToggleLeftSidebar,
         ToggleRightSidebar,
         NewTerminal,
-        NewSearch
+        NewSearch,
+        ShowNotif,
     ]
 );
 
@@ -1623,6 +1624,7 @@ impl Workspace {
             project_id,
             leader_id: Some(leader_id),
         });
+
         Some(cx.spawn_weak(|this, mut cx| async move {
             let response = request.await?;
             if let Some(this) = this.upgrade(&cx) {
@@ -1717,6 +1719,10 @@ impl Workspace {
 
     pub fn is_following(&self, peer_id: PeerId) -> bool {
         self.follower_states_by_leader.contains_key(&peer_id)
+    }
+
+    pub fn is_followed(&self, peer_id: PeerId) -> bool {
+        self.leader_state.followers.contains(&peer_id)
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -1896,6 +1902,9 @@ impl Workspace {
                         .to_proto(),
                 )
             });
+
+            cx.notify();
+
             Ok(proto::FollowResponse {
                 active_view_id,
                 views: this
@@ -1928,10 +1937,11 @@ impl Workspace {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
+        this.update(&mut cx, |this, cx| {
             this.leader_state
                 .followers
                 .remove(&envelope.original_sender_id()?);
+            cx.notify();
             Ok(())
         })
     }
