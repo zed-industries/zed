@@ -238,11 +238,14 @@ impl<'a> Statement<'a> {
 
     pub fn bind<T: Bind>(&self, value: T, index: i32) -> Result<i32> {
         debug_assert!(index > 0);
-        value.bind(self, index)
+        let after = value.bind(self, index)?;
+        debug_assert_eq!((after - index) as usize, value.column_count());
+        Ok(after)
     }
 
     pub fn column<T: Column>(&mut self) -> Result<T> {
-        let (result, _) = T::column(self, 0)?;
+        let (result, after) = T::column(self, 0)?;
+        debug_assert_eq!(T::column_count(&result), after as usize);
         Ok(result)
     }
 
@@ -260,7 +263,9 @@ impl<'a> Statement<'a> {
     }
 
     pub fn with_bindings(&mut self, bindings: impl Bind) -> Result<&mut Self> {
-        self.bind(bindings, 1)?;
+        let column_count = bindings.column_count();
+        let after = self.bind(bindings, 1)?;
+        debug_assert_eq!((after - 1) as usize, column_count);
         Ok(self)
     }
 

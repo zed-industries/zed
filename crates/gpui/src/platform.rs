@@ -126,6 +126,7 @@ pub trait Window {
     fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>);
+    fn on_moved(&mut self, callback: Box<dyn FnMut()>);
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
@@ -186,8 +187,9 @@ pub enum WindowKind {
     PopUp,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum WindowBounds {
+    Fullscreen,
     Maximized,
     Fixed(RectF),
 }

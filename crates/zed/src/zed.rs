@@ -369,12 +369,15 @@ pub fn initialize_workspace(
     });
 }
 
-pub fn build_window_options() -> WindowOptions<'static> {
-    let bounds = if let Some((position, size)) = ZED_WINDOW_POSITION.zip(*ZED_WINDOW_SIZE) {
-        WindowBounds::Fixed(RectF::new(position, size))
-    } else {
-        WindowBounds::Maximized
-    };
+pub fn build_window_options(bounds: Option<WindowBounds>) -> WindowOptions<'static> {
+    let bounds = bounds
+        .or_else(|| {
+            ZED_WINDOW_POSITION
+                .zip(*ZED_WINDOW_SIZE)
+                .map(|(position, size)| WindowBounds::Fixed(RectF::new(position, size)))
+        })
+        .unwrap_or(WindowBounds::Maximized);
+
     WindowOptions {
         bounds,
         titlebar: Some(TitlebarOptions {

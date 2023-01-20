@@ -296,6 +296,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
+        sel!(windowDidMove:),
+        window_did_move as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
         sel!(windowDidBecomeKey:),
         window_did_change_key_status as extern "C" fn(&Object, Sel, id),
     );
@@ -333,6 +337,7 @@ struct WindowState {
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
     fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
+    moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
@@ -405,6 +410,9 @@ impl Window {
 
             let screen = native_window.screen();
             match options.bounds {
+                WindowBounds::Fullscreen => {
+                    native_window.toggleFullScreen_(nil);
+                }
                 WindowBounds::Maximized => {
                     native_window.setFrame_display_(screen.visibleFrame(), YES);
                 }
@@ -441,6 +449,7 @@ impl Window {
                 close_callback: None,
                 activate_callback: None,
                 fullscreen_callback: None,
+                moved_callback: None,
                 appearance_changed_callback: None,
                 input_handler: None,
                 pending_key_down: None,
@@ -586,6 +595,10 @@ impl platform::Window for Window {
 
     fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
+    }
+
+    fn on_moved(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().borrow_mut().moved_callback = Some(callback);
     }
 
     fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
@@ -1134,6 +1147,16 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
         drop(window_state_borrow);
         callback(is_fullscreen);
         window_state.borrow_mut().fullscreen_callback = Some(callback);
+    }
+}
+
+extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    if let Some(mut callback) = window_state_borrow.moved_callback.take() {
+        drop(window_state_borrow);
+        callback();
+        window_state.borrow_mut().moved_callback = Some(callback);
     }
 }
 

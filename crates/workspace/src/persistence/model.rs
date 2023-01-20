@@ -6,10 +6,12 @@ use std::{
 use anyhow::{Context, Result};
 
 use async_recursion::async_recursion;
-use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle};
+use gpui::{
+    geometry::rect::RectF, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WindowBounds,
+};
 
 use db::sqlez::{
-    bindable::{Bind, Column},
+    bindable::{Bind, Column, StaticRowComponent},
     statement::Statement,
 };
 use project::Project;
@@ -40,6 +42,7 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
     }
 }
 
+impl StaticRowComponent for WorkspaceLocation {}
 impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         bincode::serialize(&self.0)
@@ -58,7 +61,7 @@ impl Column for WorkspaceLocation {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
@@ -66,6 +69,20 @@ pub struct SerializedWorkspace {
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
     pub left_sidebar_open: bool,
+    pub fullscreen: bool,
+    pub bounds: Option<RectF>,
+}
+
+impl SerializedWorkspace {
+    pub fn bounds(&self) -> WindowBounds {
+        if self.fullscreen {
+            WindowBounds::Fullscreen
+        } else if let Some(bounds) = self.bounds {
+            WindowBounds::Fixed(bounds)
+        } else {
+            WindowBounds::Maximized
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -237,6 +254,11 @@ impl Default for SerializedItem {
     }
 }
 
+impl StaticRowComponent for SerializedItem {
+    fn static_column_count() -> usize {
+        3
+    }
+}
 impl Bind for &SerializedItem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(self.kind.clone(), start_index)?;
@@ -261,6 +283,11 @@ impl Column for SerializedItem {
     }
 }
 
+impl StaticRowComponent for DockPosition {
+    fn static_column_count() -> usize {
+        2
+    }
+}
 impl Bind for DockPosition {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(self.is_visible(), start_index)?;

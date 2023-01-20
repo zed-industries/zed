@@ -40,6 +40,7 @@ pub struct Window {
     current_scene: Option<crate::Scene>,
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
+    pub(crate) moved_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
     fullscreen_handlers: Vec<Box<dyn FnMut(bool)>>,
     pub(crate) active_status_change_handlers: Vec<Box<dyn FnMut(bool)>>,
@@ -143,7 +144,7 @@ impl super::Platform for Platform {
         _executor: Rc<super::executor::Foreground>,
     ) -> Box<dyn super::Window> {
         Box::new(Window::new(match options.bounds {
-            WindowBounds::Maximized => vec2f(1024., 768.),
+            WindowBounds::Maximized | WindowBounds::Fullscreen => vec2f(1024., 768.),
             WindowBounds::Fixed(rect) => rect.size(),
         }))
     }
@@ -225,6 +226,7 @@ impl Window {
             size,
             event_handlers: Default::default(),
             resize_handlers: Default::default(),
+            moved_handlers: Default::default(),
             close_handlers: Default::default(),
             should_close_handler: Default::default(),
             active_status_change_handlers: Default::default(),
@@ -271,6 +273,10 @@ impl super::Window for Window {
 
     fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.resize_handlers.push(callback);
+    }
+
+    fn on_moved(&mut self, callback: Box<dyn FnMut()>) {
+        self.moved_handlers.push(callback);
     }
 
     fn on_close(&mut self, callback: Box<dyn FnOnce()>) {

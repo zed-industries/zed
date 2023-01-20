@@ -38,7 +38,7 @@ use gpui::{
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, SizeConstraint,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowBounds,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -339,7 +339,7 @@ pub struct AppState {
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub build_window_options: fn() -> WindowOptions<'static>,
+    pub build_window_options: fn(Option<WindowBounds>) -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
     pub dock_default_item_factory: DockDefaultItemFactory,
 }
@@ -366,7 +366,7 @@ impl AppState {
             languages,
             user_store,
             initialize_workspace: |_, _, _| {},
-            build_window_options: Default::default,
+            build_window_options: |_| Default::default(),
             dock_default_item_factory: |_, _| unimplemented!(),
         })
     }
@@ -682,17 +682,36 @@ impl Workspace {
             };
 
             // Use the serialized workspace to construct the new window
-            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-                let mut workspace = Workspace::new(
-                    serialized_workspace,
-                    workspace_id,
-                    project_handle,
-                    app_state.dock_default_item_factory,
-                    cx,
-                );
-                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                workspace
-            });
+            let (_, workspace) = cx.add_window(
+                (app_state.build_window_options)(
+                    serialized_workspace.as_ref().map(|sw| sw.bounds()),
+                ),
+                |cx| {
+                    let mut workspace = Workspace::new(
+                        serialized_workspace,
+                        workspace_id,
+                        project_handle,
+                        app_state.dock_default_item_factory,
+                        cx,
+                    );
+                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                    cx.observe_window_bounds(move |_, bounds, cx| {
+                        let fullscreen = cx.window_is_fullscreen(cx.window_id());
+                        cx.background()
+                            .spawn(DB.set_bounds(
+                                workspace_id,
+                                fullscreen,
+                                bounds.min_x(),
+                                bounds.min_y(),
+                                bounds.width(),
+                                bounds.height(),
+                            ))
+                            .detach_and_log_err(cx);
+                    })
+                    .detach();
+                    workspace
+                },
+            );
 
             notify_if_database_failed(&workspace, &mut cx);
 
@@ -2327,6 +2346,8 @@ impl Workspace {
                     dock_pane,
                     center_group,
                     left_sidebar_open: self.left_sidebar.read(cx).is_open(),
+                    fullscreen: false,
+                    bounds: Default::default(),
                 };
 
                 cx.background()

@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::Axis;
+use gpui::{Axis, geometry::{rect::RectF, vector::Vector2F}};
 
 use util::{unzip_option, ResultExt};
 
@@ -19,6 +19,51 @@ use model::{
 };
 
 define_connection! {
+    // Current schema shape using pseudo-rust syntax:
+    //
+    // workspaces(
+    //   workspace_id: usize, // Primary key for workspaces
+    //   workspace_location: Bincode<Vec<PathBuf>>,
+    //   dock_visible: bool,
+    //   dock_anchor: DockAnchor, // 'Bottom' / 'Right' / 'Expanded'
+    //   dock_pane: Option<usize>, // PaneId
+    //   left_sidebar_open: boolean,
+    //   timestamp: String, // UTC YYYY-MM-DD HH:MM:SS
+    //   fullscreen bool, // Boolean
+    //   window_x: f32,
+    //   window_y: f32,
+    //   window_width: f32,
+    //   window_height: f32,
+    // )
+    //
+    // pane_groups(
+    //   group_id: usize, // Primary key for pane_groups
+    //   workspace_id: usize, // References workspaces table
+    //   parent_group_id: Option<usize>, // None indicates that this is the root node
+    //   position: Optiopn<usize>, // None indicates that this is the root node
+    //   axis: Option<Axis>, // 'Vertical', 'Horizontal'
+    // )
+    //
+    // panes(
+    //     pane_id: usize, // Primary key for panes
+    //     workspace_id: usize, // References workspaces table
+    //     active: bool,
+    // )
+    //
+    // center_panes(
+    //     pane_id: usize, // Primary key for center_panes
+    //     parent_group_id: Option<usize>, // References pane_groups. If none, this is the root
+    //     position: Option<usize>, // None indicates this is the root
+    // )
+    //
+    // CREATE TABLE items(
+    //     item_id: usize, // This is the item's view id, so this is not unique
+    //     workspace_id: usize, // References workspaces table
+    //     pane_id: usize, // References panes table
+    //     kind: String, // Indicates which view this connects to. This is the key in the item_deserializers global
+    //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
+    //     active: bool, // Indicates if this item is the active one in the pane
+    // )
     pub static ref DB: WorkspaceDb<()> =
         &[sql!(
             CREATE TABLE workspaces(
@@ -39,8 +84,8 @@ define_connection! {
                 position INTEGER, // NULL indicates that this is a root node
                 axis TEXT NOT NULL, // Enum: 'Vertical' / 'Horizontal'
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE,
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
 
@@ -49,8 +94,8 @@ define_connection! {
                 workspace_id INTEGER NOT NULL,
                 active INTEGER NOT NULL, // Boolean
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE
             ) STRICT;
 
             CREATE TABLE center_panes(
@@ -58,7 +103,7 @@ define_connection! {
                 parent_group_id INTEGER, // NULL means that this is a root pane
                 position INTEGER, // NULL means that this is a root pane
                 FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
-                ON DELETE CASCADE,
+                    ON DELETE CASCADE,
                 FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
             ) STRICT;
 
@@ -70,12 +115,19 @@ define_connection! {
                 position INTEGER NOT NULL,
                 active INTEGER NOT NULL,
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE,
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE,
                 FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
-                ON DELETE CASCADE,
+                    ON DELETE CASCADE,
                 PRIMARY KEY(item_id, workspace_id)
             ) STRICT;
+        ),
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; // Boolean
+            ALTER TABLE workspaces ADD COLUMN window_x REAL; // Null means set to whatever
+            ALTER TABLE workspaces ADD COLUMN window_y REAL; // Null means set to whatever
+            ALTER TABLE workspaces ADD COLUMN window_width REAL; // Null means set to whatever
+            ALTER TABLE workspaces ADD COLUMN window_height REAL; // Null means set to whatever
         )];
 }
 
@@ -91,14 +143,26 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, left_sidebar_open, dock_position): (
+        let (workspace_id, workspace_location, left_sidebar_open, dock_position, fullscreen, window_x, window_y, window_width, window_height): (
             WorkspaceId,
             WorkspaceLocation,
             bool,
             DockPosition,
-        ) =
-            self.select_row_bound(sql!{
-                SELECT workspace_id, workspace_location, left_sidebar_open, dock_visible, dock_anchor
+            bool,
+            f32, f32, f32, f32
+        ) = self
+            .select_row_bound(sql! {
+                SELECT
+                    workspace_id,
+                    workspace_location,
+                    left_sidebar_open,
+                    dock_visible,
+                    dock_anchor,
+                    fullscreen,
+                    window_x,
+                    window_y,
+                    window_width,
+                    window_height
                 FROM workspaces
                 WHERE workspace_location = ?
             })
@@ -120,6 +184,11 @@ impl WorkspaceDb {
                 .log_err()?,
             dock_position,
             left_sidebar_open,
+            fullscreen,
+            bounds: Some(RectF::new(
+                Vector2F::new(window_x, window_y),
+                Vector2F::new(window_width, window_height)
+            ))
         })
     }
 
@@ -410,6 +479,18 @@ impl WorkspaceDb {
             WHERE workspace_id = ?
         }
     }
+
+    query! {
+        pub async fn set_bounds(workspace_id: WorkspaceId, fullscreen: bool, x: f32, y: f32, width: f32, height: f32) -> Result<()> {
+            UPDATE workspaces
+            SET fullscreen = ?2,
+                window_x = ?3,
+                window_y = ?4,
+                window_width = ?5,
+                window_height = ?6
+            WHERE workspace_id = ?1
+        }
+    }
 }
 
 #[cfg(test)]
@@ -499,6 +580,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: true,
+            fullscreen: false,
+            bounds: Default::default(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -508,6 +591,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: false,
+            fullscreen: false,
+            bounds: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -614,6 +699,8 @@ mod tests {
             center_group,
             dock_pane,
             left_sidebar_open: true,
+            fullscreen: false,
+            bounds: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -642,6 +729,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: true,
+            fullscreen: false,
+            bounds: Default::default(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -651,6 +740,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: false,
+            fullscreen: false,
+            bounds: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -687,6 +778,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: false,
+            fullscreen: false,
+            bounds: Default::default(),
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -722,6 +815,8 @@ mod tests {
             center_group: center_group.clone(),
             dock_pane,
             left_sidebar_open: true,
+            fullscreen: false,
+            bounds: Default::default(),
         }
     }
 

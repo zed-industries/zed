@@ -183,6 +183,8 @@ impl platform::Window for StatusItem {
 
     fn on_resize(&mut self, _: Box<dyn FnMut()>) {}
 
+    fn on_moved(&mut self, _: Box<dyn FnMut()>) {}
+
     fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {}
