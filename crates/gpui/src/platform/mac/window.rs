@@ -66,12 +66,6 @@ const NSNormalWindowLevel: NSInteger = 0;
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
 #[allow(non_upper_case_globals)]
-const NSTrackingMouseMoved: NSUInteger = 0x02;
-#[allow(non_upper_case_globals)]
-const NSTrackingActiveAlways: NSUInteger = 0x80;
-#[allow(non_upper_case_globals)]
-const NSTrackingInVisibleRect: NSUInteger = 0x200;
-#[allow(non_upper_case_globals)]
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 
 #[repr(C)]
@@ -469,15 +463,7 @@ impl Window {
                 native_window.setTitlebarAppearsTransparent_(YES);
             }
 
-            let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
-            let _: () = msg_send![
-                tracking_area,
-                initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
-                options: NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
-                owner: native_view
-                userInfo: nil
-            ];
-            let _: () = msg_send![native_view, addTrackingArea: tracking_area.autorelease()];
+            native_window.setAcceptsMouseMovedEvents_(YES);
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
@@ -873,11 +859,10 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
-
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let event =
-        unsafe { Event::from_native(native_event, Some(window_state_borrow.content_size().y())) };
+    let window_height = window_state_borrow.content_size().y();
+    let event = unsafe { Event::from_native(native_event, Some(window_height)) };
 
     if let Some(event) = event {
         if key_equivalent {
@@ -902,6 +887,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 function_is_held = event.keystroke.function;
                 Some((event, None))
             }
+
             _ => return NO,
         };
 
@@ -968,9 +954,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Rc::downgrade(&window_state);
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() == YES };
 
-    let event =
-        unsafe { Event::from_native(native_event, Some(window_state_borrow.content_size().y())) };
+    let window_height = window_state_borrow.content_size().y();
+    let event = unsafe { Event::from_native(native_event, Some(window_height)) };
+
     if let Some(event) = event {
         match &event {
             Event::MouseMoved(
@@ -989,12 +977,16 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ))
                     .detach();
             }
+
+            Event::MouseMoved(_) if !is_active => return,
+
             Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 ..
             }) => {
                 window_state_borrow.synthetic_drag_counter += 1;
             }
+
             Event::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
                 // Only raise modifiers changed event when they have actually changed
                 if let Some(Event::ModifiersChanged(ModifiersChangedEvent {
@@ -1008,6 +1000,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
                 window_state_borrow.previous_modifiers_changed_event = Some(event.clone());
             }
+
             _ => {}
         }
 
