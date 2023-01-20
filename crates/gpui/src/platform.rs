@@ -156,7 +156,6 @@ pub struct WindowOptions<'a> {
     pub kind: WindowKind,
     pub is_movable: bool,
     pub screen: Option<Rc<dyn Screen>>,
-    pub accepts_first_mouse: bool,
 }
 
 #[derive(Debug)]
@@ -180,7 +179,7 @@ impl Default for Appearance {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     Normal,
     PopUp,
@@ -302,7 +301,6 @@ impl<'a> Default for WindowOptions<'a> {
             kind: WindowKind::Normal,
             is_movable: true,
             screen: None,
-            accepts_first_mouse: false,
         }
     }
 }

@@ -443,7 +443,7 @@ impl Window {
                 scene_to_render: Default::default(),
                 renderer: Renderer::new(true, fonts),
                 last_fresh_keydown: None,
-                accepts_first_mouse: matches!(options.kind, WindowKind::PopUp),
+                accepts_first_mouse: options.kind == WindowKind::PopUp,
                 traffic_light_position: options
                     .titlebar
                     .as_ref()
@@ -451,7 +451,6 @@ impl Window {
                 previous_modifiers_changed_event: None,
                 ime_state: ImeState::None,
                 ime_text: None,
-                accepts_first_mouse: options.accepts_first_mouse,
             })));
 
             (*native_window).set_ivar(
