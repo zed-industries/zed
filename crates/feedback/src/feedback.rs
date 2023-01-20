@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-pub mod feedback_popover;
+pub mod feedback_editor;
 mod system_specs;
 use gpui::{actions, impl_actions, ClipboardItem, ViewContext};
 use serde::Deserialize;
@@ -21,7 +21,7 @@ actions!(
 );
 
 pub fn init(cx: &mut gpui::MutableAppContext) {
-    feedback_popover::init(cx);
+    feedback_editor::init(cx);
 
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
 
@@ -59,7 +59,4 @@ pub fn init(cx: &mut gpui::MutableAppContext) {
             });
         },
     );
-
-    // TODO FEEDBACK: Should I put Give Feedback action here?
-    // TODO FEEDBACK: Disble buffer search?
 }

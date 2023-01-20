@@ -2,15 +2,18 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN};
-use editor::{Editor, MultiBuffer};
+use editor::Editor;
 use futures::AsyncReadExt;
 use gpui::{
     actions,
     elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
-    serde_json, CursorStyle, Element, ElementBox, Entity, ModelHandle, MouseButton,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    serde_json, AnyViewHandle, CursorStyle, Element, ElementBox, Entity, ModelHandle, MouseButton,
+    MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use isahc::Request;
+use language::{Language, LanguageConfig};
+use postage::prelude::Stream;
 
 use lazy_static::lazy_static;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -24,14 +27,13 @@ use workspace::{
 
 use crate::system_specs::SystemSpecs;
 
-// TODO FEEDBACK: Rename this file to feedback editor?
-// TODO FEEDBACK: Where is the backend code for air table?
-
 lazy_static! {
     pub static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
 }
 
+// TODO FEEDBACK: In the future, it would be nice to use this is some sort of live-rendering character counter thing
+// Currently, we are just checking on submit that the the text exceeds the `start` value in this range
 const FEEDBACK_CHAR_COUNT_RANGE: Range<usize> = Range {
     start: 5,
     end: 1000,
@@ -40,7 +42,6 @@ const FEEDBACK_CHAR_COUNT_RANGE: Range<usize> = Range {
 actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    // cx.add_action(FeedbackView::submit_feedback);
     cx.add_action(FeedbackEditor::deploy);
 }
 
@@ -147,13 +148,8 @@ impl StatusItemView for FeedbackButton {
         _: Option<&dyn ItemHandle>,
         _: &mut gpui::ViewContext<Self>,
     ) {
-        // N/A
     }
 }
-
-// impl Entity for FeedbackView {
-//     type Event = ();
-// }
 
 #[derive(Serialize)]
 struct FeedbackRequestBody<'a> {
@@ -163,6 +159,7 @@ struct FeedbackRequestBody<'a> {
     token: &'a str,
 }
 
+#[derive(Clone)]
 struct FeedbackEditor {
     editor: ViewHandle<Editor>,
 }
@@ -173,15 +170,30 @@ impl FeedbackEditor {
         _: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        // TODO FEEDBACK: Get rid of this expect
+        // TODO FEEDBACK: This doesn't work like I expected it would
+        // let markdown_language = Arc::new(Language::new(
+        //     LanguageConfig::default(),
+        //     Some(tree_sitter_markdown::language()),
+        // ));
+
+        let markdown_language = project_handle
+            .read(cx)
+            .languages()
+            .get_language("Markdown")
+            .unwrap();
+
         let buffer = project_handle
-            .update(cx, |project, cx| project.create_buffer("", None, cx))
-            .expect("Could not open feedback window");
+            .update(cx, |project, cx| {
+                project.create_buffer("", Some(markdown_language), cx)
+            })
+            .expect("creating buffers on a local workspace always succeeds");
+
+        const FEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here in the form of Markdown. Save the tab to submit your feedback.";
 
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project_handle.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
-            editor.set_placeholder_text("Enter your feedback here, save to submit feedback", cx);
+            editor.set_placeholder_text(FEDBACK_PLACEHOLDER_TEXT, cx);
             editor
         });
 
@@ -189,7 +201,65 @@ impl FeedbackEditor {
         this
     }
 
-    fn submit_feedback(&mut self, cx: &mut ViewContext<'_, Self>) {
+    fn handle_save(
+        &mut self,
+        _: gpui::ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        // TODO FEEDBACK: These don't look right
+        let feedback_text_length = self.editor.read(cx).buffer().read(cx).len(cx);
+
+        if feedback_text_length <= FEEDBACK_CHAR_COUNT_RANGE.start {
+            cx.prompt(
+                PromptLevel::Critical,
+                &format!(
+                    "Feedback must be longer than {} characters",
+                    FEEDBACK_CHAR_COUNT_RANGE.start
+                ),
+                &["OK"],
+            );
+
+            return Task::ready(Ok(()));
+        }
+
+        let mut answer = cx.prompt(
+            PromptLevel::Warning,
+            "Ready to submit your feedback?",
+            &["Yes, Submit!", "No"],
+        );
+
+        let this = cx.handle();
+        cx.spawn(|_, mut cx| async move {
+            let answer = answer.recv().await;
+
+            if answer == Some(0) {
+                cx.update(|cx| {
+                    this.update(cx, |this, cx| match this.submit_feedback(cx) {
+                        // TODO FEEDBACK
+                        Ok(_) => {
+                            // Close file after feedback sent successfully
+                            // workspace
+                            //     .update(cx, |workspace, cx| {
+                            //         Pane::close_active_item(workspace, &Default::default(), cx)
+                            //             .unwrap()
+                            //     })
+                            //     .await
+                            //     .unwrap();
+                        }
+                        Err(error) => {
+                            cx.prompt(PromptLevel::Critical, &error.to_string(), &["OK"]);
+                            // Prompt that something failed (and to check the log for the exact error? and to try again?)
+                        }
+                    })
+                })
+            }
+        })
+        .detach();
+
+        Task::ready(Ok(()))
+    }
+
+    fn submit_feedback(&mut self, cx: &mut ViewContext<'_, Self>) -> anyhow::Result<()> {
         let feedback_text = self.editor.read(cx).text(cx);
         let zed_client = cx.global::<Arc<Client>>();
         let system_specs = SystemSpecs::new(cx);
@@ -198,13 +268,12 @@ impl FeedbackEditor {
         let metrics_id = zed_client.metrics_id();
         let http_client = zed_client.http_client();
 
-        cx.spawn(|_, _| {
-            async move {
-                // TODO FEEDBACK: Use or remove
-                // this.read_with(&async_cx, |this, cx| {
-                //     // Now we have a &self and a &AppContext
-                // });
+        // TODO FEEDBACK: how to get error out of the thread
 
+        let this = cx.handle();
+
+        cx.spawn(|_, async_cx| {
+            async move {
                 let request = FeedbackRequestBody {
                     feedback_text: &feedback_text,
                     metrics_id,
@@ -224,12 +293,13 @@ impl FeedbackEditor {
 
                 let response_status = response.status();
 
-                dbg!(response_status);
-
                 if !response_status.is_success() {
-                    // TODO FEEDBACK: Do some sort of error reporting here for if store fails
-                    bail!("Error")
+                    bail!("Feedback API failed with: {}", response_status)
                 }
+
+                this.read_with(&async_cx, |this, cx| -> anyhow::Result<()> {
+                    bail!("Error")
+                })?;
 
                 // TODO FEEDBACK: Use or remove
                 // Will need to handle error cases
@@ -246,6 +316,8 @@ impl FeedbackEditor {
             }
         })
         .detach();
+
+        Ok(())
     }
 }
 
@@ -258,24 +330,23 @@ impl FeedbackEditor {
         let feedback_editor = cx
             .add_view(|cx| FeedbackEditor::new(workspace.project().clone(), workspace_handle, cx));
         workspace.add_item(Box::new(feedback_editor), cx);
+        // }
     }
-    // }
 }
-
-// struct FeedbackView {
-//     editor: Editor,
-// }
 
 impl View for FeedbackEditor {
     fn ui_name() -> &'static str {
-        "Feedback"
+        "FeedbackEditor"
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        // let theme = cx.global::<Settings>().theme.clone();
-        // let submit_feedback_text_button_height = 20.0;
-
         ChildView::new(&self.editor, cx).boxed()
+    }
+
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.editor);
+        }
     }
 }
 
@@ -324,26 +395,19 @@ impl Item for FeedbackEditor {
 
     fn save(
         &mut self,
-        _: gpui::ModelHandle<Project>,
+        project_handle: gpui::ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        cx.prompt(
-            gpui::PromptLevel::Info,
-            &format!("You are trying to to submit this feedbac"),
-            &["OK"],
-        );
-
-        self.submit_feedback(cx);
-        Task::ready(Ok(()))
+        self.handle_save(project_handle, cx)
     }
 
     fn save_as(
         &mut self,
-        _: gpui::ModelHandle<Project>,
+        project_handle: gpui::ModelHandle<Project>,
         _: std::path::PathBuf,
-        _: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        unreachable!("save_as should not have been called");
+        self.handle_save(project_handle, cx)
     }
 
     fn reload(
@@ -351,7 +415,20 @@ impl Item for FeedbackEditor {
         _: gpui::ModelHandle<Project>,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        unreachable!("should not have been called")
+        unreachable!("reload should not have been called")
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: workspace::WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        // TODO FEEDBACK: split is busted
+        // Some(self.clone())
+        None
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
@@ -369,9 +446,5 @@ impl Item for FeedbackEditor {
     }
 }
 
-// TODO FEEDBACK: Add placeholder text
-// TODO FEEDBACK: act_as_type (max mentionedt this)
-// TODO FEEDBACK: focus
-// TODO FEEDBACK: markdown highlighting
-// TODO FEEDBACK: save prompts and accepting closes
-// TODO FEEDBACK: multiple tabs?
+// TODO FEEDBACK: search buffer?
+// TODO FEEDBACK: warnings
