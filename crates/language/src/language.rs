@@ -41,6 +41,7 @@ use std::{
 use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
+use unicase::UniCase;
 use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -467,10 +468,11 @@ impl LanguageRegistry {
     }
 
     pub fn language_for_name(&self, name: &str) -> Option<Arc<Language>> {
+        let name = UniCase::new(name);
         self.languages
             .read()
             .iter()
-            .find(|language| language.name().to_lowercase() == name.to_lowercase())
+            .find(|language| UniCase::new(language.name()) == name)
             .cloned()
     }
 

@@ -53,6 +53,7 @@ smol = "1.2"
 tree-sitter = "0.20"
 tree-sitter-rust = { version = "*", optional = true }
 tree-sitter-typescript = { version = "*", optional = true }
+unicase = "2.6"
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

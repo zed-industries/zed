@@ -3157,6 +3157,7 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "unicase",
  "unindent",
  "util",
 ]
