@@ -282,6 +282,7 @@ struct AutoindentRequestEntry {
 struct IndentSuggestion {
     basis_row: u32,
     delta: Ordering,
+    within_error: bool,
 }
 
 struct BufferChunkHighlights<'a> {
@@ -937,7 +938,7 @@ impl Buffer {
                 // Build a map containing the suggested indentation for each of the edited lines
                 // with respect to the state of the buffer before these edits. This map is keyed
                 // by the rows for these lines in the current state of the buffer.
-                let mut old_suggestions = BTreeMap::<u32, IndentSize>::default();
+                let mut old_suggestions = BTreeMap::<u32, (IndentSize, bool)>::default();
                 let old_edited_ranges =
                     contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
@@ -963,14 +964,17 @@ impl Buffer {
 
                             let suggested_indent = old_to_new_rows
                                 .get(&suggestion.basis_row)
-                                .and_then(|from_row| old_suggestions.get(from_row).copied())
+                                .and_then(|from_row| {
+                                    Some(old_suggestions.get(from_row).copied()?.0)
+                                })
                                 .unwrap_or_else(|| {
                                     request
                                         .before_edit
                                         .indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
-                            old_suggestions.insert(new_row, suggested_indent);
+                            old_suggestions
+                                .insert(new_row, (suggested_indent, suggestion.within_error));
                         }
                     }
                     yield_now().await;
@@ -1016,12 +1020,13 @@ impl Buffer {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
-                            if old_suggestions
-                                .get(&new_row)
-                                .map_or(true, |old_indentation| {
+                            if old_suggestions.get(&new_row).map_or(
+                                true,
+                                |(old_indentation, was_within_error)| {
                                     suggested_indent != *old_indentation
-                                })
-                            {
+                                        && (!suggestion.within_error || *was_within_error)
+                                },
+                            ) {
                                 indent_sizes.insert(new_row, suggested_indent);
                             }
                         }
@@ -1779,7 +1784,7 @@ impl BufferSnapshot {
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
         let end = Point::new(row_range.end, 0);
         let range = (start..end).to_offset(&self.text);
-        let mut matches = self.syntax.matches(range, &self.text, |grammar| {
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             Some(&grammar.indents_config.as_ref()?.query)
         });
         let indent_configs = matches
@@ -1823,6 +1828,30 @@ impl BufferSnapshot {
                     }
                 }
             }
+        }
+
+        let mut error_ranges = Vec::<Range<Point>>::new();
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            Some(&grammar.error_query)
+        });
+        while let Some(mat) = matches.peek() {
+            let node = mat.captures[0].node;
+            let start = Point::from_ts_point(node.start_position());
+            let end = Point::from_ts_point(node.end_position());
+            let range = start..end;
+            let ix = match error_ranges.binary_search_by_key(&range.start, |r| r.start) {
+                Ok(ix) | Err(ix) => ix,
+            };
+            let mut end_ix = ix;
+            while let Some(existing_range) = error_ranges.get(end_ix) {
+                if existing_range.end < end {
+                    end_ix += 1;
+                } else {
+                    break;
+                }
+            }
+            error_ranges.splice(ix..end_ix, [range]);
+            matches.advance();
         }
 
         outdent_positions.sort();
@@ -1902,33 +1931,42 @@ impl BufferSnapshot {
                 }
             }
 
+            let within_error = error_ranges
+                .iter()
+                .any(|e| e.start.row < row && e.end > row_start);
+
             let suggestion = if outdent_to_row == prev_row
                 || (outdent_from_prev_row && indent_from_prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
+                    within_error,
                 })
             } else if indent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
+                    within_error,
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
+                    within_error,
                 })
             } else if outdent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
+                    within_error,
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
+                    within_error,
                 })
             } else {
                 None
