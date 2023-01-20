@@ -28,12 +28,12 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 #[derive(Clone)]
 pub struct Settings {
     pub experiments: FeatureFlags,
-    pub projects_online_by_default: bool,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
     pub active_pane_magnification: f32,
     pub cursor_blink: bool,
+    pub confirm_quit: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub vim_mode: bool,
@@ -294,6 +294,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub cursor_blink: Option<bool>,
     #[serde(default)]
+    pub confirm_quit: Option<bool>,
+    #[serde(default)]
     pub hover_popover_enabled: Option<bool>,
     #[serde(default)]
     pub show_completions_on_input: Option<bool>,
@@ -356,10 +358,10 @@ impl Settings {
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
+            confirm_quit: defaults.confirm_quit.unwrap(),
             cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
-            projects_online_by_default: defaults.projects_online_by_default.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
@@ -407,10 +409,6 @@ impl Settings {
             }
         }
 
-        merge(
-            &mut self.projects_online_by_default,
-            data.projects_online_by_default,
-        );
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(
             &mut self.active_pane_magnification,
@@ -418,6 +416,7 @@ impl Settings {
         );
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.cursor_blink, data.cursor_blink);
+        merge(&mut self.confirm_quit, data.confirm_quit);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(
             &mut self.show_completions_on_input,
@@ -557,6 +556,7 @@ impl Settings {
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
             default_buffer_font_size: 14.,
+            confirm_quit: false,
             cursor_blink: true,
             hover_popover_enabled: true,
             show_completions_on_input: true,
@@ -582,7 +582,6 @@ impl Settings {
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             lsp: Default::default(),
-            projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
             telemetry_defaults: TelemetrySettings {
                 diagnostics: Some(true),
