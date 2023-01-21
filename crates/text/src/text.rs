@@ -1372,6 +1372,57 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    pub fn edit_via_marked_text(&mut self, marked_string: &str) {
+        let edits = self.edits_for_marked_text(marked_string);
+        self.edit(edits);
+    }
+
+    pub fn edits_for_marked_text(&self, marked_string: &str) -> Vec<(Range<usize>, String)> {
+        let old_text = self.text();
+        let (new_text, mut ranges) = util::test::marked_text_ranges(marked_string, false);
+        if ranges.is_empty() {
+            ranges.push(0..new_text.len());
+        }
+
+        assert_eq!(
+            old_text[..ranges[0].start],
+            new_text[..ranges[0].start],
+            "invalid edit"
+        );
+
+        let mut delta = 0;
+        let mut edits = Vec::new();
+        let mut ranges = ranges.into_iter().peekable();
+
+        while let Some(inserted_range) = ranges.next() {
+            let new_start = inserted_range.start;
+            let old_start = (new_start as isize - delta) as usize;
+
+            let following_text = if let Some(next_range) = ranges.peek() {
+                &new_text[inserted_range.end..next_range.start]
+            } else {
+                &new_text[inserted_range.end..]
+            };
+
+            let inserted_len = inserted_range.len();
+            let deleted_len = old_text[old_start..]
+                .find(following_text)
+                .expect("invalid edit");
+
+            let old_range = old_start..old_start + deleted_len;
+            edits.push((old_range, new_text[inserted_range].to_string()));
+            delta += inserted_len as isize - deleted_len as isize;
+        }
+
+        assert_eq!(
+            old_text.len() as isize + delta,
+            new_text.len() as isize,
+            "invalid edit"
+        );
+
+        edits
+    }
+
     pub fn check_invariants(&self) {
         // Ensure every fragment is ordered by locator in the fragment tree and corresponds
         // to an insertion fragment in the insertions tree.

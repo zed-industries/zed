@@ -2262,7 +2262,7 @@ mod tests {
         mutated_syntax_map.reparse(language.clone(), &buffer);
 
         for (i, marked_string) in steps.into_iter().enumerate() {
-            edit_buffer(&mut buffer, &marked_string.unindent());
+            buffer.edit_via_marked_text(&marked_string.unindent());
 
             // Reparse the syntax map
             mutated_syntax_map.interpolate(&buffer);
@@ -2450,52 +2450,6 @@ mod tests {
         let (text, expected_ranges) = marked_text_ranges(&marked_string.unindent(), false);
         assert_eq!(text, buffer.text());
         assert_eq!(actual_ranges, expected_ranges);
-    }
-
-    fn edit_buffer(buffer: &mut Buffer, marked_string: &str) {
-        let old_text = buffer.text();
-        let (new_text, mut ranges) = marked_text_ranges(marked_string, false);
-        if ranges.is_empty() {
-            ranges.push(0..new_text.len());
-        }
-
-        assert_eq!(
-            old_text[..ranges[0].start],
-            new_text[..ranges[0].start],
-            "invalid edit"
-        );
-
-        let mut delta = 0;
-        let mut edits = Vec::new();
-        let mut ranges = ranges.into_iter().peekable();
-
-        while let Some(inserted_range) = ranges.next() {
-            let new_start = inserted_range.start;
-            let old_start = (new_start as isize - delta) as usize;
-
-            let following_text = if let Some(next_range) = ranges.peek() {
-                &new_text[inserted_range.end..next_range.start]
-            } else {
-                &new_text[inserted_range.end..]
-            };
-
-            let inserted_len = inserted_range.len();
-            let deleted_len = old_text[old_start..]
-                .find(following_text)
-                .expect("invalid edit");
-
-            let old_range = old_start..old_start + deleted_len;
-            edits.push((old_range, new_text[inserted_range].to_string()));
-            delta += inserted_len as isize - deleted_len as isize;
-        }
-
-        assert_eq!(
-            old_text.len() as isize + delta,
-            new_text.len() as isize,
-            "invalid edit"
-        );
-
-        buffer.edit(edits);
     }
 
     pub fn string_contains_sequence(text: &str, parts: &[&str]) -> bool {

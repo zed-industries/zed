@@ -1666,6 +1666,16 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    pub fn edit_via_marked_text(
+        &mut self,
+        marked_string: &str,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let edits = self.edits_for_marked_text(marked_string);
+        self.edit(edits, autoindent_mode, cx);
+    }
+
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.text.set_group_interval(group_interval);
     }

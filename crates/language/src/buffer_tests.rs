@@ -800,23 +800,29 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
     cx.set_global(settings);
 
     cx.add_model(|cx| {
-        let text = "
+        let mut buffer = Buffer::new(
+            0,
+            "
             fn a() {
             c;
             d;
             }
-        "
-        .unindent();
-
-        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+            "
+            .unindent(),
+            cx,
+        )
+        .with_language(Arc::new(rust_lang()), cx);
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
-        buffer.edit(
-            [
-                (empty(Point::new(1, 1)), "()"),
-                (empty(Point::new(2, 1)), "()"),
-            ],
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+            c«()»;
+            d«()»;
+            }
+            "
+            .unindent(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -833,14 +839,22 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 
         // When appending new content after these lines, the indentation is based on the
         // preceding lines' actual indentation.
-        buffer.edit(
-            [
-                (empty(Point::new(1, 1)), "\n.f\n.g"),
-                (empty(Point::new(2, 1)), "\n.f\n.g"),
-            ],
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+            c«
+            .f
+            .g()»;
+            d«
+            .f
+            .g()»;
+            }
+            "
+            .unindent(),
             Some(AutoindentMode::EachLine),
             cx,
         );
+
         assert_eq!(
             buffer.text(),
             "
@@ -859,20 +873,27 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
     });
 
     cx.add_model(|cx| {
-        let text = "
+        let mut buffer = Buffer::new(
+            0,
+            "
             fn a() {
-                {
-                    b()?
-                }
-                Ok(())
-            }
-        "
-        .unindent();
-        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+                b();
+                |
+            "
+            .replace("|", "") // marker to preserve trailing whitespace
+            .unindent(),
+            cx,
+        )
+        .with_language(Arc::new(rust_lang()), cx);
 
-        // Delete a closing curly brace changes the suggested indent for the line.
-        buffer.edit(
-            [(Point::new(3, 4)..Point::new(3, 5), "")],
+        // Insert a closing brace. It is outdented.
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+                b();
+                «}»
+            "
+            .unindent(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -880,19 +901,20 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
             buffer.text(),
             "
             fn a() {
-                {
-                    b()?
-                        |
-                Ok(())
+                b();
             }
             "
-            .replace('|', "") // included in the string to preserve trailing whites
             .unindent()
         );
 
-        // Manually editing the leading whitespace
-        buffer.edit(
-            [(Point::new(3, 0)..Point::new(3, 12), "")],
+        // Manually edit the leading whitespace. The edit is preserved.
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+                b();
+            «    »}
+            "
+            .unindent(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -900,11 +922,8 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
             buffer.text(),
             "
             fn a() {
-                {
-                    b()?
-
-                Ok(())
-            }
+                b();
+                }
             "
             .unindent()
         );
@@ -913,30 +932,108 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 }
 
 #[gpui::test]
-fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppContext) {
-    cx.set_global(Settings::test(cx));
+fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut MutableAppContext) {
+    let settings = Settings::test(cx);
+    cx.set_global(settings);
+
     cx.add_model(|cx| {
-        let text = "
-            fn a() {}
-        "
-        .unindent();
+        let mut buffer = Buffer::new(
+            0,
+            "
+            fn a() {
+                i
+            }
+            "
+            .unindent(),
+            cx,
+        )
+        .with_language(Arc::new(rust_lang()), cx);
 
-        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
-
-        buffer.edit([(5..5, "\nb")], Some(AutoindentMode::EachLine), cx);
+        // Regression test: line does not get outdented due to syntax error
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+                i«f let Some(x) = y»
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
         assert_eq!(
             buffer.text(),
             "
-                fn a(
-                    b) {}
+            fn a() {
+                if let Some(x) = y
+            }
+            "
+            .unindent()
+        );
+
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+                if let Some(x) = y« {»
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+                if let Some(x) = y {
+            }
+            "
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppContext) {
+    cx.set_global(Settings::test(cx));
+    cx.add_model(|cx| {
+        let mut buffer = Buffer::new(
+            0,
+            "
+            fn a() {}
+            "
+            .unindent(),
+            cx,
+        )
+        .with_language(Arc::new(rust_lang()), cx);
+
+        buffer.edit_via_marked_text(
+            &"
+            fn a(«
+            b») {}
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a(
+                b) {}
             "
             .unindent()
         );
 
         // The indentation suggestion changed because `@end` node (a close paren)
         // is now at the beginning of the line.
-        buffer.edit(
-            [(Point::new(1, 4)..Point::new(1, 5), "")],
+        buffer.edit_via_marked_text(
+            &"
+            fn a(
+                ˇ) {}
+            "
+            .unindent(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1893,8 +1990,4 @@ fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> Str
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
         layers[0].node.to_sexp()
     })
-}
-
-fn empty(point: Point) -> Range<Point> {
-    point..point
 }
