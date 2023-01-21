@@ -360,6 +360,21 @@ impl Presenter {
                 self.last_mouse_moved_event = Some(event.clone());
             }
 
+            Event::MouseExited(event) => {
+                // When the platform sends a MouseExited event, synthesize
+                // a MouseMoved event whose position is outside the window's
+                // bounds so that hover and cursor state can be updated.
+                return self.dispatch_event(
+                    Event::MouseMoved(MouseMovedEvent {
+                        position: event.position,
+                        pressed_button: event.pressed_button,
+                        modifiers: event.modifiers,
+                    }),
+                    event_reused,
+                    cx,
+                );
+            }
+
             Event::ScrollWheel(e) => mouse_events.push(MouseEvent::ScrollWheel(MouseScrollWheel {
                 region: Default::default(),
                 platform_event: e.clone(),

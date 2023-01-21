@@ -3,7 +3,7 @@ use crate::{
     keymap_matcher::Keystroke,
     platform::{Event, NavigationDirection},
     KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseMovedEvent, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    MouseExitedEvent, MouseMovedEvent, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
@@ -213,6 +213,16 @@ impl Event {
             }
             NSEventType::NSMouseMoved => window_height.map(|window_height| {
                 Self::MouseMoved(MouseMovedEvent {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    pressed_button: None,
+                    modifiers: read_modifiers(native_event),
+                })
+            }),
+            NSEventType::NSMouseExited => window_height.map(|window_height| {
+                Self::MouseExited(MouseExitedEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
