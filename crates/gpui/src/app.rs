@@ -21,6 +21,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use pathfinder_geometry::vector::Vector2F;
 use postage::oneshot;
 use smallvec::SmallVec;
 use smol::prelude::*;
@@ -863,6 +864,12 @@ impl MutableAppContext {
                 type_name::<A>()
             );
         }
+    }
+
+    pub fn screen_position(&self, window_id: usize, view_position: &Vector2F) -> Option<Vector2F> {
+        self.presenters_and_platform_windows
+            .get(&window_id)
+            .map(|(_, window)| window.screen_position(view_position))
     }
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {

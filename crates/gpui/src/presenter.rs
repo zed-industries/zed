@@ -316,7 +316,14 @@ impl Presenter {
                         break;
                     }
                 }
-                cx.platform().set_cursor_style(style_to_assign);
+
+                if let Some(screen_position) = cx.screen_position(self.window_id, position) {
+                    cx.platform().set_cursor_style(
+                        style_to_assign,
+                        self.window_id,
+                        &screen_position,
+                    );
+                }
 
                 if !event_reused {
                     if pressed_button.is_some() {

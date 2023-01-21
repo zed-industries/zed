@@ -258,6 +258,10 @@ impl platform::Window for StatusItem {
             crate::Appearance::from_native(appearance)
         }
     }
+
+    fn screen_position(&self, _view_position: &Vector2F) -> Vector2F {
+        unimplemented!()
+    }
 }
 
 impl StatusItemState {

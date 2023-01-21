@@ -559,6 +559,26 @@ impl Window {
             }
         }
     }
+
+    pub fn window_id_under(screen_position: &Vector2F) -> Option<usize> {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+
+            let point = NSPoint::new(screen_position.x() as f64, screen_position.y() as f64);
+            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:point belowWindowWithWindowNumber:0 as NSInteger];
+            // For some reason this API doesn't work when our two windows are on top of each other
+            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
+            dbg!(top_most_window);
+            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
+            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
+            if is_panel | is_window {
+                let id = get_window_state(&*top_most_window).borrow().id;
+                Some(id)
+            } else {
+                None
+            }
+        }
+    }
 }
 
 impl Drop for Window {
@@ -754,6 +774,16 @@ impl platform::Window for Window {
 
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().appearance_changed_callback = Some(callback);
+    }
+
+    fn screen_position(&self, view_position: &Vector2F) -> Vector2F {
+        let self_borrow = self.0.borrow_mut();
+        unsafe {
+            let point = NSPoint::new(view_position.x() as f64, view_position.y() as f64);
+            let screen_point: NSPoint =
+                msg_send![self_borrow.native_window, convertPointToScreen: point];
+            vec2f(screen_point.x as f32, screen_point.y as f32)
+        }
     }
 }
 

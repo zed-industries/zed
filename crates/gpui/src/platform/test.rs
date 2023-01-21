@@ -178,7 +178,7 @@ impl super::Platform for Platform {
         Ok(())
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
+    fn set_cursor_style(&self, style: CursorStyle, _window_id: usize, _position: &Vector2F) {
         *self.cursor.lock() = style;
     }
 
@@ -332,6 +332,10 @@ impl super::Window for Window {
     }
 
     fn on_appearance_changed(&mut self, _: Box<dyn FnMut()>) {}
+
+    fn screen_position(&self, view_position: &Vector2F) -> Vector2F {
+        view_position.clone()
+    }
 }
 
 pub fn platform() -> Platform {

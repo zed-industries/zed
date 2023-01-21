@@ -37,6 +37,7 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use pathfinder_geometry::vector::Vector2F;
 use postage::oneshot;
 use ptr::null_mut;
 use std::{
@@ -695,7 +696,19 @@ impl platform::Platform for MacPlatform {
         Ok(())
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
+    fn set_cursor_style(&self, style: CursorStyle, window_id: usize, screen_position: &Vector2F) {
+        let top_most = Window::window_id_under(screen_position);
+        if top_most.is_none() {
+            return;
+        }
+        if top_most.unwrap() != window_id {
+            return;
+        }
+
+        dbg!(top_most.unwrap(), window_id);
+
+        dbg!(style);
+
         unsafe {
             let cursor: id = match style {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],

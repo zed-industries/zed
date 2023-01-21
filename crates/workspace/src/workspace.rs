@@ -31,8 +31,9 @@ use futures::{
 };
 use gpui::{
     actions,
+    color::Color,
     elements::*,
-    geometry::vector::Vector2F,
+    geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
@@ -263,6 +264,59 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);
     client.add_view_message_handler(Workspace::handle_update_followers);
+
+    // REMEMBER TO DELETE THE SHOW NOTIF
+    cx.add_action(
+        |_workspace: &mut Workspace, _: &ShowNotif, cx: &mut ViewContext<Workspace>| {
+            struct DummyView;
+
+            impl Entity for DummyView {
+                type Event = ();
+            }
+
+            impl View for DummyView {
+                fn ui_name() -> &'static str {
+                    "DummyView"
+                }
+                fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+                    MouseEventHandler::<DummyView>::new(0, cx, |state, _cx| {
+                        Empty::new()
+                            .contained()
+                            .with_background_color(if state.hovered() {
+                                Color::red()
+                            } else {
+                                Color::blue()
+                            })
+                            .constrained()
+                            .with_width(200.)
+                            .with_height(200.)
+                            .boxed()
+                    })
+                    .on_click(MouseButton::Left, |_, _| {
+                        println!("click");
+                    })
+                    .with_cursor_style(CursorStyle::ResizeUpDown)
+                    .boxed()
+                }
+            }
+
+            cx.add_window(
+                WindowOptions {
+                    bounds: gpui::WindowBounds::Fixed(gpui::geometry::rect::RectF::new(
+                        vec2f(400., 200.),
+                        vec2f(300., 200.),
+                    )),
+                    titlebar: None,
+                    center: false,
+                    focus: false,
+                    kind: gpui::WindowKind::PopUp,
+                    is_movable: true,
+                    screen: None,
+                },
+                |_cx| DummyView,
+            )
+        },
+    )
 }
 
 type ProjectItemBuilders = HashMap<
