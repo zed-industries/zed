@@ -425,8 +425,6 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 
     let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
-        dbg!(should_confirm, workspaces.first());
-
         if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
             let answer = cx
                 .prompt(
