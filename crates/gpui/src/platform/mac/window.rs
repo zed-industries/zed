@@ -1438,7 +1438,11 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     unsafe {
         let state = get_window_state(this);
         let state_borrow = state.as_ref().borrow();
-        return state_borrow.kind == WindowKind::PopUp;
+        return if state_borrow.kind == WindowKind::PopUp {
+            YES
+        } else {
+            NO
+        };
     }
 }
 
