@@ -348,6 +348,7 @@ pub struct Language {
 pub struct Grammar {
     id: usize,
     pub(crate) ts_language: tree_sitter::Language,
+    pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
@@ -684,6 +685,7 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
+                    error_query: Query::new(ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
                 })
