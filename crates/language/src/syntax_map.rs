@@ -1597,6 +1597,56 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_dynamic_language_injection() {
+        let registry = Arc::new(LanguageRegistry::test());
+        let markdown = Arc::new(markdown_lang());
+        registry.add(markdown.clone());
+        registry.add(Arc::new(rust_lang()));
+        registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::new(
+            0,
+            0,
+            r#"
+                This is a code block:
+
+                ```rs
+                fn foo() {}
+                ```
+            "#
+            .unindent(),
+        );
+
+        let mut syntax_map = SyntaxMap::new();
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(markdown.clone(), &buffer);
+        assert_layers_for_range(
+            &syntax_map,
+            &buffer,
+            Point::new(3, 0)..Point::new(3, 0),
+            &[
+                "...(fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (code_fence_content) (fenced_code_block_delimiter...",
+                "...(function_item name: (identifier) parameters: (parameters) body: (block)...",
+            ],
+        );
+
+        // Replace Rust with Ruby in code block.
+        let macro_name_range = range_for_text(&buffer, "rs");
+        buffer.edit([(macro_name_range, "ruby")]);
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(markdown.clone(), &buffer);
+        assert_layers_for_range(
+            &syntax_map,
+            &buffer,
+            Point::new(3, 0)..Point::new(3, 0),
+            &[
+                "...(fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (code_fence_content) (fenced_code_block_delimiter...",
+                "...(call method: (identifier) arguments: (argument_list (call method: (identifier) arguments: (argument_list) block: (block)...",
+            ],
+        );
+    }
+
+    #[gpui::test]
     fn test_typing_multiple_new_injections() {
         let (buffer, syntax_map) = test_edit_sequence(
             "Rust",
@@ -2408,9 +2458,9 @@ mod tests {
         .with_injection_query(
             r#"
                 (fenced_code_block
-                (info_string
-                    (language) @language)
-                (code_fence_content) @content)
+                    (info_string
+                        (language) @language)
+                    (code_fence_content) @content)
             "#,
         )
         .unwrap()
