@@ -57,6 +57,7 @@ CREATE TABLE "worktrees" (
     "abs_path" VARCHAR NOT NULL,
     "visible" BOOL NOT NULL,
     "scan_id" INTEGER NOT NULL,
+    "is_complete" BOOL NOT NULL DEFAULT FALSE,
     "completed_scan_id" INTEGER NOT NULL,
     PRIMARY KEY(project_id, id)
 );

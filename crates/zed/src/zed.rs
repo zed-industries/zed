@@ -11,6 +11,7 @@ use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
+use futures::StreamExt;
 use gpui::{
     actions,
     geometry::{
@@ -19,7 +20,8 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, ClipboardItem, PromptLevel, TitlebarOptions, ViewContext,
+    WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -379,7 +381,23 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     // prompt in the active window before switching to a different window.
     workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
 
+    let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
+        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
+            let answer = cx
+                .prompt(
+                    workspace.window_id(),
+                    PromptLevel::Info,
+                    "Are you sure you want to quit?",
+                    &["Quit", "Cancel"],
+                )
+                .next()
+                .await;
+            if answer != Some(0) {
+                return Ok(());
+            }
+        }
+
         // If the user cancels any save prompt, then keep the app open.
         for workspace in workspaces {
             if !workspace

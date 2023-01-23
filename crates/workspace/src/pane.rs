@@ -488,7 +488,7 @@ impl Pane {
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
             for (index, item) in pane.items.iter().enumerate() {
-                if item.project_path(cx).is_some()
+                if item.is_singleton(cx)
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
@@ -810,13 +810,13 @@ impl Pane {
         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
         cx.spawn(|workspace, mut cx| async move {
-            let mut saved_project_entry_ids = HashSet::default();
+            let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
-                // Find the item's current index and its set of project entries. Avoid
+                // Find the item's current index and its set of project item models. Avoid
                 // storing these in advance, in case they have changed since this task
                 // was started.
-                let (item_ix, mut project_entry_ids) = pane.read_with(&cx, |pane, cx| {
-                    (pane.index_for_item(&*item), item.project_entry_ids(cx))
+                let (item_ix, mut project_item_ids) = pane.read_with(&cx, |pane, cx| {
+                    (pane.index_for_item(&*item), item.project_item_model_ids(cx))
                 });
                 let item_ix = if let Some(ix) = item_ix {
                     ix
@@ -824,30 +824,23 @@ impl Pane {
                     continue;
                 };
 
-                // If an item hasn't yet been associated with a project entry, then always
-                // prompt to save it before closing it. Otherwise, check if the item has
-                // any project entries that are not open anywhere else in the workspace,
-                // AND that the user has not already been prompted to save. If there are
-                // any such project entries, prompt the user to save this item.
-                let should_save = if project_entry_ids.is_empty() {
-                    true
-                } else {
-                    workspace.read_with(&cx, |workspace, cx| {
-                        for item in workspace.items(cx) {
-                            if !items_to_close
-                                .iter()
-                                .any(|item_to_close| item_to_close.id() == item.id())
-                            {
-                                let other_project_entry_ids = item.project_entry_ids(cx);
-                                project_entry_ids
-                                    .retain(|id| !other_project_entry_ids.contains(id));
-                            }
+                // Check if this view has any project items that are not open anywhere else
+                // in the workspace, AND that the user has not already been prompted to save.
+                // If there are any such project entries, prompt the user to save this item.
+                workspace.read_with(&cx, |workspace, cx| {
+                    for item in workspace.items(cx) {
+                        if !items_to_close
+                            .iter()
+                            .any(|item_to_close| item_to_close.id() == item.id())
+                        {
+                            let other_project_item_ids = item.project_item_model_ids(cx);
+                            project_item_ids.retain(|id| !other_project_item_ids.contains(id));
                         }
-                    });
-                    project_entry_ids
-                        .iter()
-                        .any(|id| saved_project_entry_ids.insert(*id))
-                };
+                    }
+                });
+                let should_save = project_item_ids
+                    .iter()
+                    .any(|id| saved_project_items_ids.insert(*id));
 
                 if should_save
                     && !Self::save_item(project.clone(), &pane, item_ix, &*item, true, &mut cx)
@@ -1458,7 +1451,11 @@ impl View for Pane {
                                     0,
                                     self.active_item_index + 1,
                                     false,
-                                    Some(100.),
+                                    if self.docked.is_some() {
+                                        None
+                                    } else {
+                                        Some(100.)
+                                    },
                                     cx,
                                     {
                                         let toolbar = self.toolbar.clone();
@@ -1679,7 +1676,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::item::test::TestItem;
+    use crate::item::test::{TestItem, TestProjectItem};
     use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
 
@@ -1868,7 +1865,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
-                .with_project_entry_ids(&[1]);
+                .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1887,7 +1884,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
-                .with_project_entry_ids(&[1]);
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1906,7 +1903,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 2")
-                .with_project_entry_ids(&[2]);
+                .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1925,7 +1922,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1")
-                .with_project_entry_ids(&[1]);
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
             Pane::add_item(
                 workspace,
@@ -1944,7 +1941,7 @@ mod tests {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1b")
-                .with_project_entry_ids(&[1]);
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
             Pane::add_item(
                 workspace,

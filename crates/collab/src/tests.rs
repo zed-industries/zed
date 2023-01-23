@@ -101,10 +101,7 @@ impl TestServer {
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
             cx.set_global(HomeDir(Path::new("/tmp/").to_path_buf()));
-
-            let mut settings = Settings::test(cx);
-            settings.projects_online_by_default = false;
-            cx.set_global(settings);
+            cx.set_global(Settings::test(cx));
         });
 
         let http = FakeHttpClient::with_404_response();

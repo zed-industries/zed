@@ -20,10 +20,12 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::Unclipped;
 use language::{
-    proto::{deserialize_version, serialize_line_ending, serialize_version},
-    Buffer, DiagnosticEntry, PointUtf16, Rope,
+    proto::{
+        deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
+        serialize_version,
+    },
+    Buffer, DiagnosticEntry, PointUtf16, Rope, RopeFingerprint, Unclipped,
 };
 use parking_lot::Mutex;
 use postage::{
@@ -1863,7 +1865,7 @@ impl language::File for File {
         version: clock::Global,
         line_ending: LineEnding,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, String, SystemTime)>> {
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
@@ -1878,7 +1880,7 @@ impl language::File for File {
                             buffer_id,
                             version: serialize_version(&version),
                             mtime: Some(entry.mtime.into()),
-                            fingerprint: fingerprint.clone(),
+                            fingerprint: serialize_fingerprint(fingerprint),
                         })?;
                     }
                     Ok((version, fingerprint, entry.mtime))
@@ -1896,11 +1898,12 @@ impl language::File for File {
                         })
                         .await?;
                     let version = deserialize_version(response.version);
+                    let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
                     let mtime = response
                         .mtime
                         .ok_or_else(|| anyhow!("missing mtime"))?
                         .into();
-                    Ok((version, response.fingerprint, mtime))
+                    Ok((version, fingerprint, mtime))
                 })
             }
         })
@@ -1943,7 +1946,7 @@ impl language::LocalFile for File {
         &self,
         buffer_id: u64,
         version: &clock::Global,
-        fingerprint: String,
+        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut MutableAppContext,
@@ -1957,7 +1960,7 @@ impl language::LocalFile for File {
                     buffer_id,
                     version: serialize_version(version),
                     mtime: Some(mtime.into()),
-                    fingerprint,
+                    fingerprint: serialize_fingerprint(fingerprint),
                     line_ending: serialize_line_ending(line_ending) as i32,
                 })
                 .log_err();

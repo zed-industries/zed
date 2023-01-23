@@ -2,8 +2,10 @@ use collections::HashMap;
 use gpui::{
     actions,
     elements::{ChildView, Container, Empty, MouseEventHandler, ParentElement, Side, Stack, Svg},
+    geometry::vector::Vector2F,
     impl_internal_actions, Border, CursorStyle, Element, ElementBox, Entity, MouseButton,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    MutableAppContext, RenderContext, SizeConstraint, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use serde::Deserialize;
 use settings::{DockAnchor, Settings};
@@ -312,7 +314,27 @@ impl Dock {
                         }
                     });
 
-                    resizable.flex(5., false).boxed()
+                    if anchor == DockAnchor::Right {
+                        resizable
+                            .constrained()
+                            .dynamically(|constraint, cx| {
+                                SizeConstraint::new(
+                                    Vector2F::new(20., constraint.min.y()),
+                                    Vector2F::new(cx.window_size.x() * 0.8, constraint.max.y()),
+                                )
+                            })
+                            .boxed()
+                    } else {
+                        resizable
+                            .constrained()
+                            .dynamically(|constraint, cx| {
+                                SizeConstraint::new(
+                                    Vector2F::new(constraint.min.x(), 50.),
+                                    Vector2F::new(constraint.max.x(), cx.window_size.y() * 0.8),
+                                )
+                            })
+                            .boxed()
+                    }
                 }
                 DockAnchor::Expanded => {
                     enum ExpandedDockWash {}
@@ -470,7 +492,7 @@ mod tests {
     use super::*;
     use crate::{
         dock,
-        item::test::TestItem,
+        item::{self, test::TestItem},
         persistence::model::{
             SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
         },
@@ -492,7 +514,7 @@ mod tests {
         Settings::test_async(cx);
 
         cx.update(|cx| {
-            register_deserializable_item::<TestItem>(cx);
+            register_deserializable_item::<item::test::TestItem>(cx);
         });
 
         let serialized_workspace = SerializedWorkspace {
@@ -508,7 +530,7 @@ mod tests {
                 children: vec![SerializedItem {
                     active: true,
                     item_id: 0,
-                    kind: "test".into(),
+                    kind: "TestItem".into(),
                 }],
             },
             left_sidebar_open: false,
@@ -620,6 +642,20 @@ mod tests {
         cx.assert_dock_pane_active();
         cx.hide_dock();
         cx.move_dock(DockAnchor::Right);
+        cx.assert_dock_pane_active();
+    }
+
+    #[gpui::test]
+    async fn test_activate_next_and_prev_pane(cx: &mut TestAppContext) {
+        let mut cx = DockTestContext::new(cx).await;
+
+        cx.move_dock(DockAnchor::Right);
+        cx.assert_dock_pane_active();
+
+        cx.update_workspace(|workspace, cx| workspace.activate_next_pane(cx));
+        cx.assert_dock_pane_active();
+
+        cx.update_workspace(|workspace, cx| workspace.activate_previous_pane(cx));
         cx.assert_dock_pane_active();
     }
 

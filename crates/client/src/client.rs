@@ -25,6 +25,7 @@ use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use serde::Deserialize;
+use settings::{Settings, TelemetrySettings};
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -423,7 +424,9 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                self.telemetry.set_authenticated_user_info(None, false);
+                let telemetry_settings = cx.read(|cx| cx.global::<Settings>().telemetry());
+                self.telemetry
+                    .set_authenticated_user_info(None, false, telemetry_settings);
                 state._reconnect_task.take();
             }
             _ => {}
@@ -706,7 +709,13 @@ impl Client {
             credentials = read_credentials_from_keychain(cx);
             read_from_keychain = credentials.is_some();
             if read_from_keychain {
-                self.report_event("read credentials from keychain", Default::default());
+                cx.read(|cx| {
+                    self.report_event(
+                        "read credentials from keychain",
+                        Default::default(),
+                        cx.global::<Settings>().telemetry(),
+                    );
+                });
             }
         }
         if credentials.is_none() {
@@ -997,6 +1006,8 @@ impl Client {
         let executor = cx.background();
         let telemetry = self.telemetry.clone();
         let http = self.http.clone();
+        let metrics_enabled = cx.read(|cx| cx.global::<Settings>().telemetry());
+
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
             // zed server to encrypt the user's access token, so that it can'be intercepted by
@@ -1079,7 +1090,11 @@ impl Client {
                 .context("failed to decrypt access token")?;
             platform.activate(true);
 
-            telemetry.report_event("authenticate with browser", Default::default());
+            telemetry.report_event(
+                "authenticate with browser",
+                Default::default(),
+                metrics_enabled,
+            );
 
             Ok(Credentials {
                 user_id: user_id.parse()?,
@@ -1287,8 +1302,14 @@ impl Client {
         self.telemetry.start();
     }
 
-    pub fn report_event(&self, kind: &str, properties: Value) {
-        self.telemetry.report_event(kind, properties.clone());
+    pub fn report_event(
+        &self,
+        kind: &str,
+        properties: Value,
+        telemetry_settings: TelemetrySettings,
+    ) {
+        self.telemetry
+            .report_event(kind, properties.clone(), telemetry_settings);
     }
 
     pub fn telemetry_log_file_path(&self) -> Option<PathBuf> {

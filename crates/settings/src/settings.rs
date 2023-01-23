@@ -28,12 +28,12 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 #[derive(Clone)]
 pub struct Settings {
     pub experiments: FeatureFlags,
-    pub projects_online_by_default: bool,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
     pub active_pane_magnification: f32,
     pub cursor_blink: bool,
+    pub confirm_quit: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub vim_mode: bool,
@@ -51,7 +51,24 @@ pub struct Settings {
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
+    pub telemetry_defaults: TelemetrySettings,
+    pub telemetry_overrides: TelemetrySettings,
     pub staff_mode: bool,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct TelemetrySettings {
+    diagnostics: Option<bool>,
+    metrics: Option<bool>,
+}
+
+impl TelemetrySettings {
+    pub fn metrics(&self) -> bool {
+        self.metrics.unwrap()
+    }
+    pub fn diagnostics(&self) -> bool {
+        self.diagnostics.unwrap()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -277,6 +294,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub cursor_blink: Option<bool>,
     #[serde(default)]
+    pub confirm_quit: Option<bool>,
+    #[serde(default)]
     pub hover_popover_enabled: Option<bool>,
     #[serde(default)]
     pub show_completions_on_input: Option<bool>,
@@ -302,6 +321,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
+    pub telemetry: TelemetrySettings,
+    #[serde(default)]
     pub staff_mode: Option<bool>,
 }
 
@@ -312,6 +333,7 @@ pub struct LspSettings {
 }
 
 impl Settings {
+    /// Fill out the settings corresponding to the default.json file, overrides will be set later
     pub fn defaults(
         assets: impl AssetSource,
         font_cache: &FontCache,
@@ -336,10 +358,10 @@ impl Settings {
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
+            confirm_quit: defaults.confirm_quit.unwrap(),
             cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
-            projects_online_by_default: defaults.projects_online_by_default.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
@@ -363,11 +385,13 @@ impl Settings {
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
-
+            telemetry_defaults: defaults.telemetry,
+            telemetry_overrides: Default::default(),
             staff_mode: false,
         }
     }
 
+    // Fill out the overrride and etc. settings from the user's settings.json
     pub fn set_user_settings(
         &mut self,
         data: SettingsFileContent,
@@ -385,10 +409,6 @@ impl Settings {
             }
         }
 
-        merge(
-            &mut self.projects_online_by_default,
-            data.projects_online_by_default,
-        );
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(
             &mut self.active_pane_magnification,
@@ -396,6 +416,7 @@ impl Settings {
         );
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.cursor_blink, data.cursor_blink);
+        merge(&mut self.confirm_quit, data.confirm_quit);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(
             &mut self.show_completions_on_input,
@@ -419,6 +440,7 @@ impl Settings {
         self.terminal_overrides.copy_on_select = data.terminal.copy_on_select;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
+        self.telemetry_overrides = data.telemetry;
         self.lsp = data.lsp;
     }
 
@@ -489,6 +511,27 @@ impl Settings {
             .unwrap_or_else(|| R::default())
     }
 
+    pub fn telemetry(&self) -> TelemetrySettings {
+        TelemetrySettings {
+            diagnostics: Some(self.telemetry_diagnostics()),
+            metrics: Some(self.telemetry_metrics()),
+        }
+    }
+
+    pub fn telemetry_diagnostics(&self) -> bool {
+        self.telemetry_overrides
+            .diagnostics
+            .or(self.telemetry_defaults.diagnostics)
+            .expect("missing default")
+    }
+
+    pub fn telemetry_metrics(&self) -> bool {
+        self.telemetry_overrides
+            .metrics
+            .or(self.telemetry_defaults.metrics)
+            .expect("missing default")
+    }
+
     pub fn terminal_scroll(&self) -> AlternateScroll {
         self.terminal_setting(|terminal_setting| terminal_setting.alternate_scroll.as_ref())
     }
@@ -513,6 +556,7 @@ impl Settings {
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
             default_buffer_font_size: 14.,
+            confirm_quit: false,
             cursor_blink: true,
             hover_popover_enabled: true,
             show_completions_on_input: true,
@@ -538,8 +582,12 @@ impl Settings {
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             lsp: Default::default(),
-            projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
+            telemetry_defaults: TelemetrySettings {
+                diagnostics: Some(true),
+                metrics: Some(true),
+            },
+            telemetry_overrides: Default::default(),
             staff_mode: false,
         }
     }

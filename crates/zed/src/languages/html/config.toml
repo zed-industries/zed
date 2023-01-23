@@ -10,3 +10,17 @@ brackets = [
 ]
 
 block_comment = ["<!-- ", " -->"]
+
+[overrides.comment]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
+
+[overrides.string]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]

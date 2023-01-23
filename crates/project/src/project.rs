@@ -22,8 +22,8 @@ use gpui::{
 use language::{
     point_to_lsp,
     proto::{
-        deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
-        serialize_version,
+        deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
+        serialize_anchor, serialize_version,
     },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
@@ -67,8 +67,9 @@ use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
 pub use fs::*;
 pub use worktree::*;
 
-pub trait Item: Entity {
+pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
 // Language server state is stored across 3 collections:
@@ -2081,6 +2082,7 @@ impl Project {
                                         .buffer_snapshots
                                         .entry(buffer.remote_id())
                                         .or_insert_with(|| vec![(0, buffer.text_snapshot())]);
+
                                     let (version, initial_snapshot) = versions.last().unwrap();
                                     let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                                     language_server
@@ -2617,6 +2619,7 @@ impl Project {
             worktree_id: worktree.read(cx).id(),
             path: relative_path.into(),
         };
+
         if let Some(buffer) = self.get_open_buffer(&project_path, cx) {
             self.update_buffer_diagnostics(&buffer, diagnostics.clone(), version, cx)?;
         }
@@ -5121,7 +5124,7 @@ impl Project {
             buffer_id,
             version: serialize_version(&saved_version),
             mtime: Some(mtime.into()),
-            fingerprint,
+            fingerprint: language::proto::serialize_fingerprint(fingerprint),
         })
     }
 
@@ -5204,6 +5207,21 @@ impl Project {
                             project_id,
                             buffer_id: buffer_id as u64,
                             diff_base: buffer.diff_base().map(Into::into),
+                        })
+                        .log_err();
+
+                    client
+                        .send(proto::BufferReloaded {
+                            project_id,
+                            buffer_id,
+                            version: language::proto::serialize_version(buffer.saved_version()),
+                            mtime: Some(buffer.saved_mtime().into()),
+                            fingerprint: language::proto::serialize_fingerprint(
+                                buffer.saved_version_fingerprint(),
+                            ),
+                            line_ending: language::proto::serialize_line_ending(
+                                buffer.line_ending(),
+                            ) as i32,
                         })
                         .log_err();
 
@@ -5955,6 +5973,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
+        let fingerprint = deserialize_fingerprint(&envelope.payload.fingerprint)?;
         let version = deserialize_version(envelope.payload.version);
         let mtime = envelope
             .payload
@@ -5969,7 +5988,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, envelope.payload.fingerprint, mtime, None, cx);
+                    buffer.did_save(version, fingerprint, mtime, None, cx);
                 });
             }
             Ok(())
@@ -5984,6 +6003,7 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(payload.version);
+        let fingerprint = deserialize_fingerprint(&payload.fingerprint)?;
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
@@ -5999,7 +6019,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, payload.fingerprint, line_ending, mtime, cx);
+                    buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
                 });
             }
             Ok(())
@@ -6124,25 +6144,20 @@ impl Project {
                 .buffer_snapshots
                 .get_mut(&buffer_id)
                 .ok_or_else(|| anyhow!("no snapshot found for buffer {}", buffer_id))?;
-            let mut found_snapshot = None;
-            snapshots.retain(|(snapshot_version, snapshot)| {
-                if snapshot_version + OLD_VERSIONS_TO_RETAIN < version {
-                    false
-                } else {
-                    if *snapshot_version == version {
-                        found_snapshot = Some(snapshot.clone());
-                    }
-                    true
-                }
+            let found_snapshot = snapshots
+                .binary_search_by_key(&version, |e| e.0)
+                .map(|ix| snapshots[ix].1.clone())
+                .map_err(|_| {
+                    anyhow!(
+                        "snapshot not found for buffer {} at version {}",
+                        buffer_id,
+                        version
+                    )
+                })?;
+            snapshots.retain(|(snapshot_version, _)| {
+                snapshot_version + OLD_VERSIONS_TO_RETAIN >= version
             });
-
-            found_snapshot.ok_or_else(|| {
-                anyhow!(
-                    "snapshot not found for buffer {} at version {}",
-                    buffer_id,
-                    version
-                )
-            })
+            Ok(found_snapshot)
         } else {
             Ok((buffer.read(cx)).text_snapshot())
         }
@@ -6390,5 +6405,12 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
 impl Item for Buffer {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
         File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
+    }
+
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        File::from_dyn(self.file()).map(|file| ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
     }
 }

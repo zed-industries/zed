@@ -8,7 +8,7 @@ use crate::{
     platform::{CursorStyle, Event},
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
-        MouseMove, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
+        MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
     },
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, Appearance,
@@ -156,6 +156,7 @@ impl Presenter {
             self.cursor_regions = scene.cursor_regions();
             self.mouse_regions = scene.mouse_regions();
 
+            // window.is_topmost for the mouse moved event's postion?
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
                     self.dispatch_event(event, true, cx);
@@ -245,8 +246,11 @@ impl Presenter {
         //  -> Also updates mouse-related state
         match &event {
             Event::KeyDown(e) => return cx.dispatch_key_down(self.window_id, e),
+
             Event::KeyUp(e) => return cx.dispatch_key_up(self.window_id, e),
+
             Event::ModifiersChanged(e) => return cx.dispatch_modifiers_changed(self.window_id, e),
+
             Event::MouseDown(e) => {
                 // Click events are weird because they can be fired after a drag event.
                 // MDN says that browsers handle this by starting from 'the most
@@ -279,6 +283,7 @@ impl Presenter {
                     platform_event: e.clone(),
                 }));
             }
+
             Event::MouseUp(e) => {
                 // NOTE: The order of event pushes is important! MouseUp events MUST be fired
                 // before click events, and so the MouseUp events need to be pushed before
@@ -296,6 +301,7 @@ impl Presenter {
                     platform_event: e.clone(),
                 }));
             }
+
             Event::MouseMoved(
                 e @ MouseMovedEvent {
                     position,
@@ -347,9 +353,28 @@ impl Presenter {
                     platform_event: e.clone(),
                     started: false,
                 }));
+                mouse_events.push(MouseEvent::MoveOut(MouseMoveOut {
+                    region: Default::default(),
+                }));
 
                 self.last_mouse_moved_event = Some(event.clone());
             }
+
+            Event::MouseExited(event) => {
+                // When the platform sends a MouseExited event, synthesize
+                // a MouseMoved event whose position is outside the window's
+                // bounds so that hover and cursor state can be updated.
+                return self.dispatch_event(
+                    Event::MouseMoved(MouseMovedEvent {
+                        position: event.position,
+                        pressed_button: event.pressed_button,
+                        modifiers: event.modifiers,
+                    }),
+                    event_reused,
+                    cx,
+                );
+            }
+
             Event::ScrollWheel(e) => mouse_events.push(MouseEvent::ScrollWheel(MouseScrollWheel {
                 region: Default::default(),
                 platform_event: e.clone(),
@@ -407,6 +432,7 @@ impl Presenter {
                         }
                     }
                 }
+
                 MouseEvent::Down(_) | MouseEvent::Up(_) => {
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(self.mouse_position) {
@@ -417,6 +443,7 @@ impl Presenter {
                         }
                     }
                 }
+
                 MouseEvent::Click(e) => {
                     // Only raise click events if the released button is the same as the one stored
                     if self
@@ -439,6 +466,7 @@ impl Presenter {
                         }
                     }
                 }
+
                 MouseEvent::Drag(_) => {
                     for (mouse_region, _) in self.mouse_regions.iter().rev() {
                         if self.clicked_region_ids.contains(&mouse_region.id()) {
@@ -447,7 +475,7 @@ impl Presenter {
                     }
                 }
 
-                MouseEvent::UpOut(_) | MouseEvent::DownOut(_) => {
+                MouseEvent::MoveOut(_) | MouseEvent::UpOut(_) | MouseEvent::DownOut(_) => {
                     for (mouse_region, _) in self.mouse_regions.iter().rev() {
                         // NOT contains
                         if !mouse_region.bounds.contains_point(self.mouse_position) {
@@ -455,6 +483,7 @@ impl Presenter {
                         }
                     }
                 }
+
                 _ => {
                     for (mouse_region, _) in self.mouse_regions.iter().rev() {
                         // Contains
@@ -573,7 +602,7 @@ pub struct LayoutContext<'a> {
 
 impl<'a> LayoutContext<'a> {
     pub(crate) fn keystrokes_for_action(
-        &self,
+        &mut self,
         action: &dyn Action,
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.app

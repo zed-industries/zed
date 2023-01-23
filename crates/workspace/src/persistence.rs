@@ -216,7 +216,9 @@ impl WorkspaceDb {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         for (id, location) in self.recent_workspaces()? {
-            if location.paths().iter().all(|path| path.exists()) {
+            if location.paths().iter().all(|path| path.exists())
+                && location.paths().iter().any(|path| path.is_dir())
+            {
                 result.push((id, location));
             } else {
                 delete_tasks.push(self.delete_stale_workspace(id));
@@ -227,14 +229,13 @@ impl WorkspaceDb {
         Ok(result)
     }
 
-    query! {
-        pub fn last_workspace() -> Result<Option<WorkspaceLocation>> {
-            SELECT workspace_location
-            FROM workspaces
-            WHERE workspace_location IS NOT NULL
-            ORDER BY timestamp DESC
-            LIMIT 1
-        }
+    pub async fn last_workspace(&self) -> Result<Option<WorkspaceLocation>> {
+        Ok(self
+            .recent_workspaces_on_disk()
+            .await?
+            .into_iter()
+            .next()
+            .map(|(_, location)| location))
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {

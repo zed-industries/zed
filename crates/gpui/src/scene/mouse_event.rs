@@ -22,6 +22,11 @@ impl Deref for MouseMove {
 }
 
 #[derive(Debug, Default, Clone)]
+pub struct MouseMoveOut {
+    pub region: RectF,
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct MouseDrag {
     pub region: RectF,
     pub prev_mouse_position: Vector2F,
@@ -138,6 +143,7 @@ impl Deref for MouseScrollWheel {
 #[derive(Debug, Clone)]
 pub enum MouseEvent {
     Move(MouseMove),
+    MoveOut(MouseMoveOut),
     Drag(MouseDrag),
     Hover(MouseHover),
     Down(MouseDown),
@@ -152,6 +158,7 @@ impl MouseEvent {
     pub fn set_region(&mut self, region: RectF) {
         match self {
             MouseEvent::Move(r) => r.region = region,
+            MouseEvent::MoveOut(r) => r.region = region,
             MouseEvent::Drag(r) => r.region = region,
             MouseEvent::Hover(r) => r.region = region,
             MouseEvent::Down(r) => r.region = region,
@@ -168,6 +175,7 @@ impl MouseEvent {
     pub fn is_capturable(&self) -> bool {
         match self {
             MouseEvent::Move(_) => true,
+            MouseEvent::MoveOut(_) => false,
             MouseEvent::Drag(_) => true,
             MouseEvent::Hover(_) => false,
             MouseEvent::Down(_) => true,
@@ -183,6 +191,10 @@ impl MouseEvent {
 impl MouseEvent {
     pub fn move_disc() -> Discriminant<MouseEvent> {
         discriminant(&MouseEvent::Move(Default::default()))
+    }
+
+    pub fn move_out_disc() -> Discriminant<MouseEvent> {
+        discriminant(&MouseEvent::MoveOut(Default::default()))
     }
 
     pub fn drag_disc() -> Discriminant<MouseEvent> {
@@ -220,6 +232,7 @@ impl MouseEvent {
     pub fn handler_key(&self) -> HandlerKey {
         match self {
             MouseEvent::Move(_) => HandlerKey::new(Self::move_disc(), None),
+            MouseEvent::MoveOut(_) => HandlerKey::new(Self::move_out_disc(), None),
             MouseEvent::Drag(e) => HandlerKey::new(Self::drag_disc(), e.pressed_button),
             MouseEvent::Hover(_) => HandlerKey::new(Self::hover_disc(), None),
             MouseEvent::Down(e) => HandlerKey::new(Self::down_disc(), Some(e.button)),

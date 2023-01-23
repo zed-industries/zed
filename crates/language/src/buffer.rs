@@ -9,7 +9,7 @@ use crate::{
     syntax_map::{
         SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot, ToTreeSitterPoint,
     },
-    CodeLabel, Outline,
+    CodeLabel, LanguageScope, Outline,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -60,7 +60,7 @@ pub struct Buffer {
     git_diff_status: GitDiffStatus,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
-    saved_version_fingerprint: String,
+    saved_version_fingerprint: RopeFingerprint,
     saved_mtime: SystemTime,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
@@ -221,7 +221,7 @@ pub trait File: Send + Sync {
         version: clock::Global,
         line_ending: LineEnding,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, String, SystemTime)>>;
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>>;
 
     fn as_any(&self) -> &dyn Any;
 
@@ -238,7 +238,7 @@ pub trait LocalFile: File {
         &self,
         buffer_id: u64,
         version: &clock::Global,
-        fingerprint: String,
+        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut MutableAppContext,
@@ -282,6 +282,7 @@ struct AutoindentRequestEntry {
 struct IndentSuggestion {
     basis_row: u32,
     delta: Ordering,
+    within_error: bool,
 }
 
 struct BufferChunkHighlights<'a> {
@@ -385,6 +386,13 @@ impl Buffer {
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
+        this.saved_version = proto::deserialize_version(message.saved_version);
+        this.saved_version_fingerprint =
+            proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
+        this.saved_mtime = message
+            .saved_mtime
+            .ok_or_else(|| anyhow!("invalid saved_mtime"))?
+            .into();
         Ok(this)
     }
 
@@ -395,6 +403,9 @@ impl Buffer {
             base_text: self.base_text().to_string(),
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
+            saved_version: proto::serialize_version(&self.saved_version),
+            saved_version_fingerprint: proto::serialize_fingerprint(self.saved_version_fingerprint),
+            saved_mtime: Some(self.saved_mtime.into()),
         }
     }
 
@@ -521,7 +532,7 @@ impl Buffer {
     pub fn save(
         &mut self,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(clock::Global, String, SystemTime)>> {
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
         let file = if let Some(file) = self.file.as_ref() {
             file
         } else {
@@ -539,7 +550,7 @@ impl Buffer {
         cx.spawn(|this, mut cx| async move {
             let (version, fingerprint, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), fingerprint.clone(), mtime, None, cx);
+                this.did_save(version.clone(), fingerprint, mtime, None, cx);
             });
             Ok((version, fingerprint, mtime))
         })
@@ -547,6 +558,14 @@ impl Buffer {
 
     pub fn saved_version(&self) -> &clock::Global {
         &self.saved_version
+    }
+
+    pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
+        self.saved_version_fingerprint
+    }
+
+    pub fn saved_mtime(&self) -> SystemTime {
+        self.saved_mtime
     }
 
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
@@ -564,7 +583,7 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
-        fingerprint: String,
+        fingerprint: RopeFingerprint,
         mtime: SystemTime,
         new_file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
@@ -613,7 +632,7 @@ impl Buffer {
     pub fn did_reload(
         &mut self,
         version: clock::Global,
-        fingerprint: String,
+        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut ModelContext<Self>,
@@ -626,7 +645,7 @@ impl Buffer {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.saved_version_fingerprint.clone(),
+                self.saved_version_fingerprint,
                 self.line_ending(),
                 self.saved_mtime,
                 cx,
@@ -919,7 +938,7 @@ impl Buffer {
                 // Build a map containing the suggested indentation for each of the edited lines
                 // with respect to the state of the buffer before these edits. This map is keyed
                 // by the rows for these lines in the current state of the buffer.
-                let mut old_suggestions = BTreeMap::<u32, IndentSize>::default();
+                let mut old_suggestions = BTreeMap::<u32, (IndentSize, bool)>::default();
                 let old_edited_ranges =
                     contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
@@ -945,14 +964,17 @@ impl Buffer {
 
                             let suggested_indent = old_to_new_rows
                                 .get(&suggestion.basis_row)
-                                .and_then(|from_row| old_suggestions.get(from_row).copied())
+                                .and_then(|from_row| {
+                                    Some(old_suggestions.get(from_row).copied()?.0)
+                                })
                                 .unwrap_or_else(|| {
                                     request
                                         .before_edit
                                         .indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
-                            old_suggestions.insert(new_row, suggested_indent);
+                            old_suggestions
+                                .insert(new_row, (suggested_indent, suggestion.within_error));
                         }
                     }
                     yield_now().await;
@@ -998,12 +1020,13 @@ impl Buffer {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
-                            if old_suggestions
-                                .get(&new_row)
-                                .map_or(true, |old_indentation| {
+                            if old_suggestions.get(&new_row).map_or(
+                                true,
+                                |(old_indentation, was_within_error)| {
                                     suggested_indent != *old_indentation
-                                })
-                            {
+                                        && (!suggestion.within_error || *was_within_error)
+                                },
+                            ) {
                                 indent_sizes.insert(new_row, suggested_indent);
                             }
                         }
@@ -1332,13 +1355,6 @@ impl Buffer {
         let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
-            let (start_columns, is_block_mode) = match mode {
-                AutoindentMode::Block {
-                    original_indent_columns: start_columns,
-                } => (start_columns, true),
-                AutoindentMode::EachLine => (Default::default(), false),
-            };
-
             let mut delta = 0isize;
             let entries = edits
                 .into_iter()
@@ -1352,7 +1368,7 @@ impl Buffer {
 
                     let mut range_of_insertion_to_indent = 0..new_text_len;
                     let mut first_line_is_new = false;
-                    let mut start_column = None;
+                    let mut original_indent_column = None;
 
                     // When inserting an entire line at the beginning of an existing line,
                     // treat the insertion as new.
@@ -1364,14 +1380,23 @@ impl Buffer {
 
                     // When inserting text starting with a newline, avoid auto-indenting the
                     // previous line.
-                    if new_text[range_of_insertion_to_indent.clone()].starts_with('\n') {
+                    if new_text.starts_with('\n') {
                         range_of_insertion_to_indent.start += 1;
                         first_line_is_new = true;
                     }
 
                     // Avoid auto-indenting after the insertion.
-                    if is_block_mode {
-                        start_column = start_columns.get(ix).copied();
+                    if let AutoindentMode::Block {
+                        original_indent_columns,
+                    } = &mode
+                    {
+                        original_indent_column =
+                            Some(original_indent_columns.get(ix).copied().unwrap_or_else(|| {
+                                indent_size_for_text(
+                                    new_text[range_of_insertion_to_indent.clone()].chars(),
+                                )
+                                .len
+                            }));
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
@@ -1379,7 +1404,7 @@ impl Buffer {
 
                     AutoindentRequestEntry {
                         first_line_is_new,
-                        original_indent_column: start_column,
+                        original_indent_column,
                         indent_size: before_edit.language_indent_size_at(range.start, cx),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
@@ -1390,7 +1415,7 @@ impl Buffer {
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
                 entries,
-                is_block_mode,
+                is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
             }));
         }
 
@@ -1641,6 +1666,16 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    pub fn edit_via_marked_text(
+        &mut self,
+        marked_string: &str,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let edits = self.edits_for_marked_text(marked_string);
+        self.edit(edits, autoindent_mode, cx);
+    }
+
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.text.set_group_interval(group_interval);
     }
@@ -1759,7 +1794,7 @@ impl BufferSnapshot {
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
         let end = Point::new(row_range.end, 0);
         let range = (start..end).to_offset(&self.text);
-        let mut matches = self.syntax.matches(range, &self.text, |grammar| {
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             Some(&grammar.indents_config.as_ref()?.query)
         });
         let indent_configs = matches
@@ -1803,6 +1838,30 @@ impl BufferSnapshot {
                     }
                 }
             }
+        }
+
+        let mut error_ranges = Vec::<Range<Point>>::new();
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            Some(&grammar.error_query)
+        });
+        while let Some(mat) = matches.peek() {
+            let node = mat.captures[0].node;
+            let start = Point::from_ts_point(node.start_position());
+            let end = Point::from_ts_point(node.end_position());
+            let range = start..end;
+            let ix = match error_ranges.binary_search_by_key(&range.start, |r| r.start) {
+                Ok(ix) | Err(ix) => ix,
+            };
+            let mut end_ix = ix;
+            while let Some(existing_range) = error_ranges.get(end_ix) {
+                if existing_range.end < end {
+                    end_ix += 1;
+                } else {
+                    break;
+                }
+            }
+            error_ranges.splice(ix..end_ix, [range]);
+            matches.advance();
         }
 
         outdent_positions.sort();
@@ -1882,33 +1941,42 @@ impl BufferSnapshot {
                 }
             }
 
+            let within_error = error_ranges
+                .iter()
+                .any(|e| e.start.row < row && e.end > row_start);
+
             let suggestion = if outdent_to_row == prev_row
                 || (outdent_from_prev_row && indent_from_prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
+                    within_error,
                 })
             } else if indent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
+                    within_error,
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
+                    within_error,
                 })
             } else if outdent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
+                    within_error,
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
+                    within_error,
                 })
             } else {
                 None
@@ -1993,6 +2061,27 @@ impl BufferSnapshot {
             .last()
             .map(|info| info.language)
             .or(self.language.as_ref())
+    }
+
+    pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
+        let offset = position.to_offset(self);
+
+        if let Some(layer_info) = self
+            .syntax
+            .layers_for_range(offset..offset, &self.text)
+            .filter(|l| l.node.end_byte() > offset)
+            .last()
+        {
+            Some(LanguageScope {
+                language: layer_info.language.clone(),
+                override_id: layer_info.override_id(offset, &self.text),
+            })
+        } else {
+            self.language.clone().map(|language| LanguageScope {
+                language,
+                override_id: None,
+            })
+        }
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
@@ -2149,8 +2238,6 @@ impl BufferSnapshot {
                 continue;
             }
 
-            // TODO - move later, after processing captures
-
             let mut text = String::new();
             let mut name_ranges = Vec::new();
             let mut highlight_ranges = Vec::new();
@@ -2164,7 +2251,13 @@ impl BufferSnapshot {
                     continue;
                 }
 
-                let range = capture.node.start_byte()..capture.node.end_byte();
+                let mut range = capture.node.start_byte()..capture.node.end_byte();
+                let start = capture.node.start_position();
+                if capture.node.end_position().row > start.row {
+                    range.end =
+                        range.start + self.line_len(start.row as u32) as usize - start.column;
+                }
+
                 if !text.is_empty() {
                     text.push(' ');
                 }
@@ -2397,7 +2490,7 @@ impl BufferSnapshot {
     }
 }
 
-pub fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
+fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
     indent_size_for_text(text.chars_at(Point::new(row, 0)))
 }
 

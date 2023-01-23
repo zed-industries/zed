@@ -10,6 +10,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
+use settings::TelemetrySettings;
 use std::{
     io::Write,
     mem,
@@ -184,11 +185,18 @@ impl Telemetry {
             .detach();
     }
 
+    /// This method takes the entire TelemetrySettings struct in order to force client code
+    /// to pull the struct out of the settings global. Do not remove!
     pub fn set_authenticated_user_info(
         self: &Arc<Self>,
         metrics_id: Option<String>,
         is_staff: bool,
+        telemetry_settings: TelemetrySettings,
     ) {
+        if !telemetry_settings.metrics() {
+            return;
+        }
+
         let this = self.clone();
         let mut state = self.state.lock();
         let device_id = state.device_id.clone();
@@ -221,7 +229,16 @@ impl Telemetry {
         }
     }
 
-    pub fn report_event(self: &Arc<Self>, kind: &str, properties: Value) {
+    pub fn report_event(
+        self: &Arc<Self>,
+        kind: &str,
+        properties: Value,
+        telemetry_settings: TelemetrySettings,
+    ) {
+        if !telemetry_settings.metrics() {
+            return;
+        }
+
         let mut state = self.state.lock();
         let event = MixpanelEvent {
             event: kind.to_string(),

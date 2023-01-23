@@ -10,7 +10,7 @@ use collections::BTreeMap;
 use fs::{FakeFs, Fs as _};
 use futures::StreamExt as _;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
-use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
+use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16, Rope};
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
 use project::{search::SearchQuery, Project};
@@ -18,7 +18,13 @@ use rand::{
     distributions::{Alphanumeric, DistString},
     prelude::*,
 };
-use std::{env, ffi::OsStr, path::PathBuf, sync::Arc};
+use settings::Settings;
+use std::{
+    env,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[gpui::test(iterations = 100)]
 async fn test_random_collaboration(
@@ -104,6 +110,8 @@ async fn test_random_collaboration(
                     cx.function_name.clone(),
                 );
 
+                client_cx.update(|cx| cx.set_global(Settings::test(cx)));
+
                 let op_start_signal = futures::channel::mpsc::unbounded();
                 let client = server.create_client(&mut client_cx, &username).await;
                 user_ids.push(client.current_user_id(&client_cx));
@@ -173,6 +181,7 @@ async fn test_random_collaboration(
                 available_users.push((removed_user_id, client.username.clone()));
                 client_cx.update(|cx| {
                     cx.clear_globals();
+                    cx.set_global(Settings::test(cx));
                     drop(client);
                 });
 
@@ -394,6 +403,33 @@ async fn test_random_collaboration(
                 let guest_diff_base = guest_buffer
                     .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
                 assert_eq!(guest_diff_base, host_diff_base);
+
+                let host_saved_version =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
+                let guest_saved_version =
+                    guest_buffer.read_with(client_cx, |b, _| b.saved_version().clone());
+                assert_eq!(guest_saved_version, host_saved_version);
+
+                let host_saved_version_fingerprint =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version_fingerprint());
+                let guest_saved_version_fingerprint =
+                    guest_buffer.read_with(client_cx, |b, _| b.saved_version_fingerprint());
+                assert_eq!(
+                    guest_saved_version_fingerprint,
+                    host_saved_version_fingerprint
+                );
+
+                let host_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
+                let guest_saved_mtime = guest_buffer.read_with(client_cx, |b, _| b.saved_mtime());
+                assert_eq!(guest_saved_mtime, host_saved_mtime);
+
+                let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
+                let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
+                assert_eq!(guest_is_dirty, host_is_dirty);
+
+                let host_has_conflict = host_buffer.read_with(host_cx, |b, _| b.has_conflict());
+                let guest_has_conflict = guest_buffer.read_with(client_cx, |b, _| b.has_conflict());
+                assert_eq!(guest_has_conflict, host_has_conflict);
             }
         }
     }
@@ -401,6 +437,7 @@ async fn test_random_collaboration(
     for (client, mut cx) in clients {
         cx.update(|cx| {
             cx.clear_globals();
+            cx.set_global(Settings::test(cx));
             drop(client);
         });
     }
@@ -633,14 +670,7 @@ async fn randomly_mutate_git(client: &mut TestClient, rng: &Mutex<StdRng>) {
         client.fs.create_dir(&git_dir_path).await.unwrap();
     }
 
-    let mut child_paths = client.fs.read_dir(&dir_path).await.unwrap();
-    let mut child_file_paths = Vec::new();
-    while let Some(child_path) = child_paths.next().await {
-        let child_path = child_path.unwrap();
-        if client.fs.is_file(&child_path).await {
-            child_file_paths.push(child_path);
-        }
-    }
+    let mut child_file_paths = child_file_paths(client, &dir_path).await;
     let count = rng.lock().gen_range(0..=child_file_paths.len());
     child_file_paths.shuffle(&mut *rng.lock());
     child_file_paths.truncate(count);
@@ -664,26 +694,63 @@ async fn randomly_mutate_git(client: &mut TestClient, rng: &Mutex<StdRng>) {
 }
 
 async fn randomly_mutate_fs(client: &mut TestClient, rng: &Mutex<StdRng>) {
-    let is_dir = rng.lock().gen::<bool>();
-    let mut new_path = client
+    let parent_dir_path = client
         .fs
         .directories()
         .await
         .choose(&mut *rng.lock())
         .unwrap()
         .clone();
-    new_path.push(gen_file_name(rng));
+
+    let is_dir = rng.lock().gen::<bool>();
     if is_dir {
-        log::info!("{}: creating local dir at {:?}", client.username, new_path);
-        client.fs.create_dir(&new_path).await.unwrap();
+        let mut dir_path = parent_dir_path.clone();
+        dir_path.push(gen_file_name(rng));
+        log::info!("{}: creating local dir at {:?}", client.username, dir_path);
+        client.fs.create_dir(&dir_path).await.unwrap();
     } else {
-        new_path.set_extension("rs");
-        log::info!("{}: creating local file at {:?}", client.username, new_path);
-        client
-            .fs
-            .create_file(&new_path, Default::default())
-            .await
-            .unwrap();
+        let child_file_paths = child_file_paths(client, &parent_dir_path).await;
+        let create_new_file = child_file_paths.is_empty() || rng.lock().gen();
+        let text = Alphanumeric.sample_string(&mut *rng.lock(), 16);
+        if create_new_file {
+            let mut file_path = parent_dir_path.clone();
+            file_path.push(gen_file_name(rng));
+            file_path.set_extension("rs");
+            log::info!(
+                "{}: creating local file at {:?}",
+                client.username,
+                file_path
+            );
+            client
+                .fs
+                .create_file(&file_path, Default::default())
+                .await
+                .unwrap();
+            log::info!(
+                "{}: setting local file {:?} text to {:?}",
+                client.username,
+                file_path,
+                text
+            );
+            client
+                .fs
+                .save(&file_path, &Rope::from(text.as_str()), fs::LineEnding::Unix)
+                .await
+                .unwrap();
+        } else {
+            let file_path = child_file_paths.choose(&mut *rng.lock()).unwrap();
+            log::info!(
+                "{}: setting local file {:?} text to {:?}",
+                client.username,
+                file_path,
+                text
+            );
+            client
+                .fs
+                .save(file_path, &Rope::from(text.as_str()), fs::LineEnding::Unix)
+                .await
+                .unwrap();
+        }
     }
 }
 
@@ -1148,4 +1215,16 @@ fn gen_file_name(rng: &Mutex<StdRng>) -> String {
         name.push(letter);
     }
     name
+}
+
+async fn child_file_paths(client: &TestClient, dir_path: &Path) -> Vec<PathBuf> {
+    let mut child_paths = client.fs.read_dir(dir_path).await.unwrap();
+    let mut child_file_paths = Vec::new();
+    while let Some(child_path) = child_paths.next().await {
+        let child_path = child_path.unwrap();
+        if client.fs.is_file(&child_path).await {
+            child_file_paths.push(child_path);
+        }
+    }
+    child_file_paths
 }

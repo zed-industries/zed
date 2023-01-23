@@ -37,9 +37,7 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
         let editor_mode = editor.mode();
         let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
 
-        if editor_mode != EditorMode::Full {
-            vim.switch_mode(Mode::Insert, true, cx);
-        } else if !newest_selection_empty {
+        if editor_mode == EditorMode::Full && !newest_selection_empty {
             vim.switch_mode(Mode::Visual { line: false }, true, cx);
         }
     });
