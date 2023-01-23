@@ -697,27 +697,20 @@ impl platform::Platform for MacPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle, window_id: usize, screen_position: &Vector2F) {
-        let top_most = Window::window_id_under(screen_position);
-        if top_most.is_none() {
-            return;
-        }
-        if top_most.unwrap() != window_id {
-            return;
-        }
-
-        dbg!(top_most.unwrap(), window_id);
-
-        dbg!(style);
-
-        unsafe {
-            let cursor: id = match style {
-                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-            };
-            let _: () = msg_send![cursor, set];
+        if Some(window_id) == Window::window_id_under(screen_position) {
+            dbg!(screen_position, style);
+            unsafe {
+                let cursor: id = match style {
+                    CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+                    CursorStyle::ResizeLeftRight => {
+                        msg_send![class!(NSCursor), resizeLeftRightCursor]
+                    }
+                    CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+                    CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+                    CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+                };
+                let _: () = msg_send![cursor, set];
+            }
         }
     }
 

@@ -317,6 +317,9 @@ impl Presenter {
                     }
                 }
 
+                dbg!("*******");
+                dbg!(position);
+                dbg!(event_reused);
                 if let Some(screen_position) = cx.screen_position(self.window_id, position) {
                     cx.platform().set_cursor_style(
                         style_to_assign,
