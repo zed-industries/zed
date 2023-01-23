@@ -303,7 +303,7 @@ pub fn initialize_workspace(
 
     let theme_names = app_state
         .themes
-        .list(**cx.global::<StaffMode>())
+        .list(**cx.try_global::<StaffMode>().unwrap_or(&StaffMode(false)))
         .map(|meta| meta.name)
         .collect();
     let language_names = app_state.languages.language_names();

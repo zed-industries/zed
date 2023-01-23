@@ -149,12 +149,11 @@ impl UserStore {
                                 );
 
                                 cx.update(|cx| {
-                                    cx.update_global::<StaffMode, _, _>(|staff_mode, _| {
-                                        *staff_mode = info
-                                            .as_ref()
+                                    cx.set_global(
+                                        info.as_ref()
                                             .map(|info| StaffMode(info.staff))
-                                            .unwrap_or(StaffMode(false));
-                                    })
+                                            .unwrap_or(StaffMode(false)),
+                                    );
                                 });
 
                                 current_user_tx.send(user).await.ok();

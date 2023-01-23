@@ -45,7 +45,7 @@ impl ThemeSelector {
         let original_theme = settings.theme.clone();
 
         let mut theme_names = registry
-            .list(**cx.global::<StaffMode>())
+            .list(**cx.try_global::<StaffMode>().unwrap_or(&StaffMode(false)))
             .collect::<Vec<_>>();
         theme_names.sort_unstable_by(|a, b| {
             a.is_light
