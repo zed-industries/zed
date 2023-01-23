@@ -37,7 +37,7 @@ const FEEDBACK_CHAR_COUNT_RANGE: Range<usize> = Range {
     end: 1000,
 };
 
-const FEEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here in the form of Markdown. Save the tab to submit your feedback.";
+const FEEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here as Markdown. Save the tab to submit your feedback.";
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
@@ -76,71 +76,6 @@ impl View for FeedbackButton {
                 .boxed(),
             )
             .boxed()
-    }
-
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {}
-
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {}
-
-    fn key_down(&mut self, _: &gpui::KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
-        false
-    }
-
-    fn key_up(&mut self, _: &gpui::KeyUpEvent, _: &mut ViewContext<Self>) -> bool {
-        false
-    }
-
-    fn modifiers_changed(
-        &mut self,
-        _: &gpui::ModifiersChangedEvent,
-        _: &mut ViewContext<Self>,
-    ) -> bool {
-        false
-    }
-
-    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap_matcher::KeymapContext {
-        Self::default_keymap_context()
-    }
-
-    fn default_keymap_context() -> gpui::keymap_matcher::KeymapContext {
-        let mut cx = gpui::keymap_matcher::KeymapContext::default();
-        cx.set.insert(Self::ui_name().into());
-        cx
-    }
-
-    fn debug_json(&self, _: &gpui::AppContext) -> gpui::serde_json::Value {
-        gpui::serde_json::Value::Null
-    }
-
-    fn text_for_range(&self, _: Range<usize>, _: &gpui::AppContext) -> Option<String> {
-        None
-    }
-
-    fn selected_text_range(&self, _: &gpui::AppContext) -> Option<Range<usize>> {
-        None
-    }
-
-    fn marked_text_range(&self, _: &gpui::AppContext) -> Option<Range<usize>> {
-        None
-    }
-
-    fn unmark_text(&mut self, _: &mut ViewContext<Self>) {}
-
-    fn replace_text_in_range(
-        &mut self,
-        _: Option<Range<usize>>,
-        _: &str,
-        _: &mut ViewContext<Self>,
-    ) {
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        _: Option<Range<usize>>,
-        _: &str,
-        _: Option<Range<usize>>,
-        _: &mut ViewContext<Self>,
-    ) {
     }
 }
 

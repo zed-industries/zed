@@ -19,7 +19,6 @@ import terminal from "./terminal";
 import contactList from "./contactList";
 import incomingCallNotification from "./incomingCallNotification";
 import { ColorScheme } from "../themes/common/colorScheme";
-import feedback from "./feedback";
 
 export default function app(colorScheme: ColorScheme): Object {
   return {
@@ -38,7 +37,6 @@ export default function app(colorScheme: ColorScheme): Object {
     projectDiagnostics: projectDiagnostics(colorScheme),
     projectPanel: projectPanel(colorScheme),
     contactsPopover: contactsPopover(colorScheme),
-    feedback: feedback(colorScheme),
     contactFinder: contactFinder(colorScheme),
     contactList: contactList(colorScheme),
     search: search(colorScheme),
