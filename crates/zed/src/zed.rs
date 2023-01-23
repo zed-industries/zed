@@ -31,7 +31,7 @@ use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
-use std::{env, path::Path, str, sync::Arc};
+use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
@@ -57,6 +57,7 @@ actions!(
         DebugElements,
         OpenSettings,
         OpenLog,
+        OpenLicenses,
         OpenTelemetryLog,
         OpenKeymap,
         OpenDefaultSettings,
@@ -178,6 +179,19 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
+        move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
+            open_bundled_file(
+                workspace,
+                app_state.clone(),
+                "licenses.md",
+                "Open Source License Attribution",
+                "Markdown",
+                cx,
+            );
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
         move |workspace: &mut Workspace, _: &OpenTelemetryLog, cx: &mut ViewContext<Workspace>| {
             open_telemetry_log_file(workspace, app_state.clone(), cx);
         }
@@ -191,11 +205,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
-            open_bundled_config_file(
+            open_bundled_file(
                 workspace,
                 app_state.clone(),
                 "keymaps/default.json",
                 "Default Key Bindings",
+                "JSON",
                 cx,
             );
         }
@@ -205,11 +220,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         move |workspace: &mut Workspace,
               _: &OpenDefaultSettings,
               cx: &mut ViewContext<Workspace>| {
-            open_bundled_config_file(
+            open_bundled_file(
                 workspace,
                 app_state.clone(),
                 "settings/default.json",
                 "Default Settings",
+                "JSON",
                 cx,
             );
         }
@@ -613,21 +629,24 @@ fn open_telemetry_log_file(
     }).detach();
 }
 
-fn open_bundled_config_file(
+fn open_bundled_file(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     asset_path: &'static str,
     title: &'static str,
+    language: &'static str,
     cx: &mut ViewContext<Workspace>,
 ) {
     workspace
         .with_local_workspace(&app_state, cx, |workspace, cx| {
             let project = workspace.project().clone();
             let buffer = project.update(cx, |project, cx| {
-                let text = Assets::get(asset_path).unwrap().data;
+                let text = Assets::get(asset_path)
+                    .map(|f| f.data)
+                    .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
                 let text = str::from_utf8(text.as_ref()).unwrap();
                 project
-                    .create_buffer(text, project.languages().get_language("JSON"), cx)
+                    .create_buffer(text, project.languages().get_language(language), cx)
                     .expect("creating buffers on a local workspace always succeeds")
             });
             let buffer =

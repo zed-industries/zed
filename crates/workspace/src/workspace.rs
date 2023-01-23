@@ -234,6 +234,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         workspace.toggle_sidebar(SidebarSide::Right, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
+
     cx.add_action(Workspace::split_pane_with_item);
     cx.add_action(Workspace::split_pane_with_project_entry);
 

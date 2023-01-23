@@ -11,15 +11,15 @@ const license = {
 
 export const light = createColorScheme(`${name}`, true, {
   neutral: chroma.scale([
-      "#090a0b",
-      "#202227",
-      "#383a42",
-      "#696c77",
-      "#a0a1a7",
-      "#e5e5e6",
-      "#f0f0f1",
-      "#fafafa",
-    ])
+    "#090a0b",
+    "#202227",
+    "#383a42",
+    "#696c77",
+    "#a0a1a7",
+    "#e5e5e6",
+    "#f0f0f1",
+    "#fafafa",
+  ])
     .domain([0.05, 0.22, 0.25, 0.45, 0.62, 0.8, 0.9, 1]),
 
   red: colorRamp(chroma("#ca1243")),

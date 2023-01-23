@@ -9,7 +9,13 @@ use core_foundation::{
 use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
 use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
 use serde::Deserialize;
-use std::{ffi::OsStr, fs, path::PathBuf, ptr};
+use std::{
+    ffi::OsStr,
+    fs::{self, OpenOptions},
+    io,
+    path::{Path, PathBuf},
+    ptr,
+};
 
 #[derive(Parser)]
 #[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
@@ -54,6 +60,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    for path in args.paths.iter() {
+        if !path.exists() {
+            touch(path.as_path())?;
+        }
+    }
+
     let (tx, rx) = launch_app(bundle_path)?;
 
     tx.send(CliRequest::Open {
@@ -75,6 +87,13 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn touch(path: &Path) -> io::Result<()> {
+    match OpenOptions::new().create(true).write(true).open(path) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 fn locate_bundle() -> Result<PathBuf> {
