@@ -1,5 +1,10 @@
 #!/bin/bash
-cargo about generate --workspace -o assets/licenses.md -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md
+
+set -e
+
+[[ "$(cargo about --version)" == "cargo-about 0.5.2" ]] || cargo install cargo-about --locked --git https://github.com/zed-industries/cargo-about --branch error-code-on-warn
+
+cargo about generate --fail-on-missing-license -o assets/licenses.md -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md
 
 # cargo about automatically html-escapes all output, so we need to undo it here: 
 sed -i '' 's/&quot;/"/g' assets/licenses.md

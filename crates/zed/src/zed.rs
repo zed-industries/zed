@@ -35,7 +35,7 @@ use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
-use std::{env, path::Path, str, sync::Arc};
+use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use system_specs::SystemSpecs;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
@@ -684,7 +684,9 @@ fn open_bundled_file(
         .with_local_workspace(&app_state, cx, |workspace, cx| {
             let project = workspace.project().clone();
             let buffer = project.update(cx, |project, cx| {
-                let text = Assets::get(asset_path).unwrap().data;
+                let text = Assets::get(asset_path)
+                    .map(|f| f.data)
+                    .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
                 let text = str::from_utf8(text.as_ref()).unwrap();
                 project
                     .create_buffer(text, project.languages().get_language(language), cx)
