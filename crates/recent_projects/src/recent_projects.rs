@@ -13,7 +13,7 @@ use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use workspace::{OpenPaths, Workspace, WorkspaceLocation, WORKSPACE_DB};
 
-actions!(recent_projects, [Toggle]);
+actions!(projects, [OpenRecent]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(RecentProjectsView::toggle);
@@ -40,7 +40,7 @@ impl RecentProjectsView {
         }
     }
 
-    fn toggle(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+    fn toggle(_: &mut Workspace, _: &OpenRecent, cx: &mut ViewContext<Workspace>) {
         cx.spawn(|workspace, mut cx| async move {
             let workspace_locations = cx
                 .background()

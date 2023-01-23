@@ -81,7 +81,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Action {
                     name: "Open Recent...",
-                    action: Box::new(recent_projects::Toggle),
+                    action: Box::new(recent_projects::OpenRecent),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
