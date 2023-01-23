@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::{
     borrow::Cow,
     cell::RefCell,
-    cmp::{Ordering, Reverse},
+    cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
@@ -1004,15 +1004,21 @@ fn get_injections(
             prev_match = Some((mat.pattern_index, content_range.clone()));
 
             let combined = config.patterns[mat.pattern_index].combined;
-            let language_name = config.patterns[mat.pattern_index]
-                .language
-                .as_ref()
-                .map(|s| Cow::Borrowed(s.as_ref()))
-                .or_else(|| {
-                    let ix = config.language_capture_ix?;
-                    let node = mat.nodes_for_capture_index(ix).next()?;
-                    Some(Cow::Owned(text.text_for_range(node.byte_range()).collect()))
-                });
+
+            let mut language_name = None;
+            let mut step_range = content_range.clone();
+            if let Some(name) = config.patterns[mat.pattern_index].language.as_ref() {
+                language_name = Some(Cow::Borrowed(name.as_ref()))
+            } else if let Some(language_node) = config
+                .language_capture_ix
+                .and_then(|ix| mat.nodes_for_capture_index(ix).next())
+            {
+                step_range.start = cmp::min(content_range.start, language_node.start_byte());
+                step_range.end = cmp::max(content_range.end, language_node.end_byte());
+                language_name = Some(Cow::Owned(
+                    text.text_for_range(language_node.byte_range()).collect(),
+                ))
+            };
 
             if let Some(language_name) = language_name {
                 let language = language_registry
@@ -1020,8 +1026,8 @@ fn get_injections(
                     .or_else(|| language_registry.language_for_extension(&language_name));
                 if let Some(language) = language {
                     result = true;
-                    let range = text.anchor_before(content_range.start)
-                        ..text.anchor_after(content_range.end);
+                    let range =
+                        text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
                     if combined {
                         combined_injection_ranges
                             .get_mut(&language.clone())
