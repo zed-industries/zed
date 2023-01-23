@@ -683,9 +683,9 @@ impl Workspace {
 
             // Use the serialized workspace to construct the new window
             let (_, workspace) = cx.add_window(
-                (app_state.build_window_options)(
-                    serialized_workspace.as_ref().map(|sw| sw.bounds()),
-                ),
+                (app_state.build_window_options)(dbg!(serialized_workspace
+                    .as_ref()
+                    .map(|sw| sw.bounds()))),
                 |cx| {
                     let mut workspace = Workspace::new(
                         serialized_workspace,
@@ -697,15 +697,18 @@ impl Workspace {
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                     cx.observe_window_bounds(move |_, bounds, cx| {
                         let fullscreen = cx.window_is_fullscreen(cx.window_id());
-                        cx.background()
-                            .spawn(DB.set_bounds(
-                                workspace_id,
-                                fullscreen,
-                                bounds.min_x(),
-                                bounds.min_y(),
-                                bounds.width(),
-                                bounds.height(),
+                        let bounds = if let WindowBounds::Fixed(region) = bounds {
+                            Some((
+                                region.min_x(),
+                                region.min_y(),
+                                region.width(),
+                                region.height(),
                             ))
+                        } else {
+                            None
+                        };
+                        cx.background()
+                            .spawn(DB.set_bounds(workspace_id, fullscreen, bounds))
                             .detach_and_log_err(cx);
                     })
                     .detach();

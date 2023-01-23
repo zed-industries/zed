@@ -238,15 +238,11 @@ impl<'a> Statement<'a> {
 
     pub fn bind<T: Bind>(&self, value: T, index: i32) -> Result<i32> {
         debug_assert!(index > 0);
-        let after = value.bind(self, index)?;
-        debug_assert_eq!((after - index) as usize, value.column_count());
-        Ok(after)
+        Ok(value.bind(self, index)?)
     }
 
     pub fn column<T: Column>(&mut self) -> Result<T> {
-        let (result, after) = T::column(self, 0)?;
-        debug_assert_eq!(T::column_count(&result), after as usize);
-        Ok(result)
+        Ok(T::column(self, 0)?.0)
     }
 
     pub fn column_type(&mut self, index: i32) -> Result<SqlType> {
@@ -263,9 +259,7 @@ impl<'a> Statement<'a> {
     }
 
     pub fn with_bindings(&mut self, bindings: impl Bind) -> Result<&mut Self> {
-        let column_count = bindings.column_count();
-        let after = self.bind(bindings, 1)?;
-        debug_assert_eq!((after - 1) as usize, column_count);
+        self.bind(bindings, 1)?;
         Ok(self)
     }
 

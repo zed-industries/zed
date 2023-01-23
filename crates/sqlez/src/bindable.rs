@@ -9,37 +9,21 @@ use anyhow::{Context, Result};
 
 use crate::statement::{SqlType, Statement};
 
-pub trait StaticRowComponent {
-    fn static_column_count() -> usize {
+pub trait StaticColumnCount {
+    fn column_count() -> usize {
         1
     }
 }
 
-pub trait RowComponent {
-    fn column_count(&self) -> usize;
-}
-
-impl<T: StaticRowComponent> RowComponent for T {
-    fn column_count(&self) -> usize {
-        T::static_column_count()
-    }
-}
-
-impl<T: StaticRowComponent> StaticRowComponent for &T {
-    fn static_column_count() -> usize {
-        T::static_column_count()
-    }
-}
-
-pub trait Bind: RowComponent {
+pub trait Bind {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32>;
 }
 
-pub trait Column: Sized + RowComponent {
+pub trait Column: Sized {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)>;
 }
 
-impl StaticRowComponent for bool {}
+impl StaticColumnCount for bool {}
 impl Bind for bool {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -56,7 +40,7 @@ impl Column for bool {
     }
 }
 
-impl StaticRowComponent for &[u8] {}
+impl StaticColumnCount for &[u8] {}
 impl Bind for &[u8] {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -66,7 +50,7 @@ impl Bind for &[u8] {
     }
 }
 
-impl<const C: usize> StaticRowComponent for &[u8; C] {}
+impl<const C: usize> StaticColumnCount for &[u8; C] {}
 impl<const C: usize> Bind for &[u8; C] {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -76,7 +60,7 @@ impl<const C: usize> Bind for &[u8; C] {
     }
 }
 
-impl StaticRowComponent for Vec<u8> {}
+impl StaticColumnCount for Vec<u8> {}
 impl Bind for Vec<u8> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -96,7 +80,7 @@ impl Column for Vec<u8> {
     }
 }
 
-impl StaticRowComponent for f64 {}
+impl StaticColumnCount for f64 {}
 impl Bind for f64 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -116,7 +100,7 @@ impl Column for f64 {
     }
 }
 
-impl StaticRowComponent for f32 {}
+impl StaticColumnCount for f32 {}
 impl Bind for f32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -137,7 +121,7 @@ impl Column for f32 {
     }
 }
 
-impl StaticRowComponent for i32 {}
+impl StaticColumnCount for i32 {}
 impl Bind for i32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -155,7 +139,7 @@ impl Column for i32 {
     }
 }
 
-impl StaticRowComponent for i64 {}
+impl StaticColumnCount for i64 {}
 impl Bind for i64 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -172,7 +156,7 @@ impl Column for i64 {
     }
 }
 
-impl StaticRowComponent for u32 {}
+impl StaticColumnCount for u32 {}
 impl Bind for u32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         (*self as i64)
@@ -188,7 +172,7 @@ impl Column for u32 {
     }
 }
 
-impl StaticRowComponent for usize {}
+impl StaticColumnCount for usize {}
 impl Bind for usize {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         (*self as i64)
@@ -204,7 +188,7 @@ impl Column for usize {
     }
 }
 
-impl StaticRowComponent for &str {}
+impl StaticColumnCount for &str {}
 impl Bind for &str {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_text(start_index, self)?;
@@ -212,7 +196,7 @@ impl Bind for &str {
     }
 }
 
-impl StaticRowComponent for Arc<str> {}
+impl StaticColumnCount for Arc<str> {}
 impl Bind for Arc<str> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_text(start_index, self.as_ref())?;
@@ -220,7 +204,7 @@ impl Bind for Arc<str> {
     }
 }
 
-impl StaticRowComponent for String {}
+impl StaticColumnCount for String {}
 impl Bind for String {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_text(start_index, self)?;
@@ -242,17 +226,18 @@ impl Column for String {
     }
 }
 
-impl<T: StaticRowComponent> StaticRowComponent for Option<T> {
-    fn static_column_count() -> usize {
-        T::static_column_count()
+impl<T: StaticColumnCount> StaticColumnCount for Option<T> {
+    fn column_count() -> usize {
+        T::column_count()
     }
 }
-impl<T: Bind + StaticRowComponent> Bind for Option<T> {
+impl<T: Bind + StaticColumnCount> Bind for Option<T> {
     fn bind(&self, statement: &Statement, mut start_index: i32) -> Result<i32> {
         if let Some(this) = self {
             this.bind(statement, start_index)
         } else {
-            for _ in 0..T::static_column_count() {
+            for i in 0..T::column_count() {
+                dbg!(i);
                 statement.bind_null(start_index)?;
                 start_index += 1;
             }
@@ -261,22 +246,22 @@ impl<T: Bind + StaticRowComponent> Bind for Option<T> {
     }
 }
 
-impl<T: Column + StaticRowComponent> Column for Option<T> {
+impl<T: Column + StaticColumnCount> Column for Option<T> {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         if let SqlType::Null = statement.column_type(start_index)? {
-            Ok((None, start_index + T::static_column_count() as i32))
+            Ok((None, start_index + T::column_count() as i32))
         } else {
             T::column(statement, start_index).map(|(result, next_index)| (Some(result), next_index))
         }
     }
 }
 
-impl<T: StaticRowComponent, const COUNT: usize> StaticRowComponent for [T; COUNT] {
-    fn static_column_count() -> usize {
-        T::static_column_count() * COUNT
+impl<T: StaticColumnCount, const COUNT: usize> StaticColumnCount for [T; COUNT] {
+    fn column_count() -> usize {
+        T::column_count() * COUNT
     }
 }
-impl<T: Bind + StaticRowComponent, const COUNT: usize> Bind for [T; COUNT] {
+impl<T: Bind, const COUNT: usize> Bind for [T; COUNT] {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let mut current_index = start_index;
         for binding in self {
@@ -287,7 +272,7 @@ impl<T: Bind + StaticRowComponent, const COUNT: usize> Bind for [T; COUNT] {
     }
 }
 
-impl<T: Column + StaticRowComponent + Default + Copy, const COUNT: usize> Column for [T; COUNT] {
+impl<T: Column + Default + Copy, const COUNT: usize> Column for [T; COUNT] {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let mut array = [Default::default(); COUNT];
         let mut current_index = start_index;
@@ -298,21 +283,21 @@ impl<T: Column + StaticRowComponent + Default + Copy, const COUNT: usize> Column
     }
 }
 
-impl StaticRowComponent for &Path {}
+impl StaticColumnCount for &Path {}
 impl Bind for &Path {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         self.as_os_str().as_bytes().bind(statement, start_index)
     }
 }
 
-impl StaticRowComponent for Arc<Path> {}
+impl StaticColumnCount for Arc<Path> {}
 impl Bind for Arc<Path> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         self.as_ref().bind(statement, start_index)
     }
 }
 
-impl StaticRowComponent for PathBuf {}
+impl StaticColumnCount for PathBuf {}
 impl Bind for PathBuf {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         (self.as_ref() as &Path).bind(statement, start_index)
@@ -330,8 +315,8 @@ impl Column for PathBuf {
     }
 }
 
-impl StaticRowComponent for () {
-    fn static_column_count() -> usize {
+impl StaticColumnCount for () {
+    fn column_count() -> usize {
         0
     }
 }
@@ -350,11 +335,10 @@ impl Column for () {
 
 macro_rules! impl_tuple_row_traits {
     ( $($local:ident: $type:ident),+ ) => {
-        impl<$($type: RowComponent),+> RowComponent for ($($type,)+) {
-            fn column_count(&self) -> usize {
-                let ($($local,)+) = self;
+        impl<$($type: StaticColumnCount),+> StaticColumnCount for ($($type,)+) {
+            fn column_count() -> usize {
                 let mut count = 0;
-                $(count += $local.column_count();)+
+                $(count += $type::column_count();)+
                 count
             }
         }

@@ -2377,10 +2377,19 @@ impl MutableAppContext {
             let window = this.cx.windows.get_mut(&window_id)?;
             window.is_fullscreen = is_fullscreen;
 
-            let mut observations = this.window_fullscreen_observations.clone();
-            observations.emit(window_id, this, |callback, this| {
+            let mut fullscreen_observations = this.window_fullscreen_observations.clone();
+            fullscreen_observations.emit(window_id, this, |callback, this| {
                 callback(is_fullscreen, this)
             });
+
+            let bounds = if this.window_is_fullscreen(window_id) {
+                WindowBounds::Fullscreen
+            } else {
+                WindowBounds::Fixed(this.window_bounds(window_id))
+            };
+
+            let mut bounds_observations = this.window_bounds_observations.clone();
+            bounds_observations.emit(window_id, this, |callback, this| callback(bounds, this));
 
             Some(())
         });

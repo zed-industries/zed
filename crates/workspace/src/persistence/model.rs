@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use db::sqlez::{
-    bindable::{Bind, Column, StaticRowComponent},
+    bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use project::Project;
@@ -42,7 +42,7 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
     }
 }
 
-impl StaticRowComponent for WorkspaceLocation {}
+impl StaticColumnCount for WorkspaceLocation {}
 impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         bincode::serialize(&self.0)
@@ -254,8 +254,8 @@ impl Default for SerializedItem {
     }
 }
 
-impl StaticRowComponent for SerializedItem {
-    fn static_column_count() -> usize {
+impl StaticColumnCount for SerializedItem {
+    fn column_count() -> usize {
         3
     }
 }
@@ -283,8 +283,8 @@ impl Column for SerializedItem {
     }
 }
 
-impl StaticRowComponent for DockPosition {
-    fn static_column_count() -> usize {
+impl StaticColumnCount for DockPosition {
+    fn column_count() -> usize {
         2
     }
 }

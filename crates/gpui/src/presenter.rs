@@ -23,7 +23,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use smallvec::SmallVec;
 use sqlez::{
-    bindable::{Bind, Column, StaticRowComponent},
+    bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use std::{
@@ -932,7 +932,7 @@ impl ToJson for Axis {
     }
 }
 
-impl StaticRowComponent for Axis {}
+impl StaticColumnCount for Axis {}
 impl Bind for Axis {
     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
         match self {
