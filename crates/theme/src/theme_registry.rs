@@ -22,20 +22,13 @@ impl ThemeRegistry {
         })
     }
 
-    pub fn list(&self, internal: bool, experiments: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
+    pub fn list(&self, staff: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
         let mut dirs = self.assets.list("themes/");
 
-        if !internal {
+        if !staff {
             dirs = dirs
                 .into_iter()
-                .filter(|path| !path.starts_with("themes/Internal"))
-                .collect()
-        }
-
-        if !experiments {
-            dirs = dirs
-                .into_iter()
-                .filter(|path| !path.starts_with("themes/Experiments"))
+                .filter(|path| !path.starts_with("themes/staff"))
                 .collect()
         }
 

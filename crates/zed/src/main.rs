@@ -24,7 +24,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Fs, HomeDir};
+use project::Fs;
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -39,7 +39,11 @@ use terminal_view::{get_working_directory, TerminalView};
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
-use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
+use util::{
+    channel::RELEASE_CHANNEL,
+    paths::{self, StaffMode},
+    ResultExt, TryFutureExt,
+};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
@@ -104,7 +108,11 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
-        cx.set_global(HomeDir(paths::HOME.to_path_buf()));
+
+        #[cfg(not(debug_assertions))]
+        cx.set_global(StaffMode(false));
+        #[cfg(debug_assertions)]
+        cx.set_global(StaffMode(true));
 
         let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
 

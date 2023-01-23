@@ -8,8 +8,8 @@ export default colorSchemes;
 const schemeMeta: Meta[] = [];
 export { schemeMeta };
 
-const internalColorSchemes: ColorScheme[] = [];
-export { internalColorSchemes };
+const staffColorSchemes: ColorScheme[] = [];
+export { staffColorSchemes };
 
 const experimentalColorSchemes: ColorScheme[] = [];
 export { experimentalColorSchemes };
@@ -37,12 +37,8 @@ function fillColorSchemes(themesPath: string, colorSchemes: ColorScheme[]) {
 
 fillColorSchemes(themes_directory, colorSchemes);
 fillColorSchemes(
-  path.resolve(`${themes_directory}/internal`),
-  internalColorSchemes
-);
-fillColorSchemes(
-  path.resolve(`${themes_directory}/experiments`),
-  experimentalColorSchemes
+  path.resolve(`${themes_directory}/staff`),
+  staffColorSchemes
 );
 
 function fillMeta(themesPath: string, meta: Meta[]) {

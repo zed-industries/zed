@@ -1,4 +1,4 @@
-use crate::{parse_json_with_comments, Settings};
+use crate::parse_json_with_comments;
 use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;
@@ -42,16 +42,7 @@ struct ActionWithData(Box<str>, Box<RawValue>);
 
 impl KeymapFileContent {
     pub fn load_defaults(cx: &mut MutableAppContext) {
-        let settings = cx.global::<Settings>();
-        let mut paths = vec!["keymaps/default.json", "keymaps/vim.json"];
-
-        if settings.staff_mode {
-            paths.push("keymaps/internal.json")
-        }
-
-        paths.extend(settings.experiments.keymap_files());
-
-        for path in paths {
+        for path in ["keymaps/default.json", "keymaps/vim.json"] {
             Self::load(path, cx).unwrap();
         }
     }

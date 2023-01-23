@@ -49,30 +49,9 @@ script/zed-with-local-servers --release
 
 If you trigger `cmd-alt-i`, Zed will copy a JSON representation of the current window contents to the clipboard. You can paste this in a tool like [DJSON](https://chrome.google.com/webstore/detail/djson-json-viewer-formatt/chaeijjekipecdajnijdldjjipaegdjc?hl=en) to navigate the state of on-screen elements in a structured way.
 
-### Staff Only Features
+### Licensing
 
-Many features (e.g. the terminal) take significant time and effort before they are polished enough to be released to even Alpha users. But Zed's team workflow relies on fast, daily PRs and there can be large merge conflicts for feature branchs that diverge for a few days. To bridge this gap, there is a `staff_mode` field in the Settings that staff can set to enable these unpolished or incomplete features. Note that this setting isn't leaked via autocompletion, but there is no mechanism to stop users from setting this anyway. As initilization of Zed components is only done once, on startup, setting `staff_mode` may require a restart to take effect. You can set staff only key bindings in the `assets/keymaps/internal.json` file, and add staff only themes in the `styles/src/themes/internal` directory
-
-### Experimental Features
-
-A user facing feature flag can be added to Zed by:
-
-* Adding a setting to the crates/settings/src/settings.rs FeatureFlags struct. Use a boolean for a simple on/off, or use a struct to experiment with different configuration options. 
-* If the feature needs keybindings, add a file to the `assets/keymaps/experiments/` folder, then update the `FeatureFlags::keymap_files()` method to check for your feature's flag and add it's keybindings's path to the method's list. 
-* If you want to add an experimental theme, add it to the `styles/src/themes/experiments` folder
-
-The Settings global should be initialized with the user's feature flags by the time the feature's `init(cx)` equivalent is called.
-
-To promote an experimental feature to a full feature: 
-
-* If this is an experimental theme, move the theme file from the `styles/src/themes/experiments` folder to the `styles/src/themes/` folder
-* Take the features settings (if any) and add them under a new variable in the Settings struct. Don't forget to add a `merge()` call in `set_user_settings()`!
-* Take the feature's keybindings and add them to the default.json (or equivalent) file
-* Remove the file from the `FeatureFlags::keymap_files()` method
-* Remove the conditional in the feature's `init(cx)` equivalent.
-
-
-That's it 😸
+We use cargo-about to automatically comply with open source licenses. If CI is failing due to an unsupported license, first check whether this system is able to support this license type; ask a lawyer if you're unsure. Once you've verified the license, go to `script/licenses/zed-licenses.toml` and add the associated `accepted` SPDX identifier. If cargo about cannot find the license for the dependency at all, add a clarification field at the end of the file, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
 
 ### Wasm Plugins
 
