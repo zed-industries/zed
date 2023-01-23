@@ -7,18 +7,18 @@ use futures::AsyncReadExt;
 use gpui::{
     actions,
     elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
-    serde_json, AnyViewHandle, CursorStyle, Element, ElementBox, Entity, ModelHandle, MouseButton,
-    MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    serde_json, AnyViewHandle, AppContext, CursorStyle, Element, ElementBox, Entity, ModelHandle,
+    MouseButton, MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
 use postage::prelude::Stream;
 
 use lazy_static::lazy_static;
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::Project;
 use serde::Serialize;
 use settings::Settings;
-use smallvec::SmallVec;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
@@ -345,16 +345,12 @@ impl Item for FeedbackEditor {
             .boxed()
     }
 
+    fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
+        self.editor.for_each_project_item(cx, f)
+    }
+
     fn to_item_events(_: &Self::Event) -> Vec<workspace::item::ItemEvent> {
         Vec::new()
-    }
-
-    fn project_path(&self, _: &gpui::AppContext) -> Option<ProjectPath> {
-        None
-    }
-
-    fn project_entry_ids(&self, _: &gpui::AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-        SmallVec::new()
     }
 
     fn is_singleton(&self, _: &gpui::AppContext) -> bool {

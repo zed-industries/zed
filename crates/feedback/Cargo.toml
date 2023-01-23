@@ -25,7 +25,6 @@ project = { path = "../project" }
 search = { path = "../search" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 settings = { path = "../settings" }
-smallvec = { version = "1.6", features = ["union"] }
 sysinfo = "0.27.1"
 theme = { path = "../theme" }
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }

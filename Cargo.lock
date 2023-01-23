@@ -2040,7 +2040,6 @@ dependencies = [
  "search",
  "serde",
  "settings",
- "smallvec",
  "sysinfo",
  "theme",
  "tree-sitter-markdown",
