@@ -2035,6 +2035,7 @@ dependencies = [
  "isahc",
  "language",
  "lazy_static",
+ "log",
  "postage",
  "project",
  "search",

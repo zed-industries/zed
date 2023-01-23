@@ -36,7 +36,7 @@ pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
-struct OpenBrowser {
+pub struct OpenBrowser {
     url: Arc<str>,
 }
 

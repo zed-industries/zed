@@ -14,6 +14,7 @@ anyhow = "1.0.38"
 client = { path = "../client" }
 editor = { path = "../editor" }
 language = { path = "../language" }
+log = "0.4"
 futures = "0.3"
 gpui = { path = "../gpui" }
 human_bytes = "0.4.1"

@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN};
-use editor::Editor;
+use editor::{Anchor, Editor};
 use futures::AsyncReadExt;
 use gpui::{
     actions,
@@ -21,6 +21,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use workspace::{
     item::{Item, ItemHandle},
+    searchable::{SearchableItem, SearchableItemHandle},
     StatusItemView, Workspace,
 };
 
@@ -31,12 +32,14 @@ lazy_static! {
         std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
 }
 
-// TODO FEEDBACK: In the future, it would be nice to use this is some sort of live-rendering character counter thing
-// Currently, we are just checking on submit that the the text exceeds the `start` value in this range
 const FEEDBACK_CHAR_COUNT_RANGE: Range<usize> = Range {
-    start: 5,
+    start: 10,
     end: 1000,
 };
+
+const FEEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here in the form of Markdown. Save the tab to submit your feedback.";
+const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
+    "Feedback failed to submit, see error log for details.";
 
 actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
 
@@ -170,26 +173,21 @@ impl FeedbackEditor {
         buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        const FEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here in the form of Markdown. Save the tab to submit your feedback.";
-
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
-            editor.set_placeholder_text(FEDBACK_PLACEHOLDER_TEXT, cx);
+            editor.set_placeholder_text(FEEDBACK_PLACEHOLDER_TEXT, cx);
             editor
         });
+
+        cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
+            .detach();
 
         let this = Self { editor, project };
         this
     }
 
     fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        // TODO FEEDBACK: This doesn't work like I expected it would
-        // let markdown_language = Arc::new(Language::new(
-        //     LanguageConfig::default(),
-        //     Some(tree_sitter_markdown::language()),
-        // ));
-
         let markdown_language = project.read(cx).languages().get_language("Markdown");
 
         let buffer = project
@@ -206,7 +204,6 @@ impl FeedbackEditor {
         _: gpui::ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        // TODO FEEDBACK: These don't look right
         let feedback_text_length = self.editor.read(cx).buffer().read(cx).len(cx);
 
         if feedback_text_length <= FEEDBACK_CHAR_COUNT_RANGE.start {
@@ -223,35 +220,42 @@ impl FeedbackEditor {
         }
 
         let mut answer = cx.prompt(
-            PromptLevel::Warning,
+            PromptLevel::Info,
             "Ready to submit your feedback?",
             &["Yes, Submit!", "No"],
         );
 
         let this = cx.handle();
+        let client = cx.global::<Arc<Client>>().clone();
+        let feedback_text = self.editor.read(cx).text(cx);
+        let specs = SystemSpecs::new(cx);
+
         cx.spawn(|_, mut cx| async move {
             let answer = answer.recv().await;
 
             if answer == Some(0) {
-                cx.update(|cx| {
-                    this.update(cx, |this, cx| match this.submit_feedback(cx) {
-                        // TODO FEEDBACK
-                        Ok(_) => {
-                            // Close file after feedback sent successfully
-                            // workspace
-                            //     .update(cx, |workspace, cx| {
-                            //         Pane::close_active_item(workspace, &Default::default(), cx)
-                            //             .unwrap()
-                            //     })
-                            //     .await
-                            //     .unwrap();
-                        }
-                        Err(error) => {
-                            cx.prompt(PromptLevel::Critical, &error.to_string(), &["OK"]);
-                            // Prompt that something failed (and to check the log for the exact error? and to try again?)
-                        }
-                    })
-                })
+                match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
+                    Ok(_) => {
+                        cx.update(|cx| {
+                            this.update(cx, |_, cx| {
+                                cx.dispatch_action(workspace::CloseActiveItem);
+                            })
+                        });
+                    }
+                    Err(error) => {
+                        log::error!("{}", error);
+
+                        cx.update(|cx| {
+                            this.update(cx, |_, cx| {
+                                cx.prompt(
+                                    PromptLevel::Critical,
+                                    FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                    &["OK"],
+                                );
+                            })
+                        });
+                    }
+                }
             }
         })
         .detach();
@@ -259,63 +263,38 @@ impl FeedbackEditor {
         Task::ready(Ok(()))
     }
 
-    fn submit_feedback(&mut self, cx: &mut ViewContext<'_, Self>) -> anyhow::Result<()> {
-        let feedback_text = self.editor.read(cx).text(cx);
-        let zed_client = cx.global::<Arc<Client>>();
-        let system_specs = SystemSpecs::new(cx);
+    async fn submit_feedback(
+        feedback_text: &str,
+        zed_client: Arc<Client>,
+        system_specs: SystemSpecs,
+    ) -> anyhow::Result<()> {
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
 
         let metrics_id = zed_client.metrics_id();
         let http_client = zed_client.http_client();
 
-        // TODO FEEDBACK: how to get error out of the thread
+        let request = FeedbackRequestBody {
+            feedback_text: &feedback_text,
+            metrics_id,
+            system_specs,
+            token: ZED_SECRET_CLIENT_TOKEN,
+        };
 
-        let this = cx.handle();
+        let json_bytes = serde_json::to_vec(&request)?;
 
-        cx.spawn(|_, async_cx| {
-            async move {
-                let request = FeedbackRequestBody {
-                    feedback_text: &feedback_text,
-                    metrics_id,
-                    system_specs,
-                    token: ZED_SECRET_CLIENT_TOKEN,
-                };
+        let request = Request::post(feedback_endpoint)
+            .header("content-type", "application/json")
+            .body(json_bytes.into())?;
 
-                let json_bytes = serde_json::to_vec(&request)?;
+        let mut response = http_client.send(request).await?;
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
 
-                let request = Request::post(feedback_endpoint)
-                    .header("content-type", "application/json")
-                    .body(json_bytes.into())?;
+        let response_status = response.status();
 
-                let mut response = http_client.send(request).await?;
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-
-                let response_status = response.status();
-
-                if !response_status.is_success() {
-                    bail!("Feedback API failed with: {}", response_status)
-                }
-
-                this.read_with(&async_cx, |_this, _cx| -> anyhow::Result<()> {
-                    bail!("Error")
-                })?;
-
-                // TODO FEEDBACK: Use or remove
-                // Will need to handle error cases
-                // async_cx.update(|cx| {
-                //     this.update(cx, |this, cx| {
-                //         this.handle_error(error);
-                //         cx.notify();
-                //         cx.dispatch_action(ShowErrorPopover);
-                //         this.error_text = "Embedding failed"
-                //     })
-                // });
-
-                Ok(())
-            }
-        })
-        .detach();
+        if !response_status.is_success() {
+            bail!("Feedback API failed with error: {}", response_status)
+        }
 
         Ok(())
     }
@@ -323,13 +302,9 @@ impl FeedbackEditor {
 
 impl FeedbackEditor {
     pub fn deploy(workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>) {
-        // if let Some(existing) = workspace.item_of_type::<FeedbackEditor>(cx) {
-        //     workspace.activate_item(&existing, cx);
-        // } else {
         let feedback_editor =
             cx.add_view(|cx| FeedbackEditor::new(workspace.project().clone(), cx));
         workspace.add_item(Box::new(feedback_editor), cx);
-        // }
     }
 }
 
@@ -350,7 +325,7 @@ impl View for FeedbackEditor {
 }
 
 impl Entity for FeedbackEditor {
-    type Event = ();
+    type Event = editor::Event;
 }
 
 impl Item for FeedbackEditor {
@@ -453,52 +428,59 @@ impl Item for FeedbackEditor {
     ) -> Task<anyhow::Result<ViewHandle<Self>>> {
         unreachable!()
     }
+
+    fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
 }
 
-// impl SearchableItem for FeedbackEditor {
-//     type Match = <Editor as SearchableItem>::Match;
+impl SearchableItem for FeedbackEditor {
+    type Match = Range<Anchor>;
 
-//     fn to_search_event(event: &Self::Event) -> Option<workspace::searchable::SearchEvent> {
-//         Editor::to_search_event(event)
-//     }
+    fn to_search_event(event: &Self::Event) -> Option<workspace::searchable::SearchEvent> {
+        Editor::to_search_event(event)
+    }
 
-//     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-//         self.
-//     }
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.clear_matches(cx))
+    }
 
-//     fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-//         todo!()
-//     }
+    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.update_matches(matches, cx))
+    }
 
-//     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
-//         todo!()
-//     }
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+        self.editor
+            .update(cx, |editor, cx| editor.query_suggestion(cx))
+    }
 
-//     fn activate_match(
-//         &mut self,
-//         index: usize,
-//         matches: Vec<Self::Match>,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         todo!()
-//     }
+    fn activate_match(
+        &mut self,
+        index: usize,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor
+            .update(cx, |editor, cx| editor.activate_match(index, matches, cx))
+    }
 
-//     fn find_matches(
-//         &mut self,
-//         query: project::search::SearchQuery,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Vec<Self::Match>> {
-//         todo!()
-//     }
+    fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Self::Match>> {
+        self.editor
+            .update(cx, |editor, cx| editor.find_matches(query, cx))
+    }
 
-//     fn active_match_index(
-//         &mut self,
-//         matches: Vec<Self::Match>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<usize> {
-//         todo!()
-//     }
-// }
-
-// TODO FEEDBACK: search buffer?
-// TODO FEEDBACK: warnings
+    fn active_match_index(
+        &mut self,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        self.editor
+            .update(cx, |editor, cx| editor.active_match_index(matches, cx))
+    }
+}

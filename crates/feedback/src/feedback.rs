@@ -7,10 +7,9 @@ use serde::Deserialize;
 use system_specs::SystemSpecs;
 use workspace::Workspace;
 
-// TODO FEEDBACK: This open brownser code is duplicated from the zed crate, where should we refactor it to?
 #[derive(Deserialize, Clone, PartialEq)]
-struct OpenBrowser {
-    url: Arc<str>,
+pub struct OpenBrowser {
+    pub url: Arc<str>,
 }
 
 impl_actions!(zed, [OpenBrowser]);
