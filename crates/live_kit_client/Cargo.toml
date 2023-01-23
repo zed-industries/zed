@@ -3,6 +3,7 @@ name = "live_kit_client"
 version = "0.1.0"
 edition = "2021"
 description = "Bindings to LiveKit Swift client SDK"
+publish = false
 
 [lib]
 path = "src/live_kit_client.rs"

@@ -9,6 +9,7 @@
 /assets/themes/*.json
 /assets/themes/Internal/*.json
 /assets/themes/Experiments/*.json
+/assets/licenses.md
 **/venv
 .build
 Packages
