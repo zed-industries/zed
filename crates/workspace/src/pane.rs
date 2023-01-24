@@ -103,7 +103,7 @@ impl_internal_actions!(
         DeploySplitMenu,
         DeployNewMenu,
         DeployDockMenu,
-        MoveItem,
+        MoveItem
     ]
 );
 
@@ -1150,7 +1150,7 @@ impl Pane {
 
             row.add_child({
                 enum Tab {}
-                dragged_item_receiver::<Tab, _>(ix, ix, true, None, cx, {
+                let mut receiver = dragged_item_receiver::<Tab, _>(ix, ix, true, None, cx, {
                     let item = item.clone();
                     let pane = pane.clone();
                     let detail = detail.clone();
@@ -1162,50 +1162,51 @@ impl Pane {
                         let hovered = mouse_state.hovered();
                         Self::render_tab(&item, pane, ix == 0, detail, hovered, tab_style, cx)
                     }
-                })
-                .with_cursor_style(if pane_active && tab_active {
-                    CursorStyle::Arrow
-                } else {
-                    CursorStyle::PointingHand
-                })
-                .on_down(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(ActivateItem(ix));
-                    cx.propagate_event();
-                })
-                .on_click(MouseButton::Middle, {
-                    let item = item.clone();
-                    let pane = pane.clone();
-                    move |_, cx: &mut EventContext| {
-                        cx.dispatch_action(CloseItem {
-                            item_id: item.id(),
-                            pane: pane.clone(),
-                        })
-                    }
-                })
-                .as_draggable(
-                    DraggedItem {
-                        item,
-                        pane: pane.clone(),
-                    },
-                    {
-                        let theme = cx.global::<Settings>().theme.clone();
+                });
 
-                        let detail = detail.clone();
-                        move |dragged_item, cx: &mut RenderContext<Workspace>| {
-                            let tab_style = &theme.workspace.tab_bar.dragged_tab;
-                            Self::render_tab(
-                                &dragged_item.item,
-                                dragged_item.pane.clone(),
-                                false,
-                                detail,
-                                false,
-                                &tab_style,
-                                cx,
-                            )
+                if !pane_active || !tab_active {
+                    receiver = receiver.with_cursor_style(CursorStyle::PointingHand);
+                }
+
+                receiver
+                    .on_down(MouseButton::Left, move |_, cx| {
+                        cx.dispatch_action(ActivateItem(ix));
+                        cx.propagate_event();
+                    })
+                    .on_click(MouseButton::Middle, {
+                        let item = item.clone();
+                        let pane = pane.clone();
+                        move |_, cx: &mut EventContext| {
+                            cx.dispatch_action(CloseItem {
+                                item_id: item.id(),
+                                pane: pane.clone(),
+                            })
                         }
-                    },
-                )
-                .boxed()
+                    })
+                    .as_draggable(
+                        DraggedItem {
+                            item,
+                            pane: pane.clone(),
+                        },
+                        {
+                            let theme = cx.global::<Settings>().theme.clone();
+
+                            let detail = detail.clone();
+                            move |dragged_item, cx: &mut RenderContext<Workspace>| {
+                                let tab_style = &theme.workspace.tab_bar.dragged_tab;
+                                Self::render_tab(
+                                    &dragged_item.item,
+                                    dragged_item.pane.clone(),
+                                    false,
+                                    detail,
+                                    false,
+                                    &tab_style,
+                                    cx,
+                                )
+                            }
+                        },
+                    )
+                    .boxed()
             })
         }
 

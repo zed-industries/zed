@@ -1,10 +1,7 @@
-mod feedback;
 pub mod languages;
 pub mod menus;
-pub mod system_specs;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
@@ -23,8 +20,7 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, ClipboardItem, PromptLevel, TitlebarOptions, ViewContext,
-    WindowKind,
+    AssetSource, AsyncAppContext, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -35,14 +31,13 @@ use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
-use std::{env, path::Path, str, sync::Arc};
-use system_specs::SystemSpecs;
+use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt};
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
-struct OpenBrowser {
+pub struct OpenBrowser {
     url: Arc<str>,
 }
 
@@ -62,6 +57,7 @@ actions!(
         DebugElements,
         OpenSettings,
         OpenLog,
+        OpenLicenses,
         OpenTelemetryLog,
         OpenKeymap,
         OpenDefaultSettings,
@@ -71,9 +67,6 @@ actions!(
         ResetBufferFontSize,
         InstallCommandLineInterface,
         ResetDatabase,
-        CopySystemSpecsIntoClipboard,
-        RequestFeature,
-        FileBugReport
     ]
 );
 
@@ -186,6 +179,19 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
+        move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
+            open_bundled_file(
+                workspace,
+                app_state.clone(),
+                "licenses.md",
+                "Open Source License Attribution",
+                "Markdown",
+                cx,
+            );
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
         move |workspace: &mut Workspace, _: &OpenTelemetryLog, cx: &mut ViewContext<Workspace>| {
             open_telemetry_log_file(workspace, app_state.clone(), cx);
         }
@@ -199,11 +205,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
-            open_bundled_config_file(
+            open_bundled_file(
                 workspace,
                 app_state.clone(),
                 "keymaps/default.json",
                 "Default Key Bindings",
+                "JSON",
                 cx,
             );
         }
@@ -213,11 +220,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         move |workspace: &mut Workspace,
               _: &OpenDefaultSettings,
               cx: &mut ViewContext<Workspace>| {
-            open_bundled_config_file(
+            open_bundled_file(
                 workspace,
                 app_state.clone(),
                 "settings/default.json",
                 "Default Settings",
+                "JSON",
                 cx,
             );
         }
@@ -253,41 +261,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
          _: &project_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
             workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
-        },
-    );
-
-    cx.add_action(
-        |_: &mut Workspace, _: &CopySystemSpecsIntoClipboard, cx: &mut ViewContext<Workspace>| {
-            let system_specs = SystemSpecs::new(cx).to_string();
-            let item = ClipboardItem::new(system_specs.clone());
-            cx.prompt(
-                gpui::PromptLevel::Info,
-                &format!("Copied into clipboard:\n\n{system_specs}"),
-                &["OK"],
-            );
-            cx.write_to_clipboard(item);
-        },
-    );
-
-    cx.add_action(
-        |_: &mut Workspace, _: &RequestFeature, cx: &mut ViewContext<Workspace>| {
-            let url = "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
-            cx.dispatch_action(OpenBrowser {
-                url: url.into(),
-            });
-        },
-    );
-
-    cx.add_action(
-        |_: &mut Workspace, _: &FileBugReport, cx: &mut ViewContext<Workspace>| {
-            let system_specs_text = SystemSpecs::new(cx).to_string();
-            let url = format!(
-                "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
-                urlencoding::encode(&system_specs_text)
-            );
-            cx.dispatch_action(OpenBrowser {
-                url: url.into(),
-            });
         },
     );
 
@@ -375,12 +348,12 @@ pub fn initialize_workspace(
     let activity_indicator =
         activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    let feedback_link = cx.add_view(|_| feedback::FeedbackLink);
+    let feedback_button = cx.add_view(|_| feedback::feedback_editor::FeedbackButton {});
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
         status_bar.add_right_item(cursor_position, cx);
-        status_bar.add_right_item(feedback_link, cx);
+        status_bar.add_right_item(feedback_button, cx);
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
@@ -660,21 +633,24 @@ fn open_telemetry_log_file(
     }).detach();
 }
 
-fn open_bundled_config_file(
+fn open_bundled_file(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     asset_path: &'static str,
     title: &'static str,
+    language: &'static str,
     cx: &mut ViewContext<Workspace>,
 ) {
     workspace
         .with_local_workspace(&app_state, cx, |workspace, cx| {
             let project = workspace.project().clone();
             let buffer = project.update(cx, |project, cx| {
-                let text = Assets::get(asset_path).unwrap().data;
+                let text = Assets::get(asset_path)
+                    .map(|f| f.data)
+                    .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
                 let text = str::from_utf8(text.as_ref()).unwrap();
                 project
-                    .create_buffer(text, project.languages().language_for_name("JSON"), cx)
+                    .create_buffer(text, project.languages().language_for_name(language), cx)
                     .expect("creating buffers on a local workspace always succeeds")
             });
             let buffer =
