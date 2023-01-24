@@ -853,8 +853,8 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
         (0..urls.count())
             .into_iter()
             .filter_map(|i| {
-                let path = urls.objectAtIndex(i);
-                match CStr::from_ptr(path.absoluteString().UTF8String() as *mut c_char).to_str() {
+                let url = urls.objectAtIndex(i);
+                match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {
                     Ok(string) => Some(string.to_string()),
                     Err(err) => {
                         log::error!("error converting path to string: {}", err);
