@@ -422,6 +422,7 @@ pub struct LanguageRegistry {
     >,
     subscription: RwLock<(watch::Sender<()>, watch::Receiver<()>)>,
     theme: RwLock<Option<Arc<Theme>>>,
+    version: AtomicUsize,
 }
 
 impl LanguageRegistry {
@@ -436,6 +437,7 @@ impl LanguageRegistry {
             lsp_binary_paths: Default::default(),
             subscription: RwLock::new(watch::channel()),
             theme: Default::default(),
+            version: Default::default(),
         }
     }
 
@@ -449,11 +451,16 @@ impl LanguageRegistry {
             language.set_theme(&theme.editor.syntax);
         }
         self.languages.write().push(language);
+        self.version.fetch_add(1, SeqCst);
         *self.subscription.write().0.borrow_mut() = ();
     }
 
     pub fn subscribe(&self) -> watch::Receiver<()> {
         self.subscription.read().1.clone()
+    }
+
+    pub fn version(&self) -> usize {
+        self.version.load(SeqCst)
     }
 
     pub fn set_theme(&self, theme: Arc<Theme>) {

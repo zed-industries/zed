@@ -797,12 +797,16 @@ impl Buffer {
         self.parsing_in_background
     }
 
+    pub fn contains_unknown_injections(&self) -> bool {
+        self.syntax_map.lock().contains_unknown_injections()
+    }
+
     #[cfg(test)]
     pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
         self.sync_parse_timeout = timeout;
     }
 
-    fn reparse(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn reparse(&mut self, cx: &mut ModelContext<Self>) {
         if self.parsing_in_background {
             return;
         }
@@ -819,13 +823,13 @@ impl Buffer {
         syntax_map.interpolate(&text);
         let language_registry = syntax_map.language_registry();
         let mut syntax_snapshot = syntax_map.snapshot();
-        let syntax_map_version = syntax_map.parsed_version();
         drop(syntax_map);
 
         let parse_task = cx.background().spawn({
             let language = language.clone();
+            let language_registry = language_registry.clone();
             async move {
-                syntax_snapshot.reparse(&syntax_map_version, &text, language_registry, language);
+                syntax_snapshot.reparse(&text, language_registry, language);
                 syntax_snapshot
             }
         });
@@ -835,7 +839,7 @@ impl Buffer {
             .block_with_timeout(self.sync_parse_timeout, parse_task)
         {
             Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, parsed_version, cx);
+                self.did_finish_parsing(new_syntax_snapshot, cx);
                 return;
             }
             Err(parse_task) => {
@@ -847,9 +851,15 @@ impl Buffer {
                             this.language.as_ref().map_or(true, |current_language| {
                                 !Arc::ptr_eq(&language, current_language)
                             });
-                        let parse_again =
-                            this.version.changed_since(&parsed_version) || grammar_changed;
-                        this.did_finish_parsing(new_syntax_map, parsed_version, cx);
+                        let language_registry_changed = new_syntax_map
+                            .contains_unknown_injections()
+                            && language_registry.map_or(false, |registry| {
+                                registry.version() != new_syntax_map.language_registry_version()
+                            });
+                        let parse_again = language_registry_changed
+                            || grammar_changed
+                            || this.version.changed_since(&parsed_version);
+                        this.did_finish_parsing(new_syntax_map, cx);
                         this.parsing_in_background = false;
                         if parse_again {
                             this.reparse(cx);
@@ -861,14 +871,9 @@ impl Buffer {
         }
     }
 
-    fn did_finish_parsing(
-        &mut self,
-        syntax_snapshot: SyntaxSnapshot,
-        version: clock::Global,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut ModelContext<Self>) {
         self.parse_count += 1;
-        self.syntax_map.lock().did_parse(syntax_snapshot, version);
+        self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
         cx.notify();
