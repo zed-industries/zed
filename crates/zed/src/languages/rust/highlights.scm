@@ -52,6 +52,7 @@
 [
   "as"
   "async"
+  "await"
   "break"
   "const"
   "continue"

@@ -5,6 +5,7 @@
     (assignment_expression)
     (let_declaration)
     (let_chain)
+    (await_expression)
 ] @indent
 
 (_ "[" "]" @end) @indent

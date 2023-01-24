@@ -40,5 +40,4 @@
       ")" @context)) @item
 
 (field_declaration
-    name: (_) @name
-    type: (_) @context) @item
+    name: (_) @name) @item

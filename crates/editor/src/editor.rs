@@ -44,7 +44,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
-use hover_popover::{hide_hover, HoverState};
+use hover_popover::{hide_hover, HideHover, HoverState};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -62,7 +62,7 @@ pub use multi_buffer::{
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
-use project::{FormatTrigger, LocationLink, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -1008,6 +1008,15 @@ impl Editor {
         Self::new(EditorMode::SingleLine, buffer, None, field_editor_style, cx)
     }
 
+    pub fn multi_line(
+        field_editor_style: Option<Arc<GetFieldEditorTheme>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::Full, buffer, None, field_editor_style, cx)
+    }
+
     pub fn auto_height(
         max_lines: usize,
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
@@ -1086,6 +1095,8 @@ impl Editor {
 
         let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
+        let soft_wrap_mode_override =
+            (mode == EditorMode::SingleLine).then(|| settings::SoftWrap::None);
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1101,7 +1112,7 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
-            soft_wrap_mode_override: None,
+            soft_wrap_mode_override,
             get_field_editor_theme,
             project,
             focused: false,
@@ -1319,7 +1330,7 @@ impl Editor {
                 }
             }
 
-            hide_hover(self, cx);
+            hide_hover(self, &HideHover, cx);
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -1694,7 +1705,7 @@ impl Editor {
             return;
         }
 
-        if hide_hover(self, cx) {
+        if hide_hover(self, &HideHover, cx) {
             return;
         }
 
@@ -1735,7 +1746,7 @@ impl Editor {
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
         {
-            if let Some(language) = snapshot.language_at(selection.head()) {
+            if let Some(language) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
@@ -1896,7 +1907,7 @@ impl Editor {
                         let end = selection.end;
 
                         let mut insert_extra_newline = false;
-                        if let Some(language) = buffer.language_at(start) {
+                        if let Some(language) = buffer.language_scope_at(start) {
                             let leading_whitespace_len = buffer
                                 .reversed_chars_at(start)
                                 .take_while(|c| c.is_whitespace() && *c != '\n')
@@ -2020,7 +2031,9 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| (s.start..s.end, text.clone())),
-                    Some(AutoindentMode::EachLine),
+                    Some(AutoindentMode::Block {
+                        original_indent_columns: Vec::new(),
+                    }),
                     cx,
                 );
                 anchors
@@ -3629,9 +3642,7 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
-        dbg!("undo");
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            dbg!(tx_id);
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.change_selections(None, cx, |s| {
                     s.select_anchors(selections.to_vec());
@@ -4531,7 +4542,10 @@ impl Editor {
 
             // TODO: Handle selections that cross excerpts
             for selection in &mut selections {
-                let language = if let Some(language) = snapshot.language_at(selection.start) {
+                let start_column = snapshot.indent_size_for_line(selection.start.row).len;
+                let language = if let Some(language) =
+                    snapshot.language_scope_at(Point::new(selection.start.row, start_column))
+                {
                     language
                 } else {
                     continue;
@@ -4801,7 +4815,7 @@ impl Editor {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         let mut new_selection = s.newest_anchor().clone();
                         new_selection.collapse_to(jump_to, SelectionGoal::None);
                         s.select_anchors(vec![new_selection.clone()]);
@@ -4847,7 +4861,7 @@ impl Editor {
 
             if let Some((primary_range, group_id)) = group {
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
                             start: primary_range.start,
@@ -4922,7 +4936,7 @@ impl Editor {
                 .dedup();
 
             if let Some(hunk) = hunks.next() {
-                this.change_selections(Some(Autoscroll::center()), cx, |s| {
+                this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     let row = hunk.start_display_row();
                     let point = DisplayPoint::new(row, 0);
                     s.select_display_ranges([point..point]);
@@ -5007,25 +5021,49 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let pane = workspace.active_pane().clone();
-        for definition in definitions {
+        // If there is one definition, just open it directly
+        if let [definition] = definitions.as_slice() {
             let range = definition
                 .target
                 .range
                 .to_offset(definition.target.buffer.read(cx));
 
-            let target_editor_handle = workspace.open_project_item(definition.target.buffer, cx);
+            let target_editor_handle =
+                workspace.open_project_item(definition.target.buffer.clone(), cx);
             target_editor_handle.update(cx, |target_editor, cx| {
                 // When selecting a definition in a different buffer, disable the nav history
                 // to avoid creating a history entry at the previous cursor location.
                 if editor_handle != target_editor_handle {
                     pane.update(cx, |pane, _| pane.disable_history());
                 }
-                target_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
 
                 pane.update(cx, |pane, _| pane.enable_history());
             });
+        } else {
+            let replica_id = editor_handle.read(cx).replica_id(cx);
+            let title = definitions
+                .iter()
+                .find(|definition| definition.origin.is_some())
+                .and_then(|definition| {
+                    definition.origin.as_ref().map(|origin| {
+                        let buffer = origin.buffer.read(cx);
+                        format!(
+                            "Definitions for {}",
+                            buffer
+                                .text_for_range(origin.range.clone())
+                                .collect::<String>()
+                        )
+                    })
+                })
+                .unwrap_or("Definitions".to_owned());
+            let locations = definitions
+                .into_iter()
+                .map(|definition| definition.target)
+                .collect();
+            Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
         }
     }
 
@@ -5046,62 +5084,85 @@ impl Editor {
         let project = workspace.project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         Some(cx.spawn(|workspace, mut cx| async move {
-            let mut locations = references.await?;
+            let locations = references.await?;
             if locations.is_empty() {
                 return Ok(());
             }
 
-            locations.sort_by_key(|location| location.buffer.id());
-            let mut locations = locations.into_iter().peekable();
-            let mut ranges_to_highlight = Vec::new();
-
-            let excerpt_buffer = cx.add_model(|cx| {
-                let mut symbol_name = None;
-                let mut multibuffer = MultiBuffer::new(replica_id);
-                while let Some(location) = locations.next() {
-                    let buffer = location.buffer.read(cx);
-                    let mut ranges_for_buffer = Vec::new();
-                    let range = location.range.to_offset(buffer);
-                    ranges_for_buffer.push(range.clone());
-                    if symbol_name.is_none() {
-                        symbol_name = Some(buffer.text_for_range(range).collect::<String>());
-                    }
-
-                    while let Some(next_location) = locations.peek() {
-                        if next_location.buffer == location.buffer {
-                            ranges_for_buffer.push(next_location.range.to_offset(buffer));
-                            locations.next();
-                        } else {
-                            break;
-                        }
-                    }
-
-                    ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
-                    ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
-                        location.buffer.clone(),
-                        ranges_for_buffer,
-                        1,
-                        cx,
-                    ));
-                }
-                multibuffer.with_title(format!("References to `{}`", symbol_name.unwrap()))
-            });
-
             workspace.update(&mut cx, |workspace, cx| {
-                let editor =
-                    cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-                editor.update(cx, |editor, cx| {
-                    editor.highlight_background::<Self>(
-                        ranges_to_highlight,
-                        |theme| theme.editor.highlighted_line_background,
-                        cx,
-                    );
-                });
-                workspace.add_item(Box::new(editor), cx);
+                let title = locations
+                    .first()
+                    .as_ref()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        format!(
+                            "References to `{}`",
+                            buffer
+                                .text_for_range(location.range.clone())
+                                .collect::<String>()
+                        )
+                    })
+                    .unwrap();
+                Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx);
             });
 
             Ok(())
         }))
+    }
+
+    /// Opens a multibuffer with the given project locations in it
+    pub fn open_locations_in_multibuffer(
+        workspace: &mut Workspace,
+        mut locations: Vec<Location>,
+        replica_id: ReplicaId,
+        title: String,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        // If there are multiple definitions, open them in a multibuffer
+        locations.sort_by_key(|location| location.buffer.id());
+        let mut locations = locations.into_iter().peekable();
+        let mut ranges_to_highlight = Vec::new();
+
+        let excerpt_buffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(replica_id);
+            while let Some(location) = locations.next() {
+                let buffer = location.buffer.read(cx);
+                let mut ranges_for_buffer = Vec::new();
+                let range = location.range.to_offset(buffer);
+                ranges_for_buffer.push(range.clone());
+
+                while let Some(next_location) = locations.peek() {
+                    if next_location.buffer == location.buffer {
+                        ranges_for_buffer.push(next_location.range.to_offset(buffer));
+                        locations.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
+                    location.buffer.clone(),
+                    ranges_for_buffer,
+                    1,
+                    cx,
+                ))
+            }
+
+            multibuffer.with_title(title)
+        });
+
+        let editor = cx.add_view(|cx| {
+            Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.highlight_background::<Self>(
+                ranges_to_highlight,
+                |theme| theme.editor.highlighted_line_background,
+                cx,
+            );
+        });
+        workspace.add_item(Box::new(editor), cx);
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -6089,10 +6150,11 @@ impl Editor {
             let extension = Path::new(file.file_name(cx))
                 .extension()
                 .and_then(|e| e.to_str());
-            project
-                .read(cx)
-                .client()
-                .report_event(name, json!({ "File Extension": extension }));
+            project.read(cx).client().report_event(
+                name,
+                json!({ "File Extension": extension }),
+                cx.global::<Settings>().telemetry(),
+            );
         }
     }
 }
@@ -6173,7 +6235,7 @@ impl View for Editor {
             cx.defer(move |cx| {
                 if let Some(editor) = handle.upgrade(cx) {
                     editor.update(cx, |editor, cx| {
-                        hide_hover(editor, cx);
+                        hide_hover(editor, &HideHover, cx);
                         hide_link_definition(editor, cx);
                     })
                 }
@@ -6222,7 +6284,7 @@ impl View for Editor {
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
-        hide_hover(self, cx);
+        hide_hover(self, &HideHover, cx);
         cx.emit(Event::Blurred);
         cx.notify();
     }

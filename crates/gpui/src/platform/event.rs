@@ -178,6 +178,21 @@ impl MouseMovedEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MouseExitedEvent {
+    pub position: Vector2F,
+    pub pressed_button: Option<MouseButton>,
+    pub modifiers: Modifiers,
+}
+
+impl Deref for MouseExitedEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     KeyDown(KeyDownEvent),
@@ -186,6 +201,7 @@ pub enum Event {
     MouseDown(MouseButtonEvent),
     MouseUp(MouseButtonEvent),
     MouseMoved(MouseMovedEvent),
+    MouseExited(MouseExitedEvent),
     ScrollWheel(ScrollWheelEvent),
 }
 
@@ -197,6 +213,7 @@ impl Event {
             Event::ModifiersChanged { .. } => None,
             Event::MouseDown(event) | Event::MouseUp(event) => Some(event.position),
             Event::MouseMoved(event) => Some(event.position),
+            Event::MouseExited(event) => Some(event.position),
             Event::ScrollWheel(event) => Some(event.position),
         }
     }

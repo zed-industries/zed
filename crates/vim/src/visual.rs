@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use collections::HashMap;
 use editor::{
-    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
+    display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
 };
 use gpui::{actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, SelectionGoal};
@@ -307,6 +307,55 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
                         editor.insert(&clipboard_text, cx);
                     }
                 }
+            });
+        });
+        vim.switch_mode(Mode::Normal, false, cx);
+    });
+}
+
+pub(crate) fn visual_replace(text: &str, line: bool, cx: &mut MutableAppContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+
+                // Selections are biased right at the start. So we need to store
+                // anchors that are biased left so that we can restore the selections
+                // after the change
+                let stable_anchors = editor
+                    .selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| {
+                        let start = selection.start.bias_left(&display_map.buffer_snapshot);
+                        start..start
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut edits = Vec::new();
+                for selection in selections.iter() {
+                    let mut selection = selection.clone();
+                    if !line && !selection.reversed {
+                        // Head is at the end of the selection. Adjust the end position to
+                        // to include the character under the cursor.
+                        *selection.end.column_mut() = selection.end.column() + 1;
+                        selection.end = display_map.clip_point(selection.end, Bias::Right);
+                    }
+
+                    for row_range in
+                        movement::split_display_range_by_lines(&display_map, selection.range())
+                    {
+                        let range = row_range.start.to_offset(&display_map, Bias::Right)
+                            ..row_range.end.to_offset(&display_map, Bias::Right);
+                        let text = text.repeat(range.len());
+                        edits.push((range, text));
+                    }
+                }
+
+                editor.buffer().update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                });
+                editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
             });
         });
         vim.switch_mode(Mode::Normal, false, cx);

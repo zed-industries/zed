@@ -12,12 +12,13 @@ use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::proto::serialize_anchor as serialize_text_anchor;
-use language::{Bias, Buffer, File as _, OffsetRangeExt, Point, SelectionGoal};
-use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
+use language::{
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
+    SelectionGoal,
+};
+use project::{FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
-use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -554,22 +555,10 @@ impl Item for Editor {
             .boxed()
     }
 
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        let buffer = self.buffer.read(cx).as_singleton()?;
-        let file = buffer.read(cx).file();
-        File::from_dyn(file).map(|file| ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        })
-    }
-
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+    fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
         self.buffer
             .read(cx)
-            .files(cx)
-            .into_iter()
-            .filter_map(|file| File::from_dyn(Some(file))?.project_entry_id(cx))
-            .collect()
+            .for_each_buffer(|buffer| f(buffer.id(), buffer.read(cx)));
     }
 
     fn is_singleton(&self, cx: &AppContext) -> bool {
@@ -606,7 +595,12 @@ impl Item for Editor {
     }
 
     fn can_save(&self, cx: &AppContext) -> bool {
-        !self.buffer().read(cx).is_singleton() || self.project_path(cx).is_some()
+        let buffer = &self.buffer().read(cx);
+        if let Some(buffer) = buffer.as_singleton() {
+            buffer.read(cx).project_path(cx).is_some()
+        } else {
+            true
+        }
     }
 
     fn save(
@@ -765,6 +759,7 @@ impl Item for Editor {
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
         let item_id = cx.view_id();
+        self.workspace_id = Some(workspace_id);
 
         fn serialize(
             buffer: ModelHandle<Buffer>,
@@ -836,7 +831,11 @@ impl Item for Editor {
                         .context("Project item at stored path was not a buffer")?;
 
                     Ok(cx.update(|cx| {
-                        cx.add_view(pane, |cx| Editor::for_buffer(buffer, Some(project), cx))
+                        cx.add_view(pane, |cx| {
+                            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+                            editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                            editor
+                        })
                     }))
                 })
             })
@@ -1159,9 +1158,11 @@ fn path_for_file<'a>(
 mod tests {
     use super::*;
     use gpui::MutableAppContext;
+    use language::RopeFingerprint;
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
+        time::SystemTime,
     };
 
     #[gpui::test]
@@ -1191,7 +1192,7 @@ mod tests {
             todo!()
         }
 
-        fn mtime(&self) -> std::time::SystemTime {
+        fn mtime(&self) -> SystemTime {
             todo!()
         }
 
@@ -1210,7 +1211,7 @@ mod tests {
             _: clock::Global,
             _: project::LineEnding,
             _: &mut MutableAppContext,
-        ) -> gpui::Task<anyhow::Result<(clock::Global, String, std::time::SystemTime)>> {
+        ) -> gpui::Task<anyhow::Result<(clock::Global, RopeFingerprint, SystemTime)>> {
             todo!()
         }
 

@@ -4,7 +4,7 @@ mod point_utf16;
 mod unclipped;
 
 use arrayvec::ArrayString;
-use bromberg_sl2::{DigestString, HashMatrix};
+use bromberg_sl2::HashMatrix;
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
@@ -24,6 +24,12 @@ const CHUNK_BASE: usize = 6;
 
 #[cfg(not(test))]
 const CHUNK_BASE: usize = 16;
+
+/// Type alias to [HashMatrix], an implementation of a homomorphic hash function. Two [Rope] instances
+/// containing the same text will produce the same fingerprint. This hash function is special in that
+/// it allows us to hash individual chunks and aggregate them up the [Rope]'s tree, with the resulting
+/// hash being equivalent to hashing all the text contained in the [Rope] at once.
+pub type RopeFingerprint = HashMatrix;
 
 #[derive(Clone, Default, Debug)]
 pub struct Rope {
@@ -361,8 +367,8 @@ impl Rope {
             .column
     }
 
-    pub fn fingerprint(&self) -> String {
-        self.chunks.summary().fingerprint.to_hex()
+    pub fn fingerprint(&self) -> RopeFingerprint {
+        self.chunks.summary().fingerprint
     }
 }
 
@@ -856,7 +862,7 @@ impl sum_tree::Item for Chunk {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChunkSummary {
     text: TextSummary,
-    fingerprint: HashMatrix,
+    fingerprint: RopeFingerprint,
 }
 
 impl<'a> From<&'a str> for ChunkSummary {

@@ -11,3 +11,19 @@ brackets = [
     { start = "'", end = "'", close = false, newline = false },
     { start = "/*", end = " */", close = true, newline = false },
 ]
+
+[overrides.comment]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = false, newline = true },
+]
+
+[overrides.string]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = false, newline = true },
+]

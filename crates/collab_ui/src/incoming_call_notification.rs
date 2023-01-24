@@ -48,6 +48,7 @@ pub fn init(cx: &mut MutableAppContext) {
                         },
                         |_| IncomingCallNotification::new(incoming_call.clone()),
                     );
+
                     notification_windows.push(window_id);
                 }
             }
@@ -225,6 +226,7 @@ impl View for IncomingCallNotification {
             .theme
             .incoming_call_notification
             .background;
+
         Flex::row()
             .with_child(self.render_caller(cx))
             .with_child(self.render_buttons(cx))

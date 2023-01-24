@@ -739,8 +739,7 @@ dependencies = [
 [[package]]
 name = "bromberg_sl2"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ed88064f69518b7e3ea50ecfc1b61d43f19248618a377b95ae5c8b611134d4d"
+source = "git+https://github.com/zed-industries/bromberg_sl2?rev=dac565a90e8f9245f48ff46225c915dc50f76920#dac565a90e8f9245f48ff46225c915dc50f76920"
 dependencies = [
  "digest 0.9.0",
  "lazy_static",
@@ -1133,7 +1132,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.4.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -2023,6 +2022,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "feedback"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "editor",
+ "futures 0.3.25",
+ "gpui",
+ "human_bytes",
+ "isahc",
+ "language",
+ "lazy_static",
+ "log",
+ "postage",
+ "project",
+ "search",
+ "serde",
+ "settings",
+ "sysinfo",
+ "theme",
+ "tree-sitter-markdown",
+ "urlencoding",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "file-per-thread-logger"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2563,7 +2589,6 @@ dependencies = [
  "sum_tree",
  "time 0.3.17",
  "tiny-skia",
- "tree-sitter",
  "usvg",
  "util",
  "waker-fn",
@@ -5512,6 +5537,7 @@ dependencies = [
  "anyhow",
  "collections",
  "editor",
+ "futures 0.3.25",
  "gpui",
  "language",
  "log",
@@ -5522,6 +5548,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "theme",
  "unindent",
  "util",
@@ -6239,9 +6266,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.27.1"
+version = "0.27.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccb297c0afb439440834b4bcf02c5c9da8ec2e808e70f36b0d8e815ff403bd24"
+checksum = "1620f9573034c573376acc550f3b9a2be96daeb08abb3c12c8523e1cee06e80f"
 dependencies = [
  "cfg-if 1.0.0",
  "core-foundation-sys",
@@ -8187,7 +8214,7 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zed"
-version = "0.69.0"
+version = "0.71.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -8212,6 +8239,7 @@ dependencies = [
  "easy-parallel",
  "editor",
  "env_logger",
+ "feedback",
  "file_finder",
  "fs",
  "fsevent",
@@ -8219,7 +8247,6 @@ dependencies = [
  "fuzzy",
  "go_to_line",
  "gpui",
- "human_bytes",
  "ignore",
  "image",
  "indexmap",
@@ -8253,7 +8280,6 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
- "sysinfo",
  "tempdir",
  "terminal_view",
  "text",
@@ -8282,7 +8308,6 @@ dependencies = [
  "tree-sitter-typescript",
  "unindent",
  "url",
- "urlencoding",
  "util",
  "vim",
  "workspace",

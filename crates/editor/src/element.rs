@@ -7,7 +7,7 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
-        HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+        HideHover, HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
         GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
@@ -114,6 +114,7 @@ impl EditorElement {
     fn attach_mouse_handlers(
         view: &WeakViewHandle<Editor>,
         position_map: &Arc<PositionMap>,
+        has_popovers: bool,
         visible_bounds: RectF,
         text_bounds: RectF,
         gutter_bounds: RectF,
@@ -188,6 +189,11 @@ impl EditorElement {
                         if !Self::mouse_moved(e.platform_event, &position_map, text_bounds, cx) {
                             cx.propagate_event()
                         }
+                    }
+                })
+                .on_move_out(move |_, cx| {
+                    if has_popovers {
+                        cx.dispatch_action(HideHover);
                     }
                 })
                 .on_scroll({
@@ -1870,6 +1876,7 @@ impl Element for EditorElement {
         Self::attach_mouse_handlers(
             &self.view,
             &layout.position_map,
+            layout.hover_popovers.is_some(),
             visible_bounds,
             text_bounds,
             gutter_bounds,

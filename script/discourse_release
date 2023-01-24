@@ -1,0 +1,38 @@
+#!/usr/bin/env node --redirect-warnings=/dev/null
+
+main();
+
+async function main() {
+  const apiKey = process.argv[2]
+  const zedVersion = process.argv[3]
+  const releaseNotes = process.argv[4]
+  const postBody = `
+    📣 Zed ${zedVersion} was just released!
+    
+    Restart your Zed or head to the [releases page](https://zed.dev/releases/latest) to grab it.
+    
+    ---
+    
+    ${releaseNotes}
+  `
+
+  const title = `${zedVersion} Release Notes`
+
+  const options = {
+    method: "POST",
+    headers: {
+      "Api-Key": apiKey,
+      "Api-Username": "system"
+    },
+    body: new URLSearchParams({
+      title: title,
+      raw: postBody,
+      category: "8"
+    })
+  };
+
+  fetch("https://forum.zed.dev/posts.json", options)
+    .then(response => response.json())
+    .then(response => console.log(response))
+    .catch(err => console.error(err));
+}

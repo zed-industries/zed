@@ -29,12 +29,16 @@ pub struct HoverAt {
     pub point: Option<DisplayPoint>,
 }
 
+#[derive(Copy, Clone, PartialEq)]
+pub struct HideHover;
+
 actions!(editor, [Hover]);
-impl_internal_actions!(editor, [HoverAt]);
+impl_internal_actions!(editor, [HoverAt, HideHover]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(hover);
     cx.add_action(hover_at);
+    cx.add_action(hide_hover);
 }
 
 /// Bindable action which uses the most recent selection head to trigger a hover
@@ -50,7 +54,7 @@ pub fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Edit
         if let Some(point) = action.point {
             show_hover(editor, point, false, cx);
         } else {
-            hide_hover(editor, cx);
+            hide_hover(editor, &HideHover, cx);
         }
     }
 }
@@ -58,7 +62,7 @@ pub fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Edit
 /// Hides the type information popup.
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
-pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+pub fn hide_hover(editor: &mut Editor, _: &HideHover, cx: &mut ViewContext<Editor>) -> bool {
     let did_hide = editor.hover_state.info_popover.take().is_some()
         | editor.hover_state.diagnostic_popover.take().is_some();
 
@@ -66,6 +70,10 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
     editor.hover_state.triggered_from = None;
 
     editor.clear_background_highlights::<HoverState>(cx);
+
+    if did_hide {
+        cx.notify();
+    }
 
     did_hide
 }
@@ -121,7 +129,7 @@ fn show_hover(
                 // Hover triggered from same location as last time. Don't show again.
                 return;
             } else {
-                hide_hover(editor, cx);
+                hide_hover(editor, &HideHover, cx);
             }
         }
     }

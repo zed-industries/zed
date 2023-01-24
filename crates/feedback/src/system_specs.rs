@@ -2,9 +2,11 @@ use std::{env, fmt::Display};
 
 use gpui::AppContext;
 use human_bytes::human_bytes;
+use serde::Serialize;
 use sysinfo::{System, SystemExt};
 use util::channel::ReleaseChannel;
 
+#[derive(Debug, Serialize)]
 pub struct SystemSpecs {
     app_version: &'static str,
     release_channel: &'static str,
@@ -40,7 +42,7 @@ impl Display for SystemSpecs {
             None => format!("OS: {}", self.os_name),
         };
         let system_specs = [
-            format!("Zed: {} ({})", self.app_version, self.release_channel),
+            format!("Zed: v{} ({})", self.app_version, self.release_channel),
             os_information,
             format!("Memory: {}", human_bytes(self.memory as f64)),
             format!("Architecture: {}", self.architecture),

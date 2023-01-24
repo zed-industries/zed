@@ -352,6 +352,29 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
     start..end
 }
 
+pub fn split_display_range_by_lines(
+    map: &DisplaySnapshot,
+    range: Range<DisplayPoint>,
+) -> Vec<Range<DisplayPoint>> {
+    let mut result = Vec::new();
+
+    let mut start = range.start;
+    // Loop over all the covered rows until the one containing the range end
+    for row in range.start.row()..range.end.row() {
+        let row_end_column = map.line_len(row);
+        let end = map.clip_point(DisplayPoint::new(row, row_end_column), Bias::Left);
+        if start != end {
+            result.push(start..end);
+        }
+        start = map.clip_point(DisplayPoint::new(row + 1, 0), Bias::Left);
+    }
+
+    // Add the final range from the start of the last end to the original range end.
+    result.push(start..range.end);
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

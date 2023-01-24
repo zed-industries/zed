@@ -567,7 +567,12 @@ async fn test_invite_codes() {
 
     // User 2 redeems the invite code and becomes a contact of user 1.
     let user2_invite = db
-        .create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
+        .create_invite_from_code(
+            &invite_code,
+            "user2@example.com",
+            Some("user-2-device-id"),
+            true,
+        )
         .await
         .unwrap();
     let NewUserResult {
@@ -617,7 +622,7 @@ async fn test_invite_codes() {
 
     // User 3 redeems the invite code and becomes a contact of user 1.
     let user3_invite = db
-        .create_invite_from_code(&invite_code, "user3@example.com", None)
+        .create_invite_from_code(&invite_code, "user3@example.com", None, true)
         .await
         .unwrap();
     let NewUserResult {
@@ -672,9 +677,14 @@ async fn test_invite_codes() {
     );
 
     // Trying to reedem the code for the third time results in an error.
-    db.create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
-        .await
-        .unwrap_err();
+    db.create_invite_from_code(
+        &invite_code,
+        "user4@example.com",
+        Some("user-4-device-id"),
+        true,
+    )
+    .await
+    .unwrap_err();
 
     // Invite count can be updated after the code has been created.
     db.set_invite_count_for_user(user1, 2).await.unwrap();
@@ -684,7 +694,12 @@ async fn test_invite_codes() {
 
     // User 4 can now redeem the invite code and becomes a contact of user 1.
     let user4_invite = db
-        .create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
+        .create_invite_from_code(
+            &invite_code,
+            "user4@example.com",
+            Some("user-4-device-id"),
+            true,
+        )
         .await
         .unwrap();
     let user4 = db
@@ -739,9 +754,14 @@ async fn test_invite_codes() {
     );
 
     // An existing user cannot redeem invite codes.
-    db.create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
-        .await
-        .unwrap_err();
+    db.create_invite_from_code(
+        &invite_code,
+        "user2@example.com",
+        Some("user-2-device-id"),
+        true,
+    )
+    .await
+    .unwrap_err();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 1);
 
@@ -763,7 +783,7 @@ async fn test_invite_codes() {
     db.set_invite_count_for_user(user5, 5).await.unwrap();
     let (user5_invite_code, _) = db.get_invite_code_for_user(user5).await.unwrap().unwrap();
     let user5_invite_to_user1 = db
-        .create_invite_from_code(&user5_invite_code, "user1@different.com", None)
+        .create_invite_from_code(&user5_invite_code, "user1@different.com", None, true)
         .await
         .unwrap();
     let user1_2 = db

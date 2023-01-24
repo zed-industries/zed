@@ -12,7 +12,8 @@ use util::ResultExt;
 pub struct TypeScriptLspAdapter;
 
 impl TypeScriptLspAdapter {
-    const BIN_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
+    const OLD_BIN_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
+    const NEW_BIN_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
 }
 
 struct Versions {
@@ -57,7 +58,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         fs::create_dir_all(&version_dir)
             .await
             .context("failed to create version directory")?;
-        let binary_path = version_dir.join(Self::BIN_PATH);
+        let binary_path = version_dir.join(Self::NEW_BIN_PATH);
 
         if fs::metadata(&binary_path).await.is_err() {
             npm_install_packages(
@@ -98,9 +99,12 @@ impl LspAdapter for TypeScriptLspAdapter {
                 }
             }
             let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let bin_path = last_version_dir.join(Self::BIN_PATH);
-            if bin_path.exists() {
-                Ok(bin_path)
+            let old_bin_path = last_version_dir.join(Self::OLD_BIN_PATH);
+            let new_bin_path = last_version_dir.join(Self::NEW_BIN_PATH);
+            if new_bin_path.exists() {
+                Ok(new_bin_path)
+            } else if old_bin_path.exists() {
+                Ok(old_bin_path)
             } else {
                 Err(anyhow!(
                     "missing executable in directory {:?}",

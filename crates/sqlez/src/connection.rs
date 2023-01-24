@@ -93,36 +93,77 @@ impl Connection {
         let sql_start = remaining_sql.as_ptr();
 
         unsafe {
+            let mut alter_table = None;
             while {
                 let remaining_sql_str = remaining_sql.to_str().unwrap().trim();
-                remaining_sql_str != ";" && !remaining_sql_str.is_empty()
+                let any_remaining_sql = remaining_sql_str != ";" && !remaining_sql_str.is_empty();
+                if any_remaining_sql {
+                    alter_table = parse_alter_table(remaining_sql_str);
+                }
+                any_remaining_sql
             } {
                 let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
                 let mut remaining_sql_ptr = ptr::null();
-                sqlite3_prepare_v2(
-                    self.sqlite3,
-                    remaining_sql.as_ptr(),
-                    -1,
-                    &mut raw_statement,
-                    &mut remaining_sql_ptr,
-                );
 
-                let res = sqlite3_errcode(self.sqlite3);
-                let offset = sqlite3_error_offset(self.sqlite3);
-                let message = sqlite3_errmsg(self.sqlite3);
+                let (res, offset, message, _conn) = if let Some(table_to_alter) = alter_table {
+                    // ALTER TABLE is a weird statement. When preparing the statement the table's
+                    // existence is checked *before* syntax checking any other part of the statement.
+                    // Therefore, we need to make sure that the table has been created before calling
+                    // prepare. As we don't want to trash whatever database this is connected to, we
+                    // create a new in-memory DB to test.
+
+                    let temp_connection = Connection::open_memory(None);
+                    //This should always succeed, if it doesn't then you really should know about it
+                    temp_connection
+                        .exec(&format!(
+                        "CREATE TABLE {table_to_alter}(__place_holder_column_for_syntax_checking)"
+                    ))
+                        .unwrap()()
+                    .unwrap();
+
+                    sqlite3_prepare_v2(
+                        temp_connection.sqlite3,
+                        remaining_sql.as_ptr(),
+                        -1,
+                        &mut raw_statement,
+                        &mut remaining_sql_ptr,
+                    );
+
+                    (
+                        sqlite3_errcode(temp_connection.sqlite3),
+                        sqlite3_error_offset(temp_connection.sqlite3),
+                        sqlite3_errmsg(temp_connection.sqlite3),
+                        Some(temp_connection),
+                    )
+                } else {
+                    sqlite3_prepare_v2(
+                        self.sqlite3,
+                        remaining_sql.as_ptr(),
+                        -1,
+                        &mut raw_statement,
+                        &mut remaining_sql_ptr,
+                    );
+                    (
+                        sqlite3_errcode(self.sqlite3),
+                        sqlite3_error_offset(self.sqlite3),
+                        sqlite3_errmsg(self.sqlite3),
+                        None,
+                    )
+                };
 
                 sqlite3_finalize(raw_statement);
 
                 if res == 1 && offset >= 0 {
+                    let sub_statement_correction =
+                        remaining_sql.as_ptr() as usize - sql_start as usize;
                     let err_msg =
                         String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
                             .into_owned();
-                    let sub_statement_correction =
-                        remaining_sql.as_ptr() as usize - sql_start as usize;
 
                     return Some((err_msg, offset as usize + sub_statement_correction));
                 }
                 remaining_sql = CStr::from_ptr(remaining_sql_ptr);
+                alter_table = None;
             }
         }
         None
@@ -160,6 +201,25 @@ impl Connection {
         *self.write.borrow_mut() = false;
         result
     }
+}
+
+fn parse_alter_table(remaining_sql_str: &str) -> Option<String> {
+    let remaining_sql_str = remaining_sql_str.to_lowercase();
+    if remaining_sql_str.starts_with("alter") {
+        if let Some(table_offset) = remaining_sql_str.find("table") {
+            let after_table_offset = table_offset + "table".len();
+            let table_to_alter = remaining_sql_str
+                .chars()
+                .skip(after_table_offset)
+                .skip_while(|c| c.is_whitespace())
+                .take_while(|c| !c.is_whitespace())
+                .collect::<String>();
+            if !table_to_alter.is_empty() {
+                return Some(table_to_alter);
+            }
+        }
+    }
+    None
 }
 
 impl Drop for Connection {
@@ -330,5 +390,18 @@ mod test {
             .map(|(_, offset)| offset);
 
         assert_eq!(res, Some(first_stmt.len() + second_offset + 1));
+    }
+
+    #[test]
+    fn test_alter_table_syntax() {
+        let connection = Connection::open_memory(Some("test_alter_table_syntax"));
+
+        assert!(connection
+            .sql_has_syntax_error("ALTER TABLE test ADD x TEXT")
+            .is_none());
+
+        assert!(connection
+            .sql_has_syntax_error("ALTER TABLE test AAD x TEXT")
+            .is_some());
     }
 }

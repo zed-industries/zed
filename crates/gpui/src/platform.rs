@@ -179,7 +179,7 @@ impl Default for Appearance {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     Normal,
     PopUp,

@@ -1,0 +1,34 @@
+[package]
+name = "feedback"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/feedback.rs"
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow = "1.0.38"
+client = { path = "../client" }
+editor = { path = "../editor" }
+language = { path = "../language" }
+log = "0.4"
+futures = "0.3"
+gpui = { path = "../gpui" }
+human_bytes = "0.4.1"
+isahc = "1.7"
+lazy_static = "1.4.0"
+postage = { version = "0.4", features = ["futures-traits"] }
+project = { path = "../project" }
+search = { path = "../search" }
+serde = { version = "1.0", features = ["derive", "rc"] }
+settings = { path = "../settings" }
+sysinfo = "0.27.1"
+theme = { path = "../theme" }
+tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
+urlencoding = "2.1.2"
+util = { path = "../util" }
+workspace = { path = "../workspace" }

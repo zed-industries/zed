@@ -89,6 +89,26 @@ impl Column for f64 {
     }
 }
 
+impl Bind for f32 {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        statement
+            .bind_double(start_index, *self as f64)
+            .with_context(|| format!("Failed to bind f64 at index {start_index}"))?;
+        Ok(start_index + 1)
+    }
+}
+
+impl Column for f32 {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let result = statement
+            .column_double(start_index)
+            .with_context(|| format!("Failed to parse f32 at index {start_index}"))?
+            as f32;
+
+        Ok((result, start_index + 1))
+    }
+}
+
 impl Bind for i32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -119,6 +139,21 @@ impl Column for i64 {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let result = statement.column_int64(start_index)?;
         Ok((result, start_index + 1))
+    }
+}
+
+impl Bind for u32 {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        (*self as i64)
+            .bind(statement, start_index)
+            .with_context(|| format!("Failed to bind usize at index {start_index}"))
+    }
+}
+
+impl Column for u32 {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let result = statement.column_int64(start_index)?;
+        Ok((result as u32, start_index + 1))
     }
 }
 

@@ -12,7 +12,7 @@ use super::{
         MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover, MouseMove, MouseUp,
         MouseUpOut,
     },
-    MouseScrollWheel,
+    MouseMoveOut, MouseScrollWheel,
 };
 
 #[derive(Clone)]
@@ -121,6 +121,14 @@ impl MouseRegion {
 
     pub fn on_move(mut self, handler: impl Fn(MouseMove, &mut EventContext) + 'static) -> Self {
         self.handlers = self.handlers.on_move(handler);
+        self
+    }
+
+    pub fn on_move_out(
+        mut self,
+        handler: impl Fn(MouseMoveOut, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_move_out(handler);
         self
     }
 
@@ -283,6 +291,23 @@ impl HandlerSet {
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Move, found {:?}", 
+                        region_event);
+                }
+            }));
+        self
+    }
+
+    pub fn on_move_out(
+        mut self,
+        handler: impl Fn(MouseMoveOut, &mut EventContext) + 'static,
+    ) -> Self {
+        self.insert(MouseEvent::move_out_disc(), None,
+            Rc::new(move |region_event, cx| {
+                if let MouseEvent::MoveOut(e) = region_event {
+                    handler(e, cx);
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::MoveOut, found {:?}", 
                         region_event);
                 }
             }));

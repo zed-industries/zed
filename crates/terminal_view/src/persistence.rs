@@ -42,10 +42,10 @@ impl TerminalDb {
     }
 
     query! {
-        pub async fn take_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
-            DELETE FROM terminals
+        pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
+            SELECT working_directory
+            FROM terminals
             WHERE item_id = ? AND workspace_id = ?
-            RETURNING working_directory
         }
     }
 }

@@ -6,7 +6,6 @@ use std::{
 
 fn main() {
     generate_dispatch_bindings();
-    compile_context_predicate_parser();
     compile_metal_shaders();
     generate_shader_bindings();
 }
@@ -28,17 +27,6 @@ fn generate_dispatch_bindings() {
     bindings
         .write_to_file(out_path.join("dispatch_sys.rs"))
         .expect("couldn't write dispatch bindings");
-}
-
-fn compile_context_predicate_parser() {
-    let dir = PathBuf::from("./grammars/context-predicate/src");
-    let parser_c = dir.join("parser.c");
-
-    println!("cargo:rerun-if-changed={}", &parser_c.to_str().unwrap());
-    cc::Build::new()
-        .include(&dir)
-        .file(parser_c)
-        .compile("tree_sitter_context_predicate");
 }
 
 const SHADER_HEADER_PATH: &str = "./src/platform/mac/shaders/shaders.h";

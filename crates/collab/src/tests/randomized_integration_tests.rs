@@ -20,6 +20,7 @@ use rand::{
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     env,
     ops::Range,
@@ -307,6 +308,33 @@ async fn test_random_collaboration(
                 let guest_diff_base = guest_buffer
                     .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
                 assert_eq!(guest_diff_base, host_diff_base);
+
+                let host_saved_version =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
+                let guest_saved_version =
+                    guest_buffer.read_with(client_cx, |b, _| b.saved_version().clone());
+                assert_eq!(guest_saved_version, host_saved_version);
+
+                let host_saved_version_fingerprint =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version_fingerprint());
+                let guest_saved_version_fingerprint =
+                    guest_buffer.read_with(client_cx, |b, _| b.saved_version_fingerprint());
+                assert_eq!(
+                    guest_saved_version_fingerprint,
+                    host_saved_version_fingerprint
+                );
+
+                let host_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
+                let guest_saved_mtime = guest_buffer.read_with(client_cx, |b, _| b.saved_mtime());
+                assert_eq!(guest_saved_mtime, host_saved_mtime);
+
+                let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
+                let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
+                assert_eq!(guest_is_dirty, host_is_dirty);
+
+                let host_has_conflict = host_buffer.read_with(host_cx, |b, _| b.has_conflict());
+                let guest_has_conflict = guest_buffer.read_with(client_cx, |b, _| b.has_conflict());
+                assert_eq!(guest_has_conflict, host_has_conflict);
             }
         }
     }
@@ -314,6 +342,7 @@ async fn test_random_collaboration(
     for (client, mut cx) in clients {
         cx.update(|cx| {
             cx.clear_globals();
+            cx.set_global(Settings::test(cx));
             drop(client);
         });
     }
@@ -883,26 +912,28 @@ async fn apply_client_operation(
             }
         }
 
-        ClientOperation::CreateFsEntry { path, is_dir } => {
+        ClientOperation::WriteFsEntry {
+            path,
+            is_dir,
+            content,
+        } => {
             client
                 .fs
                 .metadata(&path.parent().unwrap())
                 .await?
                 .ok_or(TestError::Inapplicable)?;
 
-            log::info!(
-                "{}: creating {} at {:?}",
-                client.username,
-                if is_dir { "dir" } else { "file" },
-                path
-            );
-
             if is_dir {
+                log::info!("{}: creating dir at {:?}", client.username, path);
                 client.fs.create_dir(&path).await.unwrap();
             } else {
+                let exists = client.fs.metadata(&path).await?.is_some();
+                let verb = if exists { "updating" } else { "creating" };
+                log::info!("{}: {} file at {:?}", verb, client.username, path);
+
                 client
                     .fs
-                    .create_file(&path, Default::default())
+                    .save(&path, &content.as_str().into(), fs::LineEnding::Unix)
                     .await
                     .unwrap();
             }
@@ -1059,9 +1090,10 @@ enum ClientOperation {
         full_path: PathBuf,
         is_dir: bool,
     },
-    CreateFsEntry {
+    WriteFsEntry {
         path: PathBuf,
         is_dir: bool,
+        content: String,
     },
     WriteGitIndex {
         repo_path: PathBuf,
@@ -1614,20 +1646,35 @@ impl TestPlan {
                     };
                 }
 
-                // Create a file or directory
+                // Create or update a file or directory
                 96.. => {
                     let is_dir = self.rng.gen::<bool>();
-                    let mut path = cx
-                        .background()
-                        .block(client.fs.directories())
-                        .choose(&mut self.rng)
-                        .unwrap()
-                        .clone();
-                    path.push(gen_file_name(&mut self.rng));
-                    if !is_dir {
-                        path.set_extension("rs");
+                    let content;
+                    let mut path;
+                    let dir_paths = cx.background().block(client.fs.directories());
+
+                    if is_dir {
+                        content = String::new();
+                        path = dir_paths.choose(&mut self.rng).unwrap().clone();
+                        path.push(gen_file_name(&mut self.rng));
+                    } else {
+                        content = Alphanumeric.sample_string(&mut self.rng, 16);
+
+                        // Create a new file or overwrite an existing file
+                        let file_paths = cx.background().block(client.fs.files());
+                        if file_paths.is_empty() || self.rng.gen_bool(0.5) {
+                            path = dir_paths.choose(&mut self.rng).unwrap().clone();
+                            path.push(gen_file_name(&mut self.rng));
+                            path.set_extension("rs");
+                        } else {
+                            path = file_paths.choose(&mut self.rng).unwrap().clone()
+                        };
                     }
-                    break ClientOperation::CreateFsEntry { path, is_dir };
+                    break ClientOperation::WriteFsEntry {
+                        path,
+                        is_dir,
+                        content,
+                    };
                 }
             }
         })
@@ -1924,4 +1971,16 @@ fn path_env_var(name: &str) -> Option<PathBuf> {
         path = abs_path
     }
     Some(path)
+}
+
+async fn child_file_paths(client: &TestClient, dir_path: &Path) -> Vec<PathBuf> {
+    let mut child_paths = client.fs.read_dir(dir_path).await.unwrap();
+    let mut child_file_paths = Vec::new();
+    while let Some(child_path) = child_paths.next().await {
+        let child_path = child_path.unwrap();
+        if client.fs.is_file(&child_path).await {
+            child_file_paths.push(child_path);
+        }
+    }
+    child_file_paths
 }

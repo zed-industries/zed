@@ -84,9 +84,6 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     );
     cx.simulate_keystroke("/");
 
-    // We now use a weird insert mode with selection when jumping to a single line editor
-    assert_eq!(cx.mode(), Mode::Insert);
-
     let search_bar = cx.workspace(|workspace, cx| {
         workspace
             .active_pane()
