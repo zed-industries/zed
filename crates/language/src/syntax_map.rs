@@ -7,6 +7,7 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
+    iter,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
@@ -133,6 +134,7 @@ struct SyntaxLayerSummary {
     range: Range<Anchor>,
     last_layer_range: Range<Anchor>,
     last_layer_language: Option<usize>,
+    contains_pending_layer: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -642,7 +644,7 @@ impl SyntaxSnapshot {
         });
 
         cursor.next(buffer);
-        std::iter::from_fn(move || {
+        iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
                 if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
                     let info = SyntaxLayerInfo {
@@ -655,6 +657,27 @@ impl SyntaxSnapshot {
                     };
                     cursor.next(buffer);
                     return Some(info);
+                } else {
+                    cursor.next(buffer);
+                }
+            }
+            None
+        })
+    }
+
+    pub fn unknown_injection_languages<'a>(
+        &'a self,
+        buffer: &'a BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = &Arc<str>> {
+        let mut cursor = self
+            .layers
+            .filter::<_, ()>(|summary| summary.contains_pending_layer);
+        cursor.next(buffer);
+        iter::from_fn(move || {
+            while let Some(layer) = cursor.item() {
+                if let SyntaxLayerContent::Pending { language_name } = &layer.content {
+                    cursor.next(buffer);
+                    return Some(language_name);
                 } else {
                     cursor.next(buffer);
                 }
@@ -1356,6 +1379,7 @@ impl Default for SyntaxLayerSummary {
             range: Anchor::MAX..Anchor::MIN,
             last_layer_range: Anchor::MIN..Anchor::MAX,
             last_layer_language: None,
+            contains_pending_layer: false,
         }
     }
 }
@@ -1377,6 +1401,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
         }
         self.last_layer_range = other.last_layer_range.clone();
         self.last_layer_language = other.last_layer_language;
+        self.contains_pending_layer |= other.contains_pending_layer;
     }
 }
 
@@ -1427,6 +1452,7 @@ impl sum_tree::Item for SyntaxLayer {
             range: self.range.clone(),
             last_layer_range: self.range.clone(),
             last_layer_language: self.content.language_id(),
+            contains_pending_layer: matches!(self.content, SyntaxLayerContent::Pending { .. }),
         }
     }
 }
@@ -1715,6 +1741,28 @@ mod tests {
                 "...(call method: (identifier) arguments: (argument_list (call method: (identifier) arguments: (argument_list) block: (block)...",
             ],
         );
+
+        // Replace Ruby with a language that hasn't been loaded yet.
+        let macro_name_range = range_for_text(&buffer, "ruby");
+        buffer.edit([(macro_name_range, "erb")]);
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(markdown.clone(), &buffer);
+        assert_layers_for_range(
+            &syntax_map,
+            &buffer,
+            Point::new(3, 0)..Point::new(3, 0),
+            &[
+                "...(fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (code_fence_content) (fenced_code_block_delimiter..."
+            ],
+        );
+        assert_eq!(
+            syntax_map
+                .unknown_injection_languages(&buffer)
+                .collect::<Vec<_>>(),
+            vec![&Arc::from("erb")]
+        );
+
+        registry.add(Arc::new(erb_lang()));
     }
 
     #[gpui::test]
