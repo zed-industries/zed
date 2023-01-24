@@ -14,6 +14,7 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
+
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -125,11 +126,14 @@ fn main() {
 
         watch_keymap_file(keymap_file, cx);
 
+        cx.set_global(client.clone());
+
         context_menu::init(cx);
         project::Project::init(&client);
         client::init(client.clone(), cx);
         command_palette::init(cx);
         editor::init(cx);
+        feedback::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
         outline::init(cx);

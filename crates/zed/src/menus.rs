@@ -340,15 +340,15 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Copy System Specs Into Clipboard",
-                    action: Box::new(crate::CopySystemSpecsIntoClipboard),
+                    action: Box::new(feedback::CopySystemSpecsIntoClipboard),
                 },
                 MenuItem::Action {
                     name: "File Bug Report",
-                    action: Box::new(crate::FileBugReport),
+                    action: Box::new(feedback::FileBugReport),
                 },
                 MenuItem::Action {
                     name: "Request Feature",
-                    action: Box::new(crate::RequestFeature),
+                    action: Box::new(feedback::RequestFeature),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {

@@ -99,6 +99,7 @@ actions!(
         ToggleRightSidebar,
         NewTerminal,
         NewSearch,
+        Feedback,
         ShowNotif,
     ]
 );

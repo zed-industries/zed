@@ -103,7 +103,7 @@ impl_internal_actions!(
         DeploySplitMenu,
         DeployNewMenu,
         DeployDockMenu,
-        MoveItem,
+        MoveItem
     ]
 );
 
