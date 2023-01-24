@@ -802,6 +802,29 @@ impl Buffer {
         self.sync_parse_timeout = timeout;
     }
 
+    /// Called after an edit to synchronize the buffer's main parse tree with
+    /// the buffer's new underlying state.
+    ///
+    /// Locks the syntax map and interpolates the edits since the last reparse
+    /// into the foreground syntax tree.
+    ///
+    /// Then takes a stable snapshot of the syntax map before unlocking it.
+    /// The snapshot with the interpolated edits is sent to a background thread,
+    /// where we ask Tree-sitter to perform an incremental parse.
+    ///
+    /// Meanwhile, in the foreground, we block the main thread for up to 1ms
+    /// waiting on the parse to complete. As soon as it completes, we proceed
+    /// synchronously, unless a 1ms timeout elapses.
+    ///
+    /// If we time out waiting on the parse, we spawn a second task waiting
+    /// until the parse does complete and return with the interpolated tree still
+    /// in the foreground. When the background parse completes, call back into
+    /// the main thread and assign the foreground parse state.
+    ///
+    /// If the buffer or grammar changed since the start of the background parse,
+    /// initiate an additional reparse recursively. To avoid concurrent parses
+    /// for the same buffer, we only initiate a new parse if we are not already
+    /// parsing in the background.
     fn reparse(&mut self, cx: &mut ModelContext<Self>) {
         if self.parsing_in_background {
             return;
