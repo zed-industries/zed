@@ -123,7 +123,7 @@ impl FeedbackEditor {
     }
 
     fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        let markdown_language = project.read(cx).languages().get_language("Markdown");
+        let markdown_language = project.read(cx).languages().language_for_name("Markdown");
 
         let buffer = project
             .update(cx, |project, cx| {
