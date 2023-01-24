@@ -1765,10 +1765,14 @@ impl Project {
                 if let Some(project) = project.upgrade(&cx) {
                     project.update(&mut cx, |project, cx| {
                         let mut buffers_without_language = Vec::new();
+                        let mut buffers_with_unknown_injections = Vec::new();
                         for buffer in project.opened_buffers.values() {
-                            if let Some(buffer) = buffer.upgrade(cx) {
-                                if buffer.read(cx).language().is_none() {
-                                    buffers_without_language.push(buffer);
+                            if let Some(handle) = buffer.upgrade(cx) {
+                                let buffer = &handle.read(cx);
+                                if buffer.language().is_none() {
+                                    buffers_without_language.push(handle);
+                                } else if buffer.contains_unknown_injections() {
+                                    buffers_with_unknown_injections.push(handle);
                                 }
                             }
                         }
@@ -1776,6 +1780,10 @@ impl Project {
                         for buffer in buffers_without_language {
                             project.assign_language_to_buffer(&buffer, cx);
                             project.register_buffer_with_language_server(&buffer, cx);
+                        }
+
+                        for buffer in buffers_with_unknown_injections {
+                            buffer.update(cx, |buffer, cx| buffer.reparse(cx));
                         }
                     });
                 }

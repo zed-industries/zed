@@ -41,6 +41,7 @@ use std::{
 use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
+use unicase::UniCase;
 use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -421,6 +422,7 @@ pub struct LanguageRegistry {
     >,
     subscription: RwLock<(watch::Sender<()>, watch::Receiver<()>)>,
     theme: RwLock<Option<Arc<Theme>>>,
+    version: AtomicUsize,
 }
 
 impl LanguageRegistry {
@@ -435,6 +437,7 @@ impl LanguageRegistry {
             lsp_binary_paths: Default::default(),
             subscription: RwLock::new(watch::channel()),
             theme: Default::default(),
+            version: Default::default(),
         }
     }
 
@@ -448,11 +451,16 @@ impl LanguageRegistry {
             language.set_theme(&theme.editor.syntax);
         }
         self.languages.write().push(language);
+        self.version.fetch_add(1, SeqCst);
         *self.subscription.write().0.borrow_mut() = ();
     }
 
     pub fn subscribe(&self) -> watch::Receiver<()> {
         self.subscription.read().1.clone()
+    }
+
+    pub fn version(&self) -> usize {
+        self.version.load(SeqCst)
     }
 
     pub fn set_theme(&self, theme: Arc<Theme>) {
@@ -466,11 +474,27 @@ impl LanguageRegistry {
         self.language_server_download_dir = Some(path.into());
     }
 
-    pub fn get_language(&self, name: &str) -> Option<Arc<Language>> {
+    pub fn language_for_name(&self, name: &str) -> Option<Arc<Language>> {
+        let name = UniCase::new(name);
         self.languages
             .read()
             .iter()
-            .find(|language| language.name().to_lowercase() == name.to_lowercase())
+            .find(|language| UniCase::new(language.name()) == name)
+            .cloned()
+    }
+
+    pub fn language_for_extension(&self, extension: &str) -> Option<Arc<Language>> {
+        let extension = UniCase::new(extension);
+        self.languages
+            .read()
+            .iter()
+            .find(|language| {
+                language
+                    .config
+                    .path_suffixes
+                    .iter()
+                    .any(|suffix| UniCase::new(suffix) == extension)
+            })
             .cloned()
     }
 

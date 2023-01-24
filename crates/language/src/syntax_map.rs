@@ -5,8 +5,9 @@ use parking_lot::Mutex;
 use std::{
     borrow::Cow,
     cell::RefCell,
-    cmp::{Ordering, Reverse},
+    cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
+    iter,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
@@ -26,8 +27,6 @@ lazy_static! {
 
 #[derive(Default)]
 pub struct SyntaxMap {
-    parsed_version: clock::Global,
-    interpolated_version: clock::Global,
     snapshot: SyntaxSnapshot,
     language_registry: Option<Arc<LanguageRegistry>>,
 }
@@ -35,6 +34,9 @@ pub struct SyntaxMap {
 #[derive(Clone, Default)]
 pub struct SyntaxSnapshot {
     layers: SumTree<SyntaxLayer>,
+    parsed_version: clock::Global,
+    interpolated_version: clock::Global,
+    language_registry_version: usize,
 }
 
 #[derive(Default)]
@@ -89,8 +91,34 @@ struct SyntaxMapMatchesLayer<'a> {
 struct SyntaxLayer {
     depth: usize,
     range: Range<Anchor>,
-    tree: tree_sitter::Tree,
-    language: Arc<Language>,
+    content: SyntaxLayerContent,
+}
+
+#[derive(Clone)]
+enum SyntaxLayerContent {
+    Parsed {
+        tree: tree_sitter::Tree,
+        language: Arc<Language>,
+    },
+    Pending {
+        language_name: Arc<str>,
+    },
+}
+
+impl SyntaxLayerContent {
+    fn language_id(&self) -> Option<usize> {
+        match self {
+            SyntaxLayerContent::Parsed { language, .. } => language.id(),
+            SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
+
+    fn tree(&self) -> Option<&Tree> {
+        match self {
+            SyntaxLayerContent::Parsed { tree, .. } => Some(tree),
+            SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -107,6 +135,7 @@ struct SyntaxLayerSummary {
     range: Range<Anchor>,
     last_layer_range: Range<Anchor>,
     last_layer_language: Option<usize>,
+    contains_unknown_injections: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -130,10 +159,24 @@ struct SyntaxLayerPositionBeforeChange {
 
 struct ParseStep {
     depth: usize,
-    language: Arc<Language>,
+    language: ParseStepLanguage,
     range: Range<Anchor>,
     included_ranges: Vec<tree_sitter::Range>,
     mode: ParseMode,
+}
+
+enum ParseStepLanguage {
+    Loaded { language: Arc<Language> },
+    Pending { name: Arc<str> },
+}
+
+impl ParseStepLanguage {
+    fn id(&self) -> Option<usize> {
+        match self {
+            ParseStepLanguage::Loaded { language } => language.id(),
+            ParseStepLanguage::Pending { .. } => None,
+        }
+    }
 }
 
 enum ParseMode {
@@ -176,30 +219,17 @@ impl SyntaxMap {
         self.language_registry.clone()
     }
 
-    pub fn parsed_version(&self) -> clock::Global {
-        self.parsed_version.clone()
-    }
-
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
-        self.snapshot.interpolate(&self.interpolated_version, text);
-        self.interpolated_version = text.version.clone();
+        self.snapshot.interpolate(text);
     }
 
     #[cfg(test)]
     pub fn reparse(&mut self, language: Arc<Language>, text: &BufferSnapshot) {
-        self.snapshot.reparse(
-            &self.parsed_version,
-            text,
-            self.language_registry.clone(),
-            language,
-        );
-        self.parsed_version = text.version.clone();
-        self.interpolated_version = text.version.clone();
+        self.snapshot
+            .reparse(text, self.language_registry.clone(), language);
     }
 
-    pub fn did_parse(&mut self, snapshot: SyntaxSnapshot, version: clock::Global) {
-        self.interpolated_version = version.clone();
-        self.parsed_version = version;
+    pub fn did_parse(&mut self, snapshot: SyntaxSnapshot) {
         self.snapshot = snapshot;
     }
 
@@ -213,10 +243,12 @@ impl SyntaxSnapshot {
         self.layers.is_empty()
     }
 
-    pub fn interpolate(&mut self, from_version: &clock::Global, text: &BufferSnapshot) {
+    fn interpolate(&mut self, text: &BufferSnapshot) {
         let edits = text
-            .anchored_edits_since::<(usize, Point)>(&from_version)
+            .anchored_edits_since::<(usize, Point)>(&self.interpolated_version)
             .collect::<Vec<_>>();
+        self.interpolated_version = text.version().clone();
+
         if edits.is_empty() {
             return;
         }
@@ -276,46 +308,48 @@ impl SyntaxSnapshot {
             }
 
             let mut layer = layer.clone();
-            for (edit, edit_range) in &edits[first_edit_ix_for_depth..] {
-                // Ignore any edits that follow this layer.
-                if edit_range.start.cmp(&layer.range.end, text).is_ge() {
-                    break;
+            if let SyntaxLayerContent::Parsed { tree, .. } = &mut layer.content {
+                for (edit, edit_range) in &edits[first_edit_ix_for_depth..] {
+                    // Ignore any edits that follow this layer.
+                    if edit_range.start.cmp(&layer.range.end, text).is_ge() {
+                        break;
+                    }
+
+                    // Apply any edits that intersect this layer to the layer's syntax tree.
+                    let tree_edit = if edit_range.start.cmp(&layer.range.start, text).is_ge() {
+                        tree_sitter::InputEdit {
+                            start_byte: edit.new.start.0 - start_byte,
+                            old_end_byte: edit.new.start.0 - start_byte
+                                + (edit.old.end.0 - edit.old.start.0),
+                            new_end_byte: edit.new.end.0 - start_byte,
+                            start_position: (edit.new.start.1 - start_point).to_ts_point(),
+                            old_end_position: (edit.new.start.1 - start_point
+                                + (edit.old.end.1 - edit.old.start.1))
+                                .to_ts_point(),
+                            new_end_position: (edit.new.end.1 - start_point).to_ts_point(),
+                        }
+                    } else {
+                        let node = tree.root_node();
+                        tree_sitter::InputEdit {
+                            start_byte: 0,
+                            old_end_byte: node.end_byte(),
+                            new_end_byte: 0,
+                            start_position: Default::default(),
+                            old_end_position: node.end_position(),
+                            new_end_position: Default::default(),
+                        }
+                    };
+
+                    tree.edit(&tree_edit);
                 }
 
-                // Apply any edits that intersect this layer to the layer's syntax tree.
-                let tree_edit = if edit_range.start.cmp(&layer.range.start, text).is_ge() {
-                    tree_sitter::InputEdit {
-                        start_byte: edit.new.start.0 - start_byte,
-                        old_end_byte: edit.new.start.0 - start_byte
-                            + (edit.old.end.0 - edit.old.start.0),
-                        new_end_byte: edit.new.end.0 - start_byte,
-                        start_position: (edit.new.start.1 - start_point).to_ts_point(),
-                        old_end_position: (edit.new.start.1 - start_point
-                            + (edit.old.end.1 - edit.old.start.1))
-                            .to_ts_point(),
-                        new_end_position: (edit.new.end.1 - start_point).to_ts_point(),
-                    }
-                } else {
-                    let node = layer.tree.root_node();
-                    tree_sitter::InputEdit {
-                        start_byte: 0,
-                        old_end_byte: node.end_byte(),
-                        new_end_byte: 0,
-                        start_position: Default::default(),
-                        old_end_position: node.end_position(),
-                        new_end_position: Default::default(),
-                    }
-                };
-
-                layer.tree.edit(&tree_edit);
+                debug_assert!(
+                    tree.root_node().end_byte() <= text.len(),
+                    "tree's size {}, is larger than text size {}",
+                    tree.root_node().end_byte(),
+                    text.len(),
+                );
             }
-
-            debug_assert!(
-                layer.tree.root_node().end_byte() <= text.len(),
-                "tree's size {}, is larger than text size {}",
-                layer.tree.root_node().end_byte(),
-                text.len(),
-            );
 
             layers.push(layer, text);
             cursor.next(text);
@@ -328,12 +362,53 @@ impl SyntaxSnapshot {
 
     pub fn reparse(
         &mut self,
-        from_version: &clock::Global,
         text: &BufferSnapshot,
         registry: Option<Arc<LanguageRegistry>>,
         root_language: Arc<Language>,
     ) {
-        let edits = text.edits_since::<usize>(from_version).collect::<Vec<_>>();
+        let edit_ranges = text
+            .edits_since::<usize>(&self.parsed_version)
+            .map(|edit| edit.new)
+            .collect::<Vec<_>>();
+        self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
+
+        if let Some(registry) = registry {
+            if registry.version() != self.language_registry_version {
+                let mut resolved_injection_ranges = Vec::new();
+                let mut cursor = self
+                    .layers
+                    .filter::<_, ()>(|summary| summary.contains_unknown_injections);
+                cursor.next(text);
+                while let Some(layer) = cursor.item() {
+                    let SyntaxLayerContent::Pending { language_name } = &layer.content else { unreachable!() };
+                    if language_for_injection(language_name, &registry).is_some() {
+                        resolved_injection_ranges.push(layer.range.to_offset(text));
+                    }
+
+                    cursor.next(text);
+                }
+                drop(cursor);
+
+                if !resolved_injection_ranges.is_empty() {
+                    self.reparse_with_ranges(
+                        text,
+                        root_language,
+                        resolved_injection_ranges,
+                        Some(&registry),
+                    );
+                }
+                self.language_registry_version = registry.version();
+            }
+        }
+    }
+
+    fn reparse_with_ranges(
+        &mut self,
+        text: &BufferSnapshot,
+        root_language: Arc<Language>,
+        invalidated_ranges: Vec<Range<usize>>,
+        registry: Option<&Arc<LanguageRegistry>>,
+    ) {
         let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
         cursor.next(&text);
@@ -344,7 +419,9 @@ impl SyntaxSnapshot {
         let mut combined_injection_ranges = HashMap::default();
         queue.push(ParseStep {
             depth: 0,
-            language: root_language.clone(),
+            language: ParseStepLanguage::Loaded {
+                language: root_language,
+            },
             included_ranges: vec![tree_sitter::Range {
                 start_byte: 0,
                 end_byte: text.len(),
@@ -415,12 +492,11 @@ impl SyntaxSnapshot {
             let (step_start_byte, step_start_point) =
                 step.range.start.summary::<(usize, Point)>(text);
             let step_end_byte = step.range.end.to_offset(text);
-            let Some(grammar) = step.language.grammar.as_deref() else { continue };
 
             let mut old_layer = cursor.item();
             if let Some(layer) = old_layer {
                 if layer.range.to_offset(text) == (step_start_byte..step_end_byte)
-                    && layer.language.id() == step.language.id()
+                    && layer.content.language_id() == step.language.id()
                 {
                     cursor.next(&text);
                 } else {
@@ -428,89 +504,105 @@ impl SyntaxSnapshot {
                 }
             }
 
-            let tree;
-            let changed_ranges;
-            let mut included_ranges = step.included_ranges;
-            if let Some(old_layer) = old_layer {
-                if let ParseMode::Combined {
-                    parent_layer_changed_ranges,
-                    ..
-                } = step.mode
-                {
-                    included_ranges = splice_included_ranges(
-                        old_layer.tree.included_ranges(),
-                        &parent_layer_changed_ranges,
-                        &included_ranges,
-                    );
-                }
+            let content = match step.language {
+                ParseStepLanguage::Loaded { language } => {
+                    let Some(grammar) = language.grammar() else { continue };
+                    let tree;
+                    let changed_ranges;
+                    let mut included_ranges = step.included_ranges;
+                    if let Some(SyntaxLayerContent::Parsed { tree: old_tree, .. }) =
+                        old_layer.map(|layer| &layer.content)
+                    {
+                        if let ParseMode::Combined {
+                            parent_layer_changed_ranges,
+                            ..
+                        } = step.mode
+                        {
+                            included_ranges = splice_included_ranges(
+                                old_tree.included_ranges(),
+                                &parent_layer_changed_ranges,
+                                &included_ranges,
+                            );
+                        }
 
-                tree = parse_text(
-                    grammar,
-                    text.as_rope(),
-                    step_start_byte,
-                    step_start_point,
-                    included_ranges,
-                    Some(old_layer.tree.clone()),
-                );
-                changed_ranges = join_ranges(
-                    edits.iter().map(|e| e.new.clone()).filter(|range| {
-                        range.start <= step_end_byte && range.end >= step_start_byte
-                    }),
-                    old_layer
-                        .tree
-                        .changed_ranges(&tree)
-                        .map(|r| step_start_byte + r.start_byte..step_start_byte + r.end_byte),
-                );
-            } else {
-                tree = parse_text(
-                    grammar,
-                    text.as_rope(),
-                    step_start_byte,
-                    step_start_point,
-                    included_ranges,
-                    None,
-                );
-                changed_ranges = vec![step_start_byte..step_end_byte];
-            }
+                        tree = parse_text(
+                            grammar,
+                            text.as_rope(),
+                            step_start_byte,
+                            step_start_point,
+                            included_ranges,
+                            Some(old_tree.clone()),
+                        );
+                        changed_ranges = join_ranges(
+                            invalidated_ranges.iter().cloned().filter(|range| {
+                                range.start <= step_end_byte && range.end >= step_start_byte
+                            }),
+                            old_tree.changed_ranges(&tree).map(|r| {
+                                step_start_byte + r.start_byte..step_start_byte + r.end_byte
+                            }),
+                        );
+                    } else {
+                        tree = parse_text(
+                            grammar,
+                            text.as_rope(),
+                            step_start_byte,
+                            step_start_point,
+                            included_ranges,
+                            None,
+                        );
+                        changed_ranges = vec![step_start_byte..step_end_byte];
+                    }
+
+                    if let (Some((config, registry)), false) = (
+                        grammar.injection_config.as_ref().zip(registry.as_ref()),
+                        changed_ranges.is_empty(),
+                    ) {
+                        for range in &changed_ranges {
+                            changed_regions.insert(
+                                ChangedRegion {
+                                    depth: step.depth + 1,
+                                    range: text.anchor_before(range.start)
+                                        ..text.anchor_after(range.end),
+                                },
+                                text,
+                            );
+                        }
+                        get_injections(
+                            config,
+                            text,
+                            tree.root_node_with_offset(
+                                step_start_byte,
+                                step_start_point.to_ts_point(),
+                            ),
+                            registry,
+                            step.depth + 1,
+                            &changed_ranges,
+                            &mut combined_injection_ranges,
+                            &mut queue,
+                        );
+                    }
+
+                    SyntaxLayerContent::Parsed { tree, language }
+                }
+                ParseStepLanguage::Pending { name } => SyntaxLayerContent::Pending {
+                    language_name: name,
+                },
+            };
 
             layers.push(
                 SyntaxLayer {
                     depth: step.depth,
                     range: step.range,
-                    tree: tree.clone(),
-                    language: step.language.clone(),
+                    content,
                 },
                 &text,
             );
-
-            if let (Some((config, registry)), false) = (
-                grammar.injection_config.as_ref().zip(registry.as_ref()),
-                changed_ranges.is_empty(),
-            ) {
-                for range in &changed_ranges {
-                    changed_regions.insert(
-                        ChangedRegion {
-                            depth: step.depth + 1,
-                            range: text.anchor_before(range.start)..text.anchor_after(range.end),
-                        },
-                        text,
-                    );
-                }
-                get_injections(
-                    config,
-                    text,
-                    tree.root_node_with_offset(step_start_byte, step_start_point.to_ts_point()),
-                    registry,
-                    step.depth + 1,
-                    &changed_ranges,
-                    &mut combined_injection_ranges,
-                    &mut queue,
-                );
-            }
         }
 
         drop(cursor);
         self.layers = layers;
+        self.interpolated_version = text.version.clone();
+        self.parsed_version = text.version.clone();
     }
 
     pub fn single_tree_captures<'a>(
@@ -585,22 +677,33 @@ impl SyntaxSnapshot {
         });
 
         cursor.next(buffer);
-        std::iter::from_fn(move || {
-            if let Some(layer) = cursor.item() {
-                let info = SyntaxLayerInfo {
-                    language: &layer.language,
-                    depth: layer.depth,
-                    node: layer.tree.root_node_with_offset(
-                        layer.range.start.to_offset(buffer),
-                        layer.range.start.to_point(buffer).to_ts_point(),
-                    ),
-                };
-                cursor.next(buffer);
-                Some(info)
-            } else {
-                None
+        iter::from_fn(move || {
+            while let Some(layer) = cursor.item() {
+                if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
+                    let info = SyntaxLayerInfo {
+                        language,
+                        depth: layer.depth,
+                        node: tree.root_node_with_offset(
+                            layer.range.start.to_offset(buffer),
+                            layer.range.start.to_point(buffer).to_ts_point(),
+                        ),
+                    };
+                    cursor.next(buffer);
+                    return Some(info);
+                } else {
+                    cursor.next(buffer);
+                }
             }
+            None
         })
+    }
+
+    pub fn contains_unknown_injections(&self) -> bool {
+        self.layers.summary().contains_unknown_injections
+    }
+
+    pub fn language_registry_version(&self) -> usize {
+        self.language_registry_version
     }
 }
 
@@ -968,15 +1071,14 @@ fn get_injections(
     changed_ranges: &[Range<usize>],
     combined_injection_ranges: &mut HashMap<Arc<Language>, Vec<tree_sitter::Range>>,
     queue: &mut BinaryHeap<ParseStep>,
-) -> bool {
-    let mut result = false;
+) {
     let mut query_cursor = QueryCursorHandle::new();
     let mut prev_match = None;
 
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
-            if let Some(language) = language_registry.get_language(language_name) {
+            if let Some(language) = language_for_injection(language_name, language_registry) {
                 combined_injection_ranges.insert(language, Vec::new());
             }
         }
@@ -1004,21 +1106,26 @@ fn get_injections(
             prev_match = Some((mat.pattern_index, content_range.clone()));
 
             let combined = config.patterns[mat.pattern_index].combined;
-            let language_name = config.patterns[mat.pattern_index]
-                .language
-                .as_ref()
-                .map(|s| Cow::Borrowed(s.as_ref()))
-                .or_else(|| {
-                    let ix = config.language_capture_ix?;
-                    let node = mat.nodes_for_capture_index(ix).next()?;
-                    Some(Cow::Owned(text.text_for_range(node.byte_range()).collect()))
-                });
+
+            let mut language_name = None;
+            let mut step_range = content_range.clone();
+            if let Some(name) = config.patterns[mat.pattern_index].language.as_ref() {
+                language_name = Some(Cow::Borrowed(name.as_ref()))
+            } else if let Some(language_node) = config
+                .language_capture_ix
+                .and_then(|ix| mat.nodes_for_capture_index(ix).next())
+            {
+                step_range.start = cmp::min(content_range.start, language_node.start_byte());
+                step_range.end = cmp::max(content_range.end, language_node.end_byte());
+                language_name = Some(Cow::Owned(
+                    text.text_for_range(language_node.byte_range()).collect(),
+                ))
+            };
 
             if let Some(language_name) = language_name {
-                if let Some(language) = language_registry.get_language(language_name.as_ref()) {
-                    result = true;
-                    let range = text.anchor_before(content_range.start)
-                        ..text.anchor_after(content_range.end);
+                let language = language_for_injection(&language_name, language_registry);
+                let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
+                if let Some(language) = language {
                     if combined {
                         combined_injection_ranges
                             .get_mut(&language.clone())
@@ -1027,12 +1134,22 @@ fn get_injections(
                     } else {
                         queue.push(ParseStep {
                             depth,
-                            language,
+                            language: ParseStepLanguage::Loaded { language },
                             included_ranges: content_ranges,
                             range,
                             mode: ParseMode::Single,
                         });
                     }
+                } else {
+                    queue.push(ParseStep {
+                        depth,
+                        language: ParseStepLanguage::Pending {
+                            name: language_name.into(),
+                        },
+                        included_ranges: content_ranges,
+                        range,
+                        mode: ParseMode::Single,
+                    });
                 }
             }
         }
@@ -1043,7 +1160,7 @@ fn get_injections(
         let range = text.anchor_before(node.start_byte())..text.anchor_after(node.end_byte());
         queue.push(ParseStep {
             depth,
-            language,
+            language: ParseStepLanguage::Loaded { language },
             range,
             included_ranges,
             mode: ParseMode::Combined {
@@ -1052,8 +1169,15 @@ fn get_injections(
             },
         })
     }
+}
 
-    result
+fn language_for_injection(
+    language_name: &str,
+    language_registry: &LanguageRegistry,
+) -> Option<Arc<Language>> {
+    language_registry
+        .language_for_name(language_name)
+        .or_else(|| language_registry.language_for_extension(language_name))
 }
 
 fn splice_included_ranges(
@@ -1282,6 +1406,7 @@ impl Default for SyntaxLayerSummary {
             range: Anchor::MAX..Anchor::MIN,
             last_layer_range: Anchor::MIN..Anchor::MAX,
             last_layer_language: None,
+            contains_unknown_injections: false,
         }
     }
 }
@@ -1303,6 +1428,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
         }
         self.last_layer_range = other.last_layer_range.clone();
         self.last_layer_language = other.last_layer_language;
+        self.contains_unknown_injections |= other.contains_unknown_injections;
     }
 }
 
@@ -1352,7 +1478,8 @@ impl sum_tree::Item for SyntaxLayer {
             max_depth: self.depth,
             range: self.range.clone(),
             last_layer_range: self.range.clone(),
-            last_layer_language: self.language.id(),
+            last_layer_language: self.content.language_id(),
+            contains_unknown_injections: matches!(self.content, SyntaxLayerContent::Pending { .. }),
         }
     }
 }
@@ -1362,7 +1489,7 @@ impl std::fmt::Debug for SyntaxLayer {
         f.debug_struct("SyntaxLayer")
             .field("depth", &self.depth)
             .field("range", &self.range)
-            .field("tree", &self.tree)
+            .field("tree", &self.content.tree())
             .finish()
     }
 }
@@ -1591,6 +1718,84 @@ mod tests {
                 "...(array_expression (struct_expression ...",
             ],
         );
+    }
+
+    #[gpui::test]
+    fn test_dynamic_language_injection() {
+        let registry = Arc::new(LanguageRegistry::test());
+        let markdown = Arc::new(markdown_lang());
+        registry.add(markdown.clone());
+        registry.add(Arc::new(rust_lang()));
+        registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::new(
+            0,
+            0,
+            r#"
+                This is a code block:
+
+                ```rs
+                fn foo() {}
+                ```
+            "#
+            .unindent(),
+        );
+
+        let mut syntax_map = SyntaxMap::new();
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(markdown.clone(), &buffer);
+        assert_layers_for_range(
+            &syntax_map,
+            &buffer,
+            Point::new(3, 0)..Point::new(3, 0),
+            &[
+                "...(fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (code_fence_content) (fenced_code_block_delimiter...",
+                "...(function_item name: (identifier) parameters: (parameters) body: (block)...",
+            ],
+        );
+
+        // Replace Rust with Ruby in code block.
+        let macro_name_range = range_for_text(&buffer, "rs");
+        buffer.edit([(macro_name_range, "ruby")]);
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(markdown.clone(), &buffer);
+        assert_layers_for_range(
+            &syntax_map,
+            &buffer,
+            Point::new(3, 0)..Point::new(3, 0),
+            &[
+                "...(fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (code_fence_content) (fenced_code_block_delimiter...",
+                "...(call method: (identifier) arguments: (argument_list (call method: (identifier) arguments: (argument_list) block: (block)...",
+            ],
+        );
+
+        // Replace Ruby with a language that hasn't been loaded yet.
+        let macro_name_range = range_for_text(&buffer, "ruby");
+        buffer.edit([(macro_name_range, "html")]);
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(markdown.clone(), &buffer);
+        assert_layers_for_range(
+            &syntax_map,
+            &buffer,
+            Point::new(3, 0)..Point::new(3, 0),
+            &[
+                "...(fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (code_fence_content) (fenced_code_block_delimiter..."
+            ],
+        );
+        assert!(syntax_map.contains_unknown_injections());
+
+        registry.add(Arc::new(html_lang()));
+        syntax_map.reparse(markdown.clone(), &buffer);
+        assert_layers_for_range(
+            &syntax_map,
+            &buffer,
+            Point::new(3, 0)..Point::new(3, 0),
+            &[
+                "...(fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (code_fence_content) (fenced_code_block_delimiter...",
+                "(fragment (text))",
+            ],
+        );
+        assert!(!syntax_map.contains_unknown_injections());
     }
 
     #[gpui::test]
@@ -2157,16 +2362,14 @@ mod tests {
             .zip(new_syntax_map.layers.iter())
         {
             assert_eq!(old_layer.range, new_layer.range);
+            let Some(old_tree) = old_layer.content.tree() else { continue };
+            let Some(new_tree) = new_layer.content.tree() else { continue };
             let old_start_byte = old_layer.range.start.to_offset(old_buffer);
             let new_start_byte = new_layer.range.start.to_offset(new_buffer);
             let old_start_point = old_layer.range.start.to_point(old_buffer).to_ts_point();
             let new_start_point = new_layer.range.start.to_point(new_buffer).to_ts_point();
-            let old_node = old_layer
-                .tree
-                .root_node_with_offset(old_start_byte, old_start_point);
-            let new_node = new_layer
-                .tree
-                .root_node_with_offset(new_start_byte, new_start_point);
+            let old_node = old_tree.root_node_with_offset(old_start_byte, old_start_point);
+            let new_node = new_tree.root_node_with_offset(new_start_byte, new_start_point);
             check_node_edits(
                 old_layer.depth,
                 &old_layer.range,
@@ -2254,7 +2457,8 @@ mod tests {
         registry.add(Arc::new(ruby_lang()));
         registry.add(Arc::new(html_lang()));
         registry.add(Arc::new(erb_lang()));
-        let language = registry.get_language(language_name).unwrap();
+        registry.add(Arc::new(markdown_lang()));
+        let language = registry.language_for_name(language_name).unwrap();
         let mut buffer = Buffer::new(0, 0, Default::default());
 
         let mut mutated_syntax_map = SyntaxMap::new();
@@ -2387,6 +2591,26 @@ mod tests {
                 (macro_invocation
                     (token_tree) @content
                     (#set! "language" "rust"))
+            "#,
+        )
+        .unwrap()
+    }
+
+    fn markdown_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            Some(tree_sitter_markdown::language()),
+        )
+        .with_injection_query(
+            r#"
+                (fenced_code_block
+                    (info_string
+                        (language) @language)
+                    (code_fence_content) @content)
             "#,
         )
         .unwrap()

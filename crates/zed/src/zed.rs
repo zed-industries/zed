@@ -234,7 +234,11 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
             let content = to_string_pretty(&cx.debug_elements()).unwrap();
             let project = workspace.project().clone();
-            let json_language = project.read(cx).languages().get_language("JSON").unwrap();
+            let json_language = project
+                .read(cx)
+                .languages()
+                .language_for_name("JSON")
+                .unwrap();
             if project.read(cx).is_remote() {
                 cx.propagate_action();
             } else if let Some(buffer) = project
@@ -597,7 +601,7 @@ fn open_telemetry_log_file(
                     .update(cx, |project, cx| project.create_buffer("", None, cx))
                     .expect("creating buffers on a local workspace always succeeds");
                 buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(app_state.languages.get_language("JSON"), cx);
+                    buffer.set_language(app_state.languages.language_for_name("JSON"), cx);
                     buffer.edit(
                         [(
                             0..0,
@@ -646,7 +650,7 @@ fn open_bundled_file(
                     .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
                 let text = str::from_utf8(text.as_ref()).unwrap();
                 project
-                    .create_buffer(text, project.languages().get_language(language), cx)
+                    .create_buffer(text, project.languages().language_for_name(language), cx)
                     .expect("creating buffers on a local workspace always succeeds")
             });
             let buffer =
