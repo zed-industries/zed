@@ -22,7 +22,7 @@ cargo build --release --package cli --target x86_64-apple-darwin
 
 echo "Creating application bundle"
 pushd crates/zed
-channel=$(cat RELEASE_CHANNEL)
+channel=$(<RELEASE_CHANNEL)
 cp Cargo.toml Cargo.toml.backup
 sed \
     -i .backup \
@@ -48,6 +48,13 @@ lipo \
 echo "Copying WebRTC.framework into the frameworks folder"
 mkdir "${app_path}/Contents/Frameworks"
 cp -R target/x86_64-apple-darwin/release/WebRTC.framework "${app_path}/Contents/Frameworks/"
+
+mv "${app_path}/Contents/Info.plist" "${app_path}/Contents/WithoutDocumentTypes.plist"
+awk \
+    "/<\/dict>/{while(getline line<\"./crates/zed/BundleDocumentTypes.plist\"){print line}}1" \
+    "${app_path}/Contents/WithoutDocumentTypes.plist" \
+    > "${app_path}/Contents/Info.plist"
+rm "${app_path}/Contents/WithoutDocumentTypes.plist"
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
