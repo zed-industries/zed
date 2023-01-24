@@ -89,8 +89,34 @@ struct SyntaxMapMatchesLayer<'a> {
 struct SyntaxLayer {
     depth: usize,
     range: Range<Anchor>,
-    tree: tree_sitter::Tree,
-    language: Arc<Language>,
+    content: SyntaxLayerContent,
+}
+
+#[derive(Clone)]
+enum SyntaxLayerContent {
+    Parsed {
+        tree: tree_sitter::Tree,
+        language: Arc<Language>,
+    },
+    Pending {
+        language_name: Arc<str>,
+    },
+}
+
+impl SyntaxLayerContent {
+    fn language_id(&self) -> Option<usize> {
+        match self {
+            SyntaxLayerContent::Parsed { language, .. } => language.id(),
+            SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
+
+    fn tree(&self) -> Option<&Tree> {
+        match self {
+            SyntaxLayerContent::Parsed { tree, .. } => Some(tree),
+            SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -130,10 +156,24 @@ struct SyntaxLayerPositionBeforeChange {
 
 struct ParseStep {
     depth: usize,
-    language: Arc<Language>,
+    language: ParseStepLanguage,
     range: Range<Anchor>,
     included_ranges: Vec<tree_sitter::Range>,
     mode: ParseMode,
+}
+
+enum ParseStepLanguage {
+    Loaded { language: Arc<Language> },
+    Pending { name: Arc<str> },
+}
+
+impl ParseStepLanguage {
+    fn id(&self) -> Option<usize> {
+        match self {
+            ParseStepLanguage::Loaded { language } => language.id(),
+            ParseStepLanguage::Pending { .. } => None,
+        }
+    }
 }
 
 enum ParseMode {
@@ -276,46 +316,48 @@ impl SyntaxSnapshot {
             }
 
             let mut layer = layer.clone();
-            for (edit, edit_range) in &edits[first_edit_ix_for_depth..] {
-                // Ignore any edits that follow this layer.
-                if edit_range.start.cmp(&layer.range.end, text).is_ge() {
-                    break;
+            if let SyntaxLayerContent::Parsed { tree, .. } = &mut layer.content {
+                for (edit, edit_range) in &edits[first_edit_ix_for_depth..] {
+                    // Ignore any edits that follow this layer.
+                    if edit_range.start.cmp(&layer.range.end, text).is_ge() {
+                        break;
+                    }
+
+                    // Apply any edits that intersect this layer to the layer's syntax tree.
+                    let tree_edit = if edit_range.start.cmp(&layer.range.start, text).is_ge() {
+                        tree_sitter::InputEdit {
+                            start_byte: edit.new.start.0 - start_byte,
+                            old_end_byte: edit.new.start.0 - start_byte
+                                + (edit.old.end.0 - edit.old.start.0),
+                            new_end_byte: edit.new.end.0 - start_byte,
+                            start_position: (edit.new.start.1 - start_point).to_ts_point(),
+                            old_end_position: (edit.new.start.1 - start_point
+                                + (edit.old.end.1 - edit.old.start.1))
+                                .to_ts_point(),
+                            new_end_position: (edit.new.end.1 - start_point).to_ts_point(),
+                        }
+                    } else {
+                        let node = tree.root_node();
+                        tree_sitter::InputEdit {
+                            start_byte: 0,
+                            old_end_byte: node.end_byte(),
+                            new_end_byte: 0,
+                            start_position: Default::default(),
+                            old_end_position: node.end_position(),
+                            new_end_position: Default::default(),
+                        }
+                    };
+
+                    tree.edit(&tree_edit);
                 }
 
-                // Apply any edits that intersect this layer to the layer's syntax tree.
-                let tree_edit = if edit_range.start.cmp(&layer.range.start, text).is_ge() {
-                    tree_sitter::InputEdit {
-                        start_byte: edit.new.start.0 - start_byte,
-                        old_end_byte: edit.new.start.0 - start_byte
-                            + (edit.old.end.0 - edit.old.start.0),
-                        new_end_byte: edit.new.end.0 - start_byte,
-                        start_position: (edit.new.start.1 - start_point).to_ts_point(),
-                        old_end_position: (edit.new.start.1 - start_point
-                            + (edit.old.end.1 - edit.old.start.1))
-                            .to_ts_point(),
-                        new_end_position: (edit.new.end.1 - start_point).to_ts_point(),
-                    }
-                } else {
-                    let node = layer.tree.root_node();
-                    tree_sitter::InputEdit {
-                        start_byte: 0,
-                        old_end_byte: node.end_byte(),
-                        new_end_byte: 0,
-                        start_position: Default::default(),
-                        old_end_position: node.end_position(),
-                        new_end_position: Default::default(),
-                    }
-                };
-
-                layer.tree.edit(&tree_edit);
+                debug_assert!(
+                    tree.root_node().end_byte() <= text.len(),
+                    "tree's size {}, is larger than text size {}",
+                    tree.root_node().end_byte(),
+                    text.len(),
+                );
             }
-
-            debug_assert!(
-                layer.tree.root_node().end_byte() <= text.len(),
-                "tree's size {}, is larger than text size {}",
-                layer.tree.root_node().end_byte(),
-                text.len(),
-            );
 
             layers.push(layer, text);
             cursor.next(text);
@@ -344,7 +386,9 @@ impl SyntaxSnapshot {
         let mut combined_injection_ranges = HashMap::default();
         queue.push(ParseStep {
             depth: 0,
-            language: root_language.clone(),
+            language: ParseStepLanguage::Loaded {
+                language: root_language,
+            },
             included_ranges: vec![tree_sitter::Range {
                 start_byte: 0,
                 end_byte: text.len(),
@@ -415,12 +459,11 @@ impl SyntaxSnapshot {
             let (step_start_byte, step_start_point) =
                 step.range.start.summary::<(usize, Point)>(text);
             let step_end_byte = step.range.end.to_offset(text);
-            let Some(grammar) = step.language.grammar.as_deref() else { continue };
 
             let mut old_layer = cursor.item();
             if let Some(layer) = old_layer {
                 if layer.range.to_offset(text) == (step_start_byte..step_end_byte)
-                    && layer.language.id() == step.language.id()
+                    && layer.content.language_id() == step.language.id()
                 {
                     cursor.next(&text);
                 } else {
@@ -428,85 +471,99 @@ impl SyntaxSnapshot {
                 }
             }
 
-            let tree;
-            let changed_ranges;
-            let mut included_ranges = step.included_ranges;
-            if let Some(old_layer) = old_layer {
-                if let ParseMode::Combined {
-                    parent_layer_changed_ranges,
-                    ..
-                } = step.mode
-                {
-                    included_ranges = splice_included_ranges(
-                        old_layer.tree.included_ranges(),
-                        &parent_layer_changed_ranges,
-                        &included_ranges,
-                    );
-                }
+            let content = match step.language {
+                ParseStepLanguage::Loaded { language } => {
+                    let Some(grammar) = language.grammar() else { continue };
+                    let tree;
+                    let changed_ranges;
+                    let mut included_ranges = step.included_ranges;
+                    if let Some(SyntaxLayerContent::Parsed { tree: old_tree, .. }) =
+                        old_layer.map(|layer| &layer.content)
+                    {
+                        if let ParseMode::Combined {
+                            parent_layer_changed_ranges,
+                            ..
+                        } = step.mode
+                        {
+                            included_ranges = splice_included_ranges(
+                                old_tree.included_ranges(),
+                                &parent_layer_changed_ranges,
+                                &included_ranges,
+                            );
+                        }
 
-                tree = parse_text(
-                    grammar,
-                    text.as_rope(),
-                    step_start_byte,
-                    step_start_point,
-                    included_ranges,
-                    Some(old_layer.tree.clone()),
-                );
-                changed_ranges = join_ranges(
-                    edits.iter().map(|e| e.new.clone()).filter(|range| {
-                        range.start <= step_end_byte && range.end >= step_start_byte
-                    }),
-                    old_layer
-                        .tree
-                        .changed_ranges(&tree)
-                        .map(|r| step_start_byte + r.start_byte..step_start_byte + r.end_byte),
-                );
-            } else {
-                tree = parse_text(
-                    grammar,
-                    text.as_rope(),
-                    step_start_byte,
-                    step_start_point,
-                    included_ranges,
-                    None,
-                );
-                changed_ranges = vec![step_start_byte..step_end_byte];
-            }
+                        tree = parse_text(
+                            grammar,
+                            text.as_rope(),
+                            step_start_byte,
+                            step_start_point,
+                            included_ranges,
+                            Some(old_tree.clone()),
+                        );
+                        changed_ranges = join_ranges(
+                            edits.iter().map(|e| e.new.clone()).filter(|range| {
+                                range.start <= step_end_byte && range.end >= step_start_byte
+                            }),
+                            old_tree.changed_ranges(&tree).map(|r| {
+                                step_start_byte + r.start_byte..step_start_byte + r.end_byte
+                            }),
+                        );
+                    } else {
+                        tree = parse_text(
+                            grammar,
+                            text.as_rope(),
+                            step_start_byte,
+                            step_start_point,
+                            included_ranges,
+                            None,
+                        );
+                        changed_ranges = vec![step_start_byte..step_end_byte];
+                    }
+
+                    if let (Some((config, registry)), false) = (
+                        grammar.injection_config.as_ref().zip(registry.as_ref()),
+                        changed_ranges.is_empty(),
+                    ) {
+                        for range in &changed_ranges {
+                            changed_regions.insert(
+                                ChangedRegion {
+                                    depth: step.depth + 1,
+                                    range: text.anchor_before(range.start)
+                                        ..text.anchor_after(range.end),
+                                },
+                                text,
+                            );
+                        }
+                        get_injections(
+                            config,
+                            text,
+                            tree.root_node_with_offset(
+                                step_start_byte,
+                                step_start_point.to_ts_point(),
+                            ),
+                            registry,
+                            step.depth + 1,
+                            &changed_ranges,
+                            &mut combined_injection_ranges,
+                            &mut queue,
+                        );
+                    }
+
+                    SyntaxLayerContent::Parsed { tree, language }
+                }
+                ParseStepLanguage::Pending { name } => SyntaxLayerContent::Pending {
+                    language_name: name,
+                },
+            };
 
             layers.push(
                 SyntaxLayer {
                     depth: step.depth,
                     range: step.range,
-                    tree: tree.clone(),
-                    language: step.language.clone(),
+                    content,
                 },
                 &text,
             );
-
-            if let (Some((config, registry)), false) = (
-                grammar.injection_config.as_ref().zip(registry.as_ref()),
-                changed_ranges.is_empty(),
-            ) {
-                for range in &changed_ranges {
-                    changed_regions.insert(
-                        ChangedRegion {
-                            depth: step.depth + 1,
-                            range: text.anchor_before(range.start)..text.anchor_after(range.end),
-                        },
-                        text,
-                    );
-                }
-                get_injections(
-                    config,
-                    text,
-                    tree.root_node_with_offset(step_start_byte, step_start_point.to_ts_point()),
-                    registry,
-                    step.depth + 1,
-                    &changed_ranges,
-                    &mut combined_injection_ranges,
-                    &mut queue,
-                );
-            }
         }
 
         drop(cursor);
@@ -586,20 +643,23 @@ impl SyntaxSnapshot {
 
         cursor.next(buffer);
         std::iter::from_fn(move || {
-            if let Some(layer) = cursor.item() {
-                let info = SyntaxLayerInfo {
-                    language: &layer.language,
-                    depth: layer.depth,
-                    node: layer.tree.root_node_with_offset(
-                        layer.range.start.to_offset(buffer),
-                        layer.range.start.to_point(buffer).to_ts_point(),
-                    ),
-                };
-                cursor.next(buffer);
-                Some(info)
-            } else {
-                None
+            while let Some(layer) = cursor.item() {
+                if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
+                    let info = SyntaxLayerInfo {
+                        language,
+                        depth: layer.depth,
+                        node: tree.root_node_with_offset(
+                            layer.range.start.to_offset(buffer),
+                            layer.range.start.to_point(buffer).to_ts_point(),
+                        ),
+                    };
+                    cursor.next(buffer);
+                    return Some(info);
+                } else {
+                    cursor.next(buffer);
+                }
             }
+            None
         })
     }
 }
@@ -968,8 +1028,7 @@ fn get_injections(
     changed_ranges: &[Range<usize>],
     combined_injection_ranges: &mut HashMap<Arc<Language>, Vec<tree_sitter::Range>>,
     queue: &mut BinaryHeap<ParseStep>,
-) -> bool {
-    let mut result = false;
+) {
     let mut query_cursor = QueryCursorHandle::new();
     let mut prev_match = None;
 
@@ -1024,10 +1083,8 @@ fn get_injections(
                 let language = language_registry
                     .language_for_name(&language_name)
                     .or_else(|| language_registry.language_for_extension(&language_name));
+                let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
                 if let Some(language) = language {
-                    result = true;
-                    let range =
-                        text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
                     if combined {
                         combined_injection_ranges
                             .get_mut(&language.clone())
@@ -1036,12 +1093,22 @@ fn get_injections(
                     } else {
                         queue.push(ParseStep {
                             depth,
-                            language,
+                            language: ParseStepLanguage::Loaded { language },
                             included_ranges: content_ranges,
                             range,
                             mode: ParseMode::Single,
                         });
                     }
+                } else {
+                    queue.push(ParseStep {
+                        depth,
+                        language: ParseStepLanguage::Pending {
+                            name: language_name.into(),
+                        },
+                        included_ranges: content_ranges,
+                        range,
+                        mode: ParseMode::Single,
+                    });
                 }
             }
         }
@@ -1052,7 +1119,7 @@ fn get_injections(
         let range = text.anchor_before(node.start_byte())..text.anchor_after(node.end_byte());
         queue.push(ParseStep {
             depth,
-            language,
+            language: ParseStepLanguage::Loaded { language },
             range,
             included_ranges,
             mode: ParseMode::Combined {
@@ -1061,8 +1128,6 @@ fn get_injections(
             },
         })
     }
-
-    result
 }
 
 fn splice_included_ranges(
@@ -1361,7 +1426,7 @@ impl sum_tree::Item for SyntaxLayer {
             max_depth: self.depth,
             range: self.range.clone(),
             last_layer_range: self.range.clone(),
-            last_layer_language: self.language.id(),
+            last_layer_language: self.content.language_id(),
         }
     }
 }
@@ -1371,7 +1436,7 @@ impl std::fmt::Debug for SyntaxLayer {
         f.debug_struct("SyntaxLayer")
             .field("depth", &self.depth)
             .field("range", &self.range)
-            .field("tree", &self.tree)
+            .field("tree", &self.content.tree())
             .finish()
     }
 }
@@ -2216,16 +2281,14 @@ mod tests {
             .zip(new_syntax_map.layers.iter())
         {
             assert_eq!(old_layer.range, new_layer.range);
+            let Some(old_tree) = old_layer.content.tree() else { continue };
+            let Some(new_tree) = new_layer.content.tree() else { continue };
             let old_start_byte = old_layer.range.start.to_offset(old_buffer);
             let new_start_byte = new_layer.range.start.to_offset(new_buffer);
             let old_start_point = old_layer.range.start.to_point(old_buffer).to_ts_point();
             let new_start_point = new_layer.range.start.to_point(new_buffer).to_ts_point();
-            let old_node = old_layer
-                .tree
-                .root_node_with_offset(old_start_byte, old_start_point);
-            let new_node = new_layer
-                .tree
-                .root_node_with_offset(new_start_byte, new_start_point);
+            let old_node = old_tree.root_node_with_offset(old_start_byte, old_start_point);
+            let new_node = new_tree.root_node_with_offset(new_start_byte, new_start_point);
             check_node_edits(
                 old_layer.depth,
                 &old_layer.range,
