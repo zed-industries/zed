@@ -51,7 +51,12 @@ If you trigger `cmd-alt-i`, Zed will copy a JSON representation of the current w
 
 ### Licensing
 
-We use cargo-about to automatically comply with open source licenses. If CI is failing due to an unsupported license, first check whether this system is able to support this license type; ask a lawyer if you're unsure. Once you've verified the license, go to `script/licenses/zed-licenses.toml` and add the associated `accepted` SPDX identifier. If cargo about cannot find the license for the dependency at all, add a clarification field at the end of the file, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
+We use `[cargo-about](https://github.com/EmbarkStudios/cargo-about)` to automatically comply with open source licenses. If CI is failing, check the following:
+
+- Is it showing a `no license specified` error for a crate you've created? If so, add `publish = false` under `[package]` in your crate's Cargo.toml.
+- Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/zed-licenses.toml`.
+- Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/zed-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
+
 
 ### Wasm Plugins
 
