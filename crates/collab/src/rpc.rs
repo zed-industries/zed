@@ -1966,6 +1966,7 @@ async fn remove_contact(
     let pool = session.connection_pool().await;
     // Update outgoing contact requests of requester
     let mut update = proto::UpdateContacts::default();
+    update.remove_contacts.push(responder_id.to_proto());
     update
         .remove_outgoing_requests
         .push(responder_id.to_proto());
@@ -1975,6 +1976,7 @@ async fn remove_contact(
 
     // Update incoming contact requests of responder
     let mut update = proto::UpdateContacts::default();
+    update.remove_contacts.push(requester_id.to_proto());
     update
         .remove_incoming_requests
         .push(requester_id.to_proto());
