@@ -777,7 +777,7 @@ impl platform::Window for Window {
 
             let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
             let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
-            if is_panel | is_window {
+            if is_panel == YES || is_window == YES {
                 let topmost_window_id = get_window_state(&*top_most_window).borrow().id;
                 topmost_window_id == self_id
             } else {
