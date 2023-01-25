@@ -32,8 +32,8 @@ use settings::{
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
-use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{fs::OpenOptions, os::unix::prelude::OsStrExt};
 use terminal_view::{get_working_directory, TerminalView};
 
 use fs::RealFs;
@@ -90,7 +90,10 @@ fn main() {
             let paths: Vec<_> = urls
                 .iter()
                 .flat_map(|url| url.strip_prefix("file://"))
-                .map(|path| PathBuf::from(path))
+                .map(|url| {
+                    let decoded = urlencoding::decode_binary(url.as_bytes());
+                    PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
+                })
                 .collect();
             open_paths_tx
                 .unbounded_send(paths)
