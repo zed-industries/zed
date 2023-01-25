@@ -113,8 +113,7 @@ impl FeedbackEditor {
         cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
             .detach();
 
-        let this = Self { editor, project };
-        this
+        Self { editor, project }
     }
 
     fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
