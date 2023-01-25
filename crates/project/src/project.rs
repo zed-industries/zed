@@ -1480,6 +1480,10 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        buffer.update(cx, |buffer, _| {
+            buffer.set_language_registry(self.languages.clone())
+        });
+
         let remote_id = buffer.read(cx).remote_id();
         let open_buffer = if self.is_remote() || self.is_shared() {
             OpenBuffer::Strong(buffer.clone())
@@ -1803,7 +1807,6 @@ impl Project {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
             }) {
-                buffer.set_language_registry(self.languages.clone());
                 buffer.set_language(Some(new_language.clone()), cx);
             }
         });
