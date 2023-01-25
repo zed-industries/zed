@@ -866,10 +866,12 @@ impl MutableAppContext {
         }
     }
 
-    pub fn screen_position(&self, window_id: usize, view_position: &Vector2F) -> Option<Vector2F> {
+    pub fn is_topmost_window_for_position(&self, window_id: usize, position: Vector2F) -> bool {
         self.presenters_and_platform_windows
             .get(&window_id)
-            .map(|(_, window)| window.screen_position(view_position))
+            .map_or(false, |(_, window)| {
+                window.is_topmost_for_position(position)
+            })
     }
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {

@@ -64,7 +64,7 @@ pub trait Platform: Send + Sync {
     fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
     fn delete_credentials(&self, url: &str) -> Result<()>;
 
-    fn set_cursor_style(&self, style: CursorStyle, window_id: usize, screen_position: &Vector2F);
+    fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
     fn local_timezone(&self) -> UtcOffset;
@@ -145,7 +145,7 @@ pub trait Window {
     fn present_scene(&mut self, scene: Scene);
     fn appearance(&self) -> Appearance;
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
-    fn screen_position(&self, view_position: &Vector2F) -> Vector2F;
+    fn is_topmost_for_position(&self, position: Vector2F) -> bool;
 }
 
 #[derive(Debug)]

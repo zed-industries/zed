@@ -37,7 +37,6 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use pathfinder_geometry::vector::Vector2F;
 use postage::oneshot;
 use ptr::null_mut;
 use std::{
@@ -696,21 +695,18 @@ impl platform::Platform for MacPlatform {
         Ok(())
     }
 
-    fn set_cursor_style(&self, style: CursorStyle, window_id: usize, screen_position: &Vector2F) {
-        if Some(window_id) == Window::window_id_under(screen_position) {
-            dbg!(screen_position, style);
-            unsafe {
-                let cursor: id = match style {
-                    CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                    CursorStyle::ResizeLeftRight => {
-                        msg_send![class!(NSCursor), resizeLeftRightCursor]
-                    }
-                    CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                    CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-                    CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-                };
-                let _: () = msg_send![cursor, set];
-            }
+    fn set_cursor_style(&self, style: CursorStyle) {
+        unsafe {
+            let cursor: id = match style {
+                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+                CursorStyle::ResizeLeftRight => {
+                    msg_send![class!(NSCursor), resizeLeftRightCursor]
+                }
+                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+            };
+            let _: () = msg_send![cursor, set];
         }
     }
 

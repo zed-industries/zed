@@ -259,8 +259,8 @@ impl platform::Window for StatusItem {
         }
     }
 
-    fn screen_position(&self, _view_position: &Vector2F) -> Vector2F {
-        unimplemented!()
+    fn is_topmost_for_position(&self, _: Vector2F) -> bool {
+        true
     }
 }
 

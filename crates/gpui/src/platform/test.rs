@@ -178,7 +178,7 @@ impl super::Platform for Platform {
         Ok(())
     }
 
-    fn set_cursor_style(&self, style: CursorStyle, _window_id: usize, _position: &Vector2F) {
+    fn set_cursor_style(&self, style: CursorStyle) {
         *self.cursor.lock() = style;
     }
 
@@ -333,8 +333,8 @@ impl super::Window for Window {
 
     fn on_appearance_changed(&mut self, _: Box<dyn FnMut()>) {}
 
-    fn screen_position(&self, view_position: &Vector2F) -> Vector2F {
-        view_position.clone()
+    fn is_topmost_for_position(&self, _position: Vector2F) -> bool {
+        true
     }
 }
 

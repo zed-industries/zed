@@ -31,6 +31,7 @@ use std::{
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
+use time::Instant;
 
 pub struct Presenter {
     window_id: usize,
@@ -317,15 +318,8 @@ impl Presenter {
                     }
                 }
 
-                dbg!("*******");
-                dbg!(position);
-                dbg!(event_reused);
-                if let Some(screen_position) = cx.screen_position(self.window_id, position) {
-                    cx.platform().set_cursor_style(
-                        style_to_assign,
-                        self.window_id,
-                        &screen_position,
-                    );
+                if cx.is_topmost_window_for_position(self.window_id, *position) {
+                    cx.platform().set_cursor_style(style_to_assign);
                 }
 
                 if !event_reused {

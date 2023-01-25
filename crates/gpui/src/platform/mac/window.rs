@@ -17,9 +17,9 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask,
+        CGFloat, CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView,
+        NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton,
+        NSWindowCollectionBehavior, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{
@@ -51,8 +51,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-
-use super::geometry::Vector2FExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -561,28 +559,6 @@ impl Window {
             }
         }
     }
-
-    pub fn window_id_under(screen_position: &Vector2F) -> Option<usize> {
-        unsafe {
-            let app = NSApplication::sharedApplication(nil);
-
-            let point = screen_position.to_ns_point();
-            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:point belowWindowWithWindowNumber:0];
-
-            // For some reason this API doesn't work when our two windows are on top of each other
-            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
-
-            // dbg!(top_most_window);
-            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
-            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
-            if is_panel | is_window {
-                let id = get_window_state(&*top_most_window).borrow().id;
-                Some(id)
-            } else {
-                None
-            }
-        }
-    }
 }
 
 impl Drop for Window {
@@ -780,13 +756,34 @@ impl platform::Window for Window {
         self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
 
-    fn screen_position(&self, view_position: &Vector2F) -> Vector2F {
-        let self_borrow = self.0.borrow_mut();
+    fn is_topmost_for_position(&self, position: Vector2F) -> bool {
+        let window_bounds = self.bounds();
+        let self_borrow = self.0.borrow();
+        let self_id = self_borrow.id;
+
         unsafe {
-            let point = view_position.to_ns_point();
+            let app = NSApplication::sharedApplication(nil);
+
+            // Convert back to bottom-left coordinates
+            let point = NSPoint::new(
+                position.x() as CGFloat,
+                (window_bounds.height() - position.y()) as CGFloat,
+            );
+
             let screen_point: NSPoint =
                 msg_send![self_borrow.native_window, convertPointToScreen: point];
-            vec2f(screen_point.x as f32, screen_point.y as f32)
+            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
+            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
+
+            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
+            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
+            if is_panel | is_window {
+                let topmost_window_id = get_window_state(&*top_most_window).borrow().id;
+                topmost_window_id == self_id
+            } else {
+                // Someone else's window is on top
+                false
+            }
         }
     }
 }
