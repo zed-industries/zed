@@ -134,7 +134,7 @@ impl FeedbackEditor {
         _: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let feedback_char_count = self.editor.read(cx).buffer().read(cx).len(cx);
+        let feedback_char_count = self.editor.read(cx).text(cx).chars().count();
 
         let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
             Some(format!(
