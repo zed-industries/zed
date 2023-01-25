@@ -1,22 +1,22 @@
-use std::{mem, sync::Arc};
-
 use crate::contacts_popover;
 use call::ActiveCall;
 use client::{proto::PeerId, Contact, User, UserStore};
 use editor::{Cancel, Editor};
+use futures::StreamExt;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    AppContext, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle,
+    AppContext, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, PromptLevel,
+    RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
 use serde::Deserialize;
 use settings::Settings;
+use std::{mem, sync::Arc};
 use theme::IconButton;
 use util::ResultExt;
 use workspace::{JoinProject, OpenSharedScreen};
@@ -299,9 +299,19 @@ impl ContactList {
     }
 
     fn remove_contact(&mut self, request: &RemoveContact, cx: &mut ViewContext<Self>) {
-        self.user_store
-            .update(cx, |store, cx| store.remove_contact(request.0, cx))
-            .detach();
+        let user_id = request.0;
+        let user_store = self.user_store.clone();
+        let prompt_message = "Are you sure you want to remove this contact?";
+        let mut answer = cx.prompt(PromptLevel::Warning, prompt_message, &["Remove", "Cancel"]);
+        cx.spawn(|_, mut cx| async move {
+            if answer.next().await == Some(0) {
+                user_store
+                    .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))
+                    .await
+                    .unwrap();
+            }
+        })
+        .detach();
     }
 
     fn respond_to_contact_request(
