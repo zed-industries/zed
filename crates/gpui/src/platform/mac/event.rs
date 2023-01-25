@@ -125,6 +125,7 @@ impl Event {
                         button,
                         position: vec2f(
                             native_event.locationInWindow().x as f32,
+                            // MacOS screen coordinates are relative to bottom left
                             window_height - native_event.locationInWindow().y as f32,
                         ),
                         modifiers: read_modifiers(native_event),
@@ -150,6 +151,7 @@ impl Event {
                         button,
                         position: vec2f(
                             native_event.locationInWindow().x as f32,
+                            // MacOS view coordinates are relative to bottom left
                             window_height - native_event.locationInWindow().y as f32,
                         ),
                         modifiers: read_modifiers(native_event),

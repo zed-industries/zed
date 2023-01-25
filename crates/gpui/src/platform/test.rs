@@ -332,6 +332,10 @@ impl super::Window for Window {
     }
 
     fn on_appearance_changed(&mut self, _: Box<dyn FnMut()>) {}
+
+    fn is_topmost_for_position(&self, _position: Vector2F) -> bool {
+        true
+    }
 }
 
 pub fn platform() -> Platform {
