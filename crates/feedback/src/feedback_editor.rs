@@ -1,4 +1,7 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 
 use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN};
@@ -32,11 +35,7 @@ lazy_static! {
         std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
 }
 
-const FEEDBACK_CHAR_COUNT_RANGE: Range<usize> = Range {
-    start: 10,
-    end: 1000,
-};
-
+const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 const FEEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here as Markdown. Save the tab to submit your feedback.";
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
@@ -139,18 +138,24 @@ impl FeedbackEditor {
         _: gpui::ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let feedback_text_length = self.editor.read(cx).buffer().read(cx).len(cx);
+        let feedback_char_count = self.editor.read(cx).buffer().read(cx).len(cx);
 
-        if feedback_text_length <= FEEDBACK_CHAR_COUNT_RANGE.start {
-            cx.prompt(
-                PromptLevel::Critical,
-                &format!(
-                    "Feedback must be longer than {} characters",
-                    FEEDBACK_CHAR_COUNT_RANGE.start
-                ),
-                &["OK"],
-            );
+        let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
+            Some(format!(
+                "Feedback can't be shorter than {} characters.",
+                FEEDBACK_CHAR_LIMIT.start()
+            ))
+        } else if feedback_char_count > *FEEDBACK_CHAR_LIMIT.end() {
+            Some(format!(
+                "Feedback can't be longer than {} characters.",
+                FEEDBACK_CHAR_LIMIT.end()
+            ))
+        } else {
+            None
+        };
 
+        if let Some(error) = error {
+            cx.prompt(PromptLevel::Critical, &error, &["OK"]);
             return Task::ready(Ok(()));
         }
 
