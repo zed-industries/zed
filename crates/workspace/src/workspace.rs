@@ -100,7 +100,6 @@ actions!(
         NewTerminal,
         NewSearch,
         Feedback,
-        ShowNotif,
     ]
 );
 

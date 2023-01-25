@@ -209,6 +209,7 @@ impl EventDispatcher {
                         break;
                     }
                 }
+
                 cx.platform().set_cursor_style(style_to_assign);
 
                 if !event_reused {

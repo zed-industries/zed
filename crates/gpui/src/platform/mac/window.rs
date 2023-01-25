@@ -17,9 +17,9 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask,
+        CGFloat, CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView,
+        NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton,
+        NSWindowCollectionBehavior, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{
@@ -754,6 +754,37 @@ impl platform::Window for Window {
 
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().appearance_changed_callback = Some(callback);
+    }
+
+    fn is_topmost_for_position(&self, position: Vector2F) -> bool {
+        let window_bounds = self.bounds();
+        let self_borrow = self.0.borrow();
+        let self_id = self_borrow.id;
+
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+
+            // Convert back to bottom-left coordinates
+            let point = NSPoint::new(
+                position.x() as CGFloat,
+                (window_bounds.height() - position.y()) as CGFloat,
+            );
+
+            let screen_point: NSPoint =
+                msg_send![self_borrow.native_window, convertPointToScreen: point];
+            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
+            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
+
+            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
+            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
+            if is_panel | is_window {
+                let topmost_window_id = get_window_state(&*top_most_window).borrow().id;
+                topmost_window_id == self_id
+            } else {
+                // Someone else's window is on top
+                false
+            }
+        }
     }
 }
 

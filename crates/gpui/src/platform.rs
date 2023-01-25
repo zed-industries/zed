@@ -145,6 +145,7 @@ pub trait Window {
     fn present_scene(&mut self, scene: Scene);
     fn appearance(&self) -> Appearance;
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
+    fn is_topmost_for_position(&self, position: Vector2F) -> bool;
 }
 
 #[derive(Debug)]

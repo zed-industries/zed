@@ -21,6 +21,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use pathfinder_geometry::vector::Vector2F;
 use postage::oneshot;
 use smallvec::SmallVec;
 use smol::prelude::*;
@@ -863,6 +864,14 @@ impl MutableAppContext {
                 type_name::<A>()
             );
         }
+    }
+
+    pub fn is_topmost_window_for_position(&self, window_id: usize, position: Vector2F) -> bool {
+        self.presenters_and_platform_windows
+            .get(&window_id)
+            .map_or(false, |(_, window)| {
+                window.is_topmost_for_position(position)
+            })
     }
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
