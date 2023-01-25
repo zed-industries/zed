@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     ops::{Range, RangeInclusive},
     sync::Arc,
 };
@@ -12,7 +13,7 @@ use gpui::{
     elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
     serde_json, AnyViewHandle, AppContext, CursorStyle, Element, ElementBox, Entity, ModelHandle,
     MouseButton, MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WeakViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -79,12 +80,7 @@ impl View for FeedbackButton {
 }
 
 impl StatusItemView for FeedbackButton {
-    fn set_active_pane_item(
-        &mut self,
-        _: Option<&dyn ItemHandle>,
-        _: &mut gpui::ViewContext<Self>,
-    ) {
-    }
+    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
 }
 
 #[derive(Serialize)]
@@ -117,8 +113,7 @@ impl FeedbackEditor {
         cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
             .detach();
 
-        let this = Self { editor, project };
-        this
+        Self { editor, project }
     }
 
     fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
@@ -135,10 +130,10 @@ impl FeedbackEditor {
 
     fn handle_save(
         &mut self,
-        _: gpui::ModelHandle<Project>,
+        _: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let feedback_char_count = self.editor.read(cx).buffer().read(cx).len(cx);
+        let feedback_char_count = self.editor.read(cx).text(cx).chars().count();
 
         let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
             Some(format!(
@@ -269,12 +264,7 @@ impl Entity for FeedbackEditor {
 }
 
 impl Item for FeedbackEditor {
-    fn tab_content(
-        &self,
-        _: Option<usize>,
-        style: &theme::Tab,
-        _: &gpui::AppContext,
-    ) -> ElementBox {
+    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
         Flex::row()
             .with_child(
                 Label::new("Feedback".to_string(), style.label.clone())
@@ -293,19 +283,19 @@ impl Item for FeedbackEditor {
         Vec::new()
     }
 
-    fn is_singleton(&self, _: &gpui::AppContext) -> bool {
+    fn is_singleton(&self, _: &AppContext) -> bool {
         true
     }
 
     fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
 
-    fn can_save(&self, _: &gpui::AppContext) -> bool {
+    fn can_save(&self, _: &AppContext) -> bool {
         true
     }
 
     fn save(
         &mut self,
-        project: gpui::ModelHandle<Project>,
+        project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.handle_save(project, cx)
@@ -313,7 +303,7 @@ impl Item for FeedbackEditor {
 
     fn save_as(
         &mut self,
-        project: gpui::ModelHandle<Project>,
+        project: ModelHandle<Project>,
         _: std::path::PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
@@ -322,7 +312,7 @@ impl Item for FeedbackEditor {
 
     fn reload(
         &mut self,
-        _: gpui::ModelHandle<Project>,
+        _: ModelHandle<Project>,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         unreachable!("reload should not have been called")
@@ -356,8 +346,8 @@ impl Item for FeedbackEditor {
     }
 
     fn deserialize(
-        _: gpui::ModelHandle<Project>,
-        _: gpui::WeakViewHandle<Workspace>,
+        _: ModelHandle<Project>,
+        _: WeakViewHandle<Workspace>,
         _: workspace::WorkspaceId,
         _: workspace::ItemId,
         _: &mut ViewContext<workspace::Pane>,
@@ -367,6 +357,21 @@ impl Item for FeedbackEditor {
 
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn act_as_type(
+        &self,
+        type_id: TypeId,
+        self_handle: &ViewHandle<Self>,
+        _: &AppContext,
+    ) -> Option<AnyViewHandle> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some((&self.editor).into())
+        } else {
+            None
+        }
     }
 }
 
