@@ -128,14 +128,9 @@ impl Room {
         let url = url.to_string();
         let token = token.to_string();
         async move {
-            match rx.await.unwrap().context("error connecting to room") {
-                Ok(()) => {
-                    *this.connection.lock().0.borrow_mut() =
-                        ConnectionState::Connected { url, token };
-                    Ok(())
-                }
-                Err(err) => Err(err),
-            }
+            rx.await.unwrap().context("error connecting to room")?;
+            *this.connection.lock().0.borrow_mut() = ConnectionState::Connected { url, token };
+            Ok(())
         }
     }
 
