@@ -317,14 +317,8 @@ impl Presenter {
                     }
                 }
 
-                let t0 = std::time::Instant::now();
-                let is_topmost_window =
-                    cx.is_topmost_window_for_position(self.window_id, *position);
-                println!("is_topmost_window => {:?}", t0.elapsed());
-                if is_topmost_window {
-                    let t1 = std::time::Instant::now();
+                if cx.is_topmost_window_for_position(self.window_id, *position) {
                     cx.platform().set_cursor_style(style_to_assign);
-                    println!("set_cursor_style => {:?}", t1.elapsed());
                 }
 
                 if !event_reused {
