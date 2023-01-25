@@ -37,8 +37,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, SizeConstraint,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowBounds,
+    MouseButton, MutableAppContext, PathPromptOptions, Platform, PromptLevel, RenderContext,
+    SizeConstraint, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowBounds,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -339,7 +339,8 @@ pub struct AppState {
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub build_window_options: fn(Option<WindowBounds>) -> WindowOptions<'static>,
+    pub build_window_options:
+        fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
     pub dock_default_item_factory: DockDefaultItemFactory,
 }
@@ -366,7 +367,7 @@ impl AppState {
             languages,
             user_store,
             initialize_workspace: |_, _, _| {},
-            build_window_options: |_| Default::default(),
+            build_window_options: |_, _, _| Default::default(),
             dock_default_item_factory: |_, _| unimplemented!(),
         })
     }
@@ -681,11 +682,14 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
+            let (bounds, display) = dbg!(serialized_workspace
+                .as_ref()
+                .and_then(|sw| sw.bounds.zip(sw.display))
+                .unzip());
+
             // Use the serialized workspace to construct the new window
             let (_, workspace) = cx.add_window(
-                (app_state.build_window_options)(dbg!(serialized_workspace
-                    .as_ref()
-                    .map(|sw| sw.bounds()))),
+                (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
                 |cx| {
                     let mut workspace = Workspace::new(
                         serialized_workspace,
@@ -695,20 +699,9 @@ impl Workspace {
                         cx,
                     );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                    cx.observe_window_bounds(move |_, bounds, cx| {
-                        let fullscreen = cx.window_is_fullscreen(cx.window_id());
-                        let bounds = if let WindowBounds::Fixed(region) = bounds {
-                            Some((
-                                region.min_x(),
-                                region.min_y(),
-                                region.width(),
-                                region.height(),
-                            ))
-                        } else {
-                            None
-                        };
+                    cx.observe_window_bounds(move |_, bounds, display, cx| {
                         cx.background()
-                            .spawn(DB.set_bounds(workspace_id, fullscreen, bounds))
+                            .spawn(DB.set_window_bounds(workspace_id, dbg!(bounds), dbg!(display)))
                             .detach_and_log_err(cx);
                     })
                     .detach();
@@ -2349,8 +2342,8 @@ impl Workspace {
                     dock_pane,
                     center_group,
                     left_sidebar_open: self.left_sidebar.read(cx).is_open(),
-                    fullscreen: false,
                     bounds: Default::default(),
+                    display: Default::default(),
                 };
 
                 cx.background()

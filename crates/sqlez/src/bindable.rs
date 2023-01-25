@@ -60,6 +60,14 @@ impl<const C: usize> Bind for &[u8; C] {
     }
 }
 
+impl<const C: usize> Column for [u8; C] {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let bytes_slice = statement.column_blob(start_index)?;
+        let array = bytes_slice.try_into()?;
+        Ok((array, start_index + 1))
+    }
+}
+
 impl StaticColumnCount for Vec<u8> {}
 impl Bind for Vec<u8> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
@@ -236,8 +244,7 @@ impl<T: Bind + StaticColumnCount> Bind for Option<T> {
         if let Some(this) = self {
             this.bind(statement, start_index)
         } else {
-            for i in 0..T::column_count() {
-                dbg!(i);
+            for _ in 0..T::column_count() {
                 statement.bind_null(start_index)?;
                 start_index += 1;
             }
@@ -272,17 +279,6 @@ impl<T: Bind, const COUNT: usize> Bind for [T; COUNT] {
     }
 }
 
-impl<T: Column + Default + Copy, const COUNT: usize> Column for [T; COUNT] {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let mut array = [Default::default(); COUNT];
-        let mut current_index = start_index;
-        for i in 0..COUNT {
-            (array[i], current_index) = T::column(statement, current_index)?;
-        }
-        Ok((array, current_index))
-    }
-}
-
 impl StaticColumnCount for &Path {}
 impl Bind for &Path {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
@@ -312,6 +308,25 @@ impl Column for PathBuf {
             PathBuf::from(OsStr::from_bytes(blob).to_owned()),
             start_index + 1,
         ))
+    }
+}
+
+impl StaticColumnCount for uuid::Uuid {
+    fn column_count() -> usize {
+        1
+    }
+}
+
+impl Bind for uuid::Uuid {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.as_bytes().bind(statement, start_index)
+    }
+}
+
+impl Column for uuid::Uuid {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (bytes, next_index) = Column::column(statement, start_index)?;
+        Ok((uuid::Uuid::from_bytes(bytes), next_index))
     }
 }
 

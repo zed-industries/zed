@@ -54,17 +54,20 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                     })
                     .await?;
 
-                let (_, workspace) = cx.add_window((app_state.build_window_options)(None), |cx| {
-                    let mut workspace = Workspace::new(
-                        Default::default(),
-                        0,
-                        project,
-                        app_state.dock_default_item_factory,
-                        cx,
-                    );
-                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                    workspace
-                });
+                let (_, workspace) = cx.add_window(
+                    (app_state.build_window_options)(None, None, cx.platform().as_ref()),
+                    |cx| {
+                        let mut workspace = Workspace::new(
+                            Default::default(),
+                            0,
+                            project,
+                            app_state.dock_default_item_factory,
+                            cx,
+                        );
+                        (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                        workspace
+                    },
+                );
                 workspace
             };
 

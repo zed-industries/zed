@@ -20,7 +20,8 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, ClipboardItem, Platform, PromptLevel, TitlebarOptions,
+    ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -33,6 +34,7 @@ use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt};
+use uuid::Uuid;
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
 
@@ -369,7 +371,11 @@ pub fn initialize_workspace(
     });
 }
 
-pub fn build_window_options(bounds: Option<WindowBounds>) -> WindowOptions<'static> {
+pub fn build_window_options(
+    bounds: Option<WindowBounds>,
+    display: Option<Uuid>,
+    platform: &dyn Platform,
+) -> WindowOptions<'static> {
     let bounds = bounds
         .or_else(|| {
             ZED_WINDOW_POSITION
@@ -378,8 +384,9 @@ pub fn build_window_options(bounds: Option<WindowBounds>) -> WindowOptions<'stat
         })
         .unwrap_or(WindowBounds::Maximized);
 
+    let screen = display.and_then(|display| platform.screen_by_id(display));
+
     WindowOptions {
-        bounds,
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
@@ -389,7 +396,8 @@ pub fn build_window_options(bounds: Option<WindowBounds>) -> WindowOptions<'stat
         focus: true,
         kind: WindowKind::Normal,
         is_movable: true,
-        screen: None,
+        bounds,
+        screen,
     }
 }
 

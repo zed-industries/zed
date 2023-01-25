@@ -32,6 +32,7 @@ use collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 use platform::Event;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_app_context::{ContextHandle, TestAppContext};
+use uuid::Uuid;
 
 use crate::{
     elements::ElementBox,
@@ -595,7 +596,7 @@ type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
-type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, &mut MutableAppContext) -> bool>;
+type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool>;
 type KeystrokeCallback = Box<
     dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut MutableAppContext) -> bool,
 >;
@@ -909,8 +910,15 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_fullscreen)
     }
 
-    pub fn window_bounds(&self, window_id: usize) -> RectF {
+    pub fn window_bounds(&self, window_id: usize) -> WindowBounds {
         self.presenters_and_platform_windows[&window_id].1.bounds()
+    }
+
+    pub fn window_display_uuid(&self, window_id: usize) -> Uuid {
+        self.presenters_and_platform_windows[&window_id]
+            .1
+            .screen()
+            .display_uuid()
     }
 
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
@@ -1246,7 +1254,7 @@ impl MutableAppContext {
 
     fn observe_window_bounds<F>(&mut self, window_id: usize, callback: F) -> Subscription
     where
-        F: 'static + FnMut(WindowBounds, &mut MutableAppContext) -> bool,
+        F: 'static + FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.pending_effects
@@ -2382,14 +2390,12 @@ impl MutableAppContext {
                 callback(is_fullscreen, this)
             });
 
-            let bounds = if this.window_is_fullscreen(window_id) {
-                WindowBounds::Fullscreen
-            } else {
-                WindowBounds::Fixed(this.window_bounds(window_id))
-            };
-
+            let bounds = this.window_bounds(window_id);
+            let uuid = this.window_display_uuid(window_id);
             let mut bounds_observations = this.window_bounds_observations.clone();
-            bounds_observations.emit(window_id, this, |callback, this| callback(bounds, this));
+            bounds_observations.emit(window_id, this, |callback, this| {
+                callback(bounds, uuid, this)
+            });
 
             Some(())
         });
@@ -2568,15 +2574,12 @@ impl MutableAppContext {
     }
 
     fn handle_window_moved(&mut self, window_id: usize) {
-        let bounds = if self.window_is_fullscreen(window_id) {
-            WindowBounds::Fullscreen
-        } else {
-            WindowBounds::Fixed(self.window_bounds(window_id))
-        };
+        let bounds = self.window_bounds(window_id);
+        let display = self.window_display_uuid(window_id);
         self.window_bounds_observations
             .clone()
             .emit(window_id, self, move |callback, this| {
-                callback(bounds, this);
+                callback(bounds, display, this);
                 true
             });
     }
@@ -3717,7 +3720,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.toggle_window_full_screen(self.window_id)
     }
 
-    pub fn window_bounds(&self) -> RectF {
+    pub fn window_bounds(&self) -> WindowBounds {
         self.app.window_bounds(self.window_id)
     }
 
@@ -4023,14 +4026,14 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn observe_window_bounds<F>(&mut self, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, WindowBounds, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut T, WindowBounds, Uuid, &mut ViewContext<T>),
     {
         let observer = self.weak_handle();
         self.app
-            .observe_window_bounds(self.window_id(), move |bounds, cx| {
+            .observe_window_bounds(self.window_id(), move |bounds, display, cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
-                        callback(observer, bounds, cx);
+                        callback(observer, bounds, display, cx);
                     });
                     true
                 } else {

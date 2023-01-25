@@ -1275,6 +1275,7 @@ source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2f
 dependencies = [
  "core-foundation-sys",
  "libc",
+ "uuid 0.5.1",
 ]
 
 [[package]]
@@ -2591,6 +2592,7 @@ dependencies = [
  "tiny-skia",
  "usvg",
  "util",
+ "uuid 1.2.2",
  "waker-fn",
 ]
 
@@ -6014,6 +6016,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "smol",
  "thread_local",
+ "uuid 1.2.2",
 ]
 
 [[package]]
@@ -7326,6 +7329,12 @@ dependencies = [
 
 [[package]]
 name = "uuid"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcc7e3b898aa6f6c08e5295b6c89258d1331e9ac578cc992fb818759951bdc22"
+
+[[package]]
+name = "uuid"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
@@ -8169,6 +8178,7 @@ dependencies = [
  "smallvec",
  "theme",
  "util",
+ "uuid 1.2.2",
 ]
 
 [[package]]
@@ -8312,6 +8322,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
+ "uuid 1.2.2",
  "vim",
  "workspace",
 ]

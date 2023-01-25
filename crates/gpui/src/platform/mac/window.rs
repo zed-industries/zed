@@ -419,19 +419,17 @@ impl Window {
                 WindowBounds::Fixed(top_left_bounds) => {
                     let frame = screen.visibleFrame();
                     let bottom_left_bounds = RectF::new(
-                        vec2f(
+                        dbg!(vec2f(
                             top_left_bounds.origin_x(),
                             frame.size.height as f32
                                 - top_left_bounds.origin_y()
                                 - top_left_bounds.height(),
-                        ),
-                        top_left_bounds.size(),
+                        )),
+                        dbg!(top_left_bounds.size()),
                     )
                     .to_ns_rect();
-                    native_window.setFrame_display_(
-                        native_window.convertRectToScreen_(bottom_left_bounds),
-                        YES,
-                    );
+                    let screen_rect = native_window.convertRectToScreen_(bottom_left_bounds);
+                    native_window.setFrame_display_(screen_rect, YES);
                 }
             }
 
@@ -585,36 +583,39 @@ impl Drop for Window {
 }
 
 impl platform::Window for Window {
+    fn bounds(&self) -> WindowBounds {
+        self.0.as_ref().borrow().bounds()
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.0.as_ref().borrow().content_size()
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.0.as_ref().borrow().scale_factor()
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        self.0.as_ref().borrow().titlebar_height()
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        unsafe {
+            let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
+            crate::Appearance::from_native(appearance)
+        }
+    }
+
+    fn screen(&self) -> Rc<dyn crate::Screen> {
+        unsafe {
+            Rc::new(Screen {
+                native_screen: self.0.as_ref().borrow().native_window.screen(),
+            })
+        }
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
-    }
-
-    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>) {
-        self.0.as_ref().borrow_mut().event_callback = Some(callback);
-    }
-
-    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().borrow_mut().resize_callback = Some(callback);
-    }
-
-    fn on_moved(&mut self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().borrow_mut().moved_callback = Some(callback);
-    }
-
-    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().borrow_mut().fullscreen_callback = Some(callback);
-    }
-
-    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.as_ref().borrow_mut().should_close_callback = Some(callback);
-    }
-
-    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
-        self.0.as_ref().borrow_mut().close_callback = Some(callback);
-    }
-
-    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().borrow_mut().activate_callback = Some(callback);
     }
 
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>) {
@@ -726,6 +727,10 @@ impl platform::Window for Window {
             .detach();
     }
 
+    fn present_scene(&mut self, scene: Scene) {
+        self.0.as_ref().borrow_mut().present_scene(scene);
+    }
+
     fn toggle_full_screen(&self) {
         let this = self.0.borrow();
         let window = this.native_window;
@@ -738,31 +743,32 @@ impl platform::Window for Window {
             .detach();
     }
 
-    fn bounds(&self) -> RectF {
-        self.0.as_ref().borrow().bounds()
+    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>) {
+        self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
 
-    fn content_size(&self) -> Vector2F {
-        self.0.as_ref().borrow().content_size()
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().activate_callback = Some(callback);
     }
 
-    fn scale_factor(&self) -> f32 {
-        self.0.as_ref().borrow().scale_factor()
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
 
-    fn present_scene(&mut self, scene: Scene) {
-        self.0.as_ref().borrow_mut().present_scene(scene);
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().fullscreen_callback = Some(callback);
     }
 
-    fn titlebar_height(&self) -> f32 {
-        self.0.as_ref().borrow().titlebar_height()
+    fn on_moved(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().borrow_mut().moved_callback = Some(callback);
     }
 
-    fn appearance(&self) -> crate::Appearance {
-        unsafe {
-            let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
-            crate::Appearance::from_native(appearance)
-        }
+    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.as_ref().borrow_mut().should_close_callback = Some(callback);
+    }
+
+    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
+        self.0.as_ref().borrow_mut().close_callback = Some(callback);
     }
 
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
@@ -846,20 +852,39 @@ impl WindowState {
         }
     }
 
-    fn bounds(&self) -> RectF {
+    fn is_fullscreen(&self) -> bool {
         unsafe {
+            let style_mask = self.native_window.styleMask();
+            style_mask.contains(NSWindowStyleMask::NSFullScreenWindowMask)
+        }
+    }
+
+    fn bounds(&self) -> WindowBounds {
+        unsafe {
+            if self.is_fullscreen() {
+                return WindowBounds::Fullscreen;
+            }
+
             let screen_frame = self.native_window.screen().visibleFrame();
             let window_frame = NSWindow::frame(self.native_window);
             let origin = vec2f(
                 window_frame.origin.x as f32,
-                (window_frame.origin.y - screen_frame.size.height - window_frame.size.height)
+                (screen_frame.size.height - window_frame.origin.y - window_frame.size.height)
                     as f32,
             );
             let size = vec2f(
                 window_frame.size.width as f32,
                 window_frame.size.height as f32,
             );
-            RectF::new(origin, size)
+
+            if origin.is_zero()
+                && size.x() == screen_frame.size.width as f32
+                && size.y() == screen_frame.size.height as f32
+            {
+                WindowBounds::Maximized
+            } else {
+                WindowBounds::Fixed(RectF::new(origin, size))
+            }
         }
     }
 

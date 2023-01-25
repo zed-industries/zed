@@ -6,9 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 
 use async_recursion::async_recursion;
-use gpui::{
-    geometry::rect::RectF, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WindowBounds,
-};
+use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WindowBounds};
 
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -17,6 +15,7 @@ use db::sqlez::{
 use project::Project;
 use settings::DockAnchor;
 use util::ResultExt;
+use uuid::Uuid;
 
 use crate::{
     dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
@@ -69,20 +68,8 @@ pub struct SerializedWorkspace {
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
     pub left_sidebar_open: bool,
-    pub fullscreen: bool,
-    pub bounds: Option<RectF>,
-}
-
-impl SerializedWorkspace {
-    pub fn bounds(&self) -> WindowBounds {
-        if self.fullscreen {
-            WindowBounds::Fullscreen
-        } else if let Some(bounds) = self.bounds {
-            WindowBounds::Fixed(bounds)
-        } else {
-            WindowBounds::Maximized
-        }
-    }
+    pub bounds: Option<WindowBounds>,
+    pub display: Option<Uuid>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

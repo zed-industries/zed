@@ -18,11 +18,15 @@ use crate::{
     text_layout::{LineLayout, RunStyle},
     Action, ClipboardItem, Menu, Scene,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_task::Runnable;
 pub use event::*;
 use postage::oneshot;
 use serde::Deserialize;
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 use std::{
     any::Any,
     fmt::{self, Debug, Display},
@@ -33,6 +37,7 @@ use std::{
     sync::Arc,
 };
 use time::UtcOffset;
+use uuid::Uuid;
 
 pub trait Platform: Send + Sync {
     fn dispatcher(&self) -> Arc<dyn Dispatcher>;
@@ -44,6 +49,7 @@ pub trait Platform: Send + Sync {
     fn unhide_other_apps(&self);
     fn quit(&self);
 
+    fn screen_by_id(&self, id: Uuid) -> Option<Rc<dyn Screen>>;
     fn screens(&self) -> Vec<Rc<dyn Screen>>;
 
     fn open_window(
@@ -118,17 +124,18 @@ pub trait InputHandler {
 pub trait Screen: Debug {
     fn as_any(&self) -> &dyn Any;
     fn size(&self) -> Vector2F;
+    fn display_uuid(&self) -> Uuid;
 }
 
 pub trait Window {
+    fn bounds(&self) -> WindowBounds;
+    fn content_size(&self) -> Vector2F;
+    fn scale_factor(&self) -> f32;
+    fn titlebar_height(&self) -> f32;
+    fn appearance(&self) -> Appearance;
+    fn screen(&self) -> Rc<dyn Screen>;
+
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
-    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
-    fn on_resize(&mut self, callback: Box<dyn FnMut()>);
-    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>);
-    fn on_moved(&mut self, callback: Box<dyn FnMut()>);
-    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
-    fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
@@ -137,14 +144,16 @@ pub trait Window {
     fn show_character_palette(&self);
     fn minimize(&self);
     fn zoom(&self);
+    fn present_scene(&mut self, scene: Scene);
     fn toggle_full_screen(&self);
 
-    fn bounds(&self) -> RectF;
-    fn content_size(&self) -> Vector2F;
-    fn scale_factor(&self) -> f32;
-    fn titlebar_height(&self) -> f32;
-    fn present_scene(&mut self, scene: Scene);
-    fn appearance(&self) -> Appearance;
+    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>);
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>);
+    fn on_moved(&mut self, callback: Box<dyn FnMut()>);
+    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
+    fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Vector2F) -> bool;
 }
@@ -187,11 +196,68 @@ pub enum WindowKind {
     PopUp,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum WindowBounds {
     Fullscreen,
     Maximized,
     Fixed(RectF),
+}
+
+impl StaticColumnCount for WindowBounds {
+    fn column_count() -> usize {
+        5
+    }
+}
+
+impl Bind for WindowBounds {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let (region, next_index) = match self {
+            WindowBounds::Fullscreen => {
+                let next_index = statement.bind("Fullscreen", start_index)?;
+                (None, next_index)
+            }
+            WindowBounds::Maximized => {
+                let next_index = statement.bind("Maximized", start_index)?;
+                (None, next_index)
+            }
+            WindowBounds::Fixed(region) => {
+                let next_index = statement.bind("Fixed", start_index)?;
+                (Some(*region), next_index)
+            }
+        };
+
+        statement.bind(
+            region.map(|region| {
+                (
+                    region.min_x(),
+                    region.min_y(),
+                    region.width(),
+                    region.height(),
+                )
+            }),
+            next_index,
+        )
+    }
+}
+
+impl Column for WindowBounds {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (window_state, next_index) = String::column(statement, start_index)?;
+        let bounds = match window_state.as_str() {
+            "Fullscreen" => WindowBounds::Fullscreen,
+            "Maximized" => WindowBounds::Maximized,
+            "Fixed" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                WindowBounds::Fixed(RectF::new(
+                    Vector2F::new(x, y),
+                    Vector2F::new(width, height),
+                ))
+            }
+            _ => bail!("Window State did not have a valid string"),
+        };
+
+        Ok((bounds, next_index + 4))
+    }
 }
 
 pub struct PathPromptOptions {
