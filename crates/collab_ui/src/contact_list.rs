@@ -1051,7 +1051,7 @@ impl ContactList {
         let user_id = contact.user.id;
         let initial_project = project.clone();
         let mut element =
-            MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
+            MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, cx| {
                 Flex::row()
                     .with_children(contact.user.avatar.clone().map(|avatar| {
                         let status_badge = if contact.online {
@@ -1091,6 +1091,27 @@ impl ContactList {
                         .aligned()
                         .left()
                         .flex(1., true)
+                        .boxed(),
+                    )
+                    .with_child(
+                        MouseEventHandler::<Cancel>::new(
+                            contact.user.id as usize,
+                            cx,
+                            |mouse_state, _| {
+                                let button_style =
+                                    theme.contact_button.style_for(mouse_state, false);
+                                render_icon_button(button_style, "icons/x_mark_8.svg")
+                                    .aligned()
+                                    .flex_float()
+                                    .boxed()
+                            },
+                        )
+                        .with_padding(Padding::uniform(2.))
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, move |_, cx| {
+                            cx.dispatch_action(RemoveContact(user_id))
+                        })
+                        .flex_float()
                         .boxed(),
                     )
                     .with_children(if calling {
