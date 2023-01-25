@@ -875,7 +875,7 @@ impl MutableAppContext {
     }
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
-        self.cx.windows.keys().cloned()
+        self.cx.windows.keys().copied()
     }
 
     pub fn activate_window(&self, window_id: usize) {

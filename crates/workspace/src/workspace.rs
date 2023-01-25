@@ -198,6 +198,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
+    cx.add_global_action(Workspace::close_global);
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::open_shared_screen);
     cx.add_action(Workspace::add_folder_to_project);
@@ -823,6 +824,15 @@ impl Workspace {
         }
     }
 
+    pub fn close_global(_: &CloseWindow, cx: &mut MutableAppContext) {
+        let id = cx.window_ids().find(|&id| cx.window_is_active(id));
+        if let Some(id) = id {
+            //This can only get called when the window's project connection has been lost
+            //so we don't need to prompt the user for anything and instead just close the window
+            cx.remove_window(id);
+        }
+    }
+
     pub fn close(
         &mut self,
         _: &CloseWindow,
@@ -851,6 +861,7 @@ impl Workspace {
             .window_ids()
             .flat_map(|window_id| cx.root_view::<Workspace>(window_id))
             .count();
+
         cx.spawn(|this, mut cx| async move {
             if let Some(active_call) = active_call {
                 if !quitting
@@ -866,6 +877,7 @@ impl Workspace {
                         )
                         .next()
                         .await;
+
                     if answer == Some(1) {
                         return anyhow::Ok(false);
                     } else {
