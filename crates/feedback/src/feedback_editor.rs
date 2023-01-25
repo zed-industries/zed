@@ -26,7 +26,7 @@ use settings::Settings;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    StatusItemView, Workspace,
+    AppState, StatusItemView, Workspace,
 };
 
 use crate::system_specs::SystemSpecs;
@@ -43,8 +43,12 @@ const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 
 actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
 
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(FeedbackEditor::deploy);
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+    cx.add_action({
+        move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
+            FeedbackEditor::deploy(workspace, app_state.clone(), cx);
+        }
+    });
 }
 
 pub struct FeedbackButton;
@@ -116,15 +120,11 @@ impl FeedbackEditor {
         Self { editor, project }
     }
 
-    fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        let markdown_language = project.read(cx).languages().language_for_name("Markdown");
-
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.create_buffer("", markdown_language, cx)
-            })
-            .expect("creating buffers on a local workspace always succeeds");
-
+    fn new(
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self::new_with_buffer(project, buffer, cx)
     }
 
@@ -236,10 +236,24 @@ impl FeedbackEditor {
 }
 
 impl FeedbackEditor {
-    pub fn deploy(workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>) {
-        let feedback_editor =
-            cx.add_view(|cx| FeedbackEditor::new(workspace.project().clone(), cx));
-        workspace.add_item(Box::new(feedback_editor), cx);
+    pub fn deploy(
+        workspace: &mut Workspace,
+        app_state: Arc<AppState>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace
+            .with_local_workspace(&app_state, cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                let markdown_language = project.read(cx).languages().language_for_name("Markdown");
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.create_buffer("", markdown_language, cx)
+                    })
+                    .expect("creating buffers on a local workspace always succeeds");
+                let feedback_editor = cx.add_view(|cx| FeedbackEditor::new(project, buffer, cx));
+                workspace.add_item(Box::new(feedback_editor), cx);
+            })
+            .detach();
     }
 }
 

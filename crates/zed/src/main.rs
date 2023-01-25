@@ -136,7 +136,6 @@ fn main() {
         client::init(client.clone(), cx);
         command_palette::init(cx);
         editor::init(cx);
-        feedback::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
         outline::init(cx);
@@ -191,6 +190,7 @@ fn main() {
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
         collab_ui::init(app_state.clone(), cx);
+        feedback::init(app_state.clone(), cx);
 
         cx.set_menus(menus::menus());
 
