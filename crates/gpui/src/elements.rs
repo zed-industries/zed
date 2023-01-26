@@ -363,6 +363,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     value
                 }
             }
+
             _ => panic!("invalid element lifecycle state"),
         }
     }

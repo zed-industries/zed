@@ -47,6 +47,15 @@ impl View for CollabTitlebarItem {
             return Empty::new().boxed();
         };
 
+        let project = workspace.read(cx).project().read(cx);
+        let mut worktree_root_names = String::new();
+        for (i, name) in project.worktree_root_names(cx).enumerate() {
+            if i > 0 {
+                worktree_root_names.push_str(", ");
+            }
+            worktree_root_names.push_str(name);
+        }
+
         let theme = cx.global::<Settings>().theme.clone();
 
         let mut container = Flex::row();
@@ -67,7 +76,16 @@ impl View for CollabTitlebarItem {
         container.add_children(self.render_collaborators(&workspace, &theme, cx));
         container.add_children(self.render_current_user(&workspace, &theme, cx));
         container.add_children(self.render_connection_status(&workspace, cx));
-        container.boxed()
+
+        Stack::new()
+            .with_child(
+                Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
+                    .aligned()
+                    .left()
+                    .boxed(),
+            )
+            .with_child(container.aligned().right().boxed())
+            .boxed()
     }
 }
 
