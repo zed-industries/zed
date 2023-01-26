@@ -1,7 +1,5 @@
 use anyhow::Context;
-use gpui::executor::Background;
 pub use language::*;
-use lazy_static::lazy_static;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 
@@ -32,32 +30,17 @@ mod typescript;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-// TODO - Remove this once the `init` function is synchronous again.
-lazy_static! {
-    pub static ref LANGUAGE_NAMES: Vec<String> = LanguageDir::iter()
-        .filter_map(|path| {
-            if path.ends_with("config.toml") {
-                let config = LanguageDir::get(&path)?;
-                let config = toml::from_slice::<LanguageConfig>(&config.data).ok()?;
-                Some(config.name.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-}
-
-pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) {
+pub fn init(languages: Arc<LanguageRegistry>) {
     for (name, grammar, lsp_adapter) in [
         (
             "c",
             tree_sitter_c::language(),
-            Some(CachedLspAdapter::new(c::CLspAdapter).await),
+            Some(Box::new(c::CLspAdapter) as Box<dyn LspAdapter>),
         ),
         (
             "cpp",
             tree_sitter_cpp::language(),
-            Some(CachedLspAdapter::new(c::CLspAdapter).await),
+            Some(Box::new(c::CLspAdapter)),
         ),
         (
             "css",
@@ -67,17 +50,17 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
         (
             "elixir",
             tree_sitter_elixir::language(),
-            Some(CachedLspAdapter::new(elixir::ElixirLspAdapter).await),
+            Some(Box::new(elixir::ElixirLspAdapter)),
         ),
         (
             "go",
             tree_sitter_go::language(),
-            Some(CachedLspAdapter::new(go::GoLspAdapter).await),
+            Some(Box::new(go::GoLspAdapter)),
         ),
         (
             "json",
             tree_sitter_json::language(),
-            Some(CachedLspAdapter::new(json::JsonLspAdapter).await),
+            Some(Box::new(json::JsonLspAdapter)),
         ),
         (
             "markdown",
@@ -87,12 +70,12 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
         (
             "python",
             tree_sitter_python::language(),
-            Some(CachedLspAdapter::new(python::PythonLspAdapter).await),
+            Some(Box::new(python::PythonLspAdapter)),
         ),
         (
             "rust",
             tree_sitter_rust::language(),
-            Some(CachedLspAdapter::new(rust::RustLspAdapter).await),
+            Some(Box::new(rust::RustLspAdapter)),
         ),
         (
             "toml",
@@ -102,89 +85,82 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
+            Some(Box::new(typescript::TypeScriptLspAdapter)),
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
+            Some(Box::new(typescript::TypeScriptLspAdapter)),
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
+            Some(Box::new(typescript::TypeScriptLspAdapter)),
         ),
         (
             "html",
             tree_sitter_html::language(),
-            Some(CachedLspAdapter::new(html::HtmlLspAdapter).await),
+            Some(Box::new(html::HtmlLspAdapter)),
         ),
         (
             "ruby",
             tree_sitter_ruby::language(),
-            Some(CachedLspAdapter::new(ruby::RubyLanguageServer).await),
+            Some(Box::new(ruby::RubyLanguageServer)),
         ),
         (
             "erb",
             tree_sitter_embedded_template::language(),
-            Some(CachedLspAdapter::new(ruby::RubyLanguageServer).await),
+            Some(Box::new(ruby::RubyLanguageServer)),
         ),
-        ("scheme", tree_sitter_scheme::language(), None),
-        ("racket", tree_sitter_racket::language(), None),
+        (
+            "scheme",
+            tree_sitter_scheme::language(),
+            None, //
+        ),
+        (
+            "racket",
+            tree_sitter_racket::language(),
+            None, //
+        ),
     ] {
-        languages.add(language(name, grammar, lsp_adapter));
+        languages.register(name, load_config(name), grammar, lsp_adapter, load_queries);
     }
 }
 
-pub(crate) fn language(
+#[cfg(any(test, feature = "test-support"))]
+pub async fn language(
     name: &str,
     grammar: tree_sitter::Language,
-    lsp_adapter: Option<Arc<CachedLspAdapter>>,
+    lsp_adapter: Option<Box<dyn LspAdapter>>,
 ) -> Arc<Language> {
-    let config = toml::from_slice(
+    Arc::new(
+        Language::new(load_config(name), Some(grammar))
+            .with_lsp_adapter(lsp_adapter)
+            .await
+            .with_queries(load_queries(name))
+            .unwrap(),
+    )
+}
+
+fn load_config(name: &str) -> LanguageConfig {
+    toml::from_slice(
         &LanguageDir::get(&format!("{}/config.toml", name))
             .unwrap()
             .data,
     )
     .with_context(|| format!("failed to load config.toml for language {name:?}"))
-    .unwrap();
+    .unwrap()
+}
 
-    let mut language = Language::new(config, Some(grammar));
-
-    if let Some(query) = load_query(name, "/highlights") {
-        language = language
-            .with_highlights_query(query.as_ref())
-            .expect("failed to evaluate highlights query");
+fn load_queries(name: &str) -> LanguageQueries {
+    LanguageQueries {
+        highlights: load_query(name, "/highlights"),
+        brackets: load_query(name, "/brackets"),
+        indents: load_query(name, "/indents"),
+        outline: load_query(name, "/outline"),
+        injections: load_query(name, "/injections"),
+        overrides: load_query(name, "/overrides"),
     }
-    if let Some(query) = load_query(name, "/brackets") {
-        language = language
-            .with_brackets_query(query.as_ref())
-            .expect("failed to load brackets query");
-    }
-    if let Some(query) = load_query(name, "/indents") {
-        language = language
-            .with_indents_query(query.as_ref())
-            .expect("failed to load indents query");
-    }
-    if let Some(query) = load_query(name, "/outline") {
-        language = language
-            .with_outline_query(query.as_ref())
-            .expect("failed to load outline query");
-    }
-    if let Some(query) = load_query(name, "/injections") {
-        language = language
-            .with_injection_query(query.as_ref())
-            .expect("failed to load injection query");
-    }
-    if let Some(query) = load_query(name, "/overrides") {
-        language = language
-            .with_override_query(query.as_ref())
-            .expect("failed to load override query");
-    }
-    if let Some(lsp_adapter) = lsp_adapter {
-        language = language.with_lsp_adapter(lsp_adapter)
-    }
-    Arc::new(language)
 }
 
 fn load_query(name: &str, filename_prefix: &str) -> Option<Cow<'static, str>> {

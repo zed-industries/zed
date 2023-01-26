@@ -381,7 +381,12 @@ impl SyntaxSnapshot {
                 cursor.next(text);
                 while let Some(layer) = cursor.item() {
                     let SyntaxLayerContent::Pending { language_name } = &layer.content else { unreachable!() };
-                    if language_for_injection(language_name, &registry).is_some() {
+                    if {
+                        let language_registry = &registry;
+                        language_registry.language_for_name_or_extension(language_name)
+                    }
+                    .is_some()
+                    {
                         resolved_injection_ranges.push(layer.range.to_offset(text));
                     }
 
@@ -1066,7 +1071,7 @@ fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
     node: Node,
-    language_registry: &LanguageRegistry,
+    language_registry: &Arc<LanguageRegistry>,
     depth: usize,
     changed_ranges: &[Range<usize>],
     combined_injection_ranges: &mut HashMap<Arc<Language>, Vec<tree_sitter::Range>>,
@@ -1078,7 +1083,8 @@ fn get_injections(
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
-            if let Some(language) = language_for_injection(language_name, language_registry) {
+            if let Some(language) = language_registry.language_for_name_or_extension(language_name)
+            {
                 combined_injection_ranges.insert(language, Vec::new());
             }
         }
@@ -1123,7 +1129,10 @@ fn get_injections(
             };
 
             if let Some(language_name) = language_name {
-                let language = language_for_injection(&language_name, language_registry);
+                let language = {
+                    let language_name: &str = &language_name;
+                    language_registry.language_for_name_or_extension(language_name)
+                };
                 let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
                 if let Some(language) = language {
                     if combined {
@@ -1169,15 +1178,6 @@ fn get_injections(
             },
         })
     }
-}
-
-fn language_for_injection(
-    language_name: &str,
-    language_registry: &LanguageRegistry,
-) -> Option<Arc<Language>> {
-    language_registry
-        .language_for_name(language_name)
-        .or_else(|| language_registry.language_for_extension(language_name))
 }
 
 fn splice_included_ranges(

@@ -120,11 +120,10 @@ fn main() {
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let init_languages = cx
-            .background()
-            .spawn(languages::init(languages.clone(), cx.background().clone()));
+        languages::init(languages.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         watch_keymap_file(keymap_file, cx);
@@ -151,14 +150,7 @@ fn main() {
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
 
-        cx.spawn({
-            let languages = languages.clone();
-            |cx| async move {
-                cx.read(|cx| languages.set_theme(cx.global::<Settings>().theme.clone()));
-                init_languages.await;
-            }
-        })
-        .detach();
+        languages.set_theme(cx.global::<Settings>().theme.clone());
         cx.observe_global::<Settings, _>({
             let languages = languages.clone();
             move |cx| languages.set_theme(cx.global::<Settings>().theme.clone())

@@ -154,17 +154,17 @@ impl LspAdapter for TypeScriptLspAdapter {
 
 #[cfg(test)]
 mod tests {
-
-    use gpui::MutableAppContext;
+    use gpui::TestAppContext;
     use unindent::Unindent;
 
     #[gpui::test]
-    fn test_outline(cx: &mut MutableAppContext) {
+    async fn test_outline(cx: &mut TestAppContext) {
         let language = crate::languages::language(
             "typescript",
             tree_sitter_typescript::language_typescript(),
             None,
-        );
+        )
+        .await;
 
         let text = r#"
             function a() {
@@ -183,7 +183,7 @@ mod tests {
 
         let buffer =
             cx.add_model(|cx| language::Buffer::new(0, text, cx).with_language(language, cx));
-        let outline = buffer.read(cx).snapshot().outline(None).unwrap();
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline
                 .items
