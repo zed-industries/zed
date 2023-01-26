@@ -9,7 +9,7 @@ use std::fmt;
 use std::{
     cmp,
     fmt::Debug,
-    io, iter, mem,
+    io, iter,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -489,16 +489,26 @@ pub fn split_worktree_update(
             return None;
         }
 
-        let chunk_size = cmp::min(message.updated_entries.len(), max_chunk_size);
-        let updated_entries = message.updated_entries.drain(..chunk_size).collect();
-        done = message.updated_entries.is_empty();
+        let updated_entries_chunk_size = cmp::min(message.updated_entries.len(), max_chunk_size);
+        let updated_entries = message
+            .updated_entries
+            .drain(..updated_entries_chunk_size)
+            .collect();
+
+        let removed_entries_chunk_size = cmp::min(message.removed_entries.len(), max_chunk_size);
+        let removed_entries = message
+            .removed_entries
+            .drain(..removed_entries_chunk_size)
+            .collect();
+
+        done = message.updated_entries.is_empty() && message.removed_entries.is_empty();
         Some(UpdateWorktree {
             project_id: message.project_id,
             worktree_id: message.worktree_id,
             root_name: message.root_name.clone(),
             abs_path: message.abs_path.clone(),
             updated_entries,
-            removed_entries: mem::take(&mut message.removed_entries),
+            removed_entries,
             scan_id: message.scan_id,
             is_last_update: done && message.is_last_update,
         })
