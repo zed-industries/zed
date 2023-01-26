@@ -248,17 +248,19 @@ impl super::LspAdapter for CLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use gpui::MutableAppContext;
+    use gpui::TestAppContext;
     use language::{AutoindentMode, Buffer};
     use settings::Settings;
 
     #[gpui::test]
-    fn test_c_autoindent(cx: &mut MutableAppContext) {
+    async fn test_c_autoindent(cx: &mut TestAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let mut settings = Settings::test(cx);
-        settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
-        cx.set_global(settings);
-        let language = crate::languages::language("c", tree_sitter_c::language(), None);
+        cx.update(|cx| {
+            let mut settings = Settings::test(cx);
+            settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
+            cx.set_global(settings);
+        });
+        let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
 
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);

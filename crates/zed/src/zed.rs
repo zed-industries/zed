@@ -306,7 +306,7 @@ pub fn initialize_workspace(
         )
         .map(|meta| meta.name)
         .collect();
-    let language_names = &languages::LANGUAGE_NAMES;
+    let language_names = app_state.languages.language_names();
 
     workspace.project().update(cx, |project, cx| {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
@@ -318,7 +318,7 @@ pub fn initialize_workspace(
                 "schemas": [
                     {
                         "fileMatch": [schema_file_match(&paths::SETTINGS)],
-                        "schema": settings_file_json_schema(theme_names, language_names),
+                        "schema": settings_file_json_schema(theme_names, &language_names),
                     },
                     {
                         "fileMatch": [schema_file_match(&paths::KEYMAP)],
