@@ -123,7 +123,7 @@ pub trait InputHandler {
 
 pub trait Screen: Debug {
     fn as_any(&self) -> &dyn Any;
-    fn size(&self) -> Vector2F;
+    fn bounds(&self) -> RectF;
     fn display_uuid(&self) -> Uuid;
 }
 

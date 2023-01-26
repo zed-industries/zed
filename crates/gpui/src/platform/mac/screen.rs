@@ -1,20 +1,20 @@
 use std::{any::Any, ffi::c_void};
 
-use crate::{
-    geometry::vector::{vec2f, Vector2F},
-    platform,
-};
+use crate::platform;
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
-    foundation::{NSArray, NSDictionary, NSString},
+    foundation::{NSArray, NSDictionary},
 };
 use core_foundation::{
     number::{kCFNumberIntType, CFNumberGetValue, CFNumberRef},
     uuid::{CFUUIDGetUUIDBytes, CFUUIDRef},
 };
 use core_graphics::display::CGDirectDisplayID;
+use pathfinder_geometry::rect::RectF;
 use uuid::Uuid;
+
+use super::{geometry::NSRectExt, ns_string};
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -58,13 +58,6 @@ impl platform::Screen for Screen {
         self
     }
 
-    fn size(&self) -> Vector2F {
-        unsafe {
-            let frame = self.native_screen.frame();
-            vec2f(frame.size.width as f32, frame.size.height as f32)
-        }
-    }
-
     fn display_uuid(&self) -> uuid::Uuid {
         unsafe {
             // Screen ids are not stable. Further, the default device id is also unstable across restarts.
@@ -72,7 +65,7 @@ impl platform::Screen for Screen {
             // This approach is similar to that which winit takes
             // https://github.com/rust-windowing/winit/blob/402cbd55f932e95dbfb4e8b5e8551c49e56ff9ac/src/platform_impl/macos/monitor.rs#L99
             let device_description = self.native_screen.deviceDescription();
-            let key = NSString::alloc(nil).init_str("NSScreenNumber");
+            let key = ns_string("NSScreenNumber");
             let device_id_obj = device_description.objectForKey_(key);
             let mut device_id: u32 = 0;
             CFNumberGetValue(
@@ -100,6 +93,13 @@ impl platform::Screen for Screen {
                 bytes.byte14,
                 bytes.byte15,
             ])
+        }
+    }
+
+    fn bounds(&self) -> RectF {
+        unsafe {
+            let frame = self.native_screen.frame();
+            frame.to_rectf()
         }
     }
 }

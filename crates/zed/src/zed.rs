@@ -20,8 +20,7 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, ClipboardItem, Platform, PromptLevel, TitlebarOptions,
-    ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;

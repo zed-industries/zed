@@ -234,8 +234,8 @@ impl super::Screen for Screen {
         self
     }
 
-    fn size(&self) -> Vector2F {
-        Vector2F::new(1920., 1080.)
+    fn bounds(&self) -> RectF {
+        RectF::new(Vector2F::zero(), Vector2F::new(1920., 1080.))
     }
 
     fn display_uuid(&self) -> uuid::Uuid {

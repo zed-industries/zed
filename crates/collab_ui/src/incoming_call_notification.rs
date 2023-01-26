@@ -32,11 +32,12 @@ pub fn init(cx: &mut MutableAppContext) {
                 });
 
                 for screen in cx.platform().screens() {
-                    let screen_size = screen.size();
+                    let screen_bounds = screen.bounds();
                     let (window_id, _) = cx.add_window(
                         WindowOptions {
                             bounds: WindowBounds::Fixed(RectF::new(
-                                vec2f(screen_size.x() - window_size.x() - PADDING, PADDING),
+                                screen_bounds.upper_right()
+                                    - vec2f(PADDING + window_size.x(), PADDING),
                                 window_size,
                             )),
                             titlebar: None,
