@@ -1924,7 +1924,9 @@ impl Database {
                 };
 
                 if let Some(db_worktree) = db_worktree {
-                    project.worktree_root_names.push(db_worktree.root_name);
+                    if db_worktree.visible {
+                        project.worktree_root_names.push(db_worktree.root_name);
+                    }
                 }
             }
         }
