@@ -102,7 +102,7 @@ struct FeedbackEditor {
 }
 
 impl FeedbackEditor {
-    fn new_with_buffer(
+    fn new(
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
@@ -118,14 +118,6 @@ impl FeedbackEditor {
             .detach();
 
         Self { editor, project }
-    }
-
-    fn new(
-        project: ModelHandle<Project>,
-        buffer: ModelHandle<Buffer>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        Self::new_with_buffer(project, buffer, cx)
     }
 
     fn handle_save(
@@ -348,11 +340,7 @@ impl Item for FeedbackEditor {
             .as_singleton()
             .expect("Feedback buffer is only ever singleton");
 
-        Some(Self::new_with_buffer(
-            self.project.clone(),
-            buffer.clone(),
-            cx,
-        ))
+        Some(Self::new(self.project.clone(), buffer.clone(), cx))
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
