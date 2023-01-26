@@ -1094,7 +1094,7 @@ impl StatusItemView for CursorPosition {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
             self.update_position(editor, cx);
         } else {

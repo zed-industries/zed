@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     ops::{Range, RangeInclusive},
     sync::Arc,
 };
@@ -12,7 +13,7 @@ use gpui::{
     elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
     serde_json, AnyViewHandle, AppContext, CursorStyle, Element, ElementBox, Entity, ModelHandle,
     MouseButton, MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WeakViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -25,7 +26,7 @@ use settings::Settings;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    StatusItemView, Workspace,
+    AppState, StatusItemView, Workspace,
 };
 
 use crate::system_specs::SystemSpecs;
@@ -42,8 +43,12 @@ const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 
 actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
 
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(FeedbackEditor::deploy);
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+    cx.add_action({
+        move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
+            FeedbackEditor::deploy(workspace, app_state.clone(), cx);
+        }
+    });
 }
 
 pub struct FeedbackButton;
@@ -79,12 +84,7 @@ impl View for FeedbackButton {
 }
 
 impl StatusItemView for FeedbackButton {
-    fn set_active_pane_item(
-        &mut self,
-        _: Option<&dyn ItemHandle>,
-        _: &mut gpui::ViewContext<Self>,
-    ) {
-    }
+    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
 }
 
 #[derive(Serialize)]
@@ -102,7 +102,7 @@ struct FeedbackEditor {
 }
 
 impl FeedbackEditor {
-    fn new_with_buffer(
+    fn new(
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
@@ -117,28 +117,15 @@ impl FeedbackEditor {
         cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
             .detach();
 
-        let this = Self { editor, project };
-        this
-    }
-
-    fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        let markdown_language = project.read(cx).languages().language_for_name("Markdown");
-
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.create_buffer("", markdown_language, cx)
-            })
-            .expect("creating buffers on a local workspace always succeeds");
-
-        Self::new_with_buffer(project, buffer, cx)
+        Self { editor, project }
     }
 
     fn handle_save(
         &mut self,
-        _: gpui::ModelHandle<Project>,
+        _: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let feedback_char_count = self.editor.read(cx).buffer().read(cx).len(cx);
+        let feedback_char_count = self.editor.read(cx).text(cx).chars().count();
 
         let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
             Some(format!(
@@ -241,10 +228,24 @@ impl FeedbackEditor {
 }
 
 impl FeedbackEditor {
-    pub fn deploy(workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>) {
-        let feedback_editor =
-            cx.add_view(|cx| FeedbackEditor::new(workspace.project().clone(), cx));
-        workspace.add_item(Box::new(feedback_editor), cx);
+    pub fn deploy(
+        workspace: &mut Workspace,
+        app_state: Arc<AppState>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace
+            .with_local_workspace(&app_state, cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                let markdown_language = project.read(cx).languages().language_for_name("Markdown");
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.create_buffer("", markdown_language, cx)
+                    })
+                    .expect("creating buffers on a local workspace always succeeds");
+                let feedback_editor = cx.add_view(|cx| FeedbackEditor::new(project, buffer, cx));
+                workspace.add_item(Box::new(feedback_editor), cx);
+            })
+            .detach();
     }
 }
 
@@ -269,12 +270,7 @@ impl Entity for FeedbackEditor {
 }
 
 impl Item for FeedbackEditor {
-    fn tab_content(
-        &self,
-        _: Option<usize>,
-        style: &theme::Tab,
-        _: &gpui::AppContext,
-    ) -> ElementBox {
+    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
         Flex::row()
             .with_child(
                 Label::new("Feedback".to_string(), style.label.clone())
@@ -293,19 +289,19 @@ impl Item for FeedbackEditor {
         Vec::new()
     }
 
-    fn is_singleton(&self, _: &gpui::AppContext) -> bool {
+    fn is_singleton(&self, _: &AppContext) -> bool {
         true
     }
 
     fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
 
-    fn can_save(&self, _: &gpui::AppContext) -> bool {
+    fn can_save(&self, _: &AppContext) -> bool {
         true
     }
 
     fn save(
         &mut self,
-        project: gpui::ModelHandle<Project>,
+        project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.handle_save(project, cx)
@@ -313,7 +309,7 @@ impl Item for FeedbackEditor {
 
     fn save_as(
         &mut self,
-        project: gpui::ModelHandle<Project>,
+        project: ModelHandle<Project>,
         _: std::path::PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
@@ -322,7 +318,7 @@ impl Item for FeedbackEditor {
 
     fn reload(
         &mut self,
-        _: gpui::ModelHandle<Project>,
+        _: ModelHandle<Project>,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         unreachable!("reload should not have been called")
@@ -344,11 +340,7 @@ impl Item for FeedbackEditor {
             .as_singleton()
             .expect("Feedback buffer is only ever singleton");
 
-        Some(Self::new_with_buffer(
-            self.project.clone(),
-            buffer.clone(),
-            cx,
-        ))
+        Some(Self::new(self.project.clone(), buffer.clone(), cx))
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
@@ -356,8 +348,8 @@ impl Item for FeedbackEditor {
     }
 
     fn deserialize(
-        _: gpui::ModelHandle<Project>,
-        _: gpui::WeakViewHandle<Workspace>,
+        _: ModelHandle<Project>,
+        _: WeakViewHandle<Workspace>,
         _: workspace::WorkspaceId,
         _: workspace::ItemId,
         _: &mut ViewContext<workspace::Pane>,
@@ -367,6 +359,21 @@ impl Item for FeedbackEditor {
 
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn act_as_type(
+        &self,
+        type_id: TypeId,
+        self_handle: &ViewHandle<Self>,
+        _: &AppContext,
+    ) -> Option<AnyViewHandle> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some((&self.editor).into())
+        } else {
+            None
+        }
     }
 }
 

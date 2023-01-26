@@ -5,7 +5,7 @@ mod system_specs;
 use gpui::{actions, impl_actions, ClipboardItem, ViewContext};
 use serde::Deserialize;
 use system_specs::SystemSpecs;
-use workspace::Workspace;
+use workspace::{AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -19,8 +19,8 @@ actions!(
     [CopySystemSpecsIntoClipboard, FileBugReport, RequestFeature,]
 );
 
-pub fn init(cx: &mut gpui::MutableAppContext) {
-    feedback_editor::init(cx);
+pub fn init(app_state: Arc<AppState>, cx: &mut gpui::MutableAppContext) {
+    feedback_editor::init(app_state, cx);
 
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
 

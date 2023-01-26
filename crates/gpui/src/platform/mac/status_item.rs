@@ -258,6 +258,10 @@ impl platform::Window for StatusItem {
             crate::Appearance::from_native(appearance)
         }
     }
+
+    fn is_topmost_for_position(&self, _: Vector2F) -> bool {
+        true
+    }
 }
 
 impl StatusItemState {
