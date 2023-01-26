@@ -5042,7 +5042,7 @@ impl Editor {
 
                 pane.update(cx, |pane, _| pane.enable_history());
             });
-        } else {
+        } else if !definitions.is_empty() {
             let replica_id = editor_handle.read(cx).replica_id(cx);
             let title = definitions
                 .iter()
