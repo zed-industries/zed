@@ -337,6 +337,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "View Telemetry Log",
                     action: Box::new(crate::OpenTelemetryLog),
                 },
+                MenuItem::Action {
+                    name: "View Dependency Licenses",
+                    action: Box::new(crate::OpenLicenses),
+                },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Copy System Specs Into Clipboard",
