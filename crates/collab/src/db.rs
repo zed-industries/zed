@@ -595,7 +595,16 @@ impl Database {
         .await
     }
 
-    pub async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
+    /// Returns a bool indicating whether the removed contact had originally accepted or not
+    ///
+    /// Deletes the contact identified by the requester and responder ids, and then returns
+    /// whether the deleted contact had originally accepted or was a pending contact request.
+    ///
+    /// # Arguments
+    ///
+    /// * `requester_id` - The user that initiates this request
+    /// * `responder_id` - The user that will be removed
+    pub async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<bool> {
         self.transaction(|tx| async move {
             let (id_a, id_b) = if responder_id < requester_id {
                 (responder_id, requester_id)
@@ -603,20 +612,18 @@ impl Database {
                 (requester_id, responder_id)
             };
 
-            let result = contact::Entity::delete_many()
+            let contact = contact::Entity::find()
                 .filter(
                     contact::Column::UserIdA
                         .eq(id_a)
                         .and(contact::Column::UserIdB.eq(id_b)),
                 )
-                .exec(&*tx)
-                .await?;
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such contact"))?;
 
-            if result.rows_affected == 1 {
-                Ok(())
-            } else {
-                Err(anyhow!("no such contact"))?
-            }
+            contact::Entity::delete_by_id(contact.id).exec(&*tx).await?;
+            Ok(contact.accepted)
         })
         .await
     }

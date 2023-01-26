@@ -48,7 +48,7 @@ impl View for ContactNotification {
             ContactEventKind::Requested => render_user_notification(
                 self.user.clone(),
                 "wants to add you as a contact",
-                Some("They won't know if you decline."),
+                Some("They won't be alerted if you decline."),
                 Dismiss(self.user.id),
                 vec![
                     (

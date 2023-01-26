@@ -5291,6 +5291,27 @@ async fn test_contacts(
         [("user_b".to_string(), "online", "free")]
     );
 
+    // Test removing a contact
+    client_b
+        .user_store
+        .update(cx_b, |store, cx| {
+            store.remove_contact(client_c.user_id().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "offline", "free"),
+            ("user_d".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [("user_a".to_string(), "offline", "free"),]
+    );
+
     fn contacts(
         client: &TestClient,
         cx: &TestAppContext,

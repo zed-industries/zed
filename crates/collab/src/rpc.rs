@@ -1961,23 +1961,31 @@ async fn remove_contact(
     let requester_id = session.user_id;
     let responder_id = UserId::from_proto(request.user_id);
     let db = session.db().await;
-    db.remove_contact(requester_id, responder_id).await?;
+    let contact_accepted = db.remove_contact(requester_id, responder_id).await?;
 
     let pool = session.connection_pool().await;
     // Update outgoing contact requests of requester
     let mut update = proto::UpdateContacts::default();
-    update
-        .remove_outgoing_requests
-        .push(responder_id.to_proto());
+    if contact_accepted {
+        update.remove_contacts.push(responder_id.to_proto());
+    } else {
+        update
+            .remove_outgoing_requests
+            .push(responder_id.to_proto());
+    }
     for connection_id in pool.user_connection_ids(requester_id) {
         session.peer.send(connection_id, update.clone())?;
     }
 
     // Update incoming contact requests of responder
     let mut update = proto::UpdateContacts::default();
-    update
-        .remove_incoming_requests
-        .push(requester_id.to_proto());
+    if contact_accepted {
+        update.remove_contacts.push(requester_id.to_proto());
+    } else {
+        update
+            .remove_incoming_requests
+            .push(requester_id.to_proto());
+    }
     for connection_id in pool.user_connection_ids(responder_id) {
         session.peer.send(connection_id, update.clone())?;
     }
