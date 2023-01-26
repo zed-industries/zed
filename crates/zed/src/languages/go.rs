@@ -314,8 +314,9 @@ mod tests {
         let language = language(
             "go",
             tree_sitter_go::language(),
-            Some(CachedLspAdapter::new(GoLspAdapter).await),
-        );
+            Some(Box::new(GoLspAdapter)),
+        )
+        .await;
 
         let theme = SyntaxTheme::new(vec![
             ("type".into(), Color::green().into()),

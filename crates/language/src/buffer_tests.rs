@@ -51,7 +51,7 @@ fn test_line_endings(cx: &mut gpui::MutableAppContext) {
 
 #[gpui::test]
 fn test_select_language() {
-    let registry = LanguageRegistry::test();
+    let registry = Arc::new(LanguageRegistry::test());
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
@@ -71,27 +71,33 @@ fn test_select_language() {
 
     // matching file extension
     assert_eq!(
-        registry.select_language("zed/lib.rs").map(|l| l.name()),
+        registry.language_for_path("zed/lib.rs").map(|l| l.name()),
         Some("Rust".into())
     );
     assert_eq!(
-        registry.select_language("zed/lib.mk").map(|l| l.name()),
+        registry.language_for_path("zed/lib.mk").map(|l| l.name()),
         Some("Make".into())
     );
 
     // matching filename
     assert_eq!(
-        registry.select_language("zed/Makefile").map(|l| l.name()),
+        registry.language_for_path("zed/Makefile").map(|l| l.name()),
         Some("Make".into())
     );
 
     // matching suffix that is not the full file extension or filename
-    assert_eq!(registry.select_language("zed/cars").map(|l| l.name()), None);
     assert_eq!(
-        registry.select_language("zed/a.cars").map(|l| l.name()),
+        registry.language_for_path("zed/cars").map(|l| l.name()),
         None
     );
-    assert_eq!(registry.select_language("zed/sumk").map(|l| l.name()), None);
+    assert_eq!(
+        registry.language_for_path("zed/a.cars").map(|l| l.name()),
+        None
+    );
+    assert_eq!(
+        registry.language_for_path("zed/sumk").map(|l| l.name()),
+        None
+    );
 }
 
 #[gpui::test]

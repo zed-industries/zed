@@ -165,17 +165,20 @@ impl LspAdapter for PythonLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{ModelContext, MutableAppContext};
+    use gpui::{ModelContext, TestAppContext};
     use language::{AutoindentMode, Buffer};
     use settings::Settings;
 
     #[gpui::test]
-    fn test_python_autoindent(cx: &mut MutableAppContext) {
+    async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let language = crate::languages::language("python", tree_sitter_python::language(), None);
-        let mut settings = Settings::test(cx);
-        settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
-        cx.set_global(settings);
+        let language =
+            crate::languages::language("python", tree_sitter_python::language(), None).await;
+        cx.update(|cx| {
+            let mut settings = Settings::test(cx);
+            settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
+            cx.set_global(settings);
+        });
 
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);

@@ -1802,7 +1802,7 @@ impl Project {
     ) -> Option<()> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let full_path = buffer.read(cx).file()?.full_path(cx);
-        let new_language = self.languages.select_language(&full_path)?;
+        let new_language = self.languages.language_for_path(&full_path)?;
         buffer.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
@@ -2211,7 +2211,7 @@ impl Project {
             })
             .collect();
         for (worktree_id, worktree_abs_path, full_path) in language_server_lookup_info {
-            let language = self.languages.select_language(&full_path)?;
+            let language = self.languages.language_for_path(&full_path)?;
             self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
         }
 
@@ -3171,7 +3171,7 @@ impl Project {
                             let signature = this.symbol_signature(&project_path);
                             let language = this
                                 .languages
-                                .select_language(&project_path.path)
+                                .language_for_path(&project_path.path)
                                 .unwrap_or(adapter_language.clone());
                             let language_server_name = adapter.name.clone();
                             Some(async move {
@@ -5947,7 +5947,7 @@ impl Project {
                 worktree_id,
                 path: PathBuf::from(serialized_symbol.path).into(),
             };
-            let language = languages.select_language(&path.path);
+            let language = languages.language_for_path(&path.path);
             Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),

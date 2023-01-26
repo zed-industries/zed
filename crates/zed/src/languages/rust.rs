@@ -255,8 +255,8 @@ impl LspAdapter for RustLspAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::languages::{language, CachedLspAdapter};
-    use gpui::{color::Color, MutableAppContext};
+    use crate::languages::language;
+    use gpui::{color::Color, TestAppContext};
     use settings::Settings;
     use theme::SyntaxTheme;
 
@@ -306,8 +306,9 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(CachedLspAdapter::new(RustLspAdapter).await),
-        );
+            Some(Box::new(RustLspAdapter)),
+        )
+        .await;
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
             ("type".into(), Color::green().into()),
@@ -391,8 +392,9 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(CachedLspAdapter::new(RustLspAdapter).await),
-        );
+            Some(Box::new(RustLspAdapter)),
+        )
+        .await;
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
             ("type".into(), Color::green().into()),
@@ -431,12 +433,15 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_rust_autoindent(cx: &mut MutableAppContext) {
+    async fn test_rust_autoindent(cx: &mut TestAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let language = crate::languages::language("rust", tree_sitter_rust::language(), None);
-        let mut settings = Settings::test(cx);
-        settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
-        cx.set_global(settings);
+        cx.update(|cx| {
+            let mut settings = Settings::test(cx);
+            settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
+            cx.set_global(settings);
+        });
+
+        let language = crate::languages::language("rust", tree_sitter_rust::language(), None).await;
 
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
