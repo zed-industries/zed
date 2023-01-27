@@ -5,6 +5,7 @@ WORKDIR app
 COPY . .
 
 # Compile collab server
+ARG CARGO_PROFILE_RELEASE_PANIC=abort
 RUN --mount=type=cache,target=./script/node_modules \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=./target \
