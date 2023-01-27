@@ -2571,6 +2571,8 @@ async fn test_fs_operations(
         })
         .await
         .unwrap();
+    deterministic.run_until_parked();
+    
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
             worktree
