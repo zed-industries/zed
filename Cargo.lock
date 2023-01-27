@@ -8216,7 +8216,7 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zed"
-version = "0.71.1"
+version = "0.71.2"
 dependencies = [
  "activity_indicator",
  "anyhow",
