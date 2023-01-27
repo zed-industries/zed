@@ -4,7 +4,8 @@
     "description": "",
     "main": "index.js",
     "scripts": {
-        "build": "ts-node ./src/buildThemes.ts"
+        "build": "ts-node ./src/buildThemes.ts",
+        "build-licenses": "ts-node ./src/buildLicenses.ts"
     },
     "author": "",
     "license": "ISC",
@@ -13,6 +14,7 @@
         "@types/node": "^17.0.23",
         "case-anything": "^2.1.10",
         "chroma-js": "^2.4.2",
+        "toml": "^3.0.0",
         "ts-node": "^10.7.0"
     }
 }

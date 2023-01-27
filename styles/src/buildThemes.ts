@@ -1,15 +1,15 @@
 import * as fs from "fs";
-import * as path from "path";
 import { tmpdir } from "os";
-import app from "./styleTree/app";
+import * as path from "path";
 import colorSchemes, {
-  internalColorSchemes,
-  experimentalColorSchemes,
+  experimentalColorSchemes, internalColorSchemes
 } from "./colorSchemes";
-import snakeCase from "./utils/snakeCase";
+import app from "./styleTree/app";
 import { ColorScheme } from "./themes/common/colorScheme";
+import snakeCase from "./utils/snakeCase";
 
-const themeDirectory = `${__dirname}/../../assets/themes`;
+const assetsDirectory = `${__dirname}/../../assets`
+const themeDirectory = `${assetsDirectory}/themes`;
 const internalDirectory = `${themeDirectory}/Internal`;
 const experimentsDirectory = `${themeDirectory}/Experiments`;
 

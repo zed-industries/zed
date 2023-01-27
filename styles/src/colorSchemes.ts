@@ -1,9 +1,12 @@
 import fs from "fs";
 import path from "path";
-import { ColorScheme } from "./themes/common/colorScheme";
+import { ColorScheme, Meta } from "./themes/common/colorScheme";
 
 const colorSchemes: ColorScheme[] = [];
 export default colorSchemes;
+
+const schemeMeta: Meta[] = [];
+export { schemeMeta };
 
 const internalColorSchemes: ColorScheme[] = [];
 export { internalColorSchemes };
@@ -11,25 +14,45 @@ export { internalColorSchemes };
 const experimentalColorSchemes: ColorScheme[] = [];
 export { experimentalColorSchemes };
 
-function fillColorSchemes(themesPath: string, colorSchemes: ColorScheme[]) {
+const themes_directory = path.resolve(`${__dirname}/themes`);
+
+function for_all_color_schemes_in(themesPath: string, callback: (module: any, path: string) => void) {
   for (const fileName of fs.readdirSync(themesPath)) {
     if (fileName == "template.ts") continue;
     const filePath = path.join(themesPath, fileName);
 
     if (fs.statSync(filePath).isFile()) {
       const colorScheme = require(filePath);
-      if (colorScheme.dark) colorSchemes.push(colorScheme.dark);
-      if (colorScheme.light) colorSchemes.push(colorScheme.light);
+      callback(colorScheme, path.basename(filePath));
     }
   }
 }
 
-fillColorSchemes(path.resolve(`${__dirname}/themes`), colorSchemes);
+function fillColorSchemes(themesPath: string, colorSchemes: ColorScheme[]) {
+  for_all_color_schemes_in(themesPath, (colorScheme, _path) => {
+    if (colorScheme.dark) colorSchemes.push(colorScheme.dark);
+    if (colorScheme.light) colorSchemes.push(colorScheme.light);
+  })
+}
+
+fillColorSchemes(themes_directory, colorSchemes);
 fillColorSchemes(
-  path.resolve(`${__dirname}/themes/internal`),
+  path.resolve(`${themes_directory}/internal`),
   internalColorSchemes
 );
 fillColorSchemes(
-  path.resolve(`${__dirname}/themes/experiments`),
+  path.resolve(`${themes_directory}/experiments`),
   experimentalColorSchemes
 );
+
+function fillMeta(themesPath: string, meta: Meta[]) {
+  for_all_color_schemes_in(themesPath, (colorScheme, path) => {
+    if (colorScheme.meta) {
+      meta.push(colorScheme.meta)
+    } else {
+      throw Error(`Public theme ${path} must have a meta field`)
+    }
+  })
+}
+
+fillMeta(themes_directory, schemeMeta);

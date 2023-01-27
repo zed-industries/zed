@@ -339,7 +339,11 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Action {
                     name: "View Dependency Licenses",
-                    action: Box::new(crate::OpenLicenses),
+                    action: Box::new(crate::OpenSoftwareLicenses),
+                },
+                MenuItem::Action {
+                    name: "View Theme Licenses",
+                    action: Box::new(crate::OpenThemeLicenses),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {

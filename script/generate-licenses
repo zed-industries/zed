@@ -4,12 +4,18 @@ set -e
 
 [[ "$(cargo about --version)" == "cargo-about 0.5.2" ]] || cargo install cargo-about --locked --git https://github.com/zed-industries/cargo-about --branch error-code-on-warn
 
-cargo about generate --fail-on-missing-license -o assets/licenses.md -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md
+echo "Generating cargo licenses"
+cargo about generate --fail-on-missing-license -o assets/software_licenses.md -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md
 
 # cargo about automatically html-escapes all output, so we need to undo it here: 
-sed -i '' 's/&quot;/"/g' assets/licenses.md
-sed -i '' 's/&#x27;/'\''/g' assets/licenses.md # `'\''` ends the string, appends a single quote, and re-opens the string
-sed -i '' 's/&#x3D;/=/g' assets/licenses.md
-sed -i '' 's/&#x60;/`/g' assets/licenses.md
-sed -i '' 's/&lt;/</g' assets/licenses.md
-sed -i '' 's/&gt;/>/g' assets/licenses.md
+sed -i '' 's/&quot;/"/g' assets/software_licenses.md
+sed -i '' 's/&#x27;/'\''/g' assets/software_licenses.md # `'\''` ends the string, appends a single quote, and re-opens the string
+sed -i '' 's/&#x3D;/=/g' assets/software_licenses.md
+sed -i '' 's/&#x60;/`/g' assets/software_licenses.md
+sed -i '' 's/&lt;/</g' assets/software_licenses.md
+sed -i '' 's/&gt;/>/g' assets/software_licenses.md
+
+# Now make theme licenses
+echo "Generating theme licenses"
+cd styles
+npm run build-licenses
