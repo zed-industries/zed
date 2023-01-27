@@ -1,13 +1,8 @@
 import chroma from "chroma-js";
+import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Andromeda";
-const author = "EliverLara";
-const url = "https://github.com/EliverLara/Andromeda";
-const license = {
-  type: "MIT",
-  url: "https://github.com/EliverLara/Andromeda/blob/master/LICENSE.md",
-};
 
 const ramps = {
   neutral: chroma
@@ -33,3 +28,14 @@ const ramps = {
 };
 
 export const dark = createColorScheme(`${name}`, false, ramps);
+
+export const meta: Meta = {
+  name,
+  author: "EliverLara",
+  license: {
+    SPDX: "MIT",
+    https_url: "https://raw.githubusercontent.com/EliverLara/Andromeda/master/LICENSE.md",
+    license_checksum: "2f7886f1a05cefc2c26f5e49de1a39fa4466413c1ccb06fc80960e73f5ed4b89"
+  },
+  url: "https://github.com/EliverLara/Andromeda"
+}

@@ -1,13 +1,8 @@
 import chroma from "chroma-js";
+import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Sandcastle";
-const author = "gessig";
-const url = "https://github.com/gessig/base16-sandcastle-scheme";
-const license = {
-  type: "MIT",
-  url: "https://github.com/gessig/base16-sandcastle-scheme/blob/master/LICENSE",
-};
 
 const ramps = {
   neutral: chroma.scale([
@@ -31,3 +26,15 @@ const ramps = {
 };
 
 export const dark = createColorScheme(`${name}`, false, ramps);
+
+export const meta: Meta = {
+  name,
+  author: "gessig",
+  license: {
+    SPDX: "MIT",
+    https_url: "https://raw.githubusercontent.com/gessig/base16-sandcastle-scheme/master/LICENSE",
+    license_checksum: "8399d44b4d935b60be9fee0a76d7cc9a817b4f3f11574c9d6d1e8fd57e72ffdc"
+  },
+  url: "https://github.com/gessig/base16-sandcastle-scheme"
+}
+

@@ -1,13 +1,8 @@
 import chroma from "chroma-js";
+import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Summercamp";
-const author = "zoefiri";
-const url = "https://github.com/zoefiri/base16-sc";
-const license = {
-  type: "MIT",
-  url: "https://github.com/zoefiri/base16-sc/blob/master/summercamp.yaml",
-};
 
 const ramps = {
   neutral: chroma
@@ -33,3 +28,13 @@ const ramps = {
 };
 
 export const dark = createColorScheme(`${name}`, false, ramps);
+export const meta: Meta = {
+  name,
+  author: "zoefiri",
+  url: "https://github.com/zoefiri/base16-sc",
+  license: {
+    SPDX: "MIT",
+    https_url: "https://raw.githubusercontent.com/zoefiri/base16-sc/master/LICENSE",
+    license_checksum: "fadcc834b7eaf2943800956600e8aeea4b495ecf6490f4c4b6c91556a90accaf"
+  }
+}
