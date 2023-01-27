@@ -5,8 +5,8 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
+use fs::LineEnding;
 use fs::{repository::GitRepository, Fs};
-use fs::{HomeDir, LineEnding};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -49,6 +49,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
+use util::paths::HOME;
 use util::{ResultExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -1831,9 +1832,9 @@ impl language::File for File {
         } else {
             let path = worktree.abs_path();
 
-            if worktree.is_local() && path.starts_with(cx.global::<HomeDir>().as_path()) {
+            if worktree.is_local() && path.starts_with(HOME.as_path()) {
                 full_path.push("~");
-                full_path.push(path.strip_prefix(cx.global::<HomeDir>().as_path()).unwrap());
+                full_path.push(path.strip_prefix(HOME.as_path()).unwrap());
             } else {
                 full_path.push(path)
             }

@@ -38,7 +38,7 @@
             "cmd-n": "workspace::NewFile",
             "cmd-shift-n": "workspace::NewWindow",
             "cmd-o": "workspace::Open",
-            "alt-cmd-o": "recent_projects::Toggle",
+            "alt-cmd-o": "projects::OpenRecent",
             "ctrl-`": "workspace::NewTerminal"
         }
     },

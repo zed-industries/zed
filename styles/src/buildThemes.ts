@@ -2,7 +2,7 @@ import * as fs from "fs";
 import { tmpdir } from "os";
 import * as path from "path";
 import colorSchemes, {
-  experimentalColorSchemes, internalColorSchemes
+  staffColorSchemes,
 } from "./colorSchemes";
 import app from "./styleTree/app";
 import { ColorScheme } from "./themes/common/colorScheme";
@@ -10,8 +10,7 @@ import snakeCase from "./utils/snakeCase";
 
 const assetsDirectory = `${__dirname}/../../assets`
 const themeDirectory = `${assetsDirectory}/themes`;
-const internalDirectory = `${themeDirectory}/Internal`;
-const experimentsDirectory = `${themeDirectory}/Experiments`;
+const staffDirectory = `${themeDirectory}/staff`;
 
 const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"));
 
@@ -32,8 +31,7 @@ function clearThemes(themeDirectory: string) {
 }
 
 clearThemes(themeDirectory);
-clearThemes(internalDirectory);
-clearThemes(experimentsDirectory);
+clearThemes(staffDirectory);
 
 function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
   for (let colorScheme of colorSchemes) {
@@ -49,5 +47,4 @@ function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
 
 // Write new themes to theme directory
 writeThemes(colorSchemes, themeDirectory);
-writeThemes(internalColorSchemes, internalDirectory);
-writeThemes(experimentalColorSchemes, experimentsDirectory);
+writeThemes(staffColorSchemes, staffDirectory);

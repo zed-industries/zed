@@ -7,7 +7,7 @@ use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use settings::Settings;
 use std::sync::{Arc, Weak};
-use util::TryFutureExt as _;
+use util::{StaffMode, TryFutureExt as _};
 
 #[derive(Default, Debug)]
 pub struct User {
@@ -147,6 +147,19 @@ impl UserStore {
                                     info.as_ref().map(|info| info.staff).unwrap_or(false),
                                     cx.read(|cx| cx.global::<Settings>().telemetry()),
                                 );
+
+                                cx.update(|cx| {
+                                    cx.update_default_global(|staff_mode: &mut StaffMode, _| {
+                                        if !staff_mode.0 {
+                                            *staff_mode = StaffMode(
+                                                info.as_ref()
+                                                    .map(|info| info.staff)
+                                                    .unwrap_or_default(),
+                                            )
+                                        }
+                                        ()
+                                    });
+                                });
 
                                 current_user_tx.send(user).await.ok();
                             }

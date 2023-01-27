@@ -550,7 +550,6 @@ impl Project {
         if !cx.read(|cx| cx.has_global::<Settings>()) {
             cx.update(|cx| {
                 cx.set_global(Settings::test(cx));
-                cx.set_global(HomeDir(Path::new("/tmp/").to_path_buf()))
             });
         }
 

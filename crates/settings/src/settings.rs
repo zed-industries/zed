@@ -27,7 +27,6 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 
 #[derive(Clone)]
 pub struct Settings {
-    pub experiments: FeatureFlags,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
@@ -53,7 +52,6 @@ pub struct Settings {
     pub theme: Arc<Theme>,
     pub telemetry_defaults: TelemetrySettings,
     pub telemetry_overrides: TelemetrySettings,
-    pub staff_mode: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -68,17 +66,6 @@ impl TelemetrySettings {
     }
     pub fn diagnostics(&self) -> bool {
         self.diagnostics.unwrap()
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct FeatureFlags {
-    pub experimental_themes: bool,
-}
-
-impl FeatureFlags {
-    pub fn keymap_files(&self) -> Vec<&'static str> {
-        vec![]
     }
 }
 
@@ -283,7 +270,6 @@ impl Column for DockAnchor {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
-    pub experiments: Option<FeatureFlags>,
     #[serde(default)]
     pub projects_online_by_default: Option<bool>,
     #[serde(default)]
@@ -323,8 +309,6 @@ pub struct SettingsFileContent {
     pub theme: Option<String>,
     #[serde(default)]
     pub telemetry: TelemetrySettings,
-    #[serde(default)]
-    pub staff_mode: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -352,7 +336,6 @@ impl Settings {
         .unwrap();
 
         Self {
-            experiments: FeatureFlags::default(),
             buffer_font_family: font_cache
                 .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
                 .unwrap(),
@@ -388,7 +371,6 @@ impl Settings {
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
             telemetry_defaults: defaults.telemetry,
             telemetry_overrides: Default::default(),
-            staff_mode: false,
         }
     }
 
@@ -425,8 +407,6 @@ impl Settings {
         );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
-        merge(&mut self.experiments, data.experiments);
-        merge(&mut self.staff_mode, data.staff_mode);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
 
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
@@ -552,7 +532,6 @@ impl Settings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
-            experiments: FeatureFlags::default(),
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
@@ -589,7 +568,6 @@ impl Settings {
                 metrics: Some(true),
             },
             telemetry_overrides: Default::default(),
-            staff_mode: false,
         }
     }
 
@@ -647,8 +625,6 @@ pub fn settings_file_json_schema(
     ]);
     let root_schema_object = &mut root_schema.schema.object.as_mut().unwrap();
 
-    // Avoid automcomplete for non-user facing settings
-    root_schema_object.properties.remove("staff_mode");
     root_schema_object.properties.extend([
         (
             "theme".to_owned(),
