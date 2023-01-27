@@ -1414,21 +1414,6 @@ impl MutableAppContext {
         true
     }
 
-    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
-    /// Includes the passed view itself
-    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
-        std::iter::once(view_id)
-            .into_iter()
-            .chain(std::iter::from_fn(move || {
-                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
-                    view_id = *parent_id;
-                    Some(view_id)
-                } else {
-                    None
-                }
-            }))
-    }
-
     fn actions_mut(
         &mut self,
         capture_phase: bool,
@@ -2731,6 +2716,32 @@ impl AppContext {
             global.downcast_ref().unwrap()
         } else {
             panic!("no global has been added for {}", type_name::<T>());
+        }
+    }
+
+    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
+    /// Includes the passed view itself
+    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(view_id)
+            .into_iter()
+            .chain(std::iter::from_fn(move || {
+                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
+                    view_id = *parent_id;
+                    Some(view_id)
+                } else {
+                    None
+                }
+            }))
+    }
+
+    pub fn is_child_focused(&self, view: impl Into<AnyViewHandle>) -> bool {
+        let view = view.into();
+        if let Some(focused_view_id) = self.focused_view_id(view.window_id) {
+            self.ancestors(view.window_id, focused_view_id)
+                .skip(1) // Skip self id
+                .any(|parent| parent == view.view_id)
+        } else {
+            false
         }
     }
 }
