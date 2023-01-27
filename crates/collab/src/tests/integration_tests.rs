@@ -5625,7 +5625,6 @@ async fn test_following(
             .downcast::<Editor>()
             .unwrap()
     });
-    assert!(cx_b.read(|cx| editor_b2.is_focused(cx)));
     assert_eq!(
         cx_b.read(|cx| editor_b2.project_path(cx)),
         Some((worktree_id, "2.txt").into())

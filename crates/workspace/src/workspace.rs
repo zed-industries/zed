@@ -2140,7 +2140,7 @@ impl Workspace {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(leader_id)?;
-        let mut items_to_add = Vec::new();
+        let mut items_to_activate = Vec::new();
         match participant.location {
             call::ParticipantLocation::SharedProject { project_id } => {
                 if Some(project_id) == self.project.read(cx).remote_id() {
@@ -2149,12 +2149,12 @@ impl Workspace {
                             .active_view_id
                             .and_then(|id| state.items_by_leader_view_id.get(&id))
                         {
-                            items_to_add.push((pane.clone(), item.boxed_clone()));
+                            items_to_activate.push((pane.clone(), item.boxed_clone()));
                         } else {
                             if let Some(shared_screen) =
                                 self.shared_screen_for_peer(leader_id, pane, cx)
                             {
-                                items_to_add.push((pane.clone(), Box::new(shared_screen)));
+                                items_to_activate.push((pane.clone(), Box::new(shared_screen)));
                             }
                         }
                     }
@@ -2164,20 +2164,26 @@ impl Workspace {
             call::ParticipantLocation::External => {
                 for (pane, _) in self.follower_states_by_leader.get(&leader_id)? {
                     if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-                        items_to_add.push((pane.clone(), Box::new(shared_screen)));
+                        items_to_activate.push((pane.clone(), Box::new(shared_screen)));
                     }
                 }
             }
         }
 
-        for (pane, item) in items_to_add {
+        for (pane, item) in items_to_activate {
+            let active_item_was_focused = pane
+                .read(cx)
+                .active_item()
+                .map(|active_item| cx.is_child_focused(active_item.to_any()))
+                .unwrap_or_default();
+
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
             } else {
                 Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
             }
 
-            if pane == self.active_pane {
+            if active_item_was_focused {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }
         }
