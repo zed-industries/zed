@@ -793,6 +793,19 @@ impl Room {
         })
     }
 
+    pub(crate) fn unshare_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let project_id = match project.read(cx).remote_id() {
+            Some(project_id) => project_id,
+            None => return Ok(()),
+        };
+
+        self.client.send(proto::UnshareProject { project_id })
+    }
+
     pub(crate) fn set_location(
         &mut self,
         project: Option<&ModelHandle<Project>>,

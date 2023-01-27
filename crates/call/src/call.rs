@@ -284,6 +284,18 @@ impl ActiveCall {
         }
     }
 
+    pub fn unshare_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        if let Some((room, _)) = self.room.as_ref() {
+            room.update(cx, |room, cx| room.unshare_project(project, cx))
+        } else {
+            Err(anyhow!("no active call"))
+        }
+    }
+
     pub fn set_location(
         &mut self,
         project: Option<&ModelHandle<Project>>,

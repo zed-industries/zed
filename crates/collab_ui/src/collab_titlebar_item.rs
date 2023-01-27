@@ -15,13 +15,18 @@ use gpui::{
 use settings::Settings;
 use std::ops::Range;
 use theme::Theme;
+use util::ResultExt;
 use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
-actions!(collab, [ToggleCollaborationMenu, ShareProject]);
+actions!(
+    collab,
+    [ToggleCollaborationMenu, ShareProject, UnshareProject]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
     cx.add_action(CollabTitlebarItem::share_project);
+    cx.add_action(CollabTitlebarItem::unshare_project);
 }
 
 pub struct CollabTitlebarItem {
@@ -58,6 +63,19 @@ impl View for CollabTitlebarItem {
 
         let theme = cx.global::<Settings>().theme.clone();
 
+        let mut left_container = Flex::row();
+
+        left_container.add_child(
+            Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
+                .aligned()
+                .left()
+                .boxed(),
+        );
+
+        if ActiveCall::global(cx).read(cx).room().is_some() {
+            left_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
+        }
+
         let mut container = Flex::row();
 
         container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
@@ -69,8 +87,6 @@ impl View for CollabTitlebarItem {
                 || ActiveCall::global(cx).read(cx).room().is_none()
             {
                 container.add_child(self.render_toggle_contacts_button(&theme, cx));
-            } else {
-                container.add_child(self.render_share_button(&theme, cx));
             }
         }
         container.add_children(self.render_collaborators(&workspace, &theme, cx));
@@ -78,12 +94,7 @@ impl View for CollabTitlebarItem {
         container.add_children(self.render_connection_status(&workspace, cx));
 
         Stack::new()
-            .with_child(
-                Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
-                    .aligned()
-                    .left()
-                    .boxed(),
-            )
+            .with_child(left_container.boxed())
             .with_child(container.aligned().right().boxed())
             .boxed()
     }
@@ -154,6 +165,16 @@ impl CollabTitlebarItem {
             active_call
                 .update(cx, |call, cx| call.share_project(project, cx))
                 .detach_and_log_err(cx);
+        }
+    }
+
+    fn unshare_project(&mut self, _: &UnshareProject, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            let active_call = ActiveCall::global(cx);
+            let project = workspace.read(cx).project().clone();
+            active_call
+                .update(cx, |call, cx| call.unshare_project(project, cx))
+                .log_err();
         }
     }
 
@@ -305,26 +326,40 @@ impl CollabTitlebarItem {
         )
     }
 
-    fn render_share_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
-        enum Share {}
+    fn render_share_unshare_button(
+        &self,
+        workspace: &ViewHandle<Workspace>,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let is_shared = workspace.read(cx).project().read(cx).is_shared();
+        let label = if is_shared { "Unshare" } else { "Share" };
+        let tooltip = if is_shared {
+            "Unshare project from call participants"
+        } else {
+            "Share project with call participants"
+        };
 
         let titlebar = &theme.workspace.titlebar;
+
+        enum Share {}
         MouseEventHandler::<Share>::new(0, cx, |state, _| {
+            //TODO: Ensure this button has consistant width for both text variations
             let style = titlebar.share_button.style_for(state, false);
-            Label::new("Share", style.text.clone())
+            Label::new(label, style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(ShareProject))
-        .with_tooltip::<Share, _>(
-            0,
-            "Share project with call participants".into(),
-            None,
-            theme.tooltip.clone(),
-            cx,
-        )
+        .on_click(MouseButton::Left, move |_, cx| {
+            if is_shared {
+                cx.dispatch_action(UnshareProject);
+            } else {
+                cx.dispatch_action(ShareProject);
+            }
+        })
+        .with_tooltip::<Share, _>(0, tooltip.to_owned(), None, theme.tooltip.clone(), cx)
         .aligned()
         .contained()
         .with_margin_left(theme.workspace.titlebar.avatar_margin)
