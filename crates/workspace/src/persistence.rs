@@ -6,9 +6,10 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::Axis;
+use gpui::{Axis, WindowBounds};
 
 use util::{unzip_option, ResultExt};
+use uuid::Uuid;
 
 use crate::dock::DockPosition;
 use crate::WorkspaceId;
@@ -19,64 +20,118 @@ use model::{
 };
 
 define_connection! {
+    // Current schema shape using pseudo-rust syntax:
+    //
+    // workspaces(
+    //   workspace_id: usize, // Primary key for workspaces
+    //   workspace_location: Bincode<Vec<PathBuf>>,
+    //   dock_visible: bool,
+    //   dock_anchor: DockAnchor, // 'Bottom' / 'Right' / 'Expanded'
+    //   dock_pane: Option<usize>, // PaneId
+    //   left_sidebar_open: boolean,
+    //   timestamp: String, // UTC YYYY-MM-DD HH:MM:SS
+    //   window_state: String, // WindowBounds Discriminant
+    //   window_x: Option<f32>, // WindowBounds::Fixed RectF x
+    //   window_y: Option<f32>, // WindowBounds::Fixed RectF y
+    //   window_width: Option<f32>, // WindowBounds::Fixed RectF width
+    //   window_height: Option<f32>, // WindowBounds::Fixed RectF height
+    //   display: Option<Uuid>, // Display id
+    // )
+    //
+    // pane_groups(
+    //   group_id: usize, // Primary key for pane_groups
+    //   workspace_id: usize, // References workspaces table
+    //   parent_group_id: Option<usize>, // None indicates that this is the root node
+    //   position: Optiopn<usize>, // None indicates that this is the root node
+    //   axis: Option<Axis>, // 'Vertical', 'Horizontal'
+    // )
+    //
+    // panes(
+    //     pane_id: usize, // Primary key for panes
+    //     workspace_id: usize, // References workspaces table
+    //     active: bool,
+    // )
+    //
+    // center_panes(
+    //     pane_id: usize, // Primary key for center_panes
+    //     parent_group_id: Option<usize>, // References pane_groups. If none, this is the root
+    //     position: Option<usize>, // None indicates this is the root
+    // )
+    //
+    // CREATE TABLE items(
+    //     item_id: usize, // This is the item's view id, so this is not unique
+    //     workspace_id: usize, // References workspaces table
+    //     pane_id: usize, // References panes table
+    //     kind: String, // Indicates which view this connects to. This is the key in the item_deserializers global
+    //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
+    //     active: bool, // Indicates if this item is the active one in the pane
+    // )
     pub static ref DB: WorkspaceDb<()> =
-        &[sql!(
-            CREATE TABLE workspaces(
-                workspace_id INTEGER PRIMARY KEY,
-                workspace_location BLOB UNIQUE,
-                dock_visible INTEGER, // Boolean
-                dock_anchor TEXT, // Enum: 'Bottom' / 'Right' / 'Expanded'
-                dock_pane INTEGER, // NULL indicates that we don't have a dock pane yet
-                left_sidebar_open INTEGER, //Boolean
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
-                FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
-            ) STRICT;
+    &[sql!(
+        CREATE TABLE workspaces(
+            workspace_id INTEGER PRIMARY KEY,
+            workspace_location BLOB UNIQUE,
+            dock_visible INTEGER, // Boolean
+            dock_anchor TEXT, // Enum: 'Bottom' / 'Right' / 'Expanded'
+            dock_pane INTEGER, // NULL indicates that we don't have a dock pane yet
+            left_sidebar_open INTEGER, //Boolean
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
+        ) STRICT;
 
-            CREATE TABLE pane_groups(
-                group_id INTEGER PRIMARY KEY,
-                workspace_id INTEGER NOT NULL,
-                parent_group_id INTEGER, // NULL indicates that this is a root node
-                position INTEGER, // NULL indicates that this is a root node
-                axis TEXT NOT NULL, // Enum: 'Vertical' / 'Horizontal'
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE,
-                FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
-            ) STRICT;
+        CREATE TABLE pane_groups(
+            group_id INTEGER PRIMARY KEY,
+            workspace_id INTEGER NOT NULL,
+            parent_group_id INTEGER, // NULL indicates that this is a root node
+            position INTEGER, // NULL indicates that this is a root node
+            axis TEXT NOT NULL, // Enum: 'Vertical' / 'Horizontal'
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+            ON DELETE CASCADE
+            ON UPDATE CASCADE,
+            FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+        ) STRICT;
 
-            CREATE TABLE panes(
-                pane_id INTEGER PRIMARY KEY,
-                workspace_id INTEGER NOT NULL,
-                active INTEGER NOT NULL, // Boolean
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE
-            ) STRICT;
+        CREATE TABLE panes(
+            pane_id INTEGER PRIMARY KEY,
+            workspace_id INTEGER NOT NULL,
+            active INTEGER NOT NULL, // Boolean
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+            ON DELETE CASCADE
+            ON UPDATE CASCADE
+        ) STRICT;
 
-            CREATE TABLE center_panes(
-                pane_id INTEGER PRIMARY KEY,
-                parent_group_id INTEGER, // NULL means that this is a root pane
-                position INTEGER, // NULL means that this is a root pane
-                FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
-                ON DELETE CASCADE,
-                FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
-            ) STRICT;
+        CREATE TABLE center_panes(
+            pane_id INTEGER PRIMARY KEY,
+            parent_group_id INTEGER, // NULL means that this is a root pane
+            position INTEGER, // NULL means that this is a root pane
+            FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
+            ON DELETE CASCADE,
+            FOREIGN KEY(parent_group_id) REFERENCES pane_groups(group_id) ON DELETE CASCADE
+        ) STRICT;
 
-            CREATE TABLE items(
-                item_id INTEGER NOT NULL, // This is the item's view id, so this is not unique
-                workspace_id INTEGER NOT NULL,
-                pane_id INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                active INTEGER NOT NULL,
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE,
-                FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
-                ON DELETE CASCADE,
-                PRIMARY KEY(item_id, workspace_id)
-            ) STRICT;
-        )];
+        CREATE TABLE items(
+            item_id INTEGER NOT NULL, // This is the item's view id, so this is not unique
+            workspace_id INTEGER NOT NULL,
+            pane_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            active INTEGER NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+            ON DELETE CASCADE
+            ON UPDATE CASCADE,
+            FOREIGN KEY(pane_id) REFERENCES panes(pane_id)
+            ON DELETE CASCADE,
+            PRIMARY KEY(item_id, workspace_id)
+        ) STRICT;
+    ),
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN window_state TEXT;
+        ALTER TABLE workspaces ADD COLUMN window_x REAL;
+        ALTER TABLE workspaces ADD COLUMN window_y REAL;
+        ALTER TABLE workspaces ADD COLUMN window_width REAL;
+        ALTER TABLE workspaces ADD COLUMN window_height REAL;
+        ALTER TABLE workspaces ADD COLUMN display BLOB;
+    )];
 }
 
 impl WorkspaceDb {
@@ -91,14 +146,27 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, left_sidebar_open, dock_position): (
+        let (workspace_id, workspace_location, left_sidebar_open, dock_position, bounds, display): (
             WorkspaceId,
             WorkspaceLocation,
             bool,
             DockPosition,
-        ) =
-            self.select_row_bound(sql!{
-                SELECT workspace_id, workspace_location, left_sidebar_open, dock_visible, dock_anchor
+            Option<WindowBounds>,
+            Option<Uuid>,
+        ) = self
+            .select_row_bound(sql! {
+                SELECT
+                    workspace_id,
+                    workspace_location,
+                    left_sidebar_open,
+                    dock_visible,
+                    dock_anchor,
+                    window_state,
+                    window_x,
+                    window_y,
+                    window_width,
+                    window_height,
+                    display
                 FROM workspaces
                 WHERE workspace_location = ?
             })
@@ -120,6 +188,8 @@ impl WorkspaceDb {
                 .log_err()?,
             dock_position,
             left_sidebar_open,
+            bounds,
+            display,
         })
     }
 
@@ -142,22 +212,22 @@ impl WorkspaceDb {
 
                 // Upsert
                 conn.exec_bound(sql!(
-                        INSERT INTO workspaces(
-                            workspace_id,
-                            workspace_location,
-                            left_sidebar_open,
-                            dock_visible,
-                            dock_anchor,
-                            timestamp
-                        )
-                        VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
-                        ON CONFLICT DO
-                            UPDATE SET
-                            workspace_location = ?2,
-                            left_sidebar_open = ?3,
-                            dock_visible = ?4,
-                            dock_anchor = ?5,
-                            timestamp = CURRENT_TIMESTAMP
+                    INSERT INTO workspaces(
+                        workspace_id,
+                        workspace_location,
+                        left_sidebar_open,
+                        dock_visible,
+                        dock_anchor,
+                        timestamp
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+                    ON CONFLICT DO
+                    UPDATE SET
+                        workspace_location = ?2,
+                        left_sidebar_open = ?3,
+                        dock_visible = ?4,
+                        dock_anchor = ?5,
+                        timestamp = CURRENT_TIMESTAMP
                 ))?((
                     workspace.id,
                     &workspace.location,
@@ -177,7 +247,7 @@ impl WorkspaceDb {
                 conn.exec_bound(sql!(
                     UPDATE workspaces
                     SET dock_pane = ?
-                    WHERE workspace_id = ?
+                        WHERE workspace_id = ?
                 ))?((dock_id, workspace.id))
                 .context("Finishing initialization with dock pane")?;
 
@@ -261,27 +331,27 @@ impl WorkspaceDb {
         self.select_bound::<GroupKey, GroupOrPane>(sql!(
             SELECT group_id, axis, pane_id, active
                 FROM (SELECT
-                        group_id,
-                        axis,
-                        NULL as pane_id,
-                        NULL as active,
-                        position,
-                        parent_group_id,
-                        workspace_id
-                      FROM pane_groups
-                     UNION
-                      SELECT
-                        NULL,
-                        NULL,
-                        center_panes.pane_id,
-                        panes.active as active,
-                        position,
-                        parent_group_id,
-                        panes.workspace_id as workspace_id
-                      FROM center_panes
-                      JOIN panes ON center_panes.pane_id = panes.pane_id)
-            WHERE parent_group_id IS ? AND workspace_id = ?
-            ORDER BY position
+                    group_id,
+                    axis,
+                    NULL as pane_id,
+                    NULL as active,
+                    position,
+                    parent_group_id,
+                    workspace_id
+                    FROM pane_groups
+                    UNION
+                    SELECT
+                    NULL,
+                    NULL,
+                    center_panes.pane_id,
+                    panes.active as active,
+                    position,
+                    parent_group_id,
+                    panes.workspace_id as workspace_id
+                        FROM center_panes
+                        JOIN panes ON center_panes.pane_id = panes.pane_id)
+                WHERE parent_group_id IS ? AND workspace_id = ?
+                ORDER BY position
         ))?((group_id, workspace_id))?
         .into_iter()
         .map(|(group_id, axis, pane_id, active)| {
@@ -319,9 +389,9 @@ impl WorkspaceDb {
                 let (parent_id, position) = unzip_option(parent);
 
                 let group_id = conn.select_row_bound::<_, i64>(sql!(
-                        INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis)
-                        VALUES (?, ?, ?, ?)
-                        RETURNING group_id
+                    INSERT INTO pane_groups(workspace_id, parent_group_id, position, axis)
+                    VALUES (?, ?, ?, ?)
+                    RETURNING group_id
                 ))?((workspace_id, parent_id, position, *axis))?
                 .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
 
@@ -383,7 +453,7 @@ impl WorkspaceDb {
         Ok(self.select_bound(sql!(
             SELECT kind, item_id, active FROM items
             WHERE pane_id = ?
-            ORDER BY position
+                ORDER BY position
         ))?(pane_id)?)
     }
 
@@ -408,6 +478,19 @@ impl WorkspaceDb {
             UPDATE workspaces
             SET timestamp = CURRENT_TIMESTAMP
             WHERE workspace_id = ?
+        }
+    }
+
+    query! {
+        pub async fn set_window_bounds(workspace_id: WorkspaceId, bounds: WindowBounds, display: Uuid) -> Result<()> {
+            UPDATE workspaces
+            SET window_state = ?2,
+                window_x = ?3,
+                window_y = ?4,
+                window_width = ?5,
+                window_height = ?6,
+                display = ?7
+            WHERE workspace_id = ?1
         }
     }
 }
@@ -436,7 +519,7 @@ mod tests {
                         text TEXT,
                         workspace_id INTEGER,
                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                            ON DELETE CASCADE
+                        ON DELETE CASCADE
                     ) STRICT;
                 )],
             )
@@ -485,7 +568,7 @@ mod tests {
                         workspace_id INTEGER,
                         FOREIGN KEY(workspace_id) 
                             REFERENCES workspaces(workspace_id)
-                            ON DELETE CASCADE
+                        ON DELETE CASCADE
                     ) STRICT;)],
             )
         })
@@ -499,6 +582,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: true,
+            bounds: Default::default(),
+            display: Default::default(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -508,6 +593,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: false,
+            bounds: Default::default(),
+            display: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -614,6 +701,8 @@ mod tests {
             center_group,
             dock_pane,
             left_sidebar_open: true,
+            bounds: Default::default(),
+            display: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -642,6 +731,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: true,
+            bounds: Default::default(),
+            display: Default::default(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -651,6 +742,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: false,
+            bounds: Default::default(),
+            display: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -687,6 +780,8 @@ mod tests {
             center_group: Default::default(),
             dock_pane: Default::default(),
             left_sidebar_open: false,
+            bounds: Default::default(),
+            display: Default::default(),
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -722,6 +817,8 @@ mod tests {
             center_group: center_group.clone(),
             dock_pane,
             left_sidebar_open: true,
+            bounds: Default::default(),
+            display: Default::default(),
         }
     }
 

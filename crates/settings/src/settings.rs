@@ -15,7 +15,7 @@ use schemars::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use sqlez::{
-    bindable::{Bind, Column},
+    bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
@@ -253,6 +253,7 @@ pub enum DockAnchor {
     Expanded,
 }
 
+impl StaticColumnCount for DockAnchor {}
 impl Bind for DockAnchor {
     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
         match self {

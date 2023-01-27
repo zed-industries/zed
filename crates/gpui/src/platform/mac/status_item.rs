@@ -7,7 +7,7 @@ use crate::{
         self,
         mac::{platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer},
     },
-    Event, FontSystem, Scene,
+    Event, FontSystem, Scene, WindowBounds,
 };
 use cocoa::{
     appkit::{NSScreen, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
@@ -31,6 +31,8 @@ use std::{
     rc::{Rc, Weak},
     sync::Arc,
 };
+
+use super::screen::Screen;
 
 static mut VIEW_CLASS: *const Class = ptr::null();
 const STATE_IVAR: &str = "state";
@@ -167,27 +169,41 @@ impl StatusItem {
 }
 
 impl platform::Window for StatusItem {
+    fn bounds(&self) -> WindowBounds {
+        self.0.borrow().bounds()
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.0.borrow().content_size()
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.0.borrow().scale_factor()
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        0.
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        unsafe {
+            let appearance: id =
+                msg_send![self.0.borrow().native_item.button(), effectiveAppearance];
+            crate::Appearance::from_native(appearance)
+        }
+    }
+
+    fn screen(&self) -> Rc<dyn crate::Screen> {
+        unsafe {
+            Rc::new(Screen {
+                native_screen: self.0.borrow().native_window().screen(),
+            })
+        }
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
-
-    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
-        self.0.borrow_mut().event_callback = Some(callback);
-    }
-
-    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().appearance_changed_callback = Some(callback);
-    }
-
-    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {}
-
-    fn on_resize(&mut self, _: Box<dyn FnMut()>) {}
-
-    fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {}
-
-    fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {}
-
-    fn on_close(&mut self, _: Box<dyn FnOnce()>) {}
 
     fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
 
@@ -224,26 +240,6 @@ impl platform::Window for StatusItem {
         unimplemented!()
     }
 
-    fn toggle_full_screen(&self) {
-        unimplemented!()
-    }
-
-    fn bounds(&self) -> RectF {
-        self.0.borrow().bounds()
-    }
-
-    fn content_size(&self) -> Vector2F {
-        self.0.borrow().content_size()
-    }
-
-    fn scale_factor(&self) -> f32 {
-        self.0.borrow().scale_factor()
-    }
-
-    fn titlebar_height(&self) -> f32 {
-        0.
-    }
-
     fn present_scene(&mut self, scene: Scene) {
         self.0.borrow_mut().scene = Some(scene);
         unsafe {
@@ -251,12 +247,28 @@ impl platform::Window for StatusItem {
         }
     }
 
-    fn appearance(&self) -> crate::Appearance {
-        unsafe {
-            let appearance: id =
-                msg_send![self.0.borrow().native_item.button(), effectiveAppearance];
-            crate::Appearance::from_native(appearance)
-        }
+    fn toggle_full_screen(&self) {
+        unimplemented!()
+    }
+
+    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+        self.0.borrow_mut().event_callback = Some(callback);
+    }
+
+    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {}
+
+    fn on_resize(&mut self, _: Box<dyn FnMut()>) {}
+
+    fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {}
+
+    fn on_moved(&mut self, _: Box<dyn FnMut()>) {}
+
+    fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {}
+
+    fn on_close(&mut self, _: Box<dyn FnOnce()>) {}
+
+    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
 
     fn is_topmost_for_position(&self, _: Vector2F) -> bool {
@@ -265,9 +277,9 @@ impl platform::Window for StatusItem {
 }
 
 impl StatusItemState {
-    fn bounds(&self) -> RectF {
+    fn bounds(&self) -> WindowBounds {
         unsafe {
-            let window: id = msg_send![self.native_item.button(), window];
+            let window: id = self.native_window();
             let screen_frame = window.screen().visibleFrame();
             let window_frame = NSWindow::frame(window);
             let origin = vec2f(
@@ -279,7 +291,7 @@ impl StatusItemState {
                 window_frame.size.width as f32,
                 window_frame.size.height as f32,
             );
-            RectF::new(origin, size)
+            WindowBounds::Fixed(RectF::new(origin, size))
         }
     }
 
@@ -296,6 +308,10 @@ impl StatusItemState {
             let window: id = msg_send![self.native_item.button(), window];
             NSScreen::backingScaleFactor(window.screen()) as f32
         }
+    }
+
+    pub fn native_window(&self) -> id {
+        unsafe { msg_send![self.native_item.button(), window] }
     }
 }
 

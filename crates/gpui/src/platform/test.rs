@@ -20,33 +20,25 @@ use std::{
 };
 use time::UtcOffset;
 
-pub struct Platform {
-    dispatcher: Arc<dyn super::Dispatcher>,
-    fonts: Arc<dyn super::FontSystem>,
-    current_clipboard_item: Mutex<Option<ClipboardItem>>,
-    cursor: Mutex<CursorStyle>,
+struct Dispatcher;
+
+impl super::Dispatcher for Dispatcher {
+    fn is_main_thread(&self) -> bool {
+        true
+    }
+
+    fn run_on_main_thread(&self, task: async_task::Runnable) {
+        task.run();
+    }
+}
+
+pub fn foreground_platform() -> ForegroundPlatform {
+    ForegroundPlatform::default()
 }
 
 #[derive(Default)]
 pub struct ForegroundPlatform {
     last_prompt_for_new_path_args: RefCell<Option<(PathBuf, oneshot::Sender<Option<PathBuf>>)>>,
-}
-
-struct Dispatcher;
-
-pub struct Window {
-    pub(crate) size: Vector2F,
-    scale_factor: f32,
-    current_scene: Option<crate::Scene>,
-    event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
-    pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
-    close_handlers: Vec<Box<dyn FnOnce()>>,
-    fullscreen_handlers: Vec<Box<dyn FnMut(bool)>>,
-    pub(crate) active_status_change_handlers: Vec<Box<dyn FnMut(bool)>>,
-    pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
-    pub(crate) title: Option<String>,
-    pub(crate) edited: bool,
-    pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -102,6 +94,17 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     }
 }
 
+pub fn platform() -> Platform {
+    Platform::new()
+}
+
+pub struct Platform {
+    dispatcher: Arc<dyn super::Dispatcher>,
+    fonts: Arc<dyn super::FontSystem>,
+    current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    cursor: Mutex<CursorStyle>,
+}
+
 impl Platform {
     fn new() -> Self {
         Self {
@@ -132,6 +135,10 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
+    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn crate::Screen>> {
+        None
+    }
+
     fn screens(&self) -> Vec<Rc<dyn crate::Screen>> {
         Default::default()
     }
@@ -143,7 +150,7 @@ impl super::Platform for Platform {
         _executor: Rc<super::executor::Foreground>,
     ) -> Box<dyn super::Window> {
         Box::new(Window::new(match options.bounds {
-            WindowBounds::Maximized => vec2f(1024., 768.),
+            WindowBounds::Maximized | WindowBounds::Fullscreen => vec2f(1024., 768.),
             WindowBounds::Fixed(rect) => rect.size(),
         }))
     }
@@ -219,12 +226,46 @@ impl super::Platform for Platform {
     }
 }
 
+#[derive(Debug)]
+pub struct Screen;
+
+impl super::Screen for Screen {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn bounds(&self) -> RectF {
+        RectF::new(Vector2F::zero(), Vector2F::new(1920., 1080.))
+    }
+
+    fn display_uuid(&self) -> uuid::Uuid {
+        uuid::Uuid::new_v4()
+    }
+}
+
+pub struct Window {
+    pub(crate) size: Vector2F,
+    scale_factor: f32,
+    current_scene: Option<crate::Scene>,
+    event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
+    pub(crate) resize_handlers: Vec<Box<dyn FnMut()>>,
+    pub(crate) moved_handlers: Vec<Box<dyn FnMut()>>,
+    close_handlers: Vec<Box<dyn FnOnce()>>,
+    fullscreen_handlers: Vec<Box<dyn FnMut(bool)>>,
+    pub(crate) active_status_change_handlers: Vec<Box<dyn FnMut(bool)>>,
+    pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
+    pub(crate) title: Option<String>,
+    pub(crate) edited: bool,
+    pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
+}
+
 impl Window {
     fn new(size: Vector2F) -> Self {
         Self {
             size,
             event_handlers: Default::default(),
             resize_handlers: Default::default(),
+            moved_handlers: Default::default(),
             close_handlers: Default::default(),
             should_close_handler: Default::default(),
             active_status_change_handlers: Default::default(),
@@ -242,39 +283,33 @@ impl Window {
     }
 }
 
-impl super::Dispatcher for Dispatcher {
-    fn is_main_thread(&self) -> bool {
-        true
-    }
-
-    fn run_on_main_thread(&self, task: async_task::Runnable) {
-        task.run();
-    }
-}
-
 impl super::Window for Window {
+    fn bounds(&self) -> WindowBounds {
+        WindowBounds::Fixed(RectF::new(Vector2F::zero(), self.size))
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.size
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        24.
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        crate::Appearance::Light
+    }
+
+    fn screen(&self) -> Rc<dyn crate::Screen> {
+        Rc::new(Screen)
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
-    }
-
-    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
-        self.event_handlers.push(callback);
-    }
-
-    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.active_status_change_handlers.push(callback);
-    }
-
-    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.fullscreen_handlers.push(callback)
-    }
-
-    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
-        self.resize_handlers.push(callback);
-    }
-
-    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
-        self.close_handlers.push(callback);
     }
 
     fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
@@ -295,40 +330,44 @@ impl super::Window for Window {
         self.edited = edited;
     }
 
-    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
-        self.should_close_handler = Some(callback);
-    }
-
     fn show_character_palette(&self) {}
 
     fn minimize(&self) {}
 
     fn zoom(&self) {}
 
-    fn toggle_full_screen(&self) {}
-
-    fn bounds(&self) -> RectF {
-        RectF::new(Default::default(), self.size)
-    }
-
-    fn content_size(&self) -> Vector2F {
-        self.size
-    }
-
-    fn scale_factor(&self) -> f32 {
-        self.scale_factor
-    }
-
-    fn titlebar_height(&self) -> f32 {
-        24.
-    }
-
     fn present_scene(&mut self, scene: crate::Scene) {
         self.current_scene = Some(scene);
     }
 
-    fn appearance(&self) -> crate::Appearance {
-        crate::Appearance::Light
+    fn toggle_full_screen(&self) {}
+
+    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+        self.event_handlers.push(callback);
+    }
+
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.active_status_change_handlers.push(callback);
+    }
+
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
+        self.resize_handlers.push(callback);
+    }
+
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.fullscreen_handlers.push(callback)
+    }
+
+    fn on_moved(&mut self, callback: Box<dyn FnMut()>) {
+        self.moved_handlers.push(callback);
+    }
+
+    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
+        self.should_close_handler = Some(callback);
+    }
+
+    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
+        self.close_handlers.push(callback);
     }
 
     fn on_appearance_changed(&mut self, _: Box<dyn FnMut()>) {}
@@ -336,12 +375,4 @@ impl super::Window for Window {
     fn is_topmost_for_position(&self, _position: Vector2F) -> bool {
         true
     }
-}
-
-pub fn platform() -> Platform {
-    Platform::new()
-}
-
-pub fn foreground_platform() -> ForegroundPlatform {
-    ForegroundPlatform::default()
 }

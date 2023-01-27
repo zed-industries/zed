@@ -32,6 +32,7 @@ use collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 use platform::Event;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_app_context::{ContextHandle, TestAppContext};
+use uuid::Uuid;
 
 use crate::{
     elements::ElementBox,
@@ -43,6 +44,7 @@ use crate::{
     util::post_inc,
     Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, KeyUpEvent,
     ModifiersChangedEvent, MouseButton, MouseRegionId, PathPromptOptions, TextLayoutCache,
+    WindowBounds,
 };
 
 pub trait Entity: 'static {
@@ -594,6 +596,7 @@ type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
+type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool>;
 type KeystrokeCallback = Box<
     dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut MutableAppContext) -> bool,
 >;
@@ -624,6 +627,7 @@ pub struct MutableAppContext {
     action_dispatch_observations: CallbackCollection<(), ActionObservationCallback>,
     window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
     window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
+    window_bounds_observations: CallbackCollection<usize, WindowBoundsCallback>,
     keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
 
     #[allow(clippy::type_complexity)]
@@ -681,6 +685,7 @@ impl MutableAppContext {
             global_observations: Default::default(),
             window_activation_observations: Default::default(),
             window_fullscreen_observations: Default::default(),
+            window_bounds_observations: Default::default(),
             keystroke_observations: Default::default(),
             action_dispatch_observations: Default::default(),
             presenters_and_platform_windows: Default::default(),
@@ -905,8 +910,15 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_fullscreen)
     }
 
-    pub fn window_bounds(&self, window_id: usize) -> RectF {
+    pub fn window_bounds(&self, window_id: usize) -> WindowBounds {
         self.presenters_and_platform_windows[&window_id].1.bounds()
+    }
+
+    pub fn window_display_uuid(&self, window_id: usize) -> Uuid {
+        self.presenters_and_platform_windows[&window_id]
+            .1
+            .screen()
+            .display_uuid()
     }
 
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
@@ -1236,6 +1248,23 @@ impl MutableAppContext {
             });
         Subscription::WindowActivationObservation(
             self.window_activation_observations
+                .subscribe(window_id, subscription_id),
+        )
+    }
+
+    fn observe_window_bounds<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowBoundsObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowBoundsObservation(
+            self.window_bounds_observations
                 .subscribe(window_id, subscription_id),
         )
     }
@@ -1761,6 +1790,13 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
+            window.on_moved(Box::new(move || {
+                app.update(|cx| cx.window_was_moved(window_id))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
             window.on_fullscreen(Box::new(move |is_fullscreen| {
                 app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
             }));
@@ -2056,6 +2092,11 @@ impl MutableAppContext {
                                     .invalidation
                                     .get_or_insert(WindowInvalidation::default());
                             }
+                            self.handle_window_moved(window_id);
+                        }
+
+                        Effect::MoveWindow { window_id } => {
+                            self.handle_window_moved(window_id);
                         }
 
                         Effect::WindowActivationObservation {
@@ -2087,6 +2128,16 @@ impl MutableAppContext {
                             window_id,
                             is_fullscreen,
                         } => self.handle_fullscreen_effect(window_id, is_fullscreen),
+
+                        Effect::WindowBoundsObservation {
+                            window_id,
+                            subscription_id,
+                            callback,
+                        } => self.window_bounds_observations.add_callback(
+                            window_id,
+                            subscription_id,
+                            callback,
+                        ),
 
                         Effect::RefreshWindows => {
                             refreshing = true;
@@ -2180,6 +2231,11 @@ impl MutableAppContext {
     fn window_was_resized(&mut self, window_id: usize) {
         self.pending_effects
             .push_back(Effect::ResizeWindow { window_id });
+    }
+
+    fn window_was_moved(&mut self, window_id: usize) {
+        self.pending_effects
+            .push_back(Effect::MoveWindow { window_id });
     }
 
     fn window_was_fullscreen_changed(&mut self, window_id: usize, is_fullscreen: bool) {
@@ -2314,9 +2370,16 @@ impl MutableAppContext {
             let window = this.cx.windows.get_mut(&window_id)?;
             window.is_fullscreen = is_fullscreen;
 
-            let mut observations = this.window_fullscreen_observations.clone();
-            observations.emit(window_id, this, |callback, this| {
+            let mut fullscreen_observations = this.window_fullscreen_observations.clone();
+            fullscreen_observations.emit(window_id, this, |callback, this| {
                 callback(is_fullscreen, this)
+            });
+
+            let bounds = this.window_bounds(window_id);
+            let uuid = this.window_display_uuid(window_id);
+            let mut bounds_observations = this.window_bounds_observations.clone();
+            bounds_observations.emit(window_id, this, |callback, this| {
+                callback(bounds, uuid, this)
             });
 
             Some(())
@@ -2493,6 +2556,17 @@ impl MutableAppContext {
         if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
             window.on_should_close(Box::new(move || app.update(|cx| callback(cx))))
         }
+    }
+
+    fn handle_window_moved(&mut self, window_id: usize) {
+        let bounds = self.window_bounds(window_id);
+        let display = self.window_display_uuid(window_id);
+        self.window_bounds_observations
+            .clone()
+            .emit(window_id, self, move |callback, this| {
+                callback(bounds, display, this);
+                true
+            });
     }
 
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
@@ -2898,9 +2972,8 @@ pub enum Effect {
     ResizeWindow {
         window_id: usize,
     },
-    FullscreenWindow {
+    MoveWindow {
         window_id: usize,
-        is_fullscreen: bool,
     },
     ActivateWindow {
         window_id: usize,
@@ -2911,10 +2984,19 @@ pub enum Effect {
         subscription_id: usize,
         callback: WindowActivationCallback,
     },
+    FullscreenWindow {
+        window_id: usize,
+        is_fullscreen: bool,
+    },
     WindowFullscreenObservation {
         window_id: usize,
         subscription_id: usize,
         callback: WindowFullscreenCallback,
+    },
+    WindowBoundsObservation {
+        window_id: usize,
+        subscription_id: usize,
+        callback: WindowBoundsCallback,
     },
     Keystroke {
         window_id: usize,
@@ -3026,6 +3108,10 @@ impl Debug for Effect {
                 .debug_struct("Effect::RefreshWindow")
                 .field("window_id", window_id)
                 .finish(),
+            Effect::MoveWindow { window_id } => f
+                .debug_struct("Effect::MoveWindow")
+                .field("window_id", window_id)
+                .finish(),
             Effect::WindowActivationObservation {
                 window_id,
                 subscription_id,
@@ -3057,6 +3143,16 @@ impl Debug for Effect {
                 callback: _,
             } => f
                 .debug_struct("Effect::WindowFullscreenObservation")
+                .field("window_id", window_id)
+                .field("subscription_id", subscription_id)
+                .finish(),
+
+            Effect::WindowBoundsObservation {
+                window_id,
+                subscription_id,
+                callback: _,
+            } => f
+                .debug_struct("Effect::WindowBoundsObservation")
                 .field("window_id", window_id)
                 .field("subscription_id", subscription_id)
                 .finish(),
@@ -3635,7 +3731,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.toggle_window_full_screen(self.window_id)
     }
 
-    pub fn window_bounds(&self) -> RectF {
+    pub fn window_bounds(&self) -> WindowBounds {
         self.app.window_bounds(self.window_id)
     }
 
@@ -3937,6 +4033,24 @@ impl<'a, T: View> ViewContext<'a, T> {
                 }
             },
         )
+    }
+
+    pub fn observe_window_bounds<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, WindowBounds, Uuid, &mut ViewContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app
+            .observe_window_bounds(self.window_id(), move |bounds, display, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, bounds, display, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -5103,6 +5217,7 @@ pub enum Subscription {
     FocusObservation(callback_collection::Subscription<usize, FocusObservationCallback>),
     WindowActivationObservation(callback_collection::Subscription<usize, WindowActivationCallback>),
     WindowFullscreenObservation(callback_collection::Subscription<usize, WindowFullscreenCallback>),
+    WindowBoundsObservation(callback_collection::Subscription<usize, WindowBoundsCallback>),
     KeystrokeObservation(callback_collection::Subscription<usize, KeystrokeCallback>),
     ReleaseObservation(callback_collection::Subscription<usize, ReleaseObservationCallback>),
     ActionObservation(callback_collection::Subscription<(), ActionObservationCallback>),
@@ -5118,6 +5233,7 @@ impl Subscription {
             Subscription::FocusObservation(subscription) => subscription.id(),
             Subscription::WindowActivationObservation(subscription) => subscription.id(),
             Subscription::WindowFullscreenObservation(subscription) => subscription.id(),
+            Subscription::WindowBoundsObservation(subscription) => subscription.id(),
             Subscription::KeystrokeObservation(subscription) => subscription.id(),
             Subscription::ReleaseObservation(subscription) => subscription.id(),
             Subscription::ActionObservation(subscription) => subscription.id(),
@@ -5134,6 +5250,7 @@ impl Subscription {
             Subscription::KeystrokeObservation(subscription) => subscription.detach(),
             Subscription::WindowActivationObservation(subscription) => subscription.detach(),
             Subscription::WindowFullscreenObservation(subscription) => subscription.detach(),
+            Subscription::WindowBoundsObservation(subscription) => subscription.detach(),
             Subscription::ReleaseObservation(subscription) => subscription.detach(),
             Subscription::ActionObservation(subscription) => subscription.detach(),
         }

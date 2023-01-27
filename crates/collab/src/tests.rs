@@ -196,7 +196,7 @@ impl TestServer {
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
-            build_window_options: Default::default,
+            build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _| unimplemented!(),
             dock_default_item_factory: |_, _| unimplemented!(),
         });

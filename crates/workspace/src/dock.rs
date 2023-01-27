@@ -534,6 +534,8 @@ mod tests {
                 }],
             },
             left_sidebar_open: false,
+            bounds: Default::default(),
+            display: Default::default(),
         };
 
         let fs = FakeFs::new(cx.background());

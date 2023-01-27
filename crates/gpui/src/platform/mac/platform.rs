@@ -440,6 +440,10 @@ impl platform::Platform for MacPlatform {
         self.dispatcher.clone()
     }
 
+    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
+        self.fonts.clone()
+    }
+
     fn activate(&self, ignoring_other_apps: bool) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -488,6 +492,10 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn screen_by_id(&self, id: uuid::Uuid) -> Option<Rc<dyn crate::Screen>> {
+        Screen::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
+    }
+
     fn screens(&self) -> Vec<Rc<dyn platform::Screen>> {
         Screen::all()
             .into_iter()
@@ -510,10 +518,6 @@ impl platform::Platform for MacPlatform {
 
     fn add_status_item(&self) -> Box<dyn platform::Window> {
         Box::new(StatusItem::add(self.fonts()))
-    }
-
-    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
-        self.fonts.clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

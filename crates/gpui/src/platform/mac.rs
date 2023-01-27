@@ -12,12 +12,15 @@ mod sprite_cache;
 mod status_item;
 mod window;
 
-use cocoa::base::{BOOL, NO, YES};
+use cocoa::{
+    base::{id, nil, BOOL, NO, YES},
+    foundation::{NSAutoreleasePool, NSNotFound, NSString, NSUInteger},
+};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
 use platform::{MacForegroundPlatform, MacPlatform};
 pub use renderer::Surface;
-use std::{rc::Rc, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 use window::Window;
 
 pub(crate) fn platform() -> Arc<dyn super::Platform> {
@@ -40,4 +43,58 @@ impl BoolExt for bool {
             NO
         }
     }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct NSRange {
+    pub location: NSUInteger,
+    pub length: NSUInteger,
+}
+
+impl NSRange {
+    fn invalid() -> Self {
+        Self {
+            location: NSNotFound as NSUInteger,
+            length: 0,
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.location != NSNotFound as NSUInteger
+    }
+
+    fn to_range(self) -> Option<Range<usize>> {
+        if self.is_valid() {
+            let start = self.location as usize;
+            let end = start + self.length as usize;
+            Some(start..end)
+        } else {
+            None
+        }
+    }
+}
+
+impl From<Range<usize>> for NSRange {
+    fn from(range: Range<usize>) -> Self {
+        NSRange {
+            location: range.start as NSUInteger,
+            length: range.len() as NSUInteger,
+        }
+    }
+}
+
+unsafe impl objc::Encode for NSRange {
+    fn encode() -> objc::Encoding {
+        let encoding = format!(
+            "{{NSRange={}{}}}",
+            NSUInteger::encode().as_str(),
+            NSUInteger::encode().as_str()
+        );
+        unsafe { objc::Encoding::from_str(&encoding) }
+    }
+}
+
+unsafe fn ns_string(string: &str) -> id {
+    NSString::alloc(nil).init_str(string).autorelease()
 }

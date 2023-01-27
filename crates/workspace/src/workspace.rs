@@ -37,8 +37,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, SizeConstraint,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    MouseButton, MutableAppContext, PathPromptOptions, Platform, PromptLevel, RenderContext,
+    SizeConstraint, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowBounds,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -340,7 +340,8 @@ pub struct AppState {
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub build_window_options: fn() -> WindowOptions<'static>,
+    pub build_window_options:
+        fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
     pub dock_default_item_factory: DockDefaultItemFactory,
 }
@@ -367,7 +368,7 @@ impl AppState {
             languages,
             user_store,
             initialize_workspace: |_, _, _| {},
-            build_window_options: Default::default,
+            build_window_options: |_, _, _| Default::default(),
             dock_default_item_factory: |_, _| unimplemented!(),
         })
     }
@@ -682,18 +683,64 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
+            let (bounds, display) = serialized_workspace
+                .as_ref()
+                .and_then(|sw| sw.bounds.zip(sw.display))
+                .and_then(|(mut bounds, display)| {
+                    // Stored bounds are relative to the containing display. So convert back to global coordinates if that screen still exists
+                    if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                        if let Some(screen) = cx.platform().screen_by_id(display) {
+                            let screen_bounds = screen.bounds();
+                            window_bounds
+                                .set_origin_x(window_bounds.origin_x() + screen_bounds.origin_x());
+                            window_bounds
+                                .set_origin_y(window_bounds.origin_y() + screen_bounds.origin_y());
+                            bounds = WindowBounds::Fixed(window_bounds);
+                        } else {
+                            // Screen no longer exists. Return none here.
+                            return None;
+                        }
+                    }
+
+                    Some((bounds, display))
+                })
+                .unzip();
+
             // Use the serialized workspace to construct the new window
-            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-                let mut workspace = Workspace::new(
-                    serialized_workspace,
-                    workspace_id,
-                    project_handle,
-                    app_state.dock_default_item_factory,
-                    cx,
-                );
-                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                workspace
-            });
+            let (_, workspace) = cx.add_window(
+                (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
+                |cx| {
+                    let mut workspace = Workspace::new(
+                        serialized_workspace,
+                        workspace_id,
+                        project_handle,
+                        app_state.dock_default_item_factory,
+                        cx,
+                    );
+                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                    cx.observe_window_bounds(move |_, mut bounds, display, cx| {
+                        // Transform fixed bounds to be stored in terms of the containing display
+                        if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                            if let Some(screen) = cx.platform().screen_by_id(display) {
+                                let screen_bounds = screen.bounds();
+                                window_bounds.set_origin_x(
+                                    window_bounds.origin_x() - screen_bounds.origin_x(),
+                                );
+                                window_bounds.set_origin_y(
+                                    window_bounds.origin_y() - screen_bounds.origin_y(),
+                                );
+                                bounds = WindowBounds::Fixed(window_bounds);
+                            }
+                        }
+
+                        cx.background()
+                            .spawn(DB.set_window_bounds(workspace_id, bounds, display))
+                            .detach_and_log_err(cx);
+                    })
+                    .detach();
+                    workspace
+                },
+            );
 
             notify_if_database_failed(&workspace, &mut cx);
 
@@ -2345,6 +2392,8 @@ impl Workspace {
                     dock_pane,
                     center_group,
                     left_sidebar_open: self.left_sidebar.read(cx).is_open(),
+                    bounds: Default::default(),
+                    display: Default::default(),
                 };
 
                 cx.background()
