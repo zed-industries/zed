@@ -83,5 +83,3 @@ split-debuginfo = "unpacked"
 
 [profile.release]
 debug = true
-
-

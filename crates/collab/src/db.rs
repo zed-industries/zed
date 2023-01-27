@@ -1586,12 +1586,8 @@ impl Database {
                     .filter(
                         Condition::all()
                             .add(
-                                room_participant::Column::CallingConnectionId
-                                    .eq(connection.id as i32),
-                            )
-                            .add(
-                                room_participant::Column::CallingConnectionServerId
-                                    .eq(connection.owner_id as i32),
+                                room_participant::Column::CallingUserId
+                                    .eq(leaving_participant.user_id),
                             )
                             .add(room_participant::Column::AnsweringConnectionId.is_null()),
                     )

@@ -166,12 +166,10 @@ async fn test_random_collaboration(
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
                     let pool = server.connection_pool.lock();
                     for contact in contacts {
-                        if let db::Contact::Accepted { user_id, .. } = contact {
-                            if pool.is_user_online(user_id) {
-                                assert_ne!(
-                                    user_id, removed_user_id,
-                                    "removed client is still a contact of another peer"
-                                );
+                        if let db::Contact::Accepted { user_id, busy, .. } = contact {
+                            if user_id == removed_user_id {
+                                assert!(!pool.is_user_online(user_id));
+                                assert!(!busy);
                             }
                         }
                     }
