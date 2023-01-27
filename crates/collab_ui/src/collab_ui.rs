@@ -1,4 +1,5 @@
 mod collab_titlebar_item;
+mod collaborator_list_popover;
 mod contact_finder;
 mod contact_list;
 mod contact_notification;

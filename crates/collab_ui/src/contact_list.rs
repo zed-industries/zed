@@ -27,7 +27,7 @@ impl_internal_actions!(contact_list, [ToggleExpanded, Call, LeaveCall]);
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactList::remove_contact);
     cx.add_action(ContactList::respond_to_contact_request);
-    cx.add_action(ContactList::clear_filter);
+    cx.add_action(ContactList::cancel);
     cx.add_action(ContactList::select_next);
     cx.add_action(ContactList::select_prev);
     cx.add_action(ContactList::confirm);
@@ -326,7 +326,7 @@ impl ContactList {
             .detach();
     }
 
-    fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         let did_clear = self.filter_editor.update(cx, |editor, cx| {
             if editor.buffer().read(cx).len(cx) > 0 {
                 editor.set_text("", cx);
@@ -335,6 +335,7 @@ impl ContactList {
                 false
             }
         });
+
         if !did_clear {
             cx.emit(Event::Dismissed);
         }

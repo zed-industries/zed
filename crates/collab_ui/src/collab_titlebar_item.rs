@@ -1,4 +1,7 @@
-use crate::{contact_notification::ContactNotification, contacts_popover, ToggleScreenSharing};
+use crate::{
+    collaborator_list_popover, collaborator_list_popover::CollaboratorListPopover,
+    contact_notification::ContactNotification, contacts_popover, ToggleScreenSharing,
+};
 use call::{ActiveCall, ParticipantLocation};
 use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
 use clock::ReplicaId;
@@ -20,10 +23,16 @@ use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
 actions!(
     collab,
-    [ToggleCollaborationMenu, ShareProject, UnshareProject]
+    [
+        ToggleCollaboratorList,
+        ToggleCollaborationMenu,
+        ShareProject,
+        UnshareProject
+    ]
 );
 
 pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(CollabTitlebarItem::toggle_collaborator_list_popover);
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
     cx.add_action(CollabTitlebarItem::share_project);
     cx.add_action(CollabTitlebarItem::unshare_project);
@@ -33,6 +42,7 @@ pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     user_store: ModelHandle<UserStore>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
+    collaborator_list_popover: Option<ViewHandle<CollaboratorListPopover>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -76,9 +86,11 @@ impl View for CollabTitlebarItem {
             left_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
         }
 
-        let mut container = Flex::row();
+        left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
 
-        container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
+        let mut right_container = Flex::row();
+
+        right_container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
 
         if workspace.read(cx).client().status().borrow().is_connected() {
             let project = workspace.read(cx).project().read(cx);
@@ -86,16 +98,16 @@ impl View for CollabTitlebarItem {
                 || project.is_remote()
                 || ActiveCall::global(cx).read(cx).room().is_none()
             {
-                container.add_child(self.render_toggle_contacts_button(&theme, cx));
+                right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
             }
         }
-        container.add_children(self.render_collaborators(&workspace, &theme, cx));
-        container.add_children(self.render_current_user(&workspace, &theme, cx));
-        container.add_children(self.render_connection_status(&workspace, cx));
+        right_container.add_children(self.render_collaborators(&workspace, &theme, cx));
+        right_container.add_children(self.render_current_user(&workspace, &theme, cx));
+        right_container.add_children(self.render_connection_status(&workspace, cx));
 
         Stack::new()
             .with_child(left_container.boxed())
-            .with_child(container.aligned().right().boxed())
+            .with_child(right_container.aligned().right().boxed())
             .boxed()
     }
 }
@@ -141,6 +153,7 @@ impl CollabTitlebarItem {
             workspace: workspace.downgrade(),
             user_store: user_store.clone(),
             contacts_popover: None,
+            collaborator_list_popover: None,
             _subscriptions: subscriptions,
         }
     }
@@ -178,6 +191,82 @@ impl CollabTitlebarItem {
         }
     }
 
+    fn render_toggle_collaborator_list_button(
+        &self,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let titlebar = &theme.workspace.titlebar;
+
+        Stack::new()
+            .with_child(
+                MouseEventHandler::<ToggleCollaboratorList>::new(0, cx, |state, _| {
+                    let style = titlebar
+                        .toggle_contacts_button
+                        .style_for(state, self.collaborator_list_popover.is_some());
+                    Svg::new("icons/plus_8.svg")
+                        .with_color(style.color)
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
+                        .contained()
+                        .with_style(style.container)
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(ToggleCollaboratorList);
+                })
+                .aligned()
+                .boxed(),
+            )
+            .with_children(self.collaborator_list_popover.as_ref().map(|popover| {
+                Overlay::new(
+                    ChildView::new(popover, cx)
+                        .contained()
+                        .with_margin_top(titlebar.height)
+                        .with_margin_left(titlebar.toggle_contacts_button.default.button_width)
+                        .with_margin_right(-titlebar.toggle_contacts_button.default.button_width)
+                        .boxed(),
+                )
+                .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                .with_anchor_corner(AnchorCorner::BottomLeft)
+                .with_z_index(999)
+                .boxed()
+            }))
+            .boxed()
+    }
+
+    pub fn toggle_collaborator_list_popover(
+        &mut self,
+        _: &ToggleCollaboratorList,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match self.collaborator_list_popover.take() {
+            Some(_) => {}
+            None => {
+                let view = cx.add_view(|cx| CollaboratorListPopover::new(cx));
+
+                cx.subscribe(&view, |this, _, event, cx| {
+                    match event {
+                        collaborator_list_popover::Event::Dismissed => {
+                            this.collaborator_list_popover = None;
+                        }
+                    }
+
+                    cx.notify();
+                })
+                .detach();
+
+                self.collaborator_list_popover = Some(view);
+            }
+        }
+        cx.notify();
+    }
+
     pub fn toggle_contacts_popover(
         &mut self,
         _: &ToggleCollaborationMenu,
@@ -213,6 +302,7 @@ impl CollabTitlebarItem {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let titlebar = &theme.workspace.titlebar;
+
         let badge = if self
             .user_store
             .read(cx)
@@ -233,6 +323,7 @@ impl CollabTitlebarItem {
                     .boxed(),
             )
         };
+
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleCollaborationMenu>::new(0, cx, |state, _| {
