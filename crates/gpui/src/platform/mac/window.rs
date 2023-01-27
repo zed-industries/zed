@@ -371,14 +371,8 @@ impl WindowState {
                 return WindowBounds::Fullscreen;
             }
 
-            let screen_frame = self
-                .native_window
-                .screen()
-                .visibleFrame()
-                .to_window_rectf(self.native_window);
             let window_frame = self.frame();
-
-            if screen_frame == window_frame {
+            if window_frame == self.native_window.screen().visibleFrame().to_rectf() {
                 WindowBounds::Maximized
             } else {
                 WindowBounds::Fixed(window_frame)
@@ -388,7 +382,10 @@ impl WindowState {
 
     // Returns the window bounds in window coordinates
     fn frame(&self) -> RectF {
-        unsafe { NSWindow::frame(self.native_window).to_window_rectf(self.native_window) }
+        unsafe {
+            let ns_frame = NSWindow::frame(self.native_window);
+            ns_frame.to_rectf()
+        }
     }
 
     fn content_size(&self) -> Vector2F {
@@ -474,7 +471,13 @@ impl Window {
                     native_window.setFrame_display_(screen.visibleFrame(), YES);
                 }
                 WindowBounds::Fixed(rect) => {
-                    native_window.setFrame_display_(rect.to_screen_ns_rect(native_window), YES);
+                    let screen_frame = screen.visibleFrame();
+                    let ns_rect = rect.to_ns_rect();
+                    if ns_rect.intersects(screen_frame) {
+                        native_window.setFrame_display_(ns_rect, YES);
+                    } else {
+                        native_window.setFrame_display_(screen_frame, YES);
+                    }
                 }
             }
 

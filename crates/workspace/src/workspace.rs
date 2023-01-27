@@ -682,10 +682,28 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            let (bounds, display) = dbg!(serialized_workspace
+            let (bounds, display) = serialized_workspace
                 .as_ref()
                 .and_then(|sw| sw.bounds.zip(sw.display))
-                .unzip());
+                .and_then(|(mut bounds, display)| {
+                    // Stored bounds are relative to the containing display. So convert back to global coordinates if that screen still exists
+                    if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                        if let Some(screen) = cx.platform().screen_by_id(display) {
+                            let screen_bounds = screen.bounds();
+                            window_bounds
+                                .set_origin_x(window_bounds.origin_x() + screen_bounds.origin_x());
+                            window_bounds
+                                .set_origin_y(window_bounds.origin_y() + screen_bounds.origin_y());
+                            bounds = WindowBounds::Fixed(window_bounds);
+                        } else {
+                            // Screen no longer exists. Return none here.
+                            return None;
+                        }
+                    }
+
+                    Some((bounds, display))
+                })
+                .unzip();
 
             // Use the serialized workspace to construct the new window
             let (_, workspace) = cx.add_window(
@@ -699,9 +717,23 @@ impl Workspace {
                         cx,
                     );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                    cx.observe_window_bounds(move |_, bounds, display, cx| {
+                    cx.observe_window_bounds(move |_, mut bounds, display, cx| {
+                        // Transform fixed bounds to be stored in terms of the containing display
+                        if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                            if let Some(screen) = cx.platform().screen_by_id(display) {
+                                let screen_bounds = screen.bounds();
+                                window_bounds.set_origin_x(
+                                    window_bounds.origin_x() - screen_bounds.origin_x(),
+                                );
+                                window_bounds.set_origin_y(
+                                    window_bounds.origin_y() - screen_bounds.origin_y(),
+                                );
+                                bounds = WindowBounds::Fixed(window_bounds);
+                            }
+                        }
+
                         cx.background()
-                            .spawn(DB.set_window_bounds(workspace_id, dbg!(bounds), dbg!(display)))
+                            .spawn(DB.set_window_bounds(workspace_id, bounds, display))
                             .detach_and_log_err(cx);
                     })
                     .detach();

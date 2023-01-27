@@ -42,28 +42,13 @@ impl RectFExt for RectF {
     }
 
     fn to_ns_rect(&self) -> NSRect {
-        dbg!(&self);
         NSRect::new(
             NSPoint::new(
-                dbg!(self.origin_x() as f64),
-                dbg!(-(self.origin_y() - self.height()) as f64),
+                self.origin_x() as f64,
+                -(self.origin_y() + self.height()) as f64,
             ),
             NSSize::new(self.width() as f64, self.height() as f64),
         )
-    }
-}
-
-pub trait NSPointExt {
-    /// Converts self to a Vector2F with y axis pointing down.
-    /// Also takes care of converting from window scaled coordinates to screen coordinates
-    fn to_window_vector2f(&self, native_window: id) -> Vector2F;
-}
-impl NSPointExt for NSPoint {
-    fn to_window_vector2f(&self, native_window: id) -> Vector2F {
-        unsafe {
-            let point: NSPoint = msg_send![native_window, convertPointFromScreen: self];
-            vec2f(point.x as f32, -point.y as f32)
-        }
     }
 }
 
@@ -77,11 +62,13 @@ pub trait NSRectExt {
     /// The resulting RectF will have an origin at the top left of the rectangle.
     /// Unlike to_screen_ns_rect, coordinates are not converted and are assumed to already be in screen scale
     fn to_rectf(&self) -> RectF;
+
+    fn intersects(&self, other: Self) -> bool;
 }
 impl NSRectExt for NSRect {
     fn to_window_rectf(&self, native_window: id) -> RectF {
         unsafe {
-            dbg!(self.origin.x);
+            self.origin.x;
             let rect: NSRect = native_window.convertRectFromScreen_(*self);
             rect.to_rectf()
         }
@@ -90,10 +77,21 @@ impl NSRectExt for NSRect {
     fn to_rectf(&self) -> RectF {
         RectF::new(
             vec2f(
-                dbg!(self.origin.x as f32),
-                dbg!(-(self.origin.y - self.size.height) as f32),
+                self.origin.x as f32,
+                -(self.origin.y + self.size.height) as f32,
             ),
             vec2f(self.size.width as f32, self.size.height as f32),
         )
+    }
+
+    fn intersects(&self, other: Self) -> bool {
+        self.size.width > 0.
+            && self.size.height > 0.
+            && other.size.width > 0.
+            && other.size.height > 0.
+            && self.origin.x <= other.origin.x + other.size.width
+            && self.origin.x + self.size.width >= other.origin.x
+            && self.origin.y <= other.origin.y + other.size.height
+            && self.origin.y + self.size.height >= other.origin.y
     }
 }
