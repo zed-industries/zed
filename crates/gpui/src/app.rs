@@ -6394,6 +6394,8 @@ mod tests {
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
+        assert!(cx.is_child_focused(view_1.clone()));
+        assert!(!cx.is_child_focused(view_2.clone()));
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             [
@@ -6418,6 +6420,8 @@ mod tests {
         );
 
         view_1.update(cx, |_, cx| cx.focus(&view_1));
+        assert!(!cx.is_child_focused(view_1.clone()));
+        assert!(!cx.is_child_focused(view_2.clone()));
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             ["view 2 blurred", "view 1 focused"],
