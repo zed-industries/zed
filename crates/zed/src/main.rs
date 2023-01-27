@@ -39,11 +39,7 @@ use terminal_view::{get_working_directory, TerminalView};
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
-use util::{
-    channel::RELEASE_CHANNEL,
-    paths::{self, StaffMode},
-    ResultExt, TryFutureExt,
-};
+use util::{channel::RELEASE_CHANNEL, paths, ResultExt, StaffMode, TryFutureExt};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
@@ -109,8 +105,6 @@ fn main() {
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
 
-        #[cfg(not(debug_assertions))]
-        cx.set_global(StaffMode(false));
         #[cfg(debug_assertions)]
         cx.set_global(StaffMode(true));
 

@@ -1,15 +1,4 @@
-use std::{ops::Deref, path::PathBuf};
-
-#[derive(Debug)]
-pub struct StaffMode(pub bool);
-
-impl Deref for StaffMode {
-    type Target = bool;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+use std::path::PathBuf;
 
 lazy_static::lazy_static! {
     pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");

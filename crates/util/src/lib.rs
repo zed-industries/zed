@@ -13,6 +13,17 @@ use std::{
     task::{Context, Poll},
 };
 
+#[derive(Debug, Default)]
+pub struct StaffMode(pub bool);
+
+impl std::ops::Deref for StaffMode {
+    type Target = bool;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[macro_export]
 macro_rules! debug_panic {
     ( $($fmt_arg:tt)* ) => {

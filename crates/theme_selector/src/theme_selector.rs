@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, Settings};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
-use util::paths::StaffMode;
+use util::StaffMode;
 use workspace::{AppState, Workspace};
 
 pub struct ThemeSelector {
@@ -45,7 +45,7 @@ impl ThemeSelector {
         let original_theme = settings.theme.clone();
 
         let mut theme_names = registry
-            .list(**cx.try_global::<StaffMode>().unwrap_or(&StaffMode(false)))
+            .list(**cx.default_global::<StaffMode>())
             .collect::<Vec<_>>();
         theme_names.sort_unstable_by(|a, b| {
             a.is_light

@@ -32,11 +32,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{borrow::Cow, env, path::Path, str, sync::Arc};
-use util::{
-    channel::ReleaseChannel,
-    paths::{self, StaffMode},
-    ResultExt,
-};
+use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
 use uuid::Uuid;
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Workspace};
@@ -303,7 +299,7 @@ pub fn initialize_workspace(
 
     let theme_names = app_state
         .themes
-        .list(**cx.try_global::<StaffMode>().unwrap_or(&StaffMode(false)))
+        .list(**cx.default_global::<StaffMode>())
         .map(|meta| meta.name)
         .collect();
     let language_names = app_state.languages.language_names();
