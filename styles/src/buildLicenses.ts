@@ -6,7 +6,7 @@ import {
 import { Meta } from "./themes/common/colorScheme";
 import https from "https";
 import crypto from "crypto";
-const license_file = `${__dirname}/../../assets/theme_licenses.md`
+
 const accepted_licenses_file = `${__dirname}/../../script/licenses/zed-licenses.toml`
 
 // Use the cargo-about configuration file as the source of truth for supported licenses.
@@ -62,14 +62,13 @@ function getLicenseText(schemeMeta: Meta[], callback: (meta: Meta, license_text:
   }
 }
 
-function writeLicense(schemeMeta: Meta, text: String, stream: fs.WriteStream) {
-  stream.write(`# [${schemeMeta.name}](${schemeMeta.url})\n\n${text}\n******************************************************************************** \n`)
+function writeLicense(schemeMeta: Meta, text: String) {
+  process.stdout.write(`## [${schemeMeta.name}](${schemeMeta.url})\n\n${text}\n********************************************************************************\n\n`)
 }
 
 const accepted_licenses = parseAcceptedToml(accepted_licenses_file);
 checkLicenses(schemeMeta, accepted_licenses)
 
-const stream = fs.createWriteStream(license_file);
 getLicenseText(schemeMeta, (meta, text) => {
-  writeLicense(meta, text, stream)
+  writeLicense(meta, text)
 });

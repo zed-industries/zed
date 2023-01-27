@@ -57,8 +57,7 @@ actions!(
         DebugElements,
         OpenSettings,
         OpenLog,
-        OpenSoftwareLicenses,
-        OpenThemeLicenses,
+        OpenLicenses,
         OpenTelemetryLog,
         OpenKeymap,
         OpenDefaultSettings,
@@ -180,27 +179,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
-        move |workspace: &mut Workspace,
-              _: &OpenSoftwareLicenses,
-              cx: &mut ViewContext<Workspace>| {
+        move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 workspace,
                 app_state.clone(),
-                "software_licenses.md",
+                "licenses.md",
                 "Open Source License Attribution",
-                "Markdown",
-                cx,
-            );
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
-        move |workspace: &mut Workspace, _: &OpenThemeLicenses, cx: &mut ViewContext<Workspace>| {
-            open_bundled_file(
-                workspace,
-                app_state.clone(),
-                "theme_licenses.md",
-                "Theme License Attribution",
                 "Markdown",
                 cx,
             );
