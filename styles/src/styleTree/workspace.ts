@@ -147,6 +147,21 @@ export default function workspace(colorScheme: ColorScheme) {
           color: foreground(layer, "variant", "hovered"),
         },
       },
+      toggleCollaboratorsButton: {
+        margin: { left: 6 },
+        cornerRadius: 6,
+        color: foreground(layer, "variant"),
+        iconWidth: 12,
+        buttonWidth: 20,
+        active: {
+          background: background(layer, "variant", "active"),
+          color: foreground(layer, "variant", "active"),
+        },
+        hover: {
+          background: background(layer, "variant", "hovered"),
+          color: foreground(layer, "variant", "hovered"),
+        },
+      },
       toggleContactsButton: {
         margin: { left: 6 },
         cornerRadius: 6,

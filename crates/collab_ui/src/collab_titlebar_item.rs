@@ -202,9 +202,9 @@ impl CollabTitlebarItem {
             .with_child(
                 MouseEventHandler::<ToggleCollaboratorList>::new(0, cx, |state, _| {
                     let style = titlebar
-                        .toggle_contacts_button
+                        .toggle_collaborators_button
                         .style_for(state, self.collaborator_list_popover.is_some());
-                    Svg::new("icons/plus_8.svg")
+                    Svg::new("icons/user_group_12.svg")
                         .with_color(style.color)
                         .constrained()
                         .with_width(style.icon_width)
@@ -228,8 +228,10 @@ impl CollabTitlebarItem {
                     ChildView::new(popover, cx)
                         .contained()
                         .with_margin_top(titlebar.height)
-                        .with_margin_left(titlebar.toggle_contacts_button.default.button_width)
-                        .with_margin_right(-titlebar.toggle_contacts_button.default.button_width)
+                        .with_margin_left(titlebar.toggle_collaborators_button.default.button_width)
+                        .with_margin_right(
+                            -titlebar.toggle_collaborators_button.default.button_width,
+                        )
                         .boxed(),
                 )
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
