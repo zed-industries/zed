@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::bail;
-use client::{Client, ZED_SECRET_CLIENT_TOKEN};
+use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use editor::{Anchor, Editor};
 use futures::AsyncReadExt;
 use gpui::{
@@ -19,7 +19,6 @@ use isahc::Request;
 use language::Buffer;
 use postage::prelude::Stream;
 
-use lazy_static::lazy_static;
 use project::Project;
 use serde::Serialize;
 use settings::Settings;
@@ -31,11 +30,6 @@ use workspace::{
 
 use crate::system_specs::SystemSpecs;
 
-lazy_static! {
-    pub static ref ZED_SERVER_URL: String =
-        std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
-}
-
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 const FEEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here as Markdown. Save the tab to submit your feedback.";
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
@@ -43,10 +37,10 @@ const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 
 actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action({
         move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
-            FeedbackEditor::deploy(workspace, app_state.clone(), cx);
+            FeedbackEditor::deploy(system_specs.clone(), workspace, app_state.clone(), cx);
         }
     });
 }
@@ -97,12 +91,14 @@ struct FeedbackRequestBody<'a> {
 
 #[derive(Clone)]
 struct FeedbackEditor {
+    system_specs: SystemSpecs,
     editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
 }
 
 impl FeedbackEditor {
     fn new(
+        system_specs: SystemSpecs,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
@@ -117,7 +113,11 @@ impl FeedbackEditor {
         cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
             .detach();
 
-        Self { editor, project }
+        Self {
+            system_specs: system_specs.clone(),
+            editor,
+            project,
+        }
     }
 
     fn handle_save(
@@ -155,7 +155,7 @@ impl FeedbackEditor {
         let this = cx.handle();
         let client = cx.global::<Arc<Client>>().clone();
         let feedback_text = self.editor.read(cx).text(cx);
-        let specs = SystemSpecs::new(cx);
+        let specs = self.system_specs.clone();
 
         cx.spawn(|_, mut cx| async move {
             let answer = answer.recv().await;
@@ -229,6 +229,7 @@ impl FeedbackEditor {
 
 impl FeedbackEditor {
     pub fn deploy(
+        system_specs: SystemSpecs,
         workspace: &mut Workspace,
         app_state: Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
@@ -242,7 +243,8 @@ impl FeedbackEditor {
                         project.create_buffer("", markdown_language, cx)
                     })
                     .expect("creating buffers on a local workspace always succeeds");
-                let feedback_editor = cx.add_view(|cx| FeedbackEditor::new(project, buffer, cx));
+                let feedback_editor =
+                    cx.add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
                 workspace.add_item(Box::new(feedback_editor), cx);
             })
             .detach();
@@ -340,7 +342,12 @@ impl Item for FeedbackEditor {
             .as_singleton()
             .expect("Feedback buffer is only ever singleton");
 
-        Some(Self::new(self.project.clone(), buffer.clone(), cx))
+        Some(Self::new(
+            self.system_specs.clone(),
+            self.project.clone(),
+            buffer.clone(),
+            cx,
+        ))
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

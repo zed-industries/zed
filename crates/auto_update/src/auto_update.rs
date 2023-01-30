@@ -2,28 +2,21 @@ mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
 use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
+use client::{ZED_APP_PATH, ZED_APP_VERSION};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, WeakViewHandle,
 };
-use lazy_static::lazy_static;
 use serde::Deserialize;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
-use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
+use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
 use util::channel::ReleaseChannel;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
-
-lazy_static! {
-    pub static ref ZED_APP_VERSION: Option<AppVersion> = env::var("ZED_APP_VERSION")
-        .ok()
-        .and_then(|v| v.parse().ok());
-    pub static ref ZED_APP_PATH: Option<PathBuf> = env::var("ZED_APP_PATH").ok().map(PathBuf::from);
-}
 
 actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes]);
 
