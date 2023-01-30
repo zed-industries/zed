@@ -15,7 +15,7 @@ use futures::{future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamEx
 use gpui::{
     actions,
     serde_json::{self, Value},
-    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
+    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AppVersion,
     AsyncAppContext, Entity, ModelHandle, MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use http::HttpClient;
@@ -55,6 +55,11 @@ lazy_static! {
     pub static ref ADMIN_API_TOKEN: Option<String> = std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
+    pub static ref ZED_APP_VERSION: Option<AppVersion> = std::env::var("ZED_APP_VERSION")
+        .ok()
+        .and_then(|v| v.parse().ok());
+    pub static ref ZED_APP_PATH: Option<PathBuf> =
+        std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
 }
 
 pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
