@@ -6015,6 +6015,7 @@ dependencies = [
  "libsqlite3-sys",
  "parking_lot 0.11.2",
  "smol",
+ "sqlez_macros",
  "thread_local",
  "uuid 1.2.2",
 ]
