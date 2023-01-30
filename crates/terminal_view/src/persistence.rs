@@ -14,6 +14,26 @@ define_connection! {
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                 ON DELETE CASCADE
             ) STRICT;
+        ),
+        // Remove the unique constraint on the item_id table
+        // SQLite doesn't have a way of doing this automatically, so
+        // we have to do this silly copying.
+        sql!(
+            CREATE TABLE terminals2 (
+                workspace_id INTEGER,
+                item_id INTEGER,
+                working_directory BLOB,
+                PRIMARY KEY(workspace_id, item_id),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+            ) STRICT;
+
+            INSERT INTO terminals2 (workspace_id, item_id, working_directory)
+            SELECT workspace_id, item_id, working_directory FROM terminals;
+
+            DROP TABLE terminals;
+
+            ALTER TABLE terminals2 RENAME TO terminals;
         )];
 }
 
