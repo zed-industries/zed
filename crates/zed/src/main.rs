@@ -3,7 +3,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
-use auto_update::ZED_APP_VERSION;
 use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
@@ -12,7 +11,7 @@ use cli::{
 use client::{
     self,
     http::{self, HttpClient},
-    UserStore, ZED_SECRET_CLIENT_TOKEN,
+    UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
 };
 
 use futures::{
