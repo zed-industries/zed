@@ -84,7 +84,8 @@ pub struct Titlebar {
     pub outdated_warning: ContainedText,
     pub share_button: Interactive<ContainedText>,
     pub call_control: Interactive<IconButton>,
-    pub toggle_collaborators_button: Interactive<IconButton>,
+    pub toggle_collaborators_button: Interactive<Icon>,
+    pub collaborator_count: ContainedText,
     pub toggle_contacts_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
 }
@@ -382,7 +383,7 @@ pub struct InviteLink {
     pub icon: Icon,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Clone, Copy, Default)]
 pub struct Icon {
     #[serde(flatten)]
     pub container: ContainerStyle,

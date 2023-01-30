@@ -84,9 +84,8 @@ impl View for CollabTitlebarItem {
 
         if ActiveCall::global(cx).read(cx).room().is_some() {
             left_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
+            left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
         }
-
-        left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
 
         let mut right_container = Flex::row();
 
@@ -200,18 +199,40 @@ impl CollabTitlebarItem {
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<ToggleCollaboratorList>::new(0, cx, |state, _| {
+                MouseEventHandler::<ToggleCollaboratorList>::new(0, cx, |state, cx| {
+                    let collaborator_count_style = titlebar.collaborator_count.clone();
                     let style = titlebar
                         .toggle_collaborators_button
                         .style_for(state, self.collaborator_list_popover.is_some());
-                    Svg::new("icons/user_group_12.svg")
-                        .with_color(style.color)
-                        .constrained()
-                        .with_width(style.icon_width)
-                        .aligned()
-                        .constrained()
-                        .with_width(style.button_width)
-                        .with_height(style.button_width)
+
+                    let active_call = ActiveCall::global(cx);
+                    let collaborator_count = active_call
+                        .read(cx)
+                        .room()
+                        .map_or(0, |room| room.read(cx).remote_participants().len())
+                        + 1;
+
+                    Flex::row()
+                        .with_child(
+                            Svg::new("icons/user_group_12.svg")
+                                .with_color(style.color)
+                                .constrained()
+                                .with_width(style.width)
+                                .aligned()
+                                .contained()
+                                .with_style(style.container)
+                                .boxed(),
+                        )
+                        .with_child(
+                            Label::new(
+                                format!("{collaborator_count}"),
+                                collaborator_count_style.text,
+                            )
+                            .contained()
+                            .with_style(collaborator_count_style.container)
+                            .aligned()
+                            .boxed(),
+                        )
                         .contained()
                         .with_style(style.container)
                         .boxed()
@@ -228,10 +249,8 @@ impl CollabTitlebarItem {
                     ChildView::new(popover, cx)
                         .contained()
                         .with_margin_top(titlebar.height)
-                        .with_margin_left(titlebar.toggle_collaborators_button.default.button_width)
-                        .with_margin_right(
-                            -titlebar.toggle_collaborators_button.default.button_width,
-                        )
+                        .with_margin_left(titlebar.toggle_collaborators_button.default.width)
+                        .with_margin_right(-titlebar.toggle_collaborators_button.default.width)
                         .boxed(),
                 )
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
