@@ -1,5 +1,6 @@
 use call::ActiveCall;
-use gpui::{elements::*, Entity, MouseButton, RenderContext, View, ViewContext};
+use client::UserStore;
+use gpui::{elements::*, Entity, ModelHandle, MouseButton, RenderContext, View, ViewContext};
 use settings::Settings;
 
 use crate::collab_titlebar_item::ToggleCollaboratorList;
@@ -45,22 +46,33 @@ impl View for CollaboratorListPopover {
 }
 
 impl CollaboratorListPopover {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
         let active_call = ActiveCall::global(cx);
-        let collaborator_count = active_call
+
+        let mut collaborators = user_store
             .read(cx)
-            .room()
-            .map_or(0, |room| room.read(cx).remote_participants().len());
+            .current_user()
+            .map(|u| u.github_login.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        //TODO: What should the canonical sort here look like, consult contacts list implementation
+        if let Some(room) = active_call.read(cx).room() {
+            for participant in room.read(cx).remote_participants() {
+                collaborators.push(participant.1.user.github_login.clone());
+            }
+        }
+
         Self {
             list_state: ListState::new(
-                collaborator_count,
+                collaborators.len(),
                 Orientation::Top,
                 0.,
                 cx,
-                |_, index, cx| {
+                move |_, index, cx| {
                     let theme = &cx.global::<Settings>().theme;
                     Label::new(
-                        format!("Participant {index}"),
+                        collaborators[index].clone(),
                         theme.contact_list.contact_username.text.clone(),
                     )
                     .boxed()

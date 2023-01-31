@@ -269,20 +269,23 @@ impl CollabTitlebarItem {
         match self.collaborator_list_popover.take() {
             Some(_) => {}
             None => {
-                let view = cx.add_view(|cx| CollaboratorListPopover::new(cx));
+                if let Some(workspace) = self.workspace.upgrade(cx) {
+                    let user_store = workspace.read(cx).user_store().clone();
+                    let view = cx.add_view(|cx| CollaboratorListPopover::new(user_store, cx));
 
-                cx.subscribe(&view, |this, _, event, cx| {
-                    match event {
-                        collaborator_list_popover::Event::Dismissed => {
-                            this.collaborator_list_popover = None;
+                    cx.subscribe(&view, |this, _, event, cx| {
+                        match event {
+                            collaborator_list_popover::Event::Dismissed => {
+                                this.collaborator_list_popover = None;
+                            }
                         }
-                    }
 
-                    cx.notify();
-                })
-                .detach();
+                        cx.notify();
+                    })
+                    .detach();
 
-                self.collaborator_list_popover = Some(view);
+                    self.collaborator_list_popover = Some(view);
+                }
             }
         }
         cx.notify();
