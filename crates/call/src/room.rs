@@ -803,7 +803,8 @@ impl Room {
             None => return Ok(()),
         };
 
-        self.client.send(proto::UnshareProject { project_id })
+        self.client.send(proto::UnshareProject { project_id })?;
+        project.update(cx, |this, cx| this.unshare(cx))
     }
 
     pub(crate) fn set_location(
