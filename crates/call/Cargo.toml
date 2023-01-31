@@ -28,6 +28,7 @@ fs = { path = "../fs" }
 language = { path = "../language" }
 media = { path = "../media" }
 project = { path = "../project" }
+settings = { path = "../settings" }
 util = { path = "../util" }
 
 anyhow = "1.0.38"

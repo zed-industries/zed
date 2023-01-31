@@ -10,7 +10,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     Border, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::ops::Range;
