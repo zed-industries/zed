@@ -914,7 +914,7 @@ impl MutableAppContext {
         self.presenters_and_platform_windows[&window_id].1.bounds()
     }
 
-    pub fn window_display_uuid(&self, window_id: usize) -> Uuid {
+    pub fn window_display_uuid(&self, window_id: usize) -> Option<Uuid> {
         self.presenters_and_platform_windows[&window_id]
             .1
             .screen()
@@ -2375,12 +2375,13 @@ impl MutableAppContext {
                 callback(is_fullscreen, this)
             });
 
-            let bounds = this.window_bounds(window_id);
-            let uuid = this.window_display_uuid(window_id);
-            let mut bounds_observations = this.window_bounds_observations.clone();
-            bounds_observations.emit(window_id, this, |callback, this| {
-                callback(bounds, uuid, this)
-            });
+            if let Some(uuid) = this.window_display_uuid(window_id) {
+                let bounds = this.window_bounds(window_id);
+                let mut bounds_observations = this.window_bounds_observations.clone();
+                bounds_observations.emit(window_id, this, |callback, this| {
+                    callback(bounds, uuid, this)
+                });
+            }
 
             Some(())
         });
@@ -2559,14 +2560,15 @@ impl MutableAppContext {
     }
 
     fn handle_window_moved(&mut self, window_id: usize) {
-        let bounds = self.window_bounds(window_id);
-        let display = self.window_display_uuid(window_id);
-        self.window_bounds_observations
-            .clone()
-            .emit(window_id, self, move |callback, this| {
-                callback(bounds, display, this);
-                true
-            });
+        if let Some(display) = self.window_display_uuid(window_id) {
+            let bounds = self.window_bounds(window_id);
+            self.window_bounds_observations
+                .clone()
+                .emit(window_id, self, move |callback, this| {
+                    callback(bounds, display, this);
+                    true
+                });
+        }
     }
 
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
