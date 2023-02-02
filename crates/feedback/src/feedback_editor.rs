@@ -125,7 +125,9 @@ impl FeedbackEditor {
         _: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let feedback_char_count = self.editor.read(cx).text(cx).chars().count();
+        let feedback_text = self.editor.read(cx).text(cx);
+        let feedback_char_count = feedback_text.chars().count();
+        let feedback_text = feedback_text.trim().to_string();
 
         let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
             Some(format!(
@@ -154,7 +156,6 @@ impl FeedbackEditor {
 
         let this = cx.handle();
         let client = cx.global::<Arc<Client>>().clone();
-        let feedback_text = self.editor.read(cx).text(cx);
         let specs = self.system_specs.clone();
 
         cx.spawn(|_, mut cx| async move {
