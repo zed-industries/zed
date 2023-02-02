@@ -87,6 +87,9 @@ impl View for CollabTitlebarItem {
             left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
         }
 
+        left_container.add_children(self.render_current_user(&workspace, &theme, cx));
+        left_container.add_children(self.render_collaborators(&workspace, &theme, cx));
+
         let mut right_container = Flex::row();
 
         right_container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
@@ -100,8 +103,6 @@ impl View for CollabTitlebarItem {
                 right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
             }
         }
-        right_container.add_children(self.render_collaborators(&workspace, &theme, cx));
-        right_container.add_children(self.render_current_user(&workspace, &theme, cx));
         right_container.add_children(self.render_connection_status(&workspace, cx));
 
         Stack::new()
@@ -506,7 +507,7 @@ impl CollabTitlebarItem {
                         .get(&participant.peer_id)
                         .map(|collaborator| collaborator.replica_id);
                     let user = participant.user.clone();
-                    Some(self.render_avatar(
+                    Some(self.render_face_pile(
                         &user,
                         replica_id,
                         Some((
@@ -535,7 +536,7 @@ impl CollabTitlebarItem {
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         let status = *workspace.read(cx).client().status().borrow();
         if let Some(user) = user {
-            Some(self.render_avatar(&user, Some(replica_id), None, workspace, theme, cx))
+            Some(self.render_face_pile(&user, Some(replica_id), None, workspace, theme, cx))
         } else if matches!(status, client::Status::UpgradeRequired) {
             None
         } else {
@@ -559,7 +560,7 @@ impl CollabTitlebarItem {
         }
     }
 
-    fn render_avatar(
+    fn render_face_pile(
         &self,
         user: &User,
         replica_id: Option<ReplicaId>,
