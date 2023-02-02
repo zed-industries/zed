@@ -13,12 +13,12 @@ jobs:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
         content: |
           📣 Zed ${{ github.event.release.tag_name }} was just released!
-          
+
           Restart your Zed or head to https://zed.dev/releases/latest to grab it.
-        
+
           ```md
           # Changelog
-          
+
           ${{ github.event.release.body }}
           ```
   discourse_release:
@@ -45,7 +45,7 @@ jobs:
           architecture: "x64"
           cache: "pip"
       - run: pip install -r script/mixpanel_release/requirements.txt
-      - run: > 
+      - run: >
           python script/mixpanel_release/main.py
           ${{ github.event.release.tag_name }}
           ${{ secrets.MIXPANEL_PROJECT_ID }}
