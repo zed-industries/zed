@@ -2,19 +2,23 @@ mod indicator;
 pub mod participant;
 pub mod room;
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use client::{proto, Client, TypedEnvelope, User, UserStore};
 use collections::HashSet;
+use postage::watch;
+
 use gpui::{
     actions, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Subscription, Task, ViewHandle, WeakModelHandle,
 };
+use project::Project;
+use settings::Settings;
+
 use indicator::SharingStatusIndicator;
 pub use participant::ParticipantLocation;
-use postage::watch;
-use project::Project;
 pub use room::Room;
-use std::sync::Arc;
 
 actions!(collab, [ToggleScreenSharing]);
 
@@ -315,7 +319,9 @@ impl ActiveCall {
 
     pub fn set_sharing_status(&mut self, is_screen_sharing: bool, cx: &mut MutableAppContext) {
         if is_screen_sharing {
-            if self.sharing_status_indicator.is_none() {
+            if self.sharing_status_indicator.is_none()
+                && cx.global::<Settings>().show_call_status_icon
+            {
                 self.sharing_status_indicator =
                     Some(cx.add_status_bar_item(|_| SharingStatusIndicator));
             }
