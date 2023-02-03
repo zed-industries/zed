@@ -15,6 +15,8 @@ pub enum Relation {
     RoomParticipant,
     #[sea_orm(has_many = "super::project::Entity")]
     Project,
+    #[sea_orm(has_many = "super::follower::Entity")]
+    Follower,
 }
 
 impl Related<super::room_participant::Entity> for Entity {
@@ -26,6 +28,12 @@ impl Related<super::room_participant::Entity> for Entity {
 impl Related<super::project::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Project.def()
+    }
+}
+
+impl Related<super::follower::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Follower.def()
     }
 }
 

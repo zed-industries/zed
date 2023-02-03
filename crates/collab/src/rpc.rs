@@ -1312,6 +1312,7 @@ async fn join_project(
         .filter(|collaborator| collaborator.connection_id != session.connection_id)
         .map(|collaborator| collaborator.to_proto())
         .collect::<Vec<_>>();
+
     let worktrees = project
         .worktrees
         .iter()
@@ -1719,6 +1720,7 @@ async fn follow(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
+    let room_id = RoomId::from_proto(request.project_id);
     let leader_id = request
         .leader_id
         .ok_or_else(|| anyhow!("invalid leader id"))?
@@ -1744,6 +1746,14 @@ async fn follow(
         .views
         .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
+
+    let room = session
+        .db()
+        .await
+        .follow(room_id, project_id, leader_id, follower_id)
+        .await?;
+    room_updated(&room, &session.peer);
+
     Ok(())
 }
 

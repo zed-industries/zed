@@ -1,5 +1,6 @@
 mod access_token;
 mod contact;
+mod follower;
 mod language_server;
 mod project;
 mod project_collaborator;
@@ -1717,6 +1718,35 @@ impl Database {
         .await
     }
 
+    pub async fn follow(
+        &self,
+        room_id: RoomId,
+        project_id: ProjectId,
+        leader_connection: ConnectionId,
+        follower_connection: ConnectionId,
+    ) -> Result<RoomGuard<proto::Room>> {
+        self.room_transaction(|tx| async move {
+            follower::ActiveModel {
+                room_id: ActiveValue::set(room_id),
+                project_id: ActiveValue::set(project_id),
+                leader_connection_server_id: ActiveValue::set(ServerId(
+                    leader_connection.owner_id as i32,
+                )),
+                leader_connection_id: ActiveValue::set(leader_connection.id as i32),
+                follower_connection_server_id: ActiveValue::set(ServerId(
+                    follower_connection.owner_id as i32,
+                )),
+                follower_connection_id: ActiveValue::set(follower_connection.id as i32),
+                ..Default::default()
+            }
+            .insert(&*tx)
+            .await?;
+
+            Ok((room_id, self.get_room(room_id, &*tx).await?))
+        })
+        .await
+    }
+
     pub async fn update_room_participant_location(
         &self,
         room_id: RoomId,
@@ -1927,11 +1957,22 @@ impl Database {
             }
         }
 
+        let mut db_followers = db_room.find_related(follower::Entity).stream(tx).await?;
+        let mut followers = Vec::new();
+        while let Some(db_follower) = db_followers.next().await {
+            let db_follower = db_follower?;
+            followers.push(proto::Follower {
+                leader_id: Some(db_follower.leader_connection().into()),
+                follower_id: Some(db_follower.follower_connection().into()),
+            });
+        }
+
         Ok(proto::Room {
             id: db_room.id.to_proto(),
             live_kit_room: db_room.live_kit_room,
             participants: participants.into_values().collect(),
             pending_participants,
+            followers,
         })
     }
 
@@ -3011,6 +3052,7 @@ macro_rules! id_type {
 
 id_type!(AccessTokenId);
 id_type!(ContactId);
+id_type!(FollowerId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);
 id_type!(ProjectId);

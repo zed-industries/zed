@@ -55,6 +55,7 @@ pub struct Room {
     leave_when_empty: bool,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
+    follows_by_leader_id: HashMap<PeerId, HashSet<PeerId>>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
@@ -148,6 +149,7 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
+            follows_by_leader_id: Default::default(),
             maintain_connection: Some(maintain_connection),
         }
     }
@@ -487,11 +489,13 @@ impl Room {
             .iter()
             .map(|p| p.user_id)
             .collect::<Vec<_>>();
+
         let remote_participant_user_ids = room
             .participants
             .iter()
             .map(|p| p.user_id)
             .collect::<Vec<_>>();
+
         let (remote_participants, pending_participants) =
             self.user_store.update(cx, move |user_store, cx| {
                 (
@@ -499,6 +503,7 @@ impl Room {
                     user_store.get_users(pending_participant_user_ids, cx),
                 )
             });
+
         self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {
             let (remote_participants, pending_participants) =
                 futures::join!(remote_participants, pending_participants);
@@ -618,6 +623,23 @@ impl Room {
                     for participant in &this.pending_participants {
                         this.participant_user_ids.insert(participant.id);
                     }
+                }
+
+                this.follows_by_leader_id.clear();
+                for follower in room.followers {
+                    let (leader, follower) = match (follower.leader_id, follower.follower_id) {
+                        (Some(leader), Some(follower)) => (leader, follower),
+
+                        _ => {
+                            log::error!("Follower message {follower:?} missing some state");
+                            continue;
+                        }
+                    };
+
+                    this.follows_by_leader_id
+                        .entry(leader)
+                        .or_insert(Default::default())
+                        .insert(follower);
                 }
 
                 this.pending_room_update.take();
