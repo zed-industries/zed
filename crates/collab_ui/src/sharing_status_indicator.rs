@@ -6,7 +6,7 @@ use gpui::{
 };
 use settings::Settings;
 
-use crate::collab_titlebar_item::ToggleScreenSharing;
+use crate::ToggleScreenSharing;
 
 pub fn init(cx: &mut MutableAppContext) {
     let active_call = ActiveCall::global(cx);
