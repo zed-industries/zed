@@ -35,7 +35,7 @@ impl Screen {
                 .map(|ix| Screen {
                     native_screen: native_screens.objectAtIndex(ix),
                 })
-                .find(|screen| platform::Screen::display_uuid(screen) == uuid)
+                .find(|screen| platform::Screen::display_uuid(screen) == Some(uuid))
         }
     }
 
@@ -58,7 +58,7 @@ impl platform::Screen for Screen {
         self
     }
 
-    fn display_uuid(&self) -> uuid::Uuid {
+    fn display_uuid(&self) -> Option<uuid::Uuid> {
         unsafe {
             // Screen ids are not stable. Further, the default device id is also unstable across restarts.
             // CGDisplayCreateUUIDFromDisplayID is stable but not exposed in the bindings we use.
@@ -74,8 +74,12 @@ impl platform::Screen for Screen {
                 (&mut device_id) as *mut _ as *mut c_void,
             );
             let cfuuid = CGDisplayCreateUUIDFromDisplayID(device_id as CGDirectDisplayID);
+            if cfuuid.is_null() {
+                return None;
+            }
+
             let bytes = CFUUIDGetUUIDBytes(cfuuid);
-            Uuid::from_bytes([
+            Some(Uuid::from_bytes([
                 bytes.byte0,
                 bytes.byte1,
                 bytes.byte2,
@@ -92,7 +96,7 @@ impl platform::Screen for Screen {
                 bytes.byte13,
                 bytes.byte14,
                 bytes.byte15,
-            ])
+            ]))
         }
     }
 

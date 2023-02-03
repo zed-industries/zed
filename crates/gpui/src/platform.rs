@@ -124,7 +124,7 @@ pub trait InputHandler {
 pub trait Screen: Debug {
     fn as_any(&self) -> &dyn Any;
     fn bounds(&self) -> RectF;
-    fn display_uuid(&self) -> Uuid;
+    fn display_uuid(&self) -> Option<Uuid>;
 }
 
 pub trait Window {
