@@ -1747,6 +1747,47 @@ impl Database {
         .await
     }
 
+    pub async fn unfollow(
+        &self,
+        room_id: RoomId,
+        project_id: ProjectId,
+        leader_connection: ConnectionId,
+        follower_connection: ConnectionId,
+    ) -> Result<RoomGuard<proto::Room>> {
+        self.room_transaction(|tx| async move {
+            follower::Entity::delete_many()
+                .filter(
+                    Condition::all()
+                        .add(follower::Column::RoomId.eq(room_id))
+                        .add(follower::Column::ProjectId.eq(project_id))
+                        .add(
+                            Condition::any()
+                                .add(
+                                    follower::Column::LeaderConnectionServerId
+                                        .eq(leader_connection.owner_id)
+                                        .and(
+                                            follower::Column::LeaderConnectionId
+                                                .eq(leader_connection.id),
+                                        ),
+                                )
+                                .add(
+                                    follower::Column::FollowerConnectionServerId
+                                        .eq(follower_connection.owner_id)
+                                        .and(
+                                            follower::Column::FollowerConnectionId
+                                                .eq(follower_connection.id),
+                                        ),
+                                ),
+                        ),
+                )
+                .exec(&*tx)
+                .await?;
+
+            Ok((room_id, self.get_room(room_id, &*tx).await?))
+        })
+        .await
+    }
+
     pub async fn update_room_participant_location(
         &self,
         room_id: RoomId,

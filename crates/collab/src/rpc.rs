@@ -1719,13 +1719,14 @@ async fn follow(
     response: Response<proto::Follow>,
     session: Session,
 ) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.project_id);
     let room_id = RoomId::from_proto(request.project_id);
+    let project_id = ProjectId::from_proto(request.project_id);
     let leader_id = request
         .leader_id
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
     let follower_id = session.connection_id;
+
     {
         let project_connection_ids = session
             .db()
@@ -1758,22 +1759,35 @@ async fn follow(
 }
 
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
+    let room_id = RoomId::from_proto(request.project_id);
     let project_id = ProjectId::from_proto(request.project_id);
     let leader_id = request
         .leader_id
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
-    let project_connection_ids = session
+    let follower_id = session.connection_id;
+
+    if !session
         .db()
         .await
         .project_connection_ids(project_id, session.connection_id)
-        .await?;
-    if !project_connection_ids.contains(&leader_id) {
+        .await?
+        .contains(&leader_id)
+    {
         Err(anyhow!("no such peer"))?;
     }
+
     session
         .peer
         .forward_send(session.connection_id, leader_id, request)?;
+
+    let room = session
+        .db()
+        .await
+        .unfollow(room_id, project_id, leader_id, follower_id)
+        .await?;
+    room_updated(&room, &session.peer);
+
     Ok(())
 }
 
