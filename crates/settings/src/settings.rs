@@ -35,6 +35,7 @@ pub struct Settings {
     pub confirm_quit: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
+    pub show_call_status_icon: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
     pub default_dock_anchor: DockAnchor,
@@ -287,6 +288,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub show_completions_on_input: Option<bool>,
     #[serde(default)]
+    pub show_call_status_icon: Option<bool>,
+    #[serde(default)]
     pub vim_mode: Option<bool>,
     #[serde(default)]
     pub autosave: Option<Autosave>,
@@ -346,6 +349,7 @@ impl Settings {
             cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
+            show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
@@ -540,6 +544,7 @@ impl Settings {
             cursor_blink: true,
             hover_popover_enabled: true,
             show_completions_on_input: true,
+            show_call_status_icon: true,
             vim_mode: false,
             autosave: Autosave::Off,
             default_dock_anchor: DockAnchor::Bottom,

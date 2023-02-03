@@ -828,6 +828,7 @@ dependencies = [
  "media",
  "postage",
  "project",
+ "settings",
  "util",
 ]
 

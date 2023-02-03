@@ -20,6 +20,8 @@
     // Whether to pop the completions menu while typing in an editor without
     // explicitly requesting it.
     "show_completions_on_input": true,
+    // Whether the screen sharing icon is showed in the os status bar.
+    "show_call_status_icon": true,
     // Whether new projects should start out 'online'. Online projects
     // appear in the contacts panel under your name, so that your contacts
     // can see which projects you are working on. Regardless of this
