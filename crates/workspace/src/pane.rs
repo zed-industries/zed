@@ -1527,7 +1527,7 @@ impl View for Pane {
                 }
 
                 cx.focus(active_item);
-            } else {
+            } else if focused != self.tab_bar_context_menu {
                 self.last_focused_view_by_item
                     .insert(active_item.id(), focused.downgrade());
             }
