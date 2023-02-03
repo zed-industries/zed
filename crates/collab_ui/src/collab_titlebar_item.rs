@@ -1,5 +1,5 @@
 use crate::{contact_notification::ContactNotification, contacts_popover};
-use call::{ActiveCall, ParticipantLocation, ToggleScreenSharing};
+use call::{ActiveCall, ParticipantLocation};
 use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
@@ -10,17 +10,21 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     Border, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::ops::Range;
 use theme::Theme;
 use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
-actions!(collab, [ToggleCollaborationMenu, ShareProject]);
+actions!(
+    collab,
+    [ToggleCollaborationMenu, ToggleScreenSharing, ShareProject]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
+    cx.add_global_action(CollabTitlebarItem::toggle_screen_sharing);
     cx.add_action(CollabTitlebarItem::share_project);
 }
 
@@ -166,6 +170,19 @@ impl CollabTitlebarItem {
             }
         }
         cx.notify();
+    }
+
+    pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut MutableAppContext) {
+        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+            let toggle_screen_sharing = room.update(cx, |room, cx| {
+                if room.is_screen_sharing() {
+                    Task::ready(room.unshare_screen(cx))
+                } else {
+                    room.share_screen(cx)
+                }
+            });
+            toggle_screen_sharing.detach_and_log_err(cx);
+        }
     }
 
     fn render_toggle_contacts_button(
