@@ -837,7 +837,7 @@ impl Workspace {
         &self.project
     }
 
-    pub fn client(&self) -> &Arc<Client> {
+    pub fn client(&self) -> &Client {
         &self.client
     }
 

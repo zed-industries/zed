@@ -55,7 +55,7 @@ pub struct Room {
     leave_when_empty: bool,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
-    follows_by_leader_id: HashMap<PeerId, HashSet<PeerId>>,
+    follows_by_leader_id: HashMap<PeerId, Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
@@ -459,6 +459,12 @@ impl Room {
         self.participant_user_ids.contains(&user_id)
     }
 
+    pub fn follows(&self, leader_id: PeerId) -> &[PeerId] {
+        self.follows_by_leader_id
+            .get(&leader_id)
+            .map_or(&[], |v| v.as_slice())
+    }
+
     async fn handle_room_updated(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
@@ -636,10 +642,13 @@ impl Room {
                         }
                     };
 
-                    this.follows_by_leader_id
+                    let list = this
+                        .follows_by_leader_id
                         .entry(leader)
-                        .or_insert(Default::default())
-                        .insert(follower);
+                        .or_insert(Vec::new());
+                    if !list.contains(&follower) {
+                        list.push(follower);
+                    }
                 }
 
                 this.pending_room_update.take();

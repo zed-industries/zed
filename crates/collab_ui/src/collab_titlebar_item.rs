@@ -12,11 +12,11 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
-    Border, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    Border, CursorStyle, Entity, ImageData, ModelHandle, MouseButton, MutableAppContext,
+    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 use theme::Theme;
 use util::ResultExt;
 use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
@@ -510,11 +510,7 @@ impl CollabTitlebarItem {
                     Some(self.render_face_pile(
                         &user,
                         replica_id,
-                        Some((
-                            participant.peer_id,
-                            &user.github_login,
-                            participant.location,
-                        )),
+                        Some((participant.peer_id, participant.location)),
                         workspace,
                         theme,
                         cx,
@@ -564,18 +560,23 @@ impl CollabTitlebarItem {
         &self,
         user: &User,
         replica_id: Option<ReplicaId>,
-        peer: Option<(PeerId, &str, ParticipantLocation)>,
+        peer_id_and_location: Option<(PeerId, ParticipantLocation)>,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let is_followed = peer.map_or(false, |(peer_id, _, _)| {
+        let is_followed = peer_id_and_location.map_or(false, |(peer_id, _)| {
             workspace.read(cx).is_following(peer_id)
         });
 
+        let room = ActiveCall::global(cx).read(cx).room();
+        let get_followers = |leader_id: PeerId| -> &[PeerId] {
+            room.map_or(&[], |room| room.read(cx).follows(leader_id))
+        };
+
         let mut avatar_style;
-        if let Some((_, _, location)) = peer.as_ref() {
-            if let ParticipantLocation::SharedProject { project_id } = *location {
+        if let Some((_, location)) = peer_id_and_location {
+            if let ParticipantLocation::SharedProject { project_id } = location {
                 if Some(project_id) == workspace.read(cx).project().read(cx).remote_id() {
                     avatar_style = theme.workspace.titlebar.avatar;
                 } else {
@@ -599,11 +600,36 @@ impl CollabTitlebarItem {
 
         let content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
-                Image::new(avatar.clone())
-                    .with_style(avatar_style)
-                    .constrained()
-                    .with_width(theme.workspace.titlebar.avatar_width)
-                    .aligned()
+                Flex::row()
+                    .with_child(Self::render_face(avatar.clone(), avatar_style, theme))
+                    .with_children(
+                        peer_id_and_location
+                            .map(|(peer_id, _)| {
+                                get_followers(peer_id)
+                                    .into_iter()
+                                    .map(|&follower| {
+                                        room.map(|room| {
+                                            room.read(cx)
+                                                .remote_participant_for_peer_id(follower)
+                                                .map(|participant| {
+                                                    participant.user.avatar.as_ref().map(|avatar| {
+                                                        Self::render_face(
+                                                            avatar.clone(),
+                                                            avatar_style,
+                                                            theme,
+                                                        )
+                                                    })
+                                                })
+                                                .flatten()
+                                        })
+                                        .flatten()
+                                    })
+                                    .flatten()
+                            })
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .with_reversed_paint_order()
                     .boxed()
             }))
             .with_children(replica_color.map(|replica_color| {
@@ -621,7 +647,7 @@ impl CollabTitlebarItem {
             .with_margin_left(theme.workspace.titlebar.avatar_margin)
             .boxed();
 
-        if let Some((peer_id, peer_github_login, location)) = peer {
+        if let Some((peer_id, location)) = peer_id_and_location {
             if let Some(replica_id) = replica_id {
                 MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
                     .with_cursor_style(CursorStyle::PointingHand)
@@ -631,9 +657,9 @@ impl CollabTitlebarItem {
                     .with_tooltip::<ToggleFollow, _>(
                         peer_id.as_u64() as usize,
                         if is_followed {
-                            format!("Unfollow {}", peer_github_login)
+                            format!("Unfollow {}", user.github_login)
                         } else {
-                            format!("Follow {}", peer_github_login)
+                            format!("Follow {}", user.github_login)
                         },
                         Some(Box::new(FollowNextCollaborator)),
                         theme.tooltip.clone(),
@@ -654,7 +680,7 @@ impl CollabTitlebarItem {
                 })
                 .with_tooltip::<JoinProject, _>(
                     peer_id.as_u64() as usize,
-                    format!("Follow {} into external project", peer_github_login),
+                    format!("Follow {} into external project", user.github_login),
                     Some(Box::new(FollowNextCollaborator)),
                     theme.tooltip.clone(),
                     cx,
@@ -666,6 +692,15 @@ impl CollabTitlebarItem {
         } else {
             content
         }
+    }
+
+    fn render_face(avatar: Arc<ImageData>, avatar_style: ImageStyle, theme: &Theme) -> ElementBox {
+        Image::new(avatar)
+            .with_style(avatar_style)
+            .constrained()
+            .with_width(theme.workspace.titlebar.avatar_width)
+            .aligned()
+            .boxed()
     }
 
     fn render_connection_status(
