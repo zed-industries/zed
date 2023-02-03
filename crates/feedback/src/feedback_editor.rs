@@ -31,7 +31,7 @@ use workspace::{
 use crate::system_specs::SystemSpecs;
 
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
-const FEEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here as Markdown. Save the tab to submit your feedback.";
+const FEEDBACK_PLACEHOLDER_TEXT: &str = "Save to submit feedback as Markdown.";
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
