@@ -569,11 +569,6 @@ impl CollabTitlebarItem {
             workspace.read(cx).is_following(peer_id)
         });
 
-        let room = ActiveCall::global(cx).read(cx).room();
-        let get_followers = |leader_id: PeerId| -> &[PeerId] {
-            room.map_or(&[], |room| room.read(cx).follows(leader_id))
-        };
-
         let mut avatar_style;
         if let Some((_, location)) = peer_id_and_location {
             if let ParticipantLocation::SharedProject { project_id } = location {
@@ -603,31 +598,21 @@ impl CollabTitlebarItem {
                 Flex::row()
                     .with_child(Self::render_face(avatar.clone(), avatar_style, theme))
                     .with_children(
-                        peer_id_and_location
-                            .map(|(peer_id, _)| {
-                                get_followers(peer_id)
-                                    .into_iter()
-                                    .map(|&follower| {
-                                        room.map(|room| {
-                                            room.read(cx)
-                                                .remote_participant_for_peer_id(follower)
-                                                .map(|participant| {
-                                                    participant.user.avatar.as_ref().map(|avatar| {
-                                                        Self::render_face(
-                                                            avatar.clone(),
-                                                            avatar_style,
-                                                            theme,
-                                                        )
-                                                    })
-                                                })
-                                                .flatten()
-                                        })
-                                        .flatten()
-                                    })
-                                    .flatten()
-                            })
-                            .into_iter()
-                            .flatten(),
+                        (|| {
+                            let peer_id_and_location = peer_id_and_location?;
+                            let peer_id = peer_id_and_location.0;
+
+                            let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
+                            let followers = room.follows(peer_id)?;
+
+                            Some(followers.into_iter().flat_map(|&follower| {
+                                let participant = room.remote_participant_for_peer_id(follower)?;
+                                let avatar = participant.user.avatar.as_ref()?;
+                                Some(Self::render_face(avatar.clone(), avatar_style, theme))
+                            }))
+                        })()
+                        .into_iter()
+                        .flatten(),
                     )
                     .with_reversed_paint_order()
                     .boxed()
