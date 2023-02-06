@@ -2,7 +2,7 @@
 import { ColorScheme } from "../themes/common/colorScheme";
 import { background, border, text } from "./components";
 
-export default function search(colorScheme: ColorScheme) {
+export default function feedback(colorScheme: ColorScheme) {
   let layer = colorScheme.highest;
 
   // Currently feedback only needs style for the submit feedback button
