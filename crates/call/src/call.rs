@@ -1,4 +1,3 @@
-mod indicator;
 pub mod participant;
 pub mod room;
 
@@ -10,22 +9,17 @@ use collections::HashSet;
 use postage::watch;
 
 use gpui::{
-    actions, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Subscription, Task, ViewHandle, WeakModelHandle,
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
+    Subscription, Task, WeakModelHandle,
 };
 use project::Project;
-use settings::Settings;
 
-use indicator::SharingStatusIndicator;
 pub use participant::ParticipantLocation;
 pub use room::Room;
-
-actions!(collab, [ToggleScreenSharing]);
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
-    cx.add_global_action(toggle_screen_sharing);
 }
 
 #[derive(Clone)]
@@ -36,6 +30,7 @@ pub struct IncomingCall {
     pub initial_project: Option<proto::ParticipantProject>,
 }
 
+/// Singleton global maintaining the user's participation in a room across workspaces.
 pub struct ActiveCall {
     room: Option<(ModelHandle<Room>, Vec<Subscription>)>,
     location: Option<WeakModelHandle<Project>>,
@@ -46,7 +41,6 @@ pub struct ActiveCall {
     ),
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
-    sharing_status_indicator: Option<(usize, ViewHandle<SharingStatusIndicator>)>,
     _subscriptions: Vec<client::Subscription>,
 }
 
@@ -71,7 +65,6 @@ impl ActiveCall {
             ],
             client,
             user_store,
-            sharing_status_indicator: None,
         }
     }
 
@@ -290,8 +283,6 @@ impl ActiveCall {
                                 this.set_room(None, cx).detach_and_log_err(cx);
                             }
 
-                            this.set_sharing_status(room.read(cx).is_screen_sharing(), cx);
-
                             cx.notify();
                         }),
                         cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
@@ -315,31 +306,5 @@ impl ActiveCall {
 
     pub fn pending_invites(&self) -> &HashSet<u64> {
         &self.pending_invites
-    }
-
-    pub fn set_sharing_status(&mut self, is_screen_sharing: bool, cx: &mut MutableAppContext) {
-        if is_screen_sharing {
-            if self.sharing_status_indicator.is_none()
-                && cx.global::<Settings>().show_call_status_icon
-            {
-                self.sharing_status_indicator =
-                    Some(cx.add_status_bar_item(|_| SharingStatusIndicator));
-            }
-        } else if let Some((window_id, _)) = self.sharing_status_indicator.take() {
-            cx.remove_status_bar_item(window_id);
-        }
-    }
-}
-
-pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut MutableAppContext) {
-    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        let toggle_screen_sharing = room.update(cx, |room, cx| {
-            if room.is_screen_sharing() {
-                Task::ready(room.unshare_screen(cx))
-            } else {
-                room.share_screen(cx)
-            }
-        });
-        toggle_screen_sharing.detach_and_log_err(cx);
     }
 }

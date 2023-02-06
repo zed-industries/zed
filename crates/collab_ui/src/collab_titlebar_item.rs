@@ -1,5 +1,5 @@
-use crate::{contact_notification::ContactNotification, contacts_popover};
-use call::{ActiveCall, ParticipantLocation, ToggleScreenSharing};
+use crate::{contact_notification::ContactNotification, contacts_popover, ToggleScreenSharing};
+use call::{ActiveCall, ParticipantLocation};
 use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
