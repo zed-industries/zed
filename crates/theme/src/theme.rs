@@ -36,6 +36,7 @@ pub struct Theme {
     pub incoming_call_notification: IncomingCallNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
+    pub feedback: FeedbackStyle,
     pub color_scheme: ColorScheme,
 }
 
@@ -804,6 +805,12 @@ pub struct TerminalStyle {
     pub dim_white: Color,
     pub bright_foreground: Color,
     pub dim_foreground: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct FeedbackStyle {
+    pub submit_button: Interactive<ContainedText>,
+    pub button_margin: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
