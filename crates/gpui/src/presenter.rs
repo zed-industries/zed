@@ -4,7 +4,6 @@ use crate::{
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
-    keymap_matcher::Keystroke,
     platform::{CursorStyle, Event},
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
@@ -604,14 +603,6 @@ pub struct LayoutContext<'a> {
 }
 
 impl<'a> LayoutContext<'a> {
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        self.app
-            .keystrokes_for_action(self.window_id, &self.view_stack, action)
-    }
-
     fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
         let print_error = |view_id| {
             format!(

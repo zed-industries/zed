@@ -1333,6 +1333,31 @@ impl MutableAppContext {
         self.action_deserializers.keys().copied()
     }
 
+    /// Return keystrokes that would dispatch the given action on the given view.
+    pub(crate) fn keystrokes_for_action(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        let mut contexts = Vec::new();
+        for view_id in self.ancestors(window_id, view_id) {
+            if let Some(view) = self.views.get(&(window_id, view_id)) {
+                contexts.push(view.keymap_context(self));
+            }
+        }
+
+        self.keystroke_matcher
+            .bindings_for_action_type(action.as_any().type_id())
+            .find_map(|b| {
+                if b.match_context(&contexts) {
+                    b.keystrokes().map(|s| s.into())
+                } else {
+                    None
+                }
+            })
+    }
+
     pub fn available_actions(
         &self,
         window_id: usize,
@@ -1340,8 +1365,10 @@ impl MutableAppContext {
     ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
         let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
 
+        let mut contexts = Vec::new();
         for view_id in self.ancestors(window_id, view_id) {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
+                contexts.push(view.keymap_context(self));
                 let view_type = view.as_any().type_id();
                 if let Some(actions) = self.actions.get(&view_type) {
                     action_types.extend(actions.keys().copied());
@@ -1358,6 +1385,7 @@ impl MutableAppContext {
                         deserialize("{}").ok()?,
                         self.keystroke_matcher
                             .bindings_for_action_type(*type_id)
+                            .filter(|b| b.match_context(&contexts))
                             .collect(),
                     ))
                 } else {
@@ -1383,34 +1411,6 @@ impl MutableAppContext {
             }
         }
         self.global_actions.contains_key(&action_type)
-    }
-
-    /// Return keystrokes that would dispatch the given action closest to the focused view, if there are any.
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        window_id: usize,
-        view_stack: &[usize],
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        self.keystroke_matcher.contexts.clear();
-        for view_id in view_stack.iter().rev() {
-            let view = self
-                .cx
-                .views
-                .get(&(window_id, *view_id))
-                .expect("view in responder chain does not exist");
-            self.keystroke_matcher
-                .contexts
-                .push(view.keymap_context(self.as_ref()));
-            let keystrokes = self
-                .keystroke_matcher
-                .keystrokes_for_action(action, &self.keystroke_matcher.contexts);
-            if keystrokes.is_some() {
-                return keystrokes;
-            }
-        }
-
-        None
     }
 
     // Traverses the parent tree. Walks down the tree toward the passed
@@ -1916,10 +1916,11 @@ impl MutableAppContext {
     {
         self.update(|this| {
             let view_id = post_inc(&mut this.next_entity_id);
+            // Make sure we can tell child views about their parent
+            this.cx.parents.insert((window_id, view_id), parent_id);
             let mut cx = ViewContext::new(this, window_id, view_id);
             let handle = if let Some(view) = build_view(&mut cx) {
                 this.cx.views.insert((window_id, view_id), Box::new(view));
-                this.cx.parents.insert((window_id, view_id), parent_id);
                 if let Some(window) = this.cx.windows.get_mut(&window_id) {
                     window
                         .invalidation
@@ -1929,6 +1930,7 @@ impl MutableAppContext {
                 }
                 Some(ViewHandle::new(window_id, view_id, &this.cx.ref_counts))
             } else {
+                this.cx.parents.remove(&(window_id, view_id));
                 None
             };
             handle
@@ -2808,6 +2810,16 @@ impl AppContext {
                     None
                 }
             }))
+    }
+
+    /// Returns the id of the parent of the given view, or none if the given
+    /// view is the root.
+    fn parent(&self, window_id: usize, view_id: usize) -> Option<usize> {
+        if let Some(ParentId::View(view_id)) = self.parents.get(&(window_id, view_id)) {
+            Some(*view_id)
+        } else {
+            None
+        }
     }
 
     pub fn is_child_focused(&self, view: impl Into<AnyViewHandle>) -> bool {
@@ -3851,6 +3863,10 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         self.app
             .build_and_insert_view(self.window_id, ParentId::View(self.view_id), build_view)
+    }
+
+    pub fn parent(&mut self) -> Option<usize> {
+        self.cx.parent(self.window_id, self.view_id)
     }
 
     pub fn reparent(&mut self, view_handle: impl Into<AnyViewHandle>) {
