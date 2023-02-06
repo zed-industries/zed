@@ -7,8 +7,6 @@ use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{io::BufReader, StreamExt};
 use language::LanguageServerName;
-use lazy_static::lazy_static;
-use regex::Regex;
 use smol::fs;
 use util::{async_iife, ResultExt};
 
@@ -16,10 +14,6 @@ use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
-
-lazy_static! {
-    static ref LUALS_VERSION_REGEX: Regex = Regex::new(r"\d+\.\d+\.\d+").unwrap();
-}
 
 #[async_trait]
 impl super::LspAdapter for LuaLspAdapter {
