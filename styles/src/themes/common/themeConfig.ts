@@ -1,30 +1,23 @@
 import { Color, Scale } from "chroma-js";
 import { Syntax, SyntaxHighlightStyle } from "./theme";
 
-interface Meta {
-  /**
-   * The theme's name, with no variants or modifiers
-   *
-   * For example:
-   *
-   * - Gruvbox, not Gruvbox Dark Hard
-   */
-  name: string;
-
-  /**
-   * Name of the theme's author, or the author who ported the theme
-   *
-   * Github handle > full name, if both are available format like "@handle (Full Name)"
-   */
-  author: string;
-  url: string;
-  license: License;
+export interface Meta {
+  name: string,
+  author: string,
+  url: string,
+  license: License
 }
 
-interface License {
-  type: string;
-  url: string;
+export interface License {
+  SPDX: SPDXExpression,
+  /// A url where we can download the license's text
+  https_url: string,
+  license_checksum: string
 }
+
+// FIXME: Add support for the SPDX expression syntax
+export type SPDXExpression = "MIT";
+
 
 interface Colors {
   neutral: Scale<Color>;
@@ -62,8 +55,7 @@ export interface SyntaxOverrides {
 
 export interface ThemeConfig {
   meta: Meta;
-  color: Colors;
   // Syntax probably moves inside of override
-  syntax: Partial<Syntax>;
-  override: Partial<ThemeOverrides>
+  syntax?: Partial<Syntax>;
+  override?: Partial<ThemeOverrides>
 }

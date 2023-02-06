@@ -3,7 +3,7 @@ import toml from "toml";
 import {
   schemeMeta
 } from "./colorSchemes";
-import { Meta } from "./themes/common/colorScheme";
+import { Meta } from "./themes/common/themeConfig";
 import https from "https";
 import crypto from "crypto";
 

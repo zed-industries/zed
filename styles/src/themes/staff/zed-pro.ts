@@ -31,11 +31,11 @@ export const theme: ThemeConfig = {
     author: "Nate Butler",
     url: "https://github.com/iamnbutler",
     license: {
-      type: "MIT",
-      url: "",
+      SPDX: "MIT",
+      https_url: "https://raw.githubusercontent.com/edunfelt/base16-rose-pine-scheme/main/LICENSE",
+      license_checksum: "6ca1b9da8c78c8441c5aa43d024a4e4a7bf59d1ecca1480196e94fda0f91ee4a"
     },
   },
-  color: ramps,
   syntax: {},
   override: {},
 };

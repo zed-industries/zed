@@ -18,27 +18,10 @@ export interface ColorScheme {
   syntax: Syntax;
 }
 
-export interface Meta {
-  name: string,
-  author: string,
-  url: string,
-  license: License
-}
-
-export interface License {
-  SPDX: SPDXExpression,
-  /// A url where we can download the license's text
-  https_url: string,
-  license_checksum: string
-}
-
 // License name -> License text
 export interface Licenses {
   [key: string]: string
 }
-
-// FIXME: Add support for the SPDX expression syntax
-export type SPDXExpression = "MIT";
 
 export interface Player {
   cursor: string;

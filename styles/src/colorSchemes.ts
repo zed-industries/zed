@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { ColorScheme, Meta } from "./themes/common/colorScheme";
+import { Meta } from "./themes/common/themeConfig";
+import { ColorScheme } from "./themes/common/colorScheme";
 
 const colorSchemes: ColorScheme[] = [];
 export default colorSchemes;
@@ -11,9 +12,6 @@ export { schemeMeta };
 const staffColorSchemes: ColorScheme[] = [];
 export { staffColorSchemes };
 
-const experimentalColorSchemes: ColorScheme[] = [];
-export { experimentalColorSchemes };
-
 const themes_directory = path.resolve(`${__dirname}/themes`);
 
 function for_all_color_schemes_in(themesPath: string, callback: (module: any, path: string) => void) {
@@ -23,13 +21,7 @@ function for_all_color_schemes_in(themesPath: string, callback: (module: any, pa
 
     if (fs.statSync(filePath).isFile()) {
       const colorScheme = require(filePath);
-      if (colorScheme.dark) colorSchemes.push(colorScheme.dark);
-      if (colorScheme.light) colorSchemes.push(colorScheme.light);
-      if (colorScheme.variants) {
-        colorScheme.variants.map((variant: ColorScheme) => {
-          colorSchemes.push(variant)
-        })
-      };
+      callback(colorScheme, fileName);
     }
   }
 }
@@ -38,6 +30,12 @@ function fillColorSchemes(themesPath: string, colorSchemes: ColorScheme[]) {
   for_all_color_schemes_in(themesPath, (colorScheme, _path) => {
     if (colorScheme.dark) colorSchemes.push(colorScheme.dark);
     if (colorScheme.light) colorSchemes.push(colorScheme.light);
+    if (colorScheme.variants) {
+      colorScheme.variants.map((variant: ColorScheme) => {
+        colorSchemes.push(variant)
+      })
+    };
+
   })
 }
 
@@ -48,11 +46,11 @@ fillColorSchemes(
 );
 
 function fillMeta(themesPath: string, meta: Meta[]) {
-  for_all_color_schemes_in(themesPath, (colorScheme, path) => {
+  for_all_color_schemes_in(themesPath, (colorScheme, name) => {
     if (colorScheme.meta) {
       meta.push(colorScheme.meta)
     } else {
-      throw Error(`Public theme ${path} must have a meta field`)
+      throw Error(`Public theme ${name} must have a meta field`)
     }
   })
 }

@@ -21,8 +21,9 @@ export function createColorScheme(
   name: string,
   isLight: boolean,
   colorRamps: { [rampName: string]: Scale },
-  theme: ThemeConfig
+  theme_config: ThemeConfig
 ): ColorScheme {
+  let theme: ThemeConfig = { ...theme_config, ...{ syntax: {}, override: {} } }
   // Chromajs scales from 0 to 1 flipped if isLight is true
   let ramps: RampSet = {} as any;
 

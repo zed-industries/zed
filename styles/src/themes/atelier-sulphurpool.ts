@@ -1,6 +1,6 @@
 import chroma from "chroma-js";
-import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
+import { ThemeConfig } from "./common/themeConfig";
 
 const name = "Atelier Sulphurpool";
 
@@ -27,16 +27,18 @@ const ramps = {
   magenta: colorRamp(chroma("#9c637a")),
 };
 
-export const dark = createColorScheme(`${name} Dark`, false, ramps);
-export const light = createColorScheme(`${name} Light`, true, ramps);
-
-export const meta: Meta = {
-  name,
-  author: "atelierbram",
-  license: {
-    SPDX: "MIT",
-    https_url: "https://raw.githubusercontent.com/atelierbram/syntax-highlighting/master/LICENSE",
-    license_checksum: "6c2353bb9dd0b7b211364d98184ab482e54f40f611eda0c02974c3a1f9e6193c"
+export const theme: ThemeConfig = {
+  meta: {
+    name,
+    author: "atelierbram",
+    license: {
+      SPDX: "MIT",
+      https_url: "https://raw.githubusercontent.com/atelierbram/syntax-highlighting/master/LICENSE",
+      license_checksum: "6c2353bb9dd0b7b211364d98184ab482e54f40f611eda0c02974c3a1f9e6193c"
+    },
+    url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/"
   },
-  url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/"
 }
+
+export const dark = createColorScheme(`${name} Dark`, false, ramps, theme);
+export const light = createColorScheme(`${name} Light`, true, ramps, theme);

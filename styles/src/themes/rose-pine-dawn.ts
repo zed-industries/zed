@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import { Meta } from "./common/colorScheme";
+import { Meta } from "./common/themeConfig";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Rosé Pine Dawn";

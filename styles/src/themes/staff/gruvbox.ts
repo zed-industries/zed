@@ -233,7 +233,6 @@ function buildThemeConfig(appearance: Appearance, contrast: Contrast) {
         url: "https://en.wikipedia.org/wiki/MIT_License",
       },
     },
-    color: buildRamps(appearance, contrast),
     syntax,
     override: {},
   }
