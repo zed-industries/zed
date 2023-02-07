@@ -11,7 +11,10 @@ use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use workspace::{OpenPaths, Workspace, WorkspaceLocation, WORKSPACE_DB};
+use workspace::{
+    notifications::simple_message_notification::MessageNotification, OpenPaths, Workspace,
+    WorkspaceLocation, WORKSPACE_DB,
+};
 
 actions!(projects, [OpenRecent]);
 
@@ -42,7 +45,7 @@ impl RecentProjectsView {
 
     fn toggle(_: &mut Workspace, _: &OpenRecent, cx: &mut ViewContext<Workspace>) {
         cx.spawn(|workspace, mut cx| async move {
-            let workspace_locations = cx
+            let workspace_locations: Vec<_> = cx
                 .background()
                 .spawn(async {
                     WORKSPACE_DB
@@ -56,12 +59,20 @@ impl RecentProjectsView {
                 .await;
 
             workspace.update(&mut cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |_, cx| {
-                    let view = cx.add_view(|cx| Self::new(workspace_locations, cx));
-                    cx.subscribe(&view, Self::on_event).detach();
-                    view
-                });
-            })
+                if !workspace_locations.is_empty() {
+                    workspace.toggle_modal(cx, |_, cx| {
+                        let view = cx.add_view(|cx| Self::new(workspace_locations, cx));
+                        cx.subscribe(&view, Self::on_event).detach();
+                        view
+                    });
+                } else {
+                    workspace.show_notification(0, cx, |cx| {
+                        cx.add_view(|_| {
+                            MessageNotification::new_message("No recent projects to open.")
+                        })
+                    })
+                }
+            });
         })
         .detach();
     }

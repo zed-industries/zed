@@ -1,3 +1,4 @@
+use log::warn;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
@@ -220,10 +221,10 @@ impl LanguageServer {
                             }
                         }
                     } else {
-                        return Err(anyhow!(
-                            "failed to deserialize message:\n{}",
+                        warn!(
+                            "Failed to deserialize message:\n{}",
                             std::str::from_utf8(&buffer)?
-                        ));
+                        );
                     }
 
                     // Don't starve the main thread when receiving lots of messages at once.

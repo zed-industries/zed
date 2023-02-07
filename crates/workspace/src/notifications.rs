@@ -174,7 +174,7 @@ pub mod simple_message_notification {
     }
 
     impl MessageNotification {
-        pub fn new_messsage<S: AsRef<str>>(message: S) -> MessageNotification {
+        pub fn new_message<S: AsRef<str>>(message: S) -> MessageNotification {
             Self {
                 message: message.as_ref().to_string(),
                 click_action: None,
@@ -320,7 +320,7 @@ where
             Err(err) => {
                 workspace.show_notification(0, cx, |cx| {
                     cx.add_view(|_cx| {
-                        simple_message_notification::MessageNotification::new_messsage(format!(
+                        simple_message_notification::MessageNotification::new_message(format!(
                             "Error: {:?}",
                             err,
                         ))

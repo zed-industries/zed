@@ -10,6 +10,7 @@ mod html;
 mod installation;
 mod json;
 mod language_plugin;
+mod lua;
 mod python;
 mod ruby;
 mod rust;
@@ -121,6 +122,11 @@ pub fn init(languages: Arc<LanguageRegistry>) {
             "racket",
             tree_sitter_racket::language(),
             None, //
+        ),
+        (
+            "lua",
+            tree_sitter_lua::language(),
+            Some(Box::new(lua::LuaLspAdapter)),
         ),
     ] {
         languages.register(name, load_config(name), grammar, lsp_adapter, load_queries);
