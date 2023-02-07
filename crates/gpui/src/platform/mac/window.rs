@@ -832,7 +832,10 @@ impl platform::Window for Window {
             let app = NSApplication::sharedApplication(nil);
 
             // Convert back to screen coordinates
-            let screen_point = position.to_screen_ns_point(self_borrow.native_window);
+            let screen_point = position.to_screen_ns_point(
+                self_borrow.native_window,
+                self_borrow.content_size().y() as f64,
+            );
 
             let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
             let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
