@@ -4,7 +4,6 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use serde_json::json;
 use smol::fs;
 
 use language::{LanguageServerName, LspAdapter};
