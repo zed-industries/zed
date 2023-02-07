@@ -19,7 +19,7 @@ pub trait Vector2FExt {
 impl Vector2FExt for Vector2F {
     fn to_screen_ns_point(&self, native_window: id) -> NSPoint {
         unsafe {
-            let point = NSPoint::new(self.x() as f64, -self.y() as f64);
+            let point = NSPoint::new(self.x() as f64, self.y() as f64);
             msg_send![native_window, convertPointToScreen: point]
         }
     }
