@@ -14,8 +14,8 @@ mod lua;
 mod python;
 mod ruby;
 mod rust;
-
 mod typescript;
+mod yaml;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -131,8 +131,8 @@ pub fn init(languages: Arc<LanguageRegistry>) {
         (
             "yaml",
             tree_sitter_yaml::language(),
-            None, //
-        )
+            Some(Box::new(yaml::YamlLspAdapter)),
+        ),
     ] {
         languages.register(name, load_config(name), grammar, lsp_adapter, load_queries);
     }
