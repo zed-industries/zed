@@ -46,10 +46,10 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
 pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
-    if s.len() > max_chars {
-        format!("{}…", truncate(s, max_chars.saturating_sub(3)))
-    } else {
-        s.to_string()
+    let truncation_ix = s.char_indices().map(|(i, _)| i).nth(max_chars);
+    match truncation_ix {
+        Some(length) => s[..length].to_string() + "…",
+        None => s.to_string(),
     }
 }
 
@@ -275,5 +275,13 @@ mod tests {
         });
 
         assert_eq!(foo, None);
+    }
+
+    #[test]
+    fn test_trancate_and_trailoff() {
+        assert_eq!(truncate_and_trailoff("", 5), "");
+        assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
+        assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
+        assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
     }
 }
