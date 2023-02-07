@@ -259,11 +259,7 @@ impl Item for ProjectSearchView {
                     .boxed(),
             )
             .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
-                let query_text = if query.as_str().len() > MAX_TAB_TITLE_LEN {
-                    query.as_str()[..MAX_TAB_TITLE_LEN].to_string() + "…"
-                } else {
-                    query.as_str().to_string()
-                };
+                let query_text = util::truncate_and_trailoff(query.as_str(), MAX_TAB_TITLE_LEN);
 
                 Label::new(query_text, tab_theme.label.clone())
                     .aligned()
