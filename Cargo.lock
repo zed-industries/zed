@@ -7192,6 +7192,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-yaml"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=36a64faf81931d3aaa8580a329344ac80ac0fb79#36a64faf81931d3aaa8580a329344ac80ac0fb79"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8430,6 +8439,7 @@ dependencies = [
  "tree-sitter-scheme",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-yaml",
  "unindent",
  "url",
  "urlencoding",

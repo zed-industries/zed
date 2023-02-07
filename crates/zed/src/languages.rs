@@ -128,6 +128,11 @@ pub fn init(languages: Arc<LanguageRegistry>) {
             tree_sitter_lua::language(),
             Some(Box::new(lua::LuaLspAdapter)),
         ),
+        (
+            "yaml",
+            tree_sitter_yaml::language(),
+            None, //
+        )
     ] {
         languages.register(name, load_config(name), grammar, lsp_adapter, load_queries);
     }
