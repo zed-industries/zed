@@ -7194,7 +7194,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=36a64faf81931d3aaa8580a329344ac80ac0fb79#36a64faf81931d3aaa8580a329344ac80ac0fb79"
+source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=9050a4a4a847ed29e25485b1292a36eab8ae3492#9050a4a4a847ed29e25485b1292a36eab8ae3492"
 dependencies = [
  "cc",
  "tree-sitter",
