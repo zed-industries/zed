@@ -910,15 +910,14 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_fullscreen)
     }
 
-    pub fn window_bounds(&self, window_id: usize) -> WindowBounds {
-        self.presenters_and_platform_windows[&window_id].1.bounds()
+    pub fn window_bounds(&self, window_id: usize) -> Option<WindowBounds> {
+        let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
+        Some(window.bounds())
     }
 
     pub fn window_display_uuid(&self, window_id: usize) -> Option<Uuid> {
-        self.presenters_and_platform_windows[&window_id]
-            .1
-            .screen()
-            .display_uuid()
+        let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
+        window.screen().display_uuid()
     }
 
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
@@ -2375,8 +2374,10 @@ impl MutableAppContext {
                 callback(is_fullscreen, this)
             });
 
-            if let Some(uuid) = this.window_display_uuid(window_id) {
-                let bounds = this.window_bounds(window_id);
+            if let Some((uuid, bounds)) = this
+                .window_display_uuid(window_id)
+                .zip(this.window_bounds(window_id))
+            {
                 let mut bounds_observations = this.window_bounds_observations.clone();
                 bounds_observations.emit(window_id, this, |callback, this| {
                     callback(bounds, uuid, this)
@@ -2560,8 +2561,10 @@ impl MutableAppContext {
     }
 
     fn handle_window_moved(&mut self, window_id: usize) {
-        if let Some(display) = self.window_display_uuid(window_id) {
-            let bounds = self.window_bounds(window_id);
+        if let Some((display, bounds)) = self
+            .window_display_uuid(window_id)
+            .zip(self.window_bounds(window_id))
+        {
             self.window_bounds_observations
                 .clone()
                 .emit(window_id, self, move |callback, this| {
@@ -3731,10 +3734,6 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn toggle_full_screen(&self) {
         self.app.toggle_window_full_screen(self.window_id)
-    }
-
-    pub fn window_bounds(&self) -> WindowBounds {
-        self.app.window_bounds(self.window_id)
     }
 
     pub fn prompt(
