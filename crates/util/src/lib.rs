@@ -276,4 +276,15 @@ mod tests {
 
         assert_eq!(foo, None);
     }
+
+    #[test]
+    fn test_trancate_and_trailoff() {
+        const MAX_CHARS: usize = 24;
+        assert_eq!(
+            truncate_and_trailoff("ajouter un compte d'èèèès", MAX_CHARS),
+            "ajouter un compte d'è…"
+        );
+        assert_eq!(truncate_and_trailoff("ajouter", MAX_CHARS), "ajouter");
+        assert_eq!(truncate_and_trailoff("", MAX_CHARS), "");
+    }
 }
