@@ -21,20 +21,6 @@ jobs:
 
           ${{ github.event.release.body }}
           ```
-  discourse_release:
-    if: ${{ ! github.event.release.prerelease }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Install Node
-        uses: actions/setup-node@v2
-        with:
-          node-version: "19"
-      - run: >
-          node "./script/discourse_release"
-          ${{ secrets.DISCOURSE_RELEASES_API_KEY }}
-          ${{ github.event.release.tag_name }}
-          ${{ github.event.release.body }}
   mixpanel_release:
     runs-on: ubuntu-latest
     steps:
