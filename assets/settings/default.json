@@ -221,6 +221,9 @@
         },
         "TSX": {
             "tab_size": 2
+        },
+        "Yaml": {
+            "tab_size": 2
         }
     },
     // LSP Specific settings.
