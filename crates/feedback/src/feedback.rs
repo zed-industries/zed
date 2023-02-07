@@ -28,7 +28,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
 
     let url = format!(
-        "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
+        "https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
         urlencoding::encode(&system_specs_text)
     );
 
@@ -48,7 +48,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
     cx.add_action(
         |_: &mut Workspace, _: &RequestFeature, cx: &mut ViewContext<Workspace>| {
-            let url = "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
+            let url = "https://github.com/zed-industries/community/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
             cx.dispatch_action(OpenBrowser {
                 url: url.into(),
             });
