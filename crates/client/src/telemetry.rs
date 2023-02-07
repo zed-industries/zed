@@ -40,6 +40,7 @@ struct TelemetryState {
     next_event_id: usize,
     flush_task: Option<Task<()>>,
     log_file: Option<NamedTempFile>,
+    is_staff: Option<bool>,
 }
 
 const MIXPANEL_EVENTS_URL: &'static str = "https://api.mixpanel.com/track";
@@ -125,6 +126,7 @@ impl Telemetry {
                 flush_task: Default::default(),
                 next_event_id: 0,
                 log_file: None,
+                is_staff: None,
             }),
         });
 
@@ -202,6 +204,7 @@ impl Telemetry {
         let device_id = state.device_id.clone();
         let metrics_id: Option<Arc<str>> = metrics_id.map(|id| id.into());
         state.metrics_id = metrics_id.clone();
+        state.is_staff = Some(is_staff);
         drop(state);
 
         if let Some((token, device_id)) = MIXPANEL_TOKEN.as_ref().zip(device_id) {
@@ -280,6 +283,10 @@ impl Telemetry {
 
     pub fn metrics_id(self: &Arc<Self>) -> Option<Arc<str>> {
         self.state.lock().metrics_id.clone()
+    }
+
+    pub fn is_staff(self: &Arc<Self>) -> Option<bool> {
+        self.state.lock().is_staff
     }
 
     fn flush(self: &Arc<Self>) {
