@@ -533,9 +533,10 @@ impl View for FeedbackInfoText {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
+        let text = "We read whatever you submit here. For issues and discussions, visit the community repo on GitHub.";
         Label::new(
-            "We read whatever you submit here. For issues and discussions, visit the community repo on GitHub.".to_string(),
             theme.workspace.titlebar.outdated_warning.text.clone(),
+            text.to_string(),
         )
         .contained()
         .with_style(theme.workspace.titlebar.outdated_warning.container)
