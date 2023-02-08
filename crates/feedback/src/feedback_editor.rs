@@ -540,6 +540,8 @@ impl View for FeedbackInfoText {
         .contained()
         .with_style(theme.workspace.titlebar.outdated_warning.container)
         .aligned()
+        .left()
+        .clipped()
         .boxed()
     }
 }
@@ -554,7 +556,9 @@ impl ToolbarItemView for FeedbackInfoText {
         if let Some(feedback_editor) = active_pane_item.and_then(|i| i.downcast::<FeedbackEditor>())
         {
             self.active_item = Some(feedback_editor);
-            ToolbarItemLocation::PrimaryLeft { flex: None }
+            ToolbarItemLocation::PrimaryLeft {
+                flex: Some((1., false)),
+            }
         } else {
             self.active_item = None;
             ToolbarItemLocation::Hidden
