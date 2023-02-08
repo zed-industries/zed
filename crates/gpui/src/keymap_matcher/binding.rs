@@ -41,7 +41,7 @@ impl Binding {
         })
     }
 
-    fn match_context(&self, contexts: &[KeymapContext]) -> bool {
+    pub fn match_context(&self, contexts: &[KeymapContext]) -> bool {
         self.context_predicate
             .as_ref()
             .map(|predicate| predicate.eval(contexts))

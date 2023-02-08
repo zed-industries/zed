@@ -12,15 +12,21 @@ pub struct KeystrokeLabel {
     action: Box<dyn Action>,
     container_style: ContainerStyle,
     text_style: TextStyle,
+    window_id: usize,
+    view_id: usize,
 }
 
 impl KeystrokeLabel {
     pub fn new(
+        window_id: usize,
+        view_id: usize,
         action: Box<dyn Action>,
         container_style: ContainerStyle,
         text_style: TextStyle,
     ) -> Self {
         Self {
+            window_id,
+            view_id,
             action,
             container_style,
             text_style,
@@ -37,7 +43,10 @@ impl Element for KeystrokeLabel {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, ElementBox) {
-        let mut element = if let Some(keystrokes) = cx.keystrokes_for_action(self.action.as_ref()) {
+        let mut element = if let Some(keystrokes) =
+            cx.app
+                .keystrokes_for_action(self.window_id, self.view_id, self.action.as_ref())
+        {
             Flex::row()
                 .with_children(keystrokes.iter().map(|keystroke| {
                     Label::new(keystroke.to_string(), self.text_style.clone())
