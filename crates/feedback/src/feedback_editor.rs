@@ -481,6 +481,13 @@ impl View for SubmitFeedbackButton {
         .aligned()
         .contained()
         .with_margin_left(theme.feedback.button_margin)
+        .with_tooltip::<Self, _>(
+            0,
+            "cmd-s".into(),
+            Some(Box::new(SubmitFeedback)),
+            theme.tooltip.clone(),
+            cx,
+        )
         .boxed()
     }
 }
