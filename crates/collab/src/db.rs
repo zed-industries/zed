@@ -1996,7 +1996,7 @@ impl Database {
                     }
                 }
             }
-        }        
+        }
         drop(db_projects);
 
         let mut db_followers = db_room.find_related(follower::Entity).stream(tx).await?;

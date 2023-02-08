@@ -459,10 +459,10 @@ impl Room {
         self.participant_user_ids.contains(&user_id)
     }
 
-    pub fn follows(&self, leader_id: PeerId) -> Option<&[PeerId]> {
+    pub fn follows(&self, leader_id: PeerId) -> &[PeerId] {
         self.follows_by_leader_id
             .get(&leader_id)
-            .map(|v| v.as_slice())
+            .map_or(&[], |v| v.as_slice())
     }
 
     async fn handle_room_updated(

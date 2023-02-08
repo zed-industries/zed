@@ -510,7 +510,8 @@ impl CollabTitlebarItem {
                     Some(self.render_face_pile(
                         &user,
                         replica_id,
-                        Some((participant.peer_id, participant.location)),
+                        participant.peer_id,
+                        Some(participant.location),
                         workspace,
                         theme,
                         cx,
@@ -530,9 +531,18 @@ impl CollabTitlebarItem {
     ) -> Option<ElementBox> {
         let user = workspace.read(cx).user_store().read(cx).current_user();
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
+        let peer_id = workspace.read(cx).client().peer_id()?;
         let status = *workspace.read(cx).client().status().borrow();
         if let Some(user) = user {
-            Some(self.render_face_pile(&user, Some(replica_id), None, workspace, theme, cx))
+            Some(self.render_face_pile(
+                &user,
+                Some(replica_id),
+                peer_id,
+                None,
+                workspace,
+                theme,
+                cx,
+            ))
         } else if matches!(status, client::Status::UpgradeRequired) {
             None
         } else {
@@ -560,17 +570,16 @@ impl CollabTitlebarItem {
         &self,
         user: &User,
         replica_id: Option<ReplicaId>,
-        peer_id_and_location: Option<(PeerId, ParticipantLocation)>,
+        peer_id: PeerId,
+        location: Option<ParticipantLocation>,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let is_followed = peer_id_and_location.map_or(false, |(peer_id, _)| {
-            workspace.read(cx).is_following(peer_id)
-        });
+        let is_followed = workspace.read(cx).is_following(peer_id);
 
         let mut avatar_style;
-        if let Some((_, location)) = peer_id_and_location {
+        if let Some(location) = location {
             if let ParticipantLocation::SharedProject { project_id } = location {
                 if Some(project_id) == workspace.read(cx).project().read(cx).remote_id() {
                     avatar_style = theme.workspace.titlebar.avatar;
@@ -599,11 +608,8 @@ impl CollabTitlebarItem {
                     .with_child(Self::render_face(avatar.clone(), avatar_style, theme))
                     .with_children(
                         (|| {
-                            let peer_id_and_location = peer_id_and_location?;
-                            let peer_id = peer_id_and_location.0;
-
                             let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
-                            let followers = room.follows(peer_id)?;
+                            let followers = room.follows(peer_id);
 
                             Some(followers.into_iter().flat_map(|&follower| {
                                 let participant = room.remote_participant_for_peer_id(follower)?;
@@ -614,7 +620,6 @@ impl CollabTitlebarItem {
                         .into_iter()
                         .flatten(),
                     )
-                    .with_reversed_paint_order()
                     .boxed()
             }))
             .with_children(replica_color.map(|replica_color| {
@@ -626,13 +631,11 @@ impl CollabTitlebarItem {
                     .bottom()
                     .boxed()
             }))
-            .constrained()
-            .with_width(theme.workspace.titlebar.avatar_width)
             .contained()
             .with_margin_left(theme.workspace.titlebar.avatar_margin)
             .boxed();
 
-        if let Some((peer_id, location)) = peer_id_and_location {
+        if let Some(location) = location {
             if let Some(replica_id) = replica_id {
                 MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
                     .with_cursor_style(CursorStyle::PointingHand)
