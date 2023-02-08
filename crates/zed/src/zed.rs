@@ -615,7 +615,7 @@ fn open_telemetry_log_file(
                             0..0,
                             concat!(
                                 "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
-                                "// After the beta release, we'll provide the ability to opt out of this telemetry.\n",
+                                "// Telemetry can be disabled via the `settings.json` file.\n",
                                 "// Here is the data that has been reported for the current session:\n",
                                 "\n"
                             ),
