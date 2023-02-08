@@ -1324,6 +1324,10 @@ impl Client {
     pub fn metrics_id(&self) -> Option<Arc<str>> {
         self.telemetry.metrics_id()
     }
+
+    pub fn is_staff(&self) -> Option<bool> {
+        self.telemetry.is_staff()
+    }
 }
 
 impl WeakSubscriber {
