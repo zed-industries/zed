@@ -483,6 +483,7 @@ impl Window {
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
+
             assert!(!native_view.is_null());
 
             let window = Self(Rc::new(RefCell::new(WindowState {
@@ -828,12 +829,14 @@ impl platform::Window for Window {
         let self_id = self_borrow.id;
 
         unsafe {
-            let window_frame = self_borrow.frame();
             let app = NSApplication::sharedApplication(nil);
 
             // Convert back to screen coordinates
-            let screen_point =
-                (position + window_frame.origin()).to_screen_ns_point(self_borrow.native_window);
+            let screen_point = position.to_screen_ns_point(
+                self_borrow.native_window,
+                self_borrow.content_size().y() as f64,
+            );
+
             let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
             let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
 

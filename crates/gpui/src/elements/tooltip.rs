@@ -61,11 +61,14 @@ impl Tooltip {
     ) -> Self {
         struct ElementState<Tag>(Tag);
         struct MouseEventHandlerState<Tag>(Tag);
+        let focused_view_id = cx.focused_view_id(cx.window_id).unwrap();
 
         let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(
+                cx.window_id,
+                focused_view_id,
                 text.clone(),
                 style.clone(),
                 action.as_ref().map(|a| a.boxed_clone()),
@@ -74,7 +77,7 @@ impl Tooltip {
             .boxed();
             Some(
                 Overlay::new(
-                    Self::render_tooltip(text, style, action, false)
+                    Self::render_tooltip(cx.window_id, focused_view_id, text, style, action, false)
                         .constrained()
                         .dynamically(move |constraint, cx| {
                             SizeConstraint::strict_along(
@@ -128,6 +131,8 @@ impl Tooltip {
     }
 
     pub fn render_tooltip(
+        window_id: usize,
+        focused_view_id: usize,
         text: String,
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
@@ -145,8 +150,13 @@ impl Tooltip {
                 }
             })
             .with_children(action.map(|action| {
-                let keystroke_label =
-                    KeystrokeLabel::new(action, style.keystroke.container, style.keystroke.text);
+                let keystroke_label = KeystrokeLabel::new(
+                    window_id,
+                    focused_view_id,
+                    action,
+                    style.keystroke.container,
+                    style.keystroke.text,
+                );
                 if measure {
                     keystroke_label.boxed()
                 } else {

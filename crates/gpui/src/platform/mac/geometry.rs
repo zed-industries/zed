@@ -14,12 +14,12 @@ use pathfinder_geometry::{
 
 pub trait Vector2FExt {
     /// Converts self to an NSPoint with y axis pointing up.
-    fn to_screen_ns_point(&self, native_window: id) -> NSPoint;
+    fn to_screen_ns_point(&self, native_window: id, window_height: f64) -> NSPoint;
 }
 impl Vector2FExt for Vector2F {
-    fn to_screen_ns_point(&self, native_window: id) -> NSPoint {
+    fn to_screen_ns_point(&self, native_window: id, window_height: f64) -> NSPoint {
         unsafe {
-            let point = NSPoint::new(self.x() as f64, -self.y() as f64);
+            let point = NSPoint::new(self.x() as f64, window_height - self.y() as f64);
             msg_send![native_window, convertPointToScreen: point]
         }
     }
