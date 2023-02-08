@@ -45,8 +45,8 @@ pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut Mutabl
     });
 
     cx.add_async_action(
-        |toolbar_button: &mut ToolbarButton, _: &SubmitFeedback, cx| {
-            if let Some(active_item) = toolbar_button.active_item.as_ref() {
+        |submit_feedback_button: &mut SubmitFeedbackButton, _: &SubmitFeedback, cx| {
+            if let Some(active_item) = submit_feedback_button.active_item.as_ref() {
                 Some(active_item.update(cx, |feedback_editor, cx| feedback_editor.handle_save(cx)))
             } else {
                 None
@@ -55,15 +55,15 @@ pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut Mutabl
     );
 }
 
-pub struct StatusBarButton;
+pub struct DeployFeedbackButton;
 
-impl Entity for StatusBarButton {
+impl Entity for DeployFeedbackButton {
     type Event = ();
 }
 
-impl View for StatusBarButton {
+impl View for DeployFeedbackButton {
     fn ui_name() -> &'static str {
-        "StatusBarButton"
+        "DeployFeedbackButton"
     }
 
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
@@ -87,7 +87,7 @@ impl View for StatusBarButton {
     }
 }
 
-impl StatusItemView for StatusBarButton {
+impl StatusItemView for DeployFeedbackButton {
     fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
 }
 
@@ -442,11 +442,11 @@ impl SearchableItem for FeedbackEditor {
     }
 }
 
-pub struct ToolbarButton {
+pub struct SubmitFeedbackButton {
     active_item: Option<ViewHandle<FeedbackEditor>>,
 }
 
-impl ToolbarButton {
+impl SubmitFeedbackButton {
     pub fn new() -> Self {
         Self {
             active_item: Default::default(),
@@ -454,13 +454,13 @@ impl ToolbarButton {
     }
 }
 
-impl Entity for ToolbarButton {
+impl Entity for SubmitFeedbackButton {
     type Event = ();
 }
 
-impl View for ToolbarButton {
+impl View for SubmitFeedbackButton {
     fn ui_name() -> &'static str {
-        "ToolbarButton"
+        "SubmitFeedbackButton"
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -484,7 +484,7 @@ impl View for ToolbarButton {
     }
 }
 
-impl ToolbarItemView for ToolbarButton {
+impl ToolbarItemView for SubmitFeedbackButton {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
