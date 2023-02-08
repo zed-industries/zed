@@ -55,13 +55,13 @@ impl ThemeRegistry {
             .load(&asset_path)
             .with_context(|| format!("failed to load theme file {}", asset_path))?;
 
-        let mut theme: Theme = fonts::with_font_cache(self.font_cache.clone(), || {
+        // Allocate into the heap directly, the Theme struct is too large to fit in the stack.
+        let mut theme: Arc<Theme> = fonts::with_font_cache(self.font_cache.clone(), || {
             serde_path_to_error::deserialize(&mut serde_json::Deserializer::from_slice(&theme_json))
         })?;
 
         // Reset name to be the file path, so that we can use it to access the stored themes
-        theme.meta.name = name.into();
-        let theme = Arc::new(theme);
+        Arc::get_mut(&mut theme).unwrap().meta.name = name.into();
         self.themes.lock().insert(name.to_string(), theme.clone());
         Ok(theme)
     }

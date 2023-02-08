@@ -25,7 +25,7 @@ use settings::Settings;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    AppState, StatusItemView, Workspace,
+    AppState, StatusItemView, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 use crate::system_specs::SystemSpecs;
@@ -35,7 +35,7 @@ const FEEDBACK_PLACEHOLDER_TEXT: &str = "Save to submit feedback as Markdown.";
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
-actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
+actions!(feedback, [GiveFeedback, SubmitFeedback]);
 
 pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action({
@@ -43,17 +43,27 @@ pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut Mutabl
             FeedbackEditor::deploy(system_specs.clone(), workspace, app_state.clone(), cx);
         }
     });
+
+    cx.add_async_action(
+        |submit_feedback_button: &mut SubmitFeedbackButton, _: &SubmitFeedback, cx| {
+            if let Some(active_item) = submit_feedback_button.active_item.as_ref() {
+                Some(active_item.update(cx, |feedback_editor, cx| feedback_editor.handle_save(cx)))
+            } else {
+                None
+            }
+        },
+    );
 }
 
-pub struct FeedbackButton;
+pub struct DeployFeedbackButton;
 
-impl Entity for FeedbackButton {
+impl Entity for DeployFeedbackButton {
     type Event = ();
 }
 
-impl View for FeedbackButton {
+impl View for DeployFeedbackButton {
     fn ui_name() -> &'static str {
-        "FeedbackButton"
+        "DeployFeedbackButton"
     }
 
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
@@ -77,7 +87,7 @@ impl View for FeedbackButton {
     }
 }
 
-impl StatusItemView for FeedbackButton {
+impl StatusItemView for DeployFeedbackButton {
     fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
 }
 
@@ -120,11 +130,7 @@ impl FeedbackEditor {
         }
     }
 
-    fn handle_save(
-        &mut self,
-        _: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    fn handle_save(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
         let feedback_text = self.editor.read(cx).text(cx);
         let feedback_char_count = feedback_text.chars().count();
         let feedback_text = feedback_text.trim().to_string();
@@ -304,19 +310,19 @@ impl Item for FeedbackEditor {
 
     fn save(
         &mut self,
-        project: ModelHandle<Project>,
+        _: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(project, cx)
+        self.handle_save(cx)
     }
 
     fn save_as(
         &mut self,
-        project: ModelHandle<Project>,
+        _: ModelHandle<Project>,
         _: std::path::PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(project, cx)
+        self.handle_save(cx)
     }
 
     fn reload(
@@ -433,5 +439,65 @@ impl SearchableItem for FeedbackEditor {
     ) -> Option<usize> {
         self.editor
             .update(cx, |editor, cx| editor.active_match_index(matches, cx))
+    }
+}
+
+pub struct SubmitFeedbackButton {
+    active_item: Option<ViewHandle<FeedbackEditor>>,
+}
+
+impl SubmitFeedbackButton {
+    pub fn new() -> Self {
+        Self {
+            active_item: Default::default(),
+        }
+    }
+}
+
+impl Entity for SubmitFeedbackButton {
+    type Event = ();
+}
+
+impl View for SubmitFeedbackButton {
+    fn ui_name() -> &'static str {
+        "SubmitFeedbackButton"
+    }
+
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = cx.global::<Settings>().theme.clone();
+        enum SubmitFeedbackButton {}
+        MouseEventHandler::<SubmitFeedbackButton>::new(0, cx, |state, _| {
+            let style = theme.feedback.submit_button.style_for(state, false);
+            Label::new("Submit as Markdown".into(), style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, cx| {
+            cx.dispatch_action(SubmitFeedback)
+        })
+        .aligned()
+        .contained()
+        .with_margin_left(theme.feedback.button_margin)
+        .boxed()
+    }
+}
+
+impl ToolbarItemView for SubmitFeedbackButton {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> workspace::ToolbarItemLocation {
+        cx.notify();
+        if let Some(feedback_editor) = active_pane_item.and_then(|i| i.downcast::<FeedbackEditor>())
+        {
+            self.active_item = Some(feedback_editor);
+            ToolbarItemLocation::PrimaryRight { flex: None }
+        } else {
+            self.active_item = None;
+            ToolbarItemLocation::Hidden
+        }
     }
 }

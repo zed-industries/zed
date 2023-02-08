@@ -19,6 +19,7 @@ import terminal from "./terminal";
 import contactList from "./contactList";
 import incomingCallNotification from "./incomingCallNotification";
 import { ColorScheme } from "../themes/common/colorScheme";
+import feedback from "./feedback";
 
 export default function app(colorScheme: ColorScheme): Object {
   return {
@@ -51,6 +52,7 @@ export default function app(colorScheme: ColorScheme): Object {
     simpleMessageNotification: simpleMessageNotification(colorScheme),
     tooltip: tooltip(colorScheme),
     terminal: terminal(colorScheme),
+    feedback: feedback(colorScheme),
     colorScheme: {
       ...colorScheme,
       players: Object.values(colorScheme.players),
