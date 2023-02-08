@@ -315,7 +315,8 @@
     {
         "context": "Editor && VimWaiting",
         "bindings": {
-            "*": "gpui::KeyPressed"
+            "*": "gpui::KeyPressed",
+            "escape": "editor::Cancel"
         }
     }
 ]

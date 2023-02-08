@@ -400,7 +400,7 @@ pub enum SelectMode {
     All,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
     SingleLine,
     AutoHeight { max_lines: usize },
@@ -1732,11 +1732,13 @@ impl Editor {
     }
 
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        let text: Arc<str> = text.into();
+
         if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text });
             return;
         }
 
-        let text: Arc<str> = text.into();
         let selections = self.selections.all_adjusted(cx);
         let mut edits = Vec::new();
         let mut new_selections = Vec::with_capacity(selections.len());
@@ -6187,6 +6189,9 @@ impl Deref for EditorSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    InputIgnored {
+        text: Arc<str>,
+    },
     ExcerptsAdded {
         buffer: ModelHandle<Buffer>,
         predecessor: ExcerptId,
@@ -6253,8 +6258,10 @@ impl View for Editor {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        let focused_event = EditorFocused(cx.handle());
-        cx.emit_global(focused_event);
+        if cx.is_self_focused() {
+            let focused_event = EditorFocused(cx.handle());
+            cx.emit_global(focused_event);
+        }
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
         } else {
