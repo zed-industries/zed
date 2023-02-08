@@ -571,9 +571,9 @@ impl ProjectSearchView {
             self.active_match_index = None;
         } else {
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
-            let reset_selections = self.search_id != prev_search_id;
+            let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
-                if reset_selections {
+                if is_new_search {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_ranges(match_ranges.first().cloned())
                     });
@@ -584,7 +584,7 @@ impl ProjectSearchView {
                     cx,
                 );
             });
-            if self.query_editor.is_focused(cx) {
+            if is_new_search && self.query_editor.is_focused(cx) {
                 self.focus_results_editor(cx);
             }
         }
