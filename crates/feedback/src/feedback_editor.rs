@@ -31,7 +31,6 @@ use workspace::{
 use crate::system_specs::SystemSpecs;
 
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
-const FEEDBACK_PLACEHOLDER_TEXT: &str = "Save to submit feedback as Markdown.";
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
@@ -117,7 +116,6 @@ impl FeedbackEditor {
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
-            editor.set_placeholder_text(FEEDBACK_PLACEHOLDER_TEXT, cx);
             editor
         });
 
