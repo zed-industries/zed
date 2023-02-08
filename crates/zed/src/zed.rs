@@ -11,7 +11,7 @@ use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
-use feedback::feedback_editor::ToolbarButton;
+use feedback::feedback_editor::SubmitFeedbackButton;
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -288,7 +288,7 @@ pub fn initialize_workspace(
                         toolbar.add_item(buffer_search_bar, cx);
                         let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                         toolbar.add_item(project_search_bar, cx);
-                        let submit_feedback_button = cx.add_view(|_| ToolbarButton::new());
+                        let submit_feedback_button = cx.add_view(|_| SubmitFeedbackButton::new());
                         toolbar.add_item(submit_feedback_button, cx);
                     })
                 });
@@ -347,7 +347,7 @@ pub fn initialize_workspace(
     let activity_indicator =
         activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    let feedback_button = cx.add_view(|_| feedback::feedback_editor::StatusBarButton {});
+    let feedback_button = cx.add_view(|_| feedback::feedback_editor::DeployFeedbackButton {});
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);

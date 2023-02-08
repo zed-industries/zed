@@ -359,7 +359,7 @@ impl WindowInputHandler {
         // paths. In that case, the AppContext will already be borrowed, so any
         // InputHandler methods need to fail gracefully.
         //
-        // See https://github.com/zed-industries/feedback/issues/444
+        // See https://github.com/zed-industries/community/issues/444
         let app = self.app.try_borrow().ok()?;
 
         let view_id = app.focused_view_id(self.window_id)?;

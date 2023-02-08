@@ -2491,7 +2491,7 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                         indoc::indoc! {"
                             Failed to load any database file :(
                         "},
-                        OsOpen("https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
+                        OsOpen("https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
                         "Click to let us know about this error"
                     )
                 })
