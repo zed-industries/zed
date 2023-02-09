@@ -11,6 +11,11 @@ const base = {
     mid: chroma.lch(55, 0, 0),
     dark: chroma.lch(10, 0, 0),
   },
+  rose: {
+    light: chroma.lch(96, 5, 14),
+    mid: chroma.lch(56, 74, 21),
+    dark: chroma.lch(10, 24, 21),
+  },
   red: {
     light: chroma.lch(96, 4, 31),
     mid: chroma.lch(55, 77, 31),
@@ -25,5 +30,10 @@ export const gray = chroma.scale([
   base.gray.light,
   base.gray.mid,
   base.gray.dark,
+]);
+export const rose = chroma.scale([
+  base.rose.light,
+  base.rose.mid,
+  base.rose.dark,
 ]);
 export const red = chroma.scale([base.red.light, base.red.mid, base.red.dark]);
