@@ -11,7 +11,7 @@ use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
-use feedback::feedback_editor::SubmitFeedbackButton;
+use feedback::feedback_editor::{FeedbackInfoText, SubmitFeedbackButton};
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -290,6 +290,8 @@ pub fn initialize_workspace(
                         toolbar.add_item(project_search_bar, cx);
                         let submit_feedback_button = cx.add_view(|_| SubmitFeedbackButton::new());
                         toolbar.add_item(submit_feedback_button, cx);
+                        let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
+                        toolbar.add_item(feedback_info_text, cx);
                     })
                 });
             }

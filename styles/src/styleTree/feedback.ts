@@ -5,7 +5,6 @@ import { background, border, text } from "./components";
 export default function feedback(colorScheme: ColorScheme) {
   let layer = colorScheme.highest;
 
-  // Currently feedback only needs style for the submit feedback button
   return {
     submit_button: {
       ...text(layer, "mono", "on"),
@@ -32,6 +31,7 @@ export default function feedback(colorScheme: ColorScheme) {
         border: border(layer, "on", "hovered"),
       },
     },
-    button_margin: 8
+    button_margin: 8,
+    info_text: text(layer, "sans", "default", { size: "xs" }),
   };
 }
