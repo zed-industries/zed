@@ -72,6 +72,7 @@ impl View for CollabTitlebarItem {
         }
 
         let theme = cx.global::<Settings>().theme.clone();
+        let user = workspace.read(cx).user_store().read(cx).current_user();
 
         let mut left_container = Flex::row();
 
@@ -86,7 +87,7 @@ impl View for CollabTitlebarItem {
             left_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
             left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
 
-            left_container.add_child(self.render_current_user(&workspace, &theme, cx));
+            left_container.add_child(self.render_current_user(&workspace, &theme, &user, cx));
             left_container.add_children(self.render_collaborators(&workspace, &theme, room, cx));
         }
 
@@ -104,6 +105,20 @@ impl View for CollabTitlebarItem {
             }
         }
         right_container.add_children(self.render_connection_status(&workspace, cx));
+
+        if let Some(user) = user {
+            //TODO: Add style
+            right_container.add_child(
+                Label::new(
+                    user.github_login.clone(),
+                    theme.workspace.titlebar.title.clone(),
+                )
+                .aligned()
+                .boxed(),
+            );
+        } else {
+            right_container.add_child(Self::render_authenticate(&theme, cx));
+        }
 
         Stack::new()
             .with_child(left_container.boxed())
@@ -523,21 +538,17 @@ impl CollabTitlebarItem {
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
+        user: &Option<Arc<User>>,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let user = workspace
-            .read(cx)
-            .user_store()
-            .read(cx)
-            .current_user()
-            .expect("Active call without user");
+        let user = user.as_ref().expect("Active call without user");
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         let peer_id = workspace
             .read(cx)
             .client()
             .peer_id()
             .expect("Active call without peer id");
-        self.render_face_pile(&user, Some(replica_id), peer_id, None, workspace, theme, cx)
+        self.render_face_pile(user, Some(replica_id), peer_id, None, workspace, theme, cx)
     }
 
     fn render_authenticate(theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
