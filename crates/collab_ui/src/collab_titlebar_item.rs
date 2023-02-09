@@ -2,7 +2,7 @@ use crate::{
     collaborator_list_popover, collaborator_list_popover::CollaboratorListPopover,
     contact_notification::ContactNotification, contacts_popover, ToggleScreenSharing,
 };
-use call::{ActiveCall, ParticipantLocation};
+use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
@@ -82,13 +82,13 @@ impl View for CollabTitlebarItem {
                 .boxed(),
         );
 
-        if ActiveCall::global(cx).read(cx).room().is_some() {
+        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
             left_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
             left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
-        }
 
-        left_container.add_children(self.render_current_user(&workspace, &theme, cx));
-        left_container.add_children(self.render_collaborators(&workspace, &theme, cx));
+            left_container.add_child(self.render_current_user(&workspace, &theme, cx));
+            left_container.add_children(self.render_collaborators(&workspace, &theme, room, cx));
+        }
 
         let mut right_container = Flex::row();
 
@@ -486,41 +486,37 @@ impl CollabTitlebarItem {
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
+        room: ModelHandle<Room>,
         cx: &mut RenderContext<Self>,
     ) -> Vec<ElementBox> {
-        let active_call = ActiveCall::global(cx);
-        if let Some(room) = active_call.read(cx).room().cloned() {
-            let project = workspace.read(cx).project().read(cx);
-            let mut participants = room
-                .read(cx)
-                .remote_participants()
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
-            participants.sort_by_key(|p| Some(project.collaborators().get(&p.peer_id)?.replica_id));
-            participants
-                .into_iter()
-                .filter_map(|participant| {
-                    let project = workspace.read(cx).project().read(cx);
-                    let replica_id = project
-                        .collaborators()
-                        .get(&participant.peer_id)
-                        .map(|collaborator| collaborator.replica_id);
-                    let user = participant.user.clone();
-                    Some(self.render_face_pile(
-                        &user,
-                        replica_id,
-                        participant.peer_id,
-                        Some(participant.location),
-                        workspace,
-                        theme,
-                        cx,
-                    ))
-                })
-                .collect()
-        } else {
-            Default::default()
-        }
+        let project = workspace.read(cx).project().read(cx);
+        let mut participants = room
+            .read(cx)
+            .remote_participants()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        participants.sort_by_key(|p| Some(project.collaborators().get(&p.peer_id)?.replica_id));
+        participants
+            .into_iter()
+            .filter_map(|participant| {
+                let project = workspace.read(cx).project().read(cx);
+                let replica_id = project
+                    .collaborators()
+                    .get(&participant.peer_id)
+                    .map(|collaborator| collaborator.replica_id);
+                let user = participant.user.clone();
+                Some(self.render_face_pile(
+                    &user,
+                    replica_id,
+                    participant.peer_id,
+                    Some(participant.location),
+                    workspace,
+                    theme,
+                    cx,
+                ))
+            })
+            .collect()
     }
 
     fn render_current_user(
@@ -528,42 +524,38 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
-        let user = workspace.read(cx).user_store().read(cx).current_user();
+    ) -> ElementBox {
+        let user = workspace
+            .read(cx)
+            .user_store()
+            .read(cx)
+            .current_user()
+            .expect("Active call without user");
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
-        let peer_id = workspace.read(cx).client().peer_id()?;
-        let status = *workspace.read(cx).client().status().borrow();
-        if let Some(user) = user {
-            Some(self.render_face_pile(
-                &user,
-                Some(replica_id),
-                peer_id,
-                None,
-                workspace,
-                theme,
-                cx,
-            ))
-        } else if matches!(status, client::Status::UpgradeRequired) {
-            None
-        } else {
-            Some(
-                MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
-                    let style = theme
-                        .workspace
-                        .titlebar
-                        .sign_in_prompt
-                        .style_for(state, false);
-                    Label::new("Sign in", style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                        .boxed()
-                })
-                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(Authenticate))
-                .with_cursor_style(CursorStyle::PointingHand)
-                .aligned()
-                .boxed(),
-            )
-        }
+        let peer_id = workspace
+            .read(cx)
+            .client()
+            .peer_id()
+            .expect("Active call without peer id");
+        self.render_face_pile(&user, Some(replica_id), peer_id, None, workspace, theme, cx)
+    }
+
+    fn render_authenticate(theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
+            let style = theme
+                .workspace
+                .titlebar
+                .sign_in_prompt
+                .style_for(state, false);
+            Label::new("Sign in", style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(Authenticate))
+        .with_cursor_style(CursorStyle::PointingHand)
+        .aligned()
+        .boxed()
     }
 
     fn render_face_pile(
