@@ -31,7 +31,6 @@ use workspace::{
 use crate::system_specs::SystemSpecs;
 
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
-const FEEDBACK_PLACEHOLDER_TEXT: &str = "Save to submit feedback as Markdown.";
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
@@ -117,7 +116,6 @@ impl FeedbackEditor {
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
-            editor.set_placeholder_text(FEEDBACK_PLACEHOLDER_TEXT, cx);
             editor
         });
 
@@ -483,6 +481,13 @@ impl View for SubmitFeedbackButton {
         .aligned()
         .contained()
         .with_margin_left(theme.feedback.button_margin)
+        .with_tooltip::<Self, _>(
+            0,
+            "cmd-s".into(),
+            Some(Box::new(SubmitFeedback)),
+            theme.tooltip.clone(),
+            cx,
+        )
         .boxed()
     }
 }
@@ -498,6 +503,59 @@ impl ToolbarItemView for SubmitFeedbackButton {
         {
             self.active_item = Some(feedback_editor);
             ToolbarItemLocation::PrimaryRight { flex: None }
+        } else {
+            self.active_item = None;
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+
+pub struct FeedbackInfoText {
+    active_item: Option<ViewHandle<FeedbackEditor>>,
+}
+
+impl FeedbackInfoText {
+    pub fn new() -> Self {
+        Self {
+            active_item: Default::default(),
+        }
+    }
+}
+
+impl Entity for FeedbackInfoText {
+    type Event = ();
+}
+
+impl View for FeedbackInfoText {
+    fn ui_name() -> &'static str {
+        "FeedbackInfoText"
+    }
+
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = cx.global::<Settings>().theme.clone();
+        let text = "We read whatever you submit here. For issues and discussions, visit the community repo on GitHub.";
+        Label::new(text.to_string(), theme.feedback.info_text.text.clone())
+            .contained()
+            .aligned()
+            .left()
+            .clipped()
+            .boxed()
+    }
+}
+
+impl ToolbarItemView for FeedbackInfoText {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> workspace::ToolbarItemLocation {
+        cx.notify();
+        if let Some(feedback_editor) = active_pane_item.and_then(|i| i.downcast::<FeedbackEditor>())
+        {
+            self.active_item = Some(feedback_editor);
+            ToolbarItemLocation::PrimaryLeft {
+                flex: Some((1., false)),
+            }
         } else {
             self.active_item = None;
             ToolbarItemLocation::Hidden
