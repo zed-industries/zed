@@ -811,6 +811,7 @@ pub struct TerminalStyle {
 pub struct FeedbackStyle {
     pub submit_button: Interactive<ContainedText>,
     pub button_margin: f32,
+    pub info_text: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]
