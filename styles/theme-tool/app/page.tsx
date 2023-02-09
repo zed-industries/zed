@@ -49,18 +49,15 @@ export default function Home() {
         <main>
             <div style={{ display: 'flex', gap: '1px' }}>
                 <ColorChips colorScale={grayLight} />
-                <ColorChips colorScale={grayDark} />
-
                 <ColorChips colorScale={roseLight} />
-                <ColorChips colorScale={roseDark} />
-
                 <ColorChips colorScale={redLight} />
-                <ColorChips colorScale={redDark} />
-
                 <ColorChips colorScale={orangeLight} />
-                <ColorChips colorScale={orangeDark} />
-
                 <ColorChips colorScale={amberLight} />
+
+                <ColorChips colorScale={grayDark} />
+                <ColorChips colorScale={roseDark} />
+                <ColorChips colorScale={redDark} />
+                <ColorChips colorScale={orangeDark} />
                 <ColorChips colorScale={amberDark} />
             </div>
         </main>
