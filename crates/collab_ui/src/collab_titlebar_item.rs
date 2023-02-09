@@ -505,6 +505,7 @@ impl CollabTitlebarItem {
         cx: &mut RenderContext<Self>,
     ) -> Vec<ElementBox> {
         let project = workspace.read(cx).project().read(cx);
+
         let mut participants = room
             .read(cx)
             .remote_participants()
@@ -512,6 +513,7 @@ impl CollabTitlebarItem {
             .cloned()
             .collect::<Vec<_>>();
         participants.sort_by_key(|p| Some(project.collaborators().get(&p.peer_id)?.replica_id));
+
         participants
             .into_iter()
             .filter_map(|participant| {
@@ -615,8 +617,23 @@ impl CollabTitlebarItem {
                             let followers = room.follows(peer_id);
 
                             Some(followers.into_iter().flat_map(|&follower| {
-                                let participant = room.remote_participant_for_peer_id(follower)?;
-                                let avatar = participant.user.avatar.as_ref()?;
+                                let avatar = room
+                                    .remote_participant_for_peer_id(follower)
+                                    .and_then(|participant| participant.user.avatar.clone())
+                                    .or_else(|| {
+                                        if follower == workspace.read(cx).client().peer_id()? {
+                                            workspace
+                                                .read(cx)
+                                                .user_store()
+                                                .read(cx)
+                                                .current_user()?
+                                                .avatar
+                                                .clone()
+                                        } else {
+                                            None
+                                        }
+                                    })?;
+
                                 Some(Self::render_face(avatar.clone(), avatar_style, theme))
                             }))
                         })()
