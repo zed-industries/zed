@@ -33,13 +33,35 @@ function ColorChips({ colorScale }: { colorScale: Scale }) {
 }
 
 export default function Home() {
-    const { red, gray, rose } = color;
+    const {
+        grayLight,
+        grayDark,
+        roseDark,
+        roseLight,
+        redDark,
+        redLight,
+        orangeDark,
+        orangeLight,
+        amberDark,
+        amberLight,
+    } = color;
     return (
         <main>
             <div style={{ display: 'flex', gap: '1px' }}>
-                <ColorChips colorScale={gray} />
-                <ColorChips colorScale={rose} />
-                <ColorChips colorScale={red} />
+                <ColorChips colorScale={grayLight} />
+                <ColorChips colorScale={grayDark} />
+
+                <ColorChips colorScale={roseLight} />
+                <ColorChips colorScale={roseDark} />
+
+                <ColorChips colorScale={redLight} />
+                <ColorChips colorScale={redDark} />
+
+                <ColorChips colorScale={orangeLight} />
+                <ColorChips colorScale={orangeDark} />
+
+                <ColorChips colorScale={amberLight} />
+                <ColorChips colorScale={amberDark} />
             </div>
         </main>
     );

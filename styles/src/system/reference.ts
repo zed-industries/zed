@@ -1,9 +1,3 @@
-import { black, gray, rose, red, white } from "./ref/color";
+import * as color from "./ref/color";
 
-export const color = {
-  white,
-  black,
-  gray,
-  rose,
-  red,
-};
+export { color };
