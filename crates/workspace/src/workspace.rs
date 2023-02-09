@@ -1828,11 +1828,11 @@ impl Workspace {
         None
     }
 
-    pub fn is_following(&self, peer_id: PeerId) -> bool {
+    pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
         self.follower_states_by_leader.contains_key(&peer_id)
     }
 
-    pub fn is_followed(&self, peer_id: PeerId) -> bool {
+    pub fn is_followed_by(&self, peer_id: PeerId) -> bool {
         self.leader_state.followers.contains(&peer_id)
     }
 

@@ -12,8 +12,8 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
-    Border, CursorStyle, Entity, ImageData, ModelHandle, MouseButton, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    CursorStyle, Entity, ImageData, ModelHandle, MouseButton, MutableAppContext, RenderContext,
+    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
@@ -581,9 +581,10 @@ impl CollabTitlebarItem {
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let is_followed = workspace.read(cx).is_following(peer_id);
+        let room = ActiveCall::global(cx).read(cx).room();
+        let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
 
-        let mut avatar_style;
+        let avatar_style;
         if let Some(location) = location {
             if let ParticipantLocation::SharedProject { project_id } = location {
                 if Some(project_id) == workspace.read(cx).project().read(cx).remote_id() {
@@ -598,23 +599,14 @@ impl CollabTitlebarItem {
             avatar_style = theme.workspace.titlebar.avatar;
         }
 
-        let mut replica_color = None;
-        if let Some(replica_id) = replica_id {
-            let color = theme.editor.replica_selection_style(replica_id).cursor;
-            replica_color = Some(color);
-            if is_followed {
-                avatar_style.border = Border::all(1.0, color);
-            }
-        }
-
         let content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
-                Flex::row()
+                let flex = Flex::row()
                     .with_child(Self::render_face(avatar.clone(), avatar_style, theme))
                     .with_children(
                         (|| {
-                            let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
-                            let followers = room.follows(peer_id);
+                            let room = room?.read(cx);
+                            let followers = room.followers_for(peer_id);
 
                             Some(followers.into_iter().flat_map(|&follower| {
                                 let avatar = room
@@ -639,18 +631,40 @@ impl CollabTitlebarItem {
                         })()
                         .into_iter()
                         .flatten(),
-                    )
-                    .boxed()
+                    );
+
+                let room = ActiveCall::global(cx).read(cx).room();
+                if let (Some(replica_id), Some(room)) = (replica_id, room) {
+                    let followed_by_self = is_being_followed
+                        && room
+                            .read(cx)
+                            .followers_for(peer_id)
+                            .iter()
+                            .any(|&follower| {
+                                Some(follower) == workspace.read(cx).client().peer_id()
+                            });
+
+                    if followed_by_self {
+                        let color = theme.editor.replica_selection_style(replica_id).selection;
+                        return flex.contained().with_background_color(color).boxed();
+                    }
+                }
+
+                flex.boxed()
             }))
-            .with_children(replica_color.map(|replica_color| {
-                AvatarRibbon::new(replica_color)
-                    .constrained()
-                    .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                    .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                    .aligned()
-                    .bottom()
-                    .boxed()
-            }))
+            .with_children((|| {
+                let replica_id = replica_id?;
+                let color = theme.editor.replica_selection_style(replica_id).cursor;
+                Some(
+                    AvatarRibbon::new(color)
+                        .constrained()
+                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                        .aligned()
+                        .bottom()
+                        .boxed(),
+                )
+            })())
             .contained()
             .with_margin_left(theme.workspace.titlebar.avatar_margin)
             .boxed();
@@ -664,7 +678,7 @@ impl CollabTitlebarItem {
                     })
                     .with_tooltip::<ToggleFollow, _>(
                         peer_id.as_u64() as usize,
-                        if is_followed {
+                        if is_being_followed {
                             format!("Unfollow {}", user.github_login)
                         } else {
                             format!("Follow {}", user.github_login)

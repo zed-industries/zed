@@ -117,7 +117,7 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut Mutable
                     });
 
                 if let Some(follow_peer_id) = follow_peer_id {
-                    if !workspace.is_following(follow_peer_id) {
+                    if !workspace.is_being_followed(follow_peer_id) {
                         workspace
                             .toggle_follow(&ToggleFollow(follow_peer_id), cx)
                             .map(|follow| follow.detach_and_log_err(cx));

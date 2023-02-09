@@ -459,7 +459,7 @@ impl Room {
         self.participant_user_ids.contains(&user_id)
     }
 
-    pub fn follows(&self, leader_id: PeerId) -> &[PeerId] {
+    pub fn followers_for(&self, leader_id: PeerId) -> &[PeerId] {
         self.follows_by_leader_id
             .get(&leader_id)
             .map_or(&[], |v| v.as_slice())
