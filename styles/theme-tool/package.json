@@ -1,0 +1,60 @@
+{
+  "name": "zed-theme-tool",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^3.7.1",
+    "@typescript-eslint/eslint-plugin": "^5.49.0",
+    "@typescript-eslint/parser": "^5.49.0",
+    "@next/font": "13.1.6",
+    "@types/node": "18.13.0",
+    "@types/react": "18.0.27",
+    "@types/react-dom": "18.0.10",
+    "eslint": "8.33.0",
+    "eslint-config-next": "13.1.6",
+    "next": "13.1.6",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "typescript": "4.9.5",
+    "eslint-config-airbnb": "19.0.4",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-import-resolver-typescript": "3.5.3",
+    "eslint-plugin-import": "2.27.5",
+    "eslint-plugin-jsx-a11y": "6.7.1",
+    "eslint-plugin-react": "7.32.1",
+    "eslint-plugin-react-hooks": "4.6.0",
+    "prettier": "^2.7.1",
+    "prettier-plugin-tailwindcss": "^0.1.12"
+  },
+  "prettier": {
+    "arrowParens": "always",
+    "printWidth": 80,
+    "tabWidth": 4,
+    "trailingComma": "all",
+    "singleQuote": true,
+    "semi": true,
+    "importOrder": [
+        "^@/lib/(.*)$",
+        "^@/app/(.*)$",
+        "^@/ui/(.*)$",
+        "^[./]"
+    ],
+    "importOrderBuiltinModulesToTop": true,
+    "importOrderCaseInsensitive": true,
+    "importOrderParserPlugins": [
+        "typescript",
+        "jsx",
+        "decorators-legacy"
+    ],
+    "importOrderMergeDuplicateImports": true,
+    "importOrderCombineTypeAndValueImports": true,
+    "importOrderSeparation": true,
+    "importOrderSortSpecifiers": true
+}
+}
