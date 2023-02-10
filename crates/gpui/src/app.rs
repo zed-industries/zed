@@ -1,7 +1,10 @@
 pub mod action;
 mod callback_collection;
+mod menu;
+pub(crate) mod ref_counts;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_app_context;
+mod window_input_handler;
 
 use std::{
     any::{type_name, Any, TypeId},
@@ -19,33 +22,37 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use pathfinder_geometry::vector::Vector2F;
 use postage::oneshot;
 use smallvec::SmallVec;
 use smol::prelude::*;
+use uuid::Uuid;
 
 pub use action::*;
 use callback_collection::CallbackCollection;
 use collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
+pub use menu::*;
 use platform::Event;
 #[cfg(any(test, feature = "test-support"))]
+use ref_counts::LeakDetector;
+#[cfg(any(test, feature = "test-support"))]
 pub use test_app_context::{ContextHandle, TestAppContext};
-use uuid::Uuid;
+use window_input_handler::WindowInputHandler;
 
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
-    geometry::rect::RectF,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, KeyUpEvent,
+    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, KeyUpEvent,
     ModifiersChangedEvent, MouseButton, MouseRegionId, PathPromptOptions, TextLayoutCache,
     WindowBounds,
 };
+
+use self::ref_counts::RefCounts;
 
 pub trait Entity: 'static {
     type Event;
@@ -174,30 +181,11 @@ pub trait UpdateView {
         T: View;
 }
 
-pub struct Menu<'a> {
-    pub name: &'a str,
-    pub items: Vec<MenuItem<'a>>,
-}
-
-pub enum MenuItem<'a> {
-    Separator,
-    Submenu(Menu<'a>),
-    Action {
-        name: &'a str,
-        action: Box<dyn Action>,
-    },
-}
-
 #[derive(Clone)]
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
 #[derive(Clone)]
 pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
-
-pub struct WindowInputHandler {
-    app: Rc<RefCell<MutableAppContext>>,
-    window_id: usize,
-}
 
 impl App {
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
@@ -220,33 +208,7 @@ impl App {
                 cx.borrow_mut().quit();
             }
         }));
-        foreground_platform.on_will_open_menu(Box::new({
-            let cx = app.0.clone();
-            move || {
-                let mut cx = cx.borrow_mut();
-                cx.keystroke_matcher.clear_pending();
-            }
-        }));
-        foreground_platform.on_validate_menu_command(Box::new({
-            let cx = app.0.clone();
-            move |action| {
-                let cx = cx.borrow_mut();
-                !cx.keystroke_matcher.has_pending_keystrokes() && cx.is_action_available(action)
-            }
-        }));
-        foreground_platform.on_menu_command(Box::new({
-            let cx = app.0.clone();
-            move |action| {
-                let mut cx = cx.borrow_mut();
-                if let Some(key_window_id) = cx.cx.platform.key_window_id() {
-                    if let Some(view_id) = cx.focused_view_id(key_window_id) {
-                        cx.handle_dispatch_action_from_effect(key_window_id, Some(view_id), action);
-                        return;
-                    }
-                }
-                cx.dispatch_global_action_any(action);
-            }
-        }));
+        setup_menu_handlers(foreground_platform.as_ref(), &app);
 
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
         Ok(app)
@@ -346,94 +308,6 @@ impl App {
         let result = state.update(callback);
         state.pending_notifications.clear();
         result
-    }
-}
-
-impl WindowInputHandler {
-    fn read_focused_view<T, F>(&self, f: F) -> Option<T>
-    where
-        F: FnOnce(&dyn AnyView, &AppContext) -> T,
-    {
-        // Input-related application hooks are sometimes called by the OS during
-        // a call to a window-manipulation API, like prompting the user for file
-        // paths. In that case, the AppContext will already be borrowed, so any
-        // InputHandler methods need to fail gracefully.
-        //
-        // See https://github.com/zed-industries/community/issues/444
-        let app = self.app.try_borrow().ok()?;
-
-        let view_id = app.focused_view_id(self.window_id)?;
-        let view = app.cx.views.get(&(self.window_id, view_id))?;
-        let result = f(view.as_ref(), &app);
-        Some(result)
-    }
-
-    fn update_focused_view<T, F>(&mut self, f: F) -> Option<T>
-    where
-        F: FnOnce(usize, usize, &mut dyn AnyView, &mut MutableAppContext) -> T,
-    {
-        let mut app = self.app.try_borrow_mut().ok()?;
-        app.update(|app| {
-            let view_id = app.focused_view_id(self.window_id)?;
-            let mut view = app.cx.views.remove(&(self.window_id, view_id))?;
-            let result = f(self.window_id, view_id, view.as_mut(), &mut *app);
-            app.cx.views.insert((self.window_id, view_id), view);
-            Some(result)
-        })
-    }
-}
-
-impl InputHandler for WindowInputHandler {
-    fn text_for_range(&self, range: Range<usize>) -> Option<String> {
-        self.read_focused_view(|view, cx| view.text_for_range(range.clone(), cx))
-            .flatten()
-    }
-
-    fn selected_text_range(&self) -> Option<Range<usize>> {
-        self.read_focused_view(|view, cx| view.selected_text_range(cx))
-            .flatten()
-    }
-
-    fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.replace_text_in_range(range, text, cx, window_id, view_id);
-        });
-    }
-
-    fn marked_text_range(&self) -> Option<Range<usize>> {
-        self.read_focused_view(|view, cx| view.marked_text_range(cx))
-            .flatten()
-    }
-
-    fn unmark_text(&mut self) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.unmark_text(cx, window_id, view_id);
-        });
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range: Option<Range<usize>>,
-        new_text: &str,
-        new_selected_range: Option<Range<usize>>,
-    ) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.replace_and_mark_text_in_range(
-                range,
-                new_text,
-                new_selected_range,
-                cx,
-                window_id,
-                view_id,
-            );
-        });
-    }
-
-    fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
-        let app = self.app.borrow();
-        let (presenter, _) = app.presenters_and_platform_windows.get(&self.window_id)?;
-        let presenter = presenter.borrow();
-        presenter.rect_for_text_range(range_utf16, &app)
     }
 }
 
@@ -982,11 +856,6 @@ impl MutableAppContext {
         let result = callback(self);
         self.flush_effects();
         result
-    }
-
-    pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        self.foreground_platform
-            .set_menus(menus, &self.keystroke_matcher);
     }
 
     fn show_character_palette(&self, window_id: usize) {
@@ -4025,7 +3894,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             })
     }
 
-    pub fn observe_keystroke<F>(&mut self, mut callback: F) -> Subscription
+    pub fn observe_keystrokes<F>(&mut self, mut callback: F) -> Subscription
     where
         F: 'static
             + FnMut(
@@ -5277,205 +5146,6 @@ impl Subscription {
             Subscription::ReleaseObservation(subscription) => subscription.detach(),
             Subscription::ActionObservation(subscription) => subscription.detach(),
         }
-    }
-}
-
-lazy_static! {
-    static ref LEAK_BACKTRACE: bool =
-        std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Default)]
-pub struct LeakDetector {
-    next_handle_id: usize,
-    #[allow(clippy::type_complexity)]
-    handle_backtraces: HashMap<
-        usize,
-        (
-            Option<&'static str>,
-            HashMap<usize, Option<backtrace::Backtrace>>,
-        ),
-    >,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl LeakDetector {
-    fn handle_created(&mut self, type_name: Option<&'static str>, entity_id: usize) -> usize {
-        let handle_id = post_inc(&mut self.next_handle_id);
-        let entry = self.handle_backtraces.entry(entity_id).or_default();
-        let backtrace = if *LEAK_BACKTRACE {
-            Some(backtrace::Backtrace::new_unresolved())
-        } else {
-            None
-        };
-        if let Some(type_name) = type_name {
-            entry.0.get_or_insert(type_name);
-        }
-        entry.1.insert(handle_id, backtrace);
-        handle_id
-    }
-
-    fn handle_dropped(&mut self, entity_id: usize, handle_id: usize) {
-        if let Some((_, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
-            assert!(backtraces.remove(&handle_id).is_some());
-            if backtraces.is_empty() {
-                self.handle_backtraces.remove(&entity_id);
-            }
-        }
-    }
-
-    pub fn assert_dropped(&mut self, entity_id: usize) {
-        if let Some((type_name, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
-            for trace in backtraces.values_mut().flatten() {
-                trace.resolve();
-                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-            }
-
-            let hint = if *LEAK_BACKTRACE {
-                ""
-            } else {
-                " – set LEAK_BACKTRACE=1 for more information"
-            };
-
-            panic!(
-                "{} handles to {} {} still exist{}",
-                backtraces.len(),
-                type_name.unwrap_or("entity"),
-                entity_id,
-                hint
-            );
-        }
-    }
-
-    pub fn detect(&mut self) {
-        let mut found_leaks = false;
-        for (id, (type_name, backtraces)) in self.handle_backtraces.iter_mut() {
-            eprintln!(
-                "leaked {} handles to {} {}",
-                backtraces.len(),
-                type_name.unwrap_or("entity"),
-                id
-            );
-            for trace in backtraces.values_mut().flatten() {
-                trace.resolve();
-                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-            }
-            found_leaks = true;
-        }
-
-        let hint = if *LEAK_BACKTRACE {
-            ""
-        } else {
-            " – set LEAK_BACKTRACE=1 for more information"
-        };
-        assert!(!found_leaks, "detected leaked handles{}", hint);
-    }
-}
-
-#[derive(Default)]
-struct RefCounts {
-    entity_counts: HashMap<usize, usize>,
-    element_state_counts: HashMap<ElementStateId, ElementStateRefCount>,
-    dropped_models: HashSet<usize>,
-    dropped_views: HashSet<(usize, usize)>,
-    dropped_element_states: HashSet<ElementStateId>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    leak_detector: Arc<Mutex<LeakDetector>>,
-}
-
-struct ElementStateRefCount {
-    ref_count: usize,
-    frame_id: usize,
-}
-
-impl RefCounts {
-    fn inc_model(&mut self, model_id: usize) {
-        match self.entity_counts.entry(model_id) {
-            Entry::Occupied(mut entry) => {
-                *entry.get_mut() += 1;
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(1);
-                self.dropped_models.remove(&model_id);
-            }
-        }
-    }
-
-    fn inc_view(&mut self, window_id: usize, view_id: usize) {
-        match self.entity_counts.entry(view_id) {
-            Entry::Occupied(mut entry) => *entry.get_mut() += 1,
-            Entry::Vacant(entry) => {
-                entry.insert(1);
-                self.dropped_views.remove(&(window_id, view_id));
-            }
-        }
-    }
-
-    fn inc_element_state(&mut self, id: ElementStateId, frame_id: usize) {
-        match self.element_state_counts.entry(id) {
-            Entry::Occupied(mut entry) => {
-                let entry = entry.get_mut();
-                if entry.frame_id == frame_id || entry.ref_count >= 2 {
-                    panic!("used the same element state more than once in the same frame");
-                }
-                entry.ref_count += 1;
-                entry.frame_id = frame_id;
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(ElementStateRefCount {
-                    ref_count: 1,
-                    frame_id,
-                });
-                self.dropped_element_states.remove(&id);
-            }
-        }
-    }
-
-    fn dec_model(&mut self, model_id: usize) {
-        let count = self.entity_counts.get_mut(&model_id).unwrap();
-        *count -= 1;
-        if *count == 0 {
-            self.entity_counts.remove(&model_id);
-            self.dropped_models.insert(model_id);
-        }
-    }
-
-    fn dec_view(&mut self, window_id: usize, view_id: usize) {
-        let count = self.entity_counts.get_mut(&view_id).unwrap();
-        *count -= 1;
-        if *count == 0 {
-            self.entity_counts.remove(&view_id);
-            self.dropped_views.insert((window_id, view_id));
-        }
-    }
-
-    fn dec_element_state(&mut self, id: ElementStateId) {
-        let entry = self.element_state_counts.get_mut(&id).unwrap();
-        entry.ref_count -= 1;
-        if entry.ref_count == 0 {
-            self.element_state_counts.remove(&id);
-            self.dropped_element_states.insert(id);
-        }
-    }
-
-    fn is_entity_alive(&self, entity_id: usize) -> bool {
-        self.entity_counts.contains_key(&entity_id)
-    }
-
-    fn take_dropped(
-        &mut self,
-    ) -> (
-        HashSet<usize>,
-        HashSet<(usize, usize)>,
-        HashSet<ElementStateId>,
-    ) {
-        (
-            std::mem::take(&mut self.dropped_models),
-            std::mem::take(&mut self.dropped_views),
-            std::mem::take(&mut self.dropped_element_states),
-        )
     }
 }
 

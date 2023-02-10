@@ -10,12 +10,12 @@ mod state;
 mod utils;
 mod visual;
 
+use std::sync::Arc;
+
 use command_palette::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
-    impl_actions,
-    keymap_matcher::{KeyPressed, Keystroke},
-    MutableAppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
+    impl_actions, MutableAppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -57,11 +57,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_number(n, cx));
     });
-    cx.add_action(
-        |_: &mut Workspace, KeyPressed { keystroke }: &KeyPressed, cx| {
-            Vim::key_pressed(keystroke, cx);
-        },
-    );
 
     // Editor Actions
     cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
@@ -91,7 +86,7 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 }
 
-pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
+pub fn observe_keystrokes(window_id: usize, cx: &mut MutableAppContext) {
     cx.observe_keystrokes(window_id, |_keystroke, _result, handled_by, cx| {
         if let Some(handled_by) = handled_by {
             // Keystroke is handled by the vim system, so continue forward
@@ -103,11 +98,12 @@ pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
             }
         }
 
-        Vim::update(cx, |vim, cx| {
-            if vim.active_operator().is_some() {
-                // If the keystroke is not handled by vim, we should clear the operator
+        Vim::update(cx, |vim, cx| match vim.active_operator() {
+            Some(Operator::FindForward { .. } | Operator::FindBackward { .. }) => {}
+            Some(_) => {
                 vim.clear_operator(cx);
             }
+            _ => {}
         });
         true
     })
@@ -164,7 +160,6 @@ impl Vim {
             .and_then(|editor| editor.upgrade(cx))
         {
             editor.update(cx, |editor, cx| {
-                dbg!(&mode, editor.mode());
                 editor.change_selections(None, cx, |s| {
                     s.move_with(|map, selection| {
                         if self.state.empty_selections_only() {
@@ -221,24 +216,24 @@ impl Vim {
         self.state.operator_stack.last().copied()
     }
 
-    fn key_pressed(keystroke: &Keystroke, cx: &mut ViewContext<Workspace>) {
+    fn active_editor_input_ignored(text: Arc<str>, cx: &mut MutableAppContext) {
+        if text.is_empty() {
+            return;
+        }
+
         match Vim::read(cx).active_operator() {
             Some(Operator::FindForward { before }) => {
-                if let Some(character) = keystroke.key.chars().next() {
-                    motion::motion(Motion::FindForward { before, character }, cx)
-                }
+                motion::motion(Motion::FindForward { before, text }, cx)
             }
             Some(Operator::FindBackward { after }) => {
-                if let Some(character) = keystroke.key.chars().next() {
-                    motion::motion(Motion::FindBackward { after, character }, cx)
-                }
+                motion::motion(Motion::FindBackward { after, text }, cx)
             }
             Some(Operator::Replace) => match Vim::read(cx).state.mode {
-                Mode::Normal => normal_replace(&keystroke.key, cx),
-                Mode::Visual { line } => visual_replace(&keystroke.key, line, cx),
+                Mode::Normal => normal_replace(text, cx),
+                Mode::Visual { line } => visual_replace(text, line, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
-            _ => cx.propagate_action(),
+            _ => {}
         }
     }
 

@@ -363,7 +363,7 @@ pub fn initialize_workspace(
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 
     let window_id = cx.window_id();
-    vim::observe_keypresses(window_id, cx);
+    vim::observe_keystrokes(window_id, cx);
 
     cx.on_window_should_close(|workspace, cx| {
         if let Some(task) = workspace.close(&Default::default(), cx) {

@@ -19,13 +19,14 @@ use smol::stream::StreamExt;
 use crate::{
     executor, geometry::vector::Vector2F, keymap_matcher::Keystroke, platform, Action,
     AnyViewHandle, AppContext, Appearance, Entity, Event, FontCache, InputHandler, KeyDownEvent,
-    LeakDetector, ModelContext, ModelHandle, MutableAppContext, Platform, ReadModelWith,
-    ReadViewWith, RenderContext, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle,
-    WeakHandle, WindowInputHandler,
+    ModelContext, ModelHandle, MutableAppContext, Platform, ReadModelWith, ReadViewWith,
+    RenderContext, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle, WeakHandle,
 };
 use collections::BTreeMap;
 
-use super::{AsyncAppContext, RefCounts};
+use super::{
+    ref_counts::LeakDetector, window_input_handler::WindowInputHandler, AsyncAppContext, RefCounts,
+};
 
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
@@ -52,11 +53,7 @@ impl TestAppContext {
             platform,
             foreground_platform.clone(),
             font_cache,
-            RefCounts {
-                #[cfg(any(test, feature = "test-support"))]
-                leak_detector,
-                ..Default::default()
-            },
+            RefCounts::new(leak_detector),
             (),
         );
         cx.next_entity_id = first_entity_id;

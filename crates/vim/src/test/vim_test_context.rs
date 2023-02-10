@@ -53,7 +53,7 @@ impl<'a> VimTestContext<'a> {
 
         // Setup search toolbars and keypress hook
         workspace.update(cx, |workspace, cx| {
-            observe_keypresses(window_id, cx);
+            observe_keystrokes(window_id, cx);
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
                     let buffer_search_bar = cx.add_view(BufferSearchBar::new);

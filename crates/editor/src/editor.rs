@@ -6400,25 +6400,28 @@ impl View for Editor {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
+        self.transact(cx, |this, cx| {
+            if this.input_enabled {
+                let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                    let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                    Some(this.selection_replacement_ranges(range_utf16, cx))
+                } else {
+                    this.marked_text_ranges(cx)
+                };
+
+                if let Some(new_selected_ranges) = new_selected_ranges {
+                    this.change_selections(None, cx, |selections| {
+                        selections.select_ranges(new_selected_ranges)
+                    });
+                }
+            }
+
+            this.handle_input(text, cx);
+        });
+
         if !self.input_enabled {
             return;
         }
-
-        self.transact(cx, |this, cx| {
-            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else {
-                this.marked_text_ranges(cx)
-            };
-
-            if let Some(new_selected_ranges) = new_selected_ranges {
-                this.change_selections(None, cx, |selections| {
-                    selections.select_ranges(new_selected_ranges)
-                });
-            }
-            this.handle_input(text, cx);
-        });
 
         if let Some(transaction) = self.ime_transaction {
             self.buffer.update(cx, |buffer, cx| {

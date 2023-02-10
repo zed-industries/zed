@@ -2,7 +2,7 @@ mod change;
 mod delete;
 mod yank;
 
-use std::{borrow::Cow, cmp::Ordering};
+use std::{borrow::Cow, cmp::Ordering, sync::Arc};
 
 use crate::{
     motion::Motion,
@@ -424,7 +424,7 @@ fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Edito
     }
 }
 
-pub(crate) fn normal_replace(text: &str, cx: &mut MutableAppContext) {
+pub(crate) fn normal_replace(text: Arc<str>, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -453,7 +453,7 @@ pub(crate) fn normal_replace(text: &str, cx: &mut MutableAppContext) {
                         (
                             range.start.to_offset(&map, Bias::Left)
                                 ..range.end.to_offset(&map, Bias::Left),
-                            text,
+                            text.clone(),
                         )
                     })
                     .collect::<Vec<_>>();

@@ -1,4 +1,4 @@
-use editor::{EditorBlurred, EditorFocused, EditorMode, EditorReleased};
+use editor::{EditorBlurred, EditorFocused, EditorMode, EditorReleased, Event};
 use gpui::MutableAppContext;
 
 use crate::{state::Mode, Vim};
@@ -20,14 +20,18 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppContext) {
         }
 
         vim.active_editor = Some(editor.downgrade());
-        dbg!("Active editor changed", editor.read(cx).mode());
-        vim.editor_subscription = Some(cx.subscribe(editor, |editor, event, cx| {
-            if editor.read(cx).leader_replica_id().is_none() {
-                if let editor::Event::SelectionsChanged { local: true } = event {
-                    let newest_empty = editor.read(cx).selections.newest::<usize>(cx).is_empty();
+        vim.editor_subscription = Some(cx.subscribe(editor, |editor, event, cx| match event {
+            Event::SelectionsChanged { local: true } => {
+                let editor = editor.read(cx);
+                if editor.leader_replica_id().is_none() {
+                    let newest_empty = editor.selections.newest::<usize>(cx).is_empty();
                     local_selections_changed(newest_empty, cx);
                 }
             }
+            Event::InputIgnored { text } => {
+                Vim::active_editor_input_ignored(text.clone(), cx);
+            }
+            _ => {}
         }));
 
         if vim.enabled {
