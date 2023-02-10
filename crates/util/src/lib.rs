@@ -54,6 +54,14 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     }
 }
 
+pub fn open<P: AsRef<Path>>(path: P) {
+    let path_to_open = path.as_ref().to_string_lossy();
+    std::process::Command::new("open")
+        .arg(path_to_open.as_ref())
+        .spawn()
+        .log_err();
+}
+
 pub fn reveal_in_finder<P: AsRef<Path>>(path: P) {
     let path_to_reveal = path.as_ref().to_string_lossy();
     std::process::Command::new("open")

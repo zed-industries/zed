@@ -32,17 +32,14 @@ use mappings::mouse::{
 
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
-use util::ResultExt;
 
 use std::{
     cmp::min,
     collections::{HashMap, VecDeque},
     fmt::Display,
-    io,
     ops::{Deref, Index, RangeInclusive, Sub},
-    os::unix::{prelude::AsRawFd, process::CommandExt},
+    os::unix::prelude::AsRawFd,
     path::PathBuf,
-    process::Command,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -734,7 +731,7 @@ impl Terminal {
 
                 if let Some((url, url_match)) = found_url {
                     if *open {
-                        open_uri(&url).log_err();
+                        util::open(&url);
                     } else {
                         self.update_hyperlink(prev_hyperlink, url, url_match);
                     }
@@ -1075,7 +1072,7 @@ impl Terminal {
             if self.selection_phase == SelectionPhase::Ended {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
-                    open_uri(link.uri()).log_err();
+                    util::open(link.uri());
                 } else {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
@@ -1232,31 +1229,6 @@ fn content_index_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> u
     ) as usize;
 
     line * content.size.columns() + col
-}
-
-fn open_uri(uri: &str) -> Result<(), std::io::Error> {
-    let mut command = Command::new("open");
-    command.arg(uri);
-
-    unsafe {
-        command
-            .pre_exec(|| {
-                match libc::fork() {
-                    -1 => return Err(io::Error::last_os_error()),
-                    0 => (),
-                    _ => libc::_exit(0),
-                }
-
-                if libc::setsid() == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-
-                Ok(())
-            })
-            .spawn()?
-            .wait()
-            .map(|_| ())
-    }
 }
 
 #[cfg(test)]

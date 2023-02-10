@@ -121,7 +121,6 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
-    use std::process::Command;
 
     use gpui::{
         actions,
@@ -150,10 +149,7 @@ pub mod simple_message_notification {
             |_workspace: &mut Workspace, open_action: &OsOpen, _cx: &mut ViewContext<Workspace>| {
                 #[cfg(target_os = "macos")]
                 {
-                    let mut command = Command::new("open");
-                    command.arg(open_action.0.clone());
-
-                    command.spawn().ok();
+                    util::open(&open_action.0);
                 }
             },
         )
