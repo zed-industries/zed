@@ -78,8 +78,75 @@ const amber: ColorFamily = generateColorSet({
 export const amberLight = chroma.scale(amber.colors).mode("lch");
 export const amberDark = chroma.scale(amber.invertedColors).mode("lch");
 
-// TODO: Add the rest of the colors.
-// Source: https://www.figma.com/file/YEZ9jsC1uc9o6hgbv4kfxq/Core-color-library?node-id=48%3A816&t=Ae6tY1cVb2fm5xaM-1
+// Yellow ======================================== //
+
+const yellow: ColorFamily = generateColorSet({
+  name: "yellow",
+  color: {
+    start: "#FEFCE8",
+    middle: "#FADB15",
+    end: "#715E12",
+  },
+});
+
+export const yellowLight = chroma.scale(yellow.colors).mode("lch");
+export const yellowDark = chroma.scale(yellow.invertedColors).mode("lch");
+
+// Lime ======================================== //
+
+const lime: ColorFamily = generateColorSet({
+  name: "lime",
+  color: {
+    start: "#F7FEE7",
+    middle: "#32CD32",
+    end: "#295214",
+  },
+});
+
+export const limeLight = chroma.scale(lime.colors).mode("lch");
+export const limeDark = chroma.scale(lime.invertedColors).mode("lch");
+
+// Green ======================================== //
+
+const green: ColorFamily = generateColorSet({
+  name: "green",
+  color: {
+    start: "#F1FDF0",
+    middle: "#43c84c",
+    end: "#155117",
+  },
+});
+
+export const greenLight = chroma.scale(green.colors).mode("lch");
+export const greenDark = chroma.scale(green.invertedColors).mode("lch");
+
+// Emerald ======================================== //
+
+const emerald: ColorFamily = generateColorSet({
+  name: "emerald",
+  color: {
+    start: "#F0FDF4",
+    middle: "#51C878",
+    end: "#134E29",
+  },
+});
+
+export const emeraldLight = chroma.scale(emerald.colors).mode("lch");
+export const emeraldDark = chroma.scale(emerald.invertedColors).mode("lch");
+
+// Jade ======================================== //
+
+const jade: ColorFamily = generateColorSet({
+  name: "jade",
+  color: {
+    start: "#ECFDF5",
+    middle: "#1ABD82",
+    end: "#064E3B",
+  },
+});
+
+export const jadeLight = chroma.scale(jade.colors).mode("lch");
+export const jadeDark = chroma.scale(jade.invertedColors).mode("lch");
 
 // Teal ======================================== //
 
@@ -95,16 +162,100 @@ const teal: ColorFamily = generateColorSet({
 export const tealLight = chroma.scale(teal.colors).mode("lch");
 export const tealDark = chroma.scale(teal.invertedColors).mode("lch");
 
+// Cyan ======================================== //
+
 const cyan = generateColorSet({
   name: "cyan",
   color: {
-    start: "#F0FDFA",
-    middle: "#06BBD4",
-    end: "#164E63",
+    start: "#E0F7FA",
+    middle: "#00BCD4",
+    end: "#006064",
   },
 });
 
 export const cyanLight = chroma.scale(cyan.colors).mode("lch");
-export const cyanDark = chroma.scale(cyan.colors).mode("lch");
+export const cyanDark = chroma.scale(cyan.invertedColors).mode("lch");
 
-console.log(JSON.stringify(teal, null, 2));
+// Light Blue ======================================== //
+
+const lightBlue = generateColorSet({
+  name: "lightBlue",
+  color: {
+    start: "#E1F5FE",
+    middle: "#03A9F4",
+    end: "#01579B",
+  },
+});
+
+export const lightBlueLight = chroma.scale(lightBlue.colors).mode("lch");
+export const lightBlueDark = chroma.scale(lightBlue.invertedColors).mode("lch");
+
+// Blue ======================================== //
+
+const blue = generateColorSet({
+  name: "blue",
+  color: {
+    start: "#E3F2FD",
+    middle: "#3B82F6",
+    end: "#0D47A1",
+  },
+});
+
+export const blueLight = chroma.scale(blue.colors).mode("lch");
+export const blueDark = chroma.scale(blue.colors).mode("lch");
+
+// Indigo ======================================== //
+
+const indigo = generateColorSet({
+  name: "indigo",
+  color: {
+    start: "#e8eaf7",
+    middle: "#586cc6",
+    end: "#182383",
+  },
+});
+
+export const indigoLight = chroma.scale(indigo.colors).mode("lch");
+export const indigoDark = chroma.scale(indigo.colors).mode("lch");
+
+// Violet ======================================== //
+
+const violet = generateColorSet({
+  name: "violet",
+  color: {
+    start: "#f6e4f6",
+    middle: "#b93ec2",
+    end: "#490d85",
+  },
+});
+
+export const violetLight = chroma.scale(violet.colors).mode("lch");
+export const violetDark = chroma.scale(violet.colors).mode("lch");
+
+// Pink ======================================== //
+
+const pink = generateColorSet({
+  name: "pink",
+  color: {
+    start: "#ffe3ec",
+    middle: "#ff257a",
+    end: "#950050",
+  },
+});
+
+export const pinkLight = chroma.scale(pink.colors).mode("lch");
+export const pinkDark = chroma.scale(pink.colors).mode("lch");
+
+// Brown ======================================== //
+
+const brown = generateColorSet({
+  name: "brown",
+  color: {
+    start: "#f0ebe9",
+    middle: "#936c61",
+    end: "#422622",
+  },
+});
+
+export const brownLight = chroma.scale(brown.colors).mode("lch");
+export const brownDark = chroma.scale(brown.colors).mode("lch");

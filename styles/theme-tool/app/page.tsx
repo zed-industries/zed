@@ -53,12 +53,19 @@ export default function Home() {
                 <ColorChips colorScale={redLight} />
                 <ColorChips colorScale={orangeLight} />
                 <ColorChips colorScale={amberLight} />
-
-                <ColorChips colorScale={grayDark} />
-                <ColorChips colorScale={roseDark} />
-                <ColorChips colorScale={redDark} />
-                <ColorChips colorScale={orangeDark} />
-                <ColorChips colorScale={amberDark} />
+                <ColorChips colorScale={color.yellowLight} />
+                <ColorChips colorScale={color.limeLight} />
+                <ColorChips colorScale={color.greenLight} />
+                <ColorChips colorScale={color.emeraldLight} />
+                <ColorChips colorScale={color.jadeLight} />
+                <ColorChips colorScale={color.tealLight} />
+                <ColorChips colorScale={color.cyanLight} />
+                <ColorChips colorScale={color.lightBlueLight} />
+                <ColorChips colorScale={color.blueLight} />
+                <ColorChips colorScale={color.indigoLight} />
+                <ColorChips colorScale={color.violetLight} />
+                <ColorChips colorScale={color.pinkLight} />
+                <ColorChips colorScale={color.brownLight} />
             </div>
         </main>
     );
