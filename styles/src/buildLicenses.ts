@@ -41,8 +41,7 @@ function getLicenseText(schemeMeta: Meta[], callback: (meta: Meta, license_text:
       const { statusCode } = res;
 
       if (statusCode < 200 || statusCode >= 300) {
-        throw new Error('Failed to fetch license file.\n' +
-          `Status Code: ${statusCode}`);
+        throw new Error(`Failed to fetch license for: ${meta.name}, Status Code: ${statusCode}`);
       }
 
       res.setEncoding('utf8');
