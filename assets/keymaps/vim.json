@@ -315,7 +315,8 @@
     {
         "context": "Editor && VimWaiting",
         "bindings": {
-            // "*": "gpui::KeyPressed",
+            "tab": "vim::Tab",
+            "enter": "vim::Enter",
             "escape": "editor::Cancel"
         }
     }

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use command_palette::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
-    impl_actions, MutableAppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
+    actions, impl_actions, MutableAppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -35,6 +35,7 @@ pub struct PushOperator(pub Operator);
 #[derive(Clone, Deserialize, PartialEq)]
 struct Number(u8);
 
+actions!(vim, [Tab, Enter]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -74,8 +75,16 @@ pub fn init(cx: &mut MutableAppContext) {
         }
     });
 
+    cx.add_action(|_: &mut Workspace, _: &Tab, cx| {
+        Vim::active_editor_input_ignored(" ".into(), cx)
+    });
+
+    cx.add_action(|_: &mut Workspace, _: &Enter, cx| {
+        Vim::active_editor_input_ignored("\n".into(), cx)
+    });
+
     // Sync initial settings with the rest of the app
-    Vim::update(cx, |state, cx| state.sync_vim_settings(cx));
+    Vim::update(cx, |vim, cx| vim.sync_vim_settings(cx));
 
     // Any time settings change, update vim mode to match
     cx.observe_global::<Settings, _>(|cx| {
@@ -99,7 +108,9 @@ pub fn observe_keystrokes(window_id: usize, cx: &mut MutableAppContext) {
         }
 
         Vim::update(cx, |vim, cx| match vim.active_operator() {
-            Some(Operator::FindForward { .. } | Operator::FindBackward { .. }) => {}
+            Some(
+                Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
+            ) => {}
             Some(_) => {
                 vim.clear_operator(cx);
             }

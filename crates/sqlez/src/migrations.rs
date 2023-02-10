@@ -83,7 +83,6 @@ impl Connection {
 #[cfg(test)]
 mod test {
     use indoc::indoc;
-    use sqlez_macros::sql;
 
     use crate::connection::Connection;
 
@@ -288,21 +287,18 @@ mod test {
         let connection = Connection::open_memory(Some("test_create_alter_drop"));
 
         connection
-            .migrate(
-                "first_migration",
-                &[sql!( CREATE TABLE table1(a TEXT) STRICT; )],
-            )
+            .migrate("first_migration", &["CREATE TABLE table1(a TEXT) STRICT;"])
             .unwrap();
 
         connection
-            .exec(sql!( INSERT INTO table1(a) VALUES ("test text"); ))
+            .exec("INSERT INTO table1(a) VALUES (\"test text\");")
             .unwrap()()
         .unwrap();
 
         connection
             .migrate(
                 "second_migration",
-                &[sql!(
+                &[indoc! {"
                     CREATE TABLE table2(b TEXT) STRICT;
 
                     INSERT INTO table2 (b)
@@ -311,16 +307,11 @@ mod test {
                     DROP TABLE table1;
 
                     ALTER TABLE table2 RENAME TO table1;
-                )],
+                "}],
             )
             .unwrap();
 
-        let res = &connection
-            .select::<String>(sql!(
-                SELECT b FROM table1
-            ))
-            .unwrap()()
-        .unwrap()[0];
+        let res = &connection.select::<String>("SELECT b FROM table1").unwrap()().unwrap()[0];
 
         assert_eq!(res, "test text");
     }
