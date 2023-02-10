@@ -56,8 +56,8 @@ export const meta: Meta = {
   author: "atelierbram",
   license: {
     SPDX: "MIT",
-    https_url: "https://raw.githubusercontent.com/atelierbram/syntax-highlighting/master/LICENSE",
+    https_url: "https://atelierbram.mit-license.org/license.txt",
     license_checksum: "f95ce526ef4e7eecf7a832bba0e3451cc1000f9ce63eb01ed6f64f8109f5d0a5"
   },
-  url: "https://atelierbram.mit-license.org/license.txt"
+  url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/cave/"
 }
