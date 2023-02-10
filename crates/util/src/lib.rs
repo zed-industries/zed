@@ -9,6 +9,7 @@ use rand::{seq::SliceRandom, Rng};
 use std::{
     cmp::Ordering,
     ops::AddAssign,
+    path::Path,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -51,6 +52,15 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
         Some(length) => s[..length].to_string() + "…",
         None => s.to_string(),
     }
+}
+
+pub fn reveal_in_finder<P: AsRef<Path>>(path: P) {
+    let path_to_reveal = path.as_ref().to_string_lossy();
+    std::process::Command::new("open")
+        .arg("-R") // To reveal in Finder instead of opening the file
+        .arg(path_to_reveal.as_ref())
+        .spawn()
+        .log_err();
 }
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
