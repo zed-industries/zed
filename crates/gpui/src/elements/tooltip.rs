@@ -61,7 +61,7 @@ impl Tooltip {
     ) -> Self {
         struct ElementState<Tag>(Tag);
         struct MouseEventHandlerState<Tag>(Tag);
-        let focused_view_id = cx.focused_view_id(cx.window_id).unwrap();
+        let focused_view_id = cx.focused_view_id(cx.window_id);
 
         let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
@@ -132,7 +132,7 @@ impl Tooltip {
 
     pub fn render_tooltip(
         window_id: usize,
-        focused_view_id: usize,
+        focused_view_id: Option<usize>,
         text: String,
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
@@ -149,18 +149,18 @@ impl Tooltip {
                     text.flex(1., false).aligned().boxed()
                 }
             })
-            .with_children(action.map(|action| {
+            .with_children(action.and_then(|action| {
                 let keystroke_label = KeystrokeLabel::new(
                     window_id,
-                    focused_view_id,
+                    focused_view_id?,
                     action,
                     style.keystroke.container,
                     style.keystroke.text,
                 );
                 if measure {
-                    keystroke_label.boxed()
+                    Some(keystroke_label.boxed())
                 } else {
-                    keystroke_label.aligned().boxed()
+                    Some(keystroke_label.aligned().boxed())
                 }
             }))
             .contained()
