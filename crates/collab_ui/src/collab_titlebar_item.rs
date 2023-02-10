@@ -84,9 +84,7 @@ impl View for CollabTitlebarItem {
         );
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-            left_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
             left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
-
             left_container.add_child(self.render_current_user(&workspace, &theme, &user, cx));
             left_container.add_children(self.render_collaborators(&workspace, &theme, room, cx));
         }
@@ -104,6 +102,11 @@ impl View for CollabTitlebarItem {
                 right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
             }
         }
+
+        if ActiveCall::global(cx).read(cx).room().is_some() {
+            right_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
+        }
+
         right_container.add_children(self.render_connection_status(&workspace, cx));
 
         if let Some(user) = user {
