@@ -6,6 +6,7 @@ export type Color = {
 };
 
 export type ColorSet = Color[];
+
 export type ColorFamily = {
   name: string;
   colors: string[];

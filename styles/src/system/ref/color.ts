@@ -2,6 +2,11 @@ import chroma from "chroma-js";
 import { generateColorSet } from "../algorithm";
 import { ColorFamily } from "../types";
 
+// These are the source colors for the color scales in the system.
+// This should never directly be used in the system, or exported to be used in a component or theme
+// As it will generate thousands of lines of code.
+// Instead, use the outputs from the reference palette which exports a smaller subset of colors.
+
 // Colors should use the LCH color space.
 // https://www.w3.org/TR/css-color-4/#lch-colors
 

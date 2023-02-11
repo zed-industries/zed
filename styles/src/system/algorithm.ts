@@ -17,11 +17,15 @@ function assignColor(scale: Scale, steps: number, step: number) {
   const rgbaArray = color.rgba();
   const hex = color.hex();
 
+  // Roughly  calculate if a color is dark or light
+  const isLight = lch[0] > 50;
+
   const result = {
     step,
     hex,
     lch,
     rgbaArray,
+    isLight,
   };
 
   return result;
