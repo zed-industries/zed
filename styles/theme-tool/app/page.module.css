@@ -1,8 +1,20 @@
 .main {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6rem;
-  min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6rem;
+    min-height: 100vh;
+}
+
+.chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 1px;
+    color: #000;
+    font-size: 12px;
+    font-family: monospace;
+    text-transform: uppercase;
+    font-weight: 500;
 }

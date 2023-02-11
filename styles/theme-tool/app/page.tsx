@@ -2,6 +2,7 @@
 import { Scale } from 'chroma-js';
 
 import { color } from '../../src/system/reference';
+import styles from './page.module.css';
 
 function ColorChips({ colorScale }: { colorScale: Scale }) {
     const colors = colorScale.colors(11);
@@ -24,6 +25,7 @@ function ColorChips({ colorScale }: { colorScale: Scale }) {
                         width: '80px',
                         height: '40px',
                     }}
+                    className={styles.chip}
                 >
                     {c}
                 </div>
@@ -33,26 +35,14 @@ function ColorChips({ colorScale }: { colorScale: Scale }) {
 }
 
 export default function Home() {
-    const {
-        grayLight,
-        grayDark,
-        roseDark,
-        roseLight,
-        redDark,
-        redLight,
-        orangeDark,
-        orangeLight,
-        amberDark,
-        amberLight,
-    } = color;
     return (
         <main>
             <div style={{ display: 'flex', gap: '1px' }}>
-                <ColorChips colorScale={grayLight} />
-                <ColorChips colorScale={roseLight} />
-                <ColorChips colorScale={redLight} />
-                <ColorChips colorScale={orangeLight} />
-                <ColorChips colorScale={amberLight} />
+                <ColorChips colorScale={color.grayLight} />
+                <ColorChips colorScale={color.roseLight} />
+                <ColorChips colorScale={color.redLight} />
+                <ColorChips colorScale={color.orangeLight} />
+                <ColorChips colorScale={color.amberLight} />
                 <ColorChips colorScale={color.yellowLight} />
                 <ColorChips colorScale={color.limeLight} />
                 <ColorChips colorScale={color.greenLight} />
