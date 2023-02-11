@@ -1,31 +1,7 @@
 // Adapted from @k-vyn/coloralgorithm
 
 import chroma, { Scale } from "chroma-js";
-
-export type Color = {
-  step: number;
-  hex: string;
-  lch: number[];
-  rgbaArray: number[];
-};
-
-export type ColorSet = Color[];
-export type ColorFamily = {
-  name: string;
-  colors: string[];
-  invertedColors: string[];
-  colorsMeta: ColorSet;
-  invertedMeta: ColorSet;
-};
-
-export interface ColorProps {
-  name: string;
-  color: {
-    start: string;
-    middle: string;
-    end: string;
-  };
-}
+import { ColorFamily, ColorProps, ColorSet } from "./types";
 
 function validColor(color: string) {
   if (chroma.valid(color)) {

@@ -1,5 +1,6 @@
-import * as chroma from "chroma-js";
-import { ColorFamily, generateColorSet } from "../algorithm";
+import chroma from "chroma-js";
+import { generateColorSet } from "../algorithm";
+import { ColorFamily } from "../types";
 
 // Colors should use the LCH color space.
 // https://www.w3.org/TR/css-color-4/#lch-colors
