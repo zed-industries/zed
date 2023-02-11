@@ -184,7 +184,7 @@ impl MacForegroundPlatform {
                     .map(|binding| binding.keystrokes());
 
                 let item;
-                if let Some(keystrokes) = keystrokes.flatten() {
+                if let Some(keystrokes) = keystrokes {
                     if keystrokes.len() == 1 {
                         let keystroke = &keystrokes[0];
                         let mut mask = NSEventModifierFlags::empty();
