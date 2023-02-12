@@ -57,6 +57,14 @@ export default function Home() {
                 <ColorChips colorScale={color.pinkLight} />
                 <ColorChips colorScale={color.brownLight} />
             </div>
+            <div style={{ display: 'flex', gap: '1px' }}>
+                <ColorChips colorScale={color.red2Light} />
+                <ColorChips colorScale={color.orange2Light} />
+                <ColorChips colorScale={color.amber2Light} />
+                <ColorChips colorScale={color.yellow2Light} />
+                <ColorChips colorScale={color.citron2Light} />
+                <ColorChips colorScale={color.lime2Light} />
+            </div>
         </main>
     );
 }

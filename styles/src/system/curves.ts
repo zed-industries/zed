@@ -7,6 +7,8 @@ export interface Curve {
 }
 
 export interface Curves {
+  lightness: Curve;
+  saturation: Curve;
   linear: Curve;
   easeInCubic: Curve;
   easeOutCubic: Curve;
@@ -35,6 +37,16 @@ export interface Curves {
 }
 
 export const curve: Curves = {
+  lightness: {
+    name: "nate",
+    formatted_name: "Nate",
+    value: [0.2, 0, 0.85, 1.1],
+  },
+  saturation: {
+    name: "nate",
+    formatted_name: "Nate",
+    value: [0.67, 0.6, 0.55, 1.0],
+  },
   linear: {
     name: "linear",
     formatted_name: "Linear",

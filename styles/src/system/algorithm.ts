@@ -1,6 +1,8 @@
 // Adapted from @k-vyn/coloralgorithm
 
+import bezier from "bezier-easing";
 import chroma, { Scale } from "chroma-js";
+import { Curve } from "./curves";
 import { ColorFamily, ColorProps, ColorSet } from "./types";
 
 function validColor(color: string) {
@@ -56,6 +58,91 @@ export function generateColors(props: ColorProps, inverted: boolean) {
     colors.push(color);
   }
   return colors;
+}
+
+export function generateColorsUsingCurve(
+  startColor: string,
+  endColor: string,
+  curve: number[]
+) {
+  const NUM_STEPS = 101;
+
+  const easing = bezier(curve[0], curve[1], curve[2], curve[3]);
+  const curveProgress = [];
+  for (let i = 0; i <= NUM_STEPS; i++) {
+    curveProgress.push(easing(i / NUM_STEPS));
+  }
+
+  const colors: chroma.Color[] = [];
+  for (let i = 0; i < NUM_STEPS; i++) {
+    // Use HSL as an input as it is easier to construct programatically
+    // const color = chroma.hsl();
+    const color = chroma.mix(startColor, endColor, curveProgress[i], "lch");
+    colors.push(color);
+  }
+
+  return colors;
+}
+
+export function generateColors2(
+  hue: {
+    start: number;
+    end: number;
+    curve: Curve;
+  },
+  saturation: {
+    start: number;
+    end: number;
+    curve: Curve;
+  },
+  lightness: {
+    start: number;
+    end: number;
+    curve: Curve;
+  }
+) {
+  const NUM_STEPS = 9;
+
+  const hueEasing = bezier(
+    hue.curve.value[0],
+    hue.curve.value[1],
+    hue.curve.value[2],
+    hue.curve.value[3]
+  );
+  const saturationEasing = bezier(
+    saturation.curve.value[0],
+    saturation.curve.value[1],
+    saturation.curve.value[2],
+    saturation.curve.value[3]
+  );
+  const lightnessEasing = bezier(
+    lightness.curve.value[0],
+    lightness.curve.value[1],
+    lightness.curve.value[2],
+    lightness.curve.value[3]
+  );
+
+  const colors: chroma.Color[] = [];
+  for (let i = 0; i < NUM_STEPS; i++) {
+    const hueValue =
+      hueEasing(i / NUM_STEPS) * (hue.end - hue.start) + hue.start;
+    const saturationValue =
+      saturationEasing(i / NUM_STEPS) * (saturation.end - saturation.start) +
+      saturation.start;
+    const lightnessValue =
+      lightnessEasing(i / NUM_STEPS) * (lightness.end - lightness.start) +
+      lightness.start;
+
+    const color = chroma.hsl(
+      hueValue,
+      saturationValue / 100,
+      lightnessValue / 100
+    );
+    colors.push(color);
+  }
+
+  const scale = chroma.scale(colors).mode("lch");
+  return scale;
 }
 
 /** Generates two color ramps:

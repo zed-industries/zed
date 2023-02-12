@@ -1,5 +1,10 @@
 import chroma from "chroma-js";
-import { generateColorSet } from "../algorithm";
+import {
+  generateColors2,
+  generateColorSet,
+  generateColorsUsingCurve,
+} from "../algorithm";
+import { curve } from "../curves";
 import { ColorFamily } from "../types";
 
 // These are the source colors for the color scales in the system.
@@ -59,6 +64,28 @@ const red: ColorFamily = generateColorSet({
 export const redLight = chroma.scale(red.colors).mode("lch");
 export const redDark = chroma.scale(red.invertedColors).mode("lch");
 
+// Red 2 ======================================== //
+
+const red2 = generateColors2(
+  {
+    start: 0,
+    end: 0,
+    curve: curve.linear,
+  },
+  {
+    start: 95,
+    end: 75,
+    curve: curve.saturation,
+  },
+  {
+    start: 97,
+    end: 25,
+    curve: curve.lightness,
+  }
+);
+
+export const red2Light = red2;
+
 // Orange ======================================== //
 
 const orange: ColorFamily = generateColorSet({
@@ -72,6 +99,28 @@ const orange: ColorFamily = generateColorSet({
 
 export const orangeLight = chroma.scale(orange.colors).mode("lch");
 export const orangeDark = chroma.scale(orange.invertedColors).mode("lch");
+
+// Orange 2 ======================================== //
+
+const orange2 = generateColors2(
+  {
+    start: 25,
+    end: 25,
+    curve: curve.linear,
+  },
+  {
+    start: 100,
+    end: 100,
+    curve: curve.saturation,
+  },
+  {
+    start: 97,
+    end: 25,
+    curve: curve.lightness,
+  }
+);
+
+export const orange2Light = orange2;
 
 // Amber ======================================== //
 
@@ -87,6 +136,28 @@ const amber: ColorFamily = generateColorSet({
 export const amberLight = chroma.scale(amber.colors).mode("lch");
 export const amberDark = chroma.scale(amber.invertedColors).mode("lch");
 
+// Amber 2 ======================================== //
+
+const amber2 = generateColors2(
+  {
+    start: 34,
+    end: 34,
+    curve: curve.linear,
+  },
+  {
+    start: 100,
+    end: 100,
+    curve: curve.saturation,
+  },
+  {
+    start: 97,
+    end: 25,
+    curve: curve.lightness,
+  }
+);
+
+export const amber2Light = amber2;
+
 // Yellow ======================================== //
 
 const yellow: ColorFamily = generateColorSet({
@@ -101,6 +172,28 @@ const yellow: ColorFamily = generateColorSet({
 export const yellowLight = chroma.scale(yellow.colors).mode("lch");
 export const yellowDark = chroma.scale(yellow.invertedColors).mode("lch");
 
+// Yellow 2 ======================================== //
+
+const yellow2 = generateColors2(
+  {
+    start: 48,
+    end: 48,
+    curve: curve.linear,
+  },
+  {
+    start: 90,
+    end: 100,
+    curve: curve.saturation,
+  },
+  {
+    start: 97,
+    end: 30,
+    curve: curve.lightness,
+  }
+);
+
+export const yellow2Light = yellow2;
+
 // Lime ======================================== //
 
 const lime: ColorFamily = generateColorSet({
@@ -114,6 +207,50 @@ const lime: ColorFamily = generateColorSet({
 
 export const limeLight = chroma.scale(lime.colors).mode("lch");
 export const limeDark = chroma.scale(lime.invertedColors).mode("lch");
+
+// Lime 2 ======================================== //
+
+const lime2 = generateColors2(
+  {
+    start: 85,
+    end: 85,
+    curve: curve.linear,
+  },
+  {
+    start: 85,
+    end: 70,
+    curve: curve.saturation,
+  },
+  {
+    start: 97,
+    end: 30,
+    curve: curve.lightness,
+  }
+);
+
+export const lime2Light = lime2;
+
+// Citron 2 ======================================== //
+
+const citron2 = generateColors2(
+  {
+    start: 65,
+    end: 65,
+    curve: curve.linear,
+  },
+  {
+    start: 85,
+    end: 70,
+    curve: curve.saturation,
+  },
+  {
+    start: 97,
+    end: 30,
+    curve: curve.lightness,
+  }
+);
+
+export const citron2Light = citron2;
 
 // Green ======================================== //
 
