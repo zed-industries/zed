@@ -219,10 +219,6 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "Toggle Left Sidebar",
                     action: Box::new(workspace::ToggleLeftSidebar),
                 },
-                MenuItem::Action {
-                    name: "Toggle Right Sidebar",
-                    action: Box::new(workspace::ToggleRightSidebar),
-                },
                 MenuItem::Submenu(Menu {
                     name: "Editor Layout",
                     items: vec![

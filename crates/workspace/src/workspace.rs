@@ -96,7 +96,6 @@ actions!(
         ActivateNextPane,
         FollowNextCollaborator,
         ToggleLeftSidebar,
-        ToggleRightSidebar,
         NewTerminal,
         NewSearch,
         Feedback,
@@ -229,9 +228,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftSidebar, cx| {
         workspace.toggle_sidebar(SidebarSide::Left, cx);
-    });
-    cx.add_action(|workspace: &mut Workspace, _: &ToggleRightSidebar, cx| {
-        workspace.toggle_sidebar(SidebarSide::Right, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
 

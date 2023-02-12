@@ -431,13 +431,6 @@
         }
     },
     {
-        "context": "Workspace",
-        "bindings": {
-            "shift-escape": "dock::FocusDock",
-            "cmd-shift-b": "workspace::ToggleRightSidebar"
-        }
-    },
-    {
         "bindings": {
             "cmd-shift-k cmd-shift-right": "dock::AnchorDockRight",
             "cmd-shift-k cmd-shift-down": "dock::AnchorDockBottom",
