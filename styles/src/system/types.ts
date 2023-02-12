@@ -1,3 +1,5 @@
+import { Color as ChromaColor } from "chroma-js";
+
 export type Color = {
   step: number;
   hex: string;
@@ -18,8 +20,8 @@ export type ColorFamily = {
 export interface ColorProps {
   name: string;
   color: {
-    start: string;
-    middle: string;
-    end: string;
+    start: string | ChromaColor;
+    middle: string | ChromaColor;
+    end: string | ChromaColor;
   };
 }

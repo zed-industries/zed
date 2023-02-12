@@ -38,9 +38,9 @@ export function generateColors(props: ColorProps, inverted: boolean) {
 
   const { start, middle, end } = props.color;
 
-  const startColor = validColor(start);
-  const middleColor = validColor(middle);
-  const endColor = validColor(end);
+  const startColor = typeof start === "string" ? validColor(start) : start;
+  const middleColor = typeof middle === "string" ? validColor(middle) : middle;
+  const endColor = typeof end === "string" ? validColor(end) : end;
 
   // TODO: Use curve when generating colors
 

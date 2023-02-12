@@ -7,6 +7,9 @@ import { ColorFamily } from "../types";
 // As it will generate thousands of lines of code.
 // Instead, use the outputs from the reference palette which exports a smaller subset of colors.
 
+// Token or user-facing colors should use short, clear names
+// and a 100-900 scale to match the font weight scale.
+
 // Colors should use the LCH color space.
 // https://www.w3.org/TR/css-color-4/#lch-colors
 
