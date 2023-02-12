@@ -38,32 +38,22 @@ export default function Home() {
     return (
         <main>
             <div style={{ display: 'flex', gap: '1px' }}>
-                <ColorChips colorScale={color.grayLight} />
-                <ColorChips colorScale={color.roseLight} />
-                <ColorChips colorScale={color.redLight} />
-                <ColorChips colorScale={color.orangeLight} />
-                <ColorChips colorScale={color.amberLight} />
-                <ColorChips colorScale={color.yellowLight} />
-                <ColorChips colorScale={color.limeLight} />
-                <ColorChips colorScale={color.greenLight} />
-                <ColorChips colorScale={color.emeraldLight} />
-                <ColorChips colorScale={color.jadeLight} />
-                <ColorChips colorScale={color.tealLight} />
-                <ColorChips colorScale={color.cyanLight} />
-                <ColorChips colorScale={color.lightBlueLight} />
-                <ColorChips colorScale={color.blueLight} />
-                <ColorChips colorScale={color.indigoLight} />
-                <ColorChips colorScale={color.violetLight} />
-                <ColorChips colorScale={color.pinkLight} />
-                <ColorChips colorScale={color.brownLight} />
-            </div>
-            <div style={{ display: 'flex', gap: '1px' }}>
-                <ColorChips colorScale={color.red2Light} />
-                <ColorChips colorScale={color.orange2Light} />
-                <ColorChips colorScale={color.amber2Light} />
-                <ColorChips colorScale={color.yellow2Light} />
-                <ColorChips colorScale={color.citron2Light} />
-                <ColorChips colorScale={color.lime2Light} />
+                <ColorChips colorScale={color.red} />
+                <ColorChips colorScale={color.sunset} />
+                <ColorChips colorScale={color.orange} />
+                <ColorChips colorScale={color.amber} />
+                <ColorChips colorScale={color.yellow} />
+                <ColorChips colorScale={color.citron} />
+                <ColorChips colorScale={color.lime} />
+                <ColorChips colorScale={color.green} />
+                <ColorChips colorScale={color.mint} />
+                <ColorChips colorScale={color.cyan} />
+                <ColorChips colorScale={color.sky} />
+                <ColorChips colorScale={color.blue} />
+                <ColorChips colorScale={color.indigo} />
+                <ColorChips colorScale={color.purple} />
+                <ColorChips colorScale={color.pink} />
+                <ColorChips colorScale={color.rose} />
             </div>
         </main>
     );
