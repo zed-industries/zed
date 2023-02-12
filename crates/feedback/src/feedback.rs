@@ -1,6 +1,10 @@
+pub mod deploy_feedback_button;
+pub mod feedback_editor;
+pub mod feedback_info_text;
+pub mod submit_feedback_button;
+
 use std::sync::Arc;
 
-pub mod feedback_editor;
 mod system_specs;
 use gpui::{actions, impl_actions, ClipboardItem, MutableAppContext, PromptLevel, ViewContext};
 use serde::Deserialize;

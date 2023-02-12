@@ -10,10 +10,10 @@ use editor::{Anchor, Editor};
 use futures::AsyncReadExt;
 use gpui::{
     actions,
-    elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
-    serde_json, AnyViewHandle, AppContext, CursorStyle, Element, ElementBox, Entity, ModelHandle,
-    MouseButton, MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    elements::{ChildView, Flex, Label, ParentElement},
+    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle,
+    MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -21,14 +21,13 @@ use postage::prelude::Stream;
 
 use project::Project;
 use serde::Serialize;
-use settings::Settings;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    AppState, StatusItemView, ToolbarItemLocation, ToolbarItemView, Workspace,
+    AppState, Workspace,
 };
 
-use crate::system_specs::SystemSpecs;
+use crate::{submit_feedback_button::SubmitFeedbackButton, system_specs::SystemSpecs};
 
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
@@ -54,42 +53,6 @@ pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut Mutabl
     );
 }
 
-pub struct DeployFeedbackButton;
-
-impl Entity for DeployFeedbackButton {
-    type Event = ();
-}
-
-impl View for DeployFeedbackButton {
-    fn ui_name() -> &'static str {
-        "DeployFeedbackButton"
-    }
-
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
-        Stack::new()
-            .with_child(
-                MouseEventHandler::<Self>::new(0, cx, |state, cx| {
-                    let theme = &cx.global::<Settings>().theme;
-                    let theme = &theme.workspace.status_bar.feedback;
-
-                    Text::new(
-                        "Give Feedback".to_string(),
-                        theme.style_for(state, true).clone(),
-                    )
-                    .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(GiveFeedback))
-                .boxed(),
-            )
-            .boxed()
-    }
-}
-
-impl StatusItemView for DeployFeedbackButton {
-    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
-}
-
 #[derive(Serialize)]
 struct FeedbackRequestBody<'a> {
     feedback_text: &'a str,
@@ -100,7 +63,7 @@ struct FeedbackRequestBody<'a> {
 }
 
 #[derive(Clone)]
-struct FeedbackEditor {
+pub(crate) struct FeedbackEditor {
     system_specs: SystemSpecs,
     editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
@@ -440,125 +403,5 @@ impl SearchableItem for FeedbackEditor {
     ) -> Option<usize> {
         self.editor
             .update(cx, |editor, cx| editor.active_match_index(matches, cx))
-    }
-}
-
-pub struct SubmitFeedbackButton {
-    active_item: Option<ViewHandle<FeedbackEditor>>,
-}
-
-impl SubmitFeedbackButton {
-    pub fn new() -> Self {
-        Self {
-            active_item: Default::default(),
-        }
-    }
-}
-
-impl Entity for SubmitFeedbackButton {
-    type Event = ();
-}
-
-impl View for SubmitFeedbackButton {
-    fn ui_name() -> &'static str {
-        "SubmitFeedbackButton"
-    }
-
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.global::<Settings>().theme.clone();
-        enum SubmitFeedbackButton {}
-        MouseEventHandler::<SubmitFeedbackButton>::new(0, cx, |state, _| {
-            let style = theme.feedback.submit_button.style_for(state, false);
-            Label::new("Submit as Markdown".into(), style.text.clone())
-                .contained()
-                .with_style(style.container)
-                .boxed()
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, cx| {
-            cx.dispatch_action(SubmitFeedback)
-        })
-        .aligned()
-        .contained()
-        .with_margin_left(theme.feedback.button_margin)
-        .with_tooltip::<Self, _>(
-            0,
-            "cmd-s".into(),
-            Some(Box::new(SubmitFeedback)),
-            theme.tooltip.clone(),
-            cx,
-        )
-        .boxed()
-    }
-}
-
-impl ToolbarItemView for SubmitFeedbackButton {
-    fn set_active_pane_item(
-        &mut self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
-    ) -> workspace::ToolbarItemLocation {
-        cx.notify();
-        if let Some(feedback_editor) = active_pane_item.and_then(|i| i.downcast::<FeedbackEditor>())
-        {
-            self.active_item = Some(feedback_editor);
-            ToolbarItemLocation::PrimaryRight { flex: None }
-        } else {
-            self.active_item = None;
-            ToolbarItemLocation::Hidden
-        }
-    }
-}
-
-pub struct FeedbackInfoText {
-    active_item: Option<ViewHandle<FeedbackEditor>>,
-}
-
-impl FeedbackInfoText {
-    pub fn new() -> Self {
-        Self {
-            active_item: Default::default(),
-        }
-    }
-}
-
-impl Entity for FeedbackInfoText {
-    type Event = ();
-}
-
-impl View for FeedbackInfoText {
-    fn ui_name() -> &'static str {
-        "FeedbackInfoText"
-    }
-
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.global::<Settings>().theme.clone();
-        let text = "We read whatever you submit here. For issues and discussions, visit the community repo on GitHub.";
-        Label::new(text.to_string(), theme.feedback.info_text.text.clone())
-            .contained()
-            .aligned()
-            .left()
-            .clipped()
-            .boxed()
-    }
-}
-
-impl ToolbarItemView for FeedbackInfoText {
-    fn set_active_pane_item(
-        &mut self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
-    ) -> workspace::ToolbarItemLocation {
-        cx.notify();
-        if let Some(feedback_editor) = active_pane_item.and_then(|i| i.downcast::<FeedbackEditor>())
-        {
-            self.active_item = Some(feedback_editor);
-            ToolbarItemLocation::PrimaryLeft {
-                flex: Some((1., false)),
-            }
-        } else {
-            self.active_item = None;
-            ToolbarItemLocation::Hidden
-        }
     }
 }
