@@ -65,7 +65,7 @@ impl CommandPalette {
                     action,
                     keystrokes: bindings
                         .iter()
-                        .filter_map(|binding| binding.keystrokes())
+                        .map(|binding| binding.keystrokes())
                         .last()
                         .map_or(Vec::new(), |keystrokes| keystrokes.to_vec()),
                 })

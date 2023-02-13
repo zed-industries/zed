@@ -10,13 +10,12 @@ mod state;
 mod utils;
 mod visual;
 
-use collections::HashMap;
+use std::sync::Arc;
+
 use command_palette::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
-    impl_actions,
-    keymap_matcher::{KeyPressed, Keystroke},
-    MutableAppContext, Subscription, ViewContext, WeakViewHandle,
+    actions, impl_actions, MutableAppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -36,6 +35,7 @@ pub struct PushOperator(pub Operator);
 #[derive(Clone, Deserialize, PartialEq)]
 struct Number(u8);
 
+actions!(vim, [Tab, Enter]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -58,11 +58,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_number(n, cx));
     });
-    cx.add_action(
-        |_: &mut Workspace, KeyPressed { keystroke }: &KeyPressed, cx| {
-            Vim::key_pressed(keystroke, cx);
-        },
-    );
 
     // Editor Actions
     cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
@@ -80,8 +75,16 @@ pub fn init(cx: &mut MutableAppContext) {
         }
     });
 
+    cx.add_action(|_: &mut Workspace, _: &Tab, cx| {
+        Vim::active_editor_input_ignored(" ".into(), cx)
+    });
+
+    cx.add_action(|_: &mut Workspace, _: &Enter, cx| {
+        Vim::active_editor_input_ignored("\n".into(), cx)
+    });
+
     // Sync initial settings with the rest of the app
-    Vim::update(cx, |state, cx| state.sync_vim_settings(cx));
+    Vim::update(cx, |vim, cx| vim.sync_vim_settings(cx));
 
     // Any time settings change, update vim mode to match
     cx.observe_global::<Settings, _>(|cx| {
@@ -92,7 +95,7 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 }
 
-pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
+pub fn observe_keystrokes(window_id: usize, cx: &mut MutableAppContext) {
     cx.observe_keystrokes(window_id, |_keystroke, _result, handled_by, cx| {
         if let Some(handled_by) = handled_by {
             // Keystroke is handled by the vim system, so continue forward
@@ -104,11 +107,14 @@ pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
             }
         }
 
-        Vim::update(cx, |vim, cx| {
-            if vim.active_operator().is_some() {
-                // If the keystroke is not handled by vim, we should clear the operator
+        Vim::update(cx, |vim, cx| match vim.active_operator() {
+            Some(
+                Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
+            ) => {}
+            Some(_) => {
                 vim.clear_operator(cx);
             }
+            _ => {}
         });
         true
     })
@@ -117,9 +123,8 @@ pub fn observe_keypresses(window_id: usize, cx: &mut MutableAppContext) {
 
 #[derive(Default)]
 pub struct Vim {
-    editors: HashMap<usize, WeakViewHandle<Editor>>,
     active_editor: Option<WeakViewHandle<Editor>>,
-    selection_subscription: Option<Subscription>,
+    editor_subscription: Option<Subscription>,
 
     enabled: bool,
     state: VimState,
@@ -160,24 +165,26 @@ impl Vim {
         }
 
         // Adjust selections
-        for editor in self.editors.values() {
-            if let Some(editor) = editor.upgrade(cx) {
-                editor.update(cx, |editor, cx| {
-                    editor.change_selections(None, cx, |s| {
-                        s.move_with(|map, selection| {
-                            if self.state.empty_selections_only() {
-                                let new_head = map.clip_point(selection.head(), Bias::Left);
-                                selection.collapse_to(new_head, selection.goal)
-                            } else {
-                                selection.set_head(
-                                    map.clip_point(selection.head(), Bias::Left),
-                                    selection.goal,
-                                );
-                            }
-                        });
-                    })
+        if let Some(editor) = self
+            .active_editor
+            .as_ref()
+            .and_then(|editor| editor.upgrade(cx))
+        {
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(None, cx, |s| {
+                    s.move_with(|map, selection| {
+                        if self.state.empty_selections_only() {
+                            let new_head = map.clip_point(selection.head(), Bias::Left);
+                            selection.collapse_to(new_head, selection.goal)
+                        } else {
+                            selection.set_head(
+                                map.clip_point(selection.head(), Bias::Left),
+                                selection.goal,
+                            );
+                        }
+                    });
                 })
-            }
+            })
         }
     }
 
@@ -220,24 +227,24 @@ impl Vim {
         self.state.operator_stack.last().copied()
     }
 
-    fn key_pressed(keystroke: &Keystroke, cx: &mut ViewContext<Workspace>) {
+    fn active_editor_input_ignored(text: Arc<str>, cx: &mut MutableAppContext) {
+        if text.is_empty() {
+            return;
+        }
+
         match Vim::read(cx).active_operator() {
             Some(Operator::FindForward { before }) => {
-                if let Some(character) = keystroke.key.chars().next() {
-                    motion::motion(Motion::FindForward { before, character }, cx)
-                }
+                motion::motion(Motion::FindForward { before, text }, cx)
             }
             Some(Operator::FindBackward { after }) => {
-                if let Some(character) = keystroke.key.chars().next() {
-                    motion::motion(Motion::FindBackward { after, character }, cx)
-                }
+                motion::motion(Motion::FindBackward { after, text }, cx)
             }
             Some(Operator::Replace) => match Vim::read(cx).state.mode {
-                Mode::Normal => normal_replace(&keystroke.key, cx),
-                Mode::Visual { line } => visual_replace(&keystroke.key, line, cx),
+                Mode::Normal => normal_replace(text, cx),
+                Mode::Visual { line } => visual_replace(text, line, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
-            _ => cx.propagate_action(),
+            _ => {}
         }
     }
 
@@ -264,26 +271,33 @@ impl Vim {
             }
         });
 
-        for editor in self.editors.values() {
-            if let Some(editor) = editor.upgrade(cx) {
+        if let Some(editor) = self
+            .active_editor
+            .as_ref()
+            .and_then(|editor| editor.upgrade(cx))
+        {
+            if self.enabled && editor.read(cx).mode() == EditorMode::Full {
                 editor.update(cx, |editor, cx| {
-                    if self.enabled && editor.mode() == EditorMode::Full {
-                        editor.set_cursor_shape(cursor_shape, cx);
-                        editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
-                        editor.set_input_enabled(!state.vim_controlled());
-                        editor.selections.line_mode =
-                            matches!(state.mode, Mode::Visual { line: true });
-                        let context_layer = state.keymap_context_layer();
-                        editor.set_keymap_context_layer::<Self>(context_layer);
-                    } else {
-                        editor.set_cursor_shape(CursorShape::Bar, cx);
-                        editor.set_clip_at_line_ends(false, cx);
-                        editor.set_input_enabled(true);
-                        editor.selections.line_mode = false;
-                        editor.remove_keymap_context_layer::<Self>();
-                    }
+                    editor.set_cursor_shape(cursor_shape, cx);
+                    editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
+                    editor.set_input_enabled(!state.vim_controlled());
+                    editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
+                    let context_layer = state.keymap_context_layer();
+                    editor.set_keymap_context_layer::<Self>(context_layer);
                 });
+            } else {
+                self.unhook_vim_settings(editor, cx);
             }
         }
+    }
+
+    fn unhook_vim_settings(&self, editor: ViewHandle<Editor>, cx: &mut MutableAppContext) {
+        editor.update(cx, |editor, cx| {
+            editor.set_cursor_shape(CursorShape::Bar, cx);
+            editor.set_clip_at_line_ends(false, cx);
+            editor.set_input_enabled(true);
+            editor.selections.line_mode = false;
+            editor.remove_keymap_context_layer::<Self>();
+        });
     }
 }

@@ -6,23 +6,14 @@ mod keystroke;
 use std::{any::TypeId, fmt::Debug};
 
 use collections::HashMap;
-use serde::Deserialize;
 use smallvec::SmallVec;
 
-use crate::{impl_actions, Action};
+use crate::Action;
 
 pub use binding::{Binding, BindingMatchResult};
 pub use keymap::Keymap;
 pub use keymap_context::{KeymapContext, KeymapContextPredicate};
 pub use keystroke::Keystroke;
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-pub struct KeyPressed {
-    #[serde(default)]
-    pub keystroke: Keystroke,
-}
-
-impl_actions!(gpui, [KeyPressed]);
 
 pub struct KeymapMatcher {
     pub contexts: Vec<KeymapContext>,
@@ -102,13 +93,7 @@ impl KeymapMatcher {
             for binding in self.keymap.bindings().iter().rev() {
                 match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
                 {
-                    BindingMatchResult::Complete(mut action) => {
-                        // Swap in keystroke for special KeyPressed action
-                        if action.name() == "KeyPressed" && action.namespace() == "gpui" {
-                            action = Box::new(KeyPressed {
-                                keystroke: keystroke.clone(),
-                            });
-                        }
+                    BindingMatchResult::Complete(action) => {
                         matched_bindings.push((view_id, action))
                     }
                     BindingMatchResult::Partial => {

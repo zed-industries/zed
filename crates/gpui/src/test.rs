@@ -1,14 +1,3 @@
-use crate::{
-    elements::Empty,
-    executor::{self, ExecutorEvent},
-    platform,
-    util::CwdBacktrace,
-    Element, ElementBox, Entity, FontCache, Handle, LeakDetector, MutableAppContext, Platform,
-    RenderContext, Subscription, TestAppContext, View,
-};
-use futures::StreamExt;
-use parking_lot::Mutex;
-use smol::channel;
 use std::{
     fmt::Write,
     panic::{self, RefUnwindSafe},
@@ -17,6 +6,20 @@ use std::{
         atomic::{AtomicU64, Ordering::SeqCst},
         Arc,
     },
+};
+
+use futures::StreamExt;
+use parking_lot::Mutex;
+use smol::channel;
+
+use crate::{
+    app::ref_counts::LeakDetector,
+    elements::Empty,
+    executor::{self, ExecutorEvent},
+    platform,
+    util::CwdBacktrace,
+    Element, ElementBox, Entity, FontCache, Handle, MutableAppContext, Platform, RenderContext,
+    Subscription, TestAppContext, View,
 };
 
 #[cfg(test)]
