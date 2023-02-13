@@ -21,6 +21,7 @@ use gpui::{
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
 use settings::{Settings, TerminalBlink, WorkingDirectory};
+use smallvec::SmallVec;
 use smol::Timer;
 use terminal::{
     alacritty_terminal::{
@@ -664,12 +665,12 @@ impl Item for TerminalView {
         Some(Box::new(handle.clone()))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
-            Event::BreadcrumbsChanged => vec![ItemEvent::UpdateBreadcrumbs],
-            Event::TitleChanged | Event::Wakeup => vec![ItemEvent::UpdateTab],
-            Event::CloseTerminal => vec![ItemEvent::CloseItem],
-            _ => vec![],
+            Event::BreadcrumbsChanged => smallvec::smallvec![ItemEvent::UpdateBreadcrumbs],
+            Event::TitleChanged | Event::Wakeup => smallvec::smallvec![ItemEvent::UpdateTab],
+            Event::CloseTerminal => smallvec::smallvec![ItemEvent::CloseItem],
+            _ => smallvec::smallvec![],
         }
     }
 

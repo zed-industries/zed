@@ -14,6 +14,8 @@ pub mod sidebar;
 mod status_bar;
 mod toolbar;
 
+pub use smallvec;
+
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
 use client::{

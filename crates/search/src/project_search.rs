@@ -16,6 +16,7 @@ use gpui::{
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     mem,
@@ -345,11 +346,13 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.git_diff_recalc(project, cx))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
-            ViewEvent::UpdateTab => vec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab],
+            ViewEvent::UpdateTab => {
+                smallvec::smallvec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab]
+            }
             ViewEvent::EditorEvent(editor_event) => Editor::to_item_events(editor_event),
-            _ => Vec::new(),
+            _ => SmallVec::new(),
         }
     }
 

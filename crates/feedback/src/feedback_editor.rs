@@ -24,6 +24,7 @@ use serde::Serialize;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
+    smallvec::SmallVec,
     AppState, Workspace,
 };
 
@@ -258,8 +259,8 @@ impl Item for FeedbackEditor {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn to_item_events(_: &Self::Event) -> Vec<workspace::item::ItemEvent> {
-        Vec::new()
+    fn to_item_events(_: &Self::Event) -> SmallVec<[workspace::item::ItemEvent; 2]> {
+        SmallVec::new()
     }
 
     fn is_singleton(&self, _: &AppContext) -> bool {
