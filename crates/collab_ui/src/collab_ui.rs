@@ -11,7 +11,7 @@ mod sharing_status_indicator;
 
 use anyhow::anyhow;
 use call::ActiveCall;
-pub use collab_titlebar_item::{CollabTitlebarItem, ToggleCollaborationMenu};
+pub use collab_titlebar_item::{CollabTitlebarItem, ToggleContactsMenu};
 use gpui::{actions, MutableAppContext, Task};
 use std::sync::Arc;
 use workspace::{AppState, JoinProject, ToggleFollow, Workspace};

@@ -25,7 +25,7 @@ actions!(
     collab,
     [
         ToggleCollaboratorList,
-        ToggleCollaborationMenu,
+        ToggleContactsMenu,
         ShareProject,
         UnshareProject
     ]
@@ -87,24 +87,19 @@ impl View for CollabTitlebarItem {
             left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
             left_container.add_child(self.render_current_user(&workspace, &theme, &user, cx));
             left_container.add_children(self.render_collaborators(&workspace, &theme, room, cx));
+            left_container.add_child(self.render_toggle_contacts_button(&theme, cx));
         }
 
         let mut right_container = Flex::row();
 
         right_container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
 
-        if workspace.read(cx).client().status().borrow().is_connected() {
-            let project = workspace.read(cx).project().read(cx);
-            if project.is_shared()
-                || project.is_remote()
-                || ActiveCall::global(cx).read(cx).room().is_none()
-            {
-                right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
-            }
-        }
-
         if ActiveCall::global(cx).read(cx).room().is_some() {
-            right_container.add_child(self.render_share_unshare_button(&workspace, &theme, cx));
+            right_container
+                .add_child(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
+        } else {
+            right_container
+                .add_child(self.render_outside_call_share_button(&workspace, &theme, cx));
         }
 
         right_container.add_children(self.render_connection_status(&workspace, cx));
@@ -310,11 +305,7 @@ impl CollabTitlebarItem {
         cx.notify();
     }
 
-    pub fn toggle_contacts_popover(
-        &mut self,
-        _: &ToggleCollaborationMenu,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn toggle_contacts_popover(&mut self, _: &ToggleContactsMenu, cx: &mut ViewContext<Self>) {
         match self.contacts_popover.take() {
             Some(_) => {}
             None => {
@@ -369,7 +360,7 @@ impl CollabTitlebarItem {
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<ToggleCollaborationMenu>::new(0, cx, |state, _| {
+                MouseEventHandler::<ToggleContactsMenu>::new(0, cx, |state, _| {
                     let style = titlebar
                         .toggle_contacts_button
                         .style_for(state, self.contacts_popover.is_some());
@@ -387,7 +378,7 @@ impl CollabTitlebarItem {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(ToggleCollaborationMenu);
+                    cx.dispatch_action(ToggleContactsMenu);
                 })
                 .aligned()
                 .boxed(),
@@ -460,7 +451,7 @@ impl CollabTitlebarItem {
         )
     }
 
-    fn render_share_unshare_button(
+    fn render_in_call_share_unshare_button(
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
@@ -476,8 +467,8 @@ impl CollabTitlebarItem {
 
         let titlebar = &theme.workspace.titlebar;
 
-        enum Share {}
-        MouseEventHandler::<Share>::new(0, cx, |state, _| {
+        enum ShareUnshare {}
+        MouseEventHandler::<ShareUnshare>::new(0, cx, |state, _| {
             //TODO: Ensure this button has consistant width for both text variations
             let style = titlebar.share_button.style_for(state, false);
             Label::new(label, style.text.clone())
@@ -493,11 +484,66 @@ impl CollabTitlebarItem {
                 cx.dispatch_action(ShareProject);
             }
         })
-        .with_tooltip::<Share, _>(0, tooltip.to_owned(), None, theme.tooltip.clone(), cx)
+        .with_tooltip::<ShareUnshare, _>(0, tooltip.to_owned(), None, theme.tooltip.clone(), cx)
         .aligned()
         .contained()
         .with_margin_left(theme.workspace.titlebar.avatar_margin)
+        .with_margin_right(theme.workspace.titlebar.avatar_margin)
         .boxed()
+    }
+
+    fn render_outside_call_share_button(
+        &self,
+        workspace: &ViewHandle<Workspace>,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let tooltip = "Share project with new call";
+        let titlebar = &theme.workspace.titlebar;
+
+        enum OutsideCallShare {}
+        Stack::new()
+            .with_child(
+                MouseEventHandler::<OutsideCallShare>::new(0, cx, |state, _| {
+                    //TODO: Ensure this button has consistant width for both text variations
+                    let style = titlebar.share_button.style_for(state, false);
+                    Label::new("Share".to_owned(), style.text.clone())
+                        .contained()
+                        .with_style(style.container)
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(ToggleContactsMenu);
+                })
+                .with_tooltip::<OutsideCallShare, _>(
+                    0,
+                    tooltip.to_owned(),
+                    None,
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .boxed(),
+            )
+            .with_children(self.contacts_popover.as_ref().map(|popover| {
+                Overlay::new(
+                    ChildView::new(popover, cx)
+                        .contained()
+                        .with_margin_top(titlebar.height)
+                        .with_margin_left(titlebar.toggle_contacts_button.default.button_width)
+                        .with_margin_right(-titlebar.toggle_contacts_button.default.button_width)
+                        .boxed(),
+                )
+                .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                .with_anchor_corner(AnchorCorner::BottomLeft)
+                .with_z_index(999)
+                .boxed()
+            }))
+            .aligned()
+            .contained()
+            .with_margin_left(theme.workspace.titlebar.avatar_margin)
+            .with_margin_right(theme.workspace.titlebar.avatar_margin)
+            .boxed()
     }
 
     fn render_collaborators(
