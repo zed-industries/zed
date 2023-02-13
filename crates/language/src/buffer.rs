@@ -2247,7 +2247,6 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        let mut chunks = self.chunks(0..self.len(), true);
         let mut stack = Vec::<Range<usize>>::new();
         let mut items = Vec::new();
         while let Some(mat) = matches.peek() {
@@ -2266,9 +2265,7 @@ impl BufferSnapshot {
                 continue;
             }
 
-            let mut text = String::new();
-            let mut name_ranges = Vec::new();
-            let mut highlight_ranges = Vec::new();
+            let mut buffer_ranges = Vec::new();
             for capture in mat.captures {
                 let node_is_name;
                 if capture.index == config.name_capture_ix {
@@ -2286,12 +2283,27 @@ impl BufferSnapshot {
                         range.start + self.line_len(start.row as u32) as usize - start.column;
                 }
 
+                buffer_ranges.push((range, node_is_name));
+            }
+
+            if buffer_ranges.is_empty() {
+                continue;
+            }
+
+            let mut text = String::new();
+            let mut highlight_ranges = Vec::new();
+            let mut name_ranges = Vec::new();
+            let mut chunks = self.chunks(
+                buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
+                true,
+            );
+            for (buffer_range, is_name) in buffer_ranges {
                 if !text.is_empty() {
                     text.push(' ');
                 }
-                if node_is_name {
+                if is_name {
                     let mut start = text.len();
-                    let end = start + range.len();
+                    let end = start + buffer_range.len();
 
                     // When multiple names are captured, then the matcheable text
                     // includes the whitespace in between the names.
@@ -2302,12 +2314,12 @@ impl BufferSnapshot {
                     name_ranges.push(start..end);
                 }
 
-                let mut offset = range.start;
+                let mut offset = buffer_range.start;
                 chunks.seek(offset);
                 for mut chunk in chunks.by_ref() {
-                    if chunk.text.len() > range.end - offset {
-                        chunk.text = &chunk.text[0..(range.end - offset)];
-                        offset = range.end;
+                    if chunk.text.len() > buffer_range.end - offset {
+                        chunk.text = &chunk.text[0..(buffer_range.end - offset)];
+                        offset = buffer_range.end;
                     } else {
                         offset += chunk.text.len();
                     }
@@ -2321,7 +2333,7 @@ impl BufferSnapshot {
                         highlight_ranges.push((start..end, style));
                     }
                     text.push_str(chunk.text);
-                    if offset >= range.end {
+                    if offset >= buffer_range.end {
                         break;
                     }
                 }

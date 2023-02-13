@@ -608,6 +608,31 @@ impl SyntaxSnapshot {
         self.layers = layers;
         self.interpolated_version = text.version.clone();
         self.parsed_version = text.version.clone();
+        #[cfg(debug_assertions)]
+        self.check_invariants(text);
+    }
+
+    #[cfg(debug_assertions)]
+    fn check_invariants(&self, text: &BufferSnapshot) {
+        let mut max_depth = 0;
+        let mut prev_range: Option<Range<Anchor>> = None;
+        for layer in self.layers.iter() {
+            if layer.depth == max_depth {
+                if let Some(prev_range) = prev_range {
+                    match layer.range.start.cmp(&prev_range.start, text) {
+                        Ordering::Less => panic!("layers out of order"),
+                        Ordering::Equal => {
+                            assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
+                        }
+                        Ordering::Greater => {}
+                    }
+                }
+            } else if layer.depth < max_depth {
+                panic!("layers out of order")
+            }
+            max_depth = layer.depth;
+            prev_range = Some(layer.range.clone());
+        }
     }
 
     pub fn single_tree_captures<'a>(
@@ -1419,7 +1444,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();
         } else {
-            if other.range.start.cmp(&self.range.start, buffer).is_lt() {
+            if self.range == (Anchor::MAX..Anchor::MAX) {
                 self.range.start = other.range.start;
             }
             if other.range.end.cmp(&self.range.end, buffer).is_gt() {
