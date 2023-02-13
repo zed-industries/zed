@@ -1,12 +1,8 @@
 /* eslint-disable import/no-relative-packages */
-import { Scale } from 'chroma-js';
-
-import { color } from '../../src/system/reference';
+import { color } from '../../src/system/system';
 import styles from './page.module.css';
 
-function ColorChips({ colorScale }: { colorScale: Scale }) {
-    const colors = colorScale.colors(11);
-
+function ColorChips({ colors }: { colors: string[] }) {
     return (
         <div
             style={{
@@ -38,22 +34,22 @@ export default function Home() {
     return (
         <main>
             <div style={{ display: 'flex', gap: '1px' }}>
-                <ColorChips colorScale={color.red} />
-                <ColorChips colorScale={color.sunset} />
-                <ColorChips colorScale={color.orange} />
-                <ColorChips colorScale={color.amber} />
-                <ColorChips colorScale={color.yellow} />
-                <ColorChips colorScale={color.citron} />
-                <ColorChips colorScale={color.lime} />
-                <ColorChips colorScale={color.green} />
-                <ColorChips colorScale={color.mint} />
-                <ColorChips colorScale={color.cyan} />
-                <ColorChips colorScale={color.sky} />
-                <ColorChips colorScale={color.blue} />
-                <ColorChips colorScale={color.indigo} />
-                <ColorChips colorScale={color.purple} />
-                <ColorChips colorScale={color.pink} />
-                <ColorChips colorScale={color.rose} />
+                <ColorChips colors={color.red} />
+                <ColorChips colors={color.sunset} />
+                <ColorChips colors={color.orange} />
+                <ColorChips colors={color.amber} />
+                <ColorChips colors={color.yellow} />
+                <ColorChips colors={color.citron} />
+                <ColorChips colors={color.lime} />
+                <ColorChips colors={color.green} />
+                <ColorChips colors={color.mint} />
+                <ColorChips colors={color.cyan} />
+                <ColorChips colors={color.sky} />
+                <ColorChips colors={color.blue} />
+                <ColorChips colors={color.indigo} />
+                <ColorChips colors={color.purple} />
+                <ColorChips colors={color.pink} />
+                <ColorChips colors={color.rose} />
             </div>
         </main>
     );
