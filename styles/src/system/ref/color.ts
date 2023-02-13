@@ -7,6 +7,52 @@ import { curve } from "./curves";
 
 // Token or user-facing colors should use short, clear names and a 100-900 scale to match the font weight scale.
 
+// Light Gray ======================================== //
+
+export const lightgray = generateColorFamily({
+  name: "lightgray",
+  color: {
+    hue: {
+      start: 210,
+      end: 210,
+      curve: curve.linear,
+    },
+    saturation: {
+      start: 10,
+      end: 15,
+      curve: curve.saturation,
+    },
+    lightness: {
+      start: 97,
+      end: 50,
+      curve: curve.linear,
+    },
+  },
+});
+
+// Light Dark ======================================== //
+
+export const darkgray = generateColorFamily({
+  name: "darkgray",
+  color: {
+    hue: {
+      start: 210,
+      end: 210,
+      curve: curve.linear,
+    },
+    saturation: {
+      start: 15,
+      end: 20,
+      curve: curve.saturation,
+    },
+    lightness: {
+      start: 55,
+      end: 8,
+      curve: curve.linear,
+    },
+  },
+});
+
 // Red ======================================== //
 
 export const red = generateColorFamily({

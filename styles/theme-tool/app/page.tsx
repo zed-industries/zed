@@ -34,6 +34,8 @@ export default function Home() {
     return (
         <main>
             <div style={{ display: 'flex', gap: '1px' }}>
+                <ColorChips colors={color.lightgray} />
+                <ColorChips colors={color.darkgray} />
                 <ColorChips colors={color.red} />
                 <ColorChips colors={color.sunset} />
                 <ColorChips colors={color.orange} />
