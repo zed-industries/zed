@@ -1,8 +1,12 @@
 /* eslint-disable import/no-relative-packages */
-import { color } from '../../src/system/system';
+
+import * as color from '../../src/system/ref/color';
+import { ColorFamily } from '../../src/system/types';
 import styles from './page.module.css';
 
-function ColorChips({ colors }: { colors: string[] }) {
+function ColorChips({ colorFamily }: { colorFamily: ColorFamily }) {
+    const familySubset = [0, 11, 22, 33, 44, 56, 67, 79, 90, 101];
+
     return (
         <div
             style={{
@@ -13,19 +17,33 @@ function ColorChips({ colors }: { colors: string[] }) {
                 gap: '1px',
             }}
         >
-            {colors.map((c) => (
-                <div
-                    key={c}
-                    style={{
-                        backgroundColor: c,
-                        width: '80px',
-                        height: '40px',
-                    }}
-                    className={styles.chip}
-                >
-                    {c}
-                </div>
-            ))}
+            <div
+                style={{
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    padding: '16px 0',
+                }}
+            >
+                {colorFamily.name}
+            </div>
+            {colorFamily.scale.colors.map(
+                (c) =>
+                    familySubset.includes(c.step) && (
+                        <div
+                            key={c.step}
+                            style={{
+                                backgroundColor: c.hex,
+                                color: c.isLight ? 'black' : 'white',
+                                width: '80px',
+                                height: '40px',
+                            }}
+                            className={styles.chip}
+                        >
+                            {c.hex}
+                        </div>
+                    ),
+            )}
         </div>
     );
 }
@@ -34,24 +52,25 @@ export default function Home() {
     return (
         <main>
             <div style={{ display: 'flex', gap: '1px' }}>
-                <ColorChips colors={color.lightgray} />
-                <ColorChips colors={color.darkgray} />
-                <ColorChips colors={color.red} />
-                <ColorChips colors={color.sunset} />
-                <ColorChips colors={color.orange} />
-                <ColorChips colors={color.amber} />
-                <ColorChips colors={color.yellow} />
-                <ColorChips colors={color.citron} />
-                <ColorChips colors={color.lime} />
-                <ColorChips colors={color.green} />
-                <ColorChips colors={color.mint} />
-                <ColorChips colors={color.cyan} />
-                <ColorChips colors={color.sky} />
-                <ColorChips colors={color.blue} />
-                <ColorChips colors={color.indigo} />
-                <ColorChips colors={color.purple} />
-                <ColorChips colors={color.pink} />
-                <ColorChips colors={color.rose} />
+                <ColorChips colorFamily={color.lightgray} />
+                <ColorChips colorFamily={color.darkgray} />
+                <ColorChips colorFamily={color.red} />
+                <ColorChips colorFamily={color.sunset} />
+                <ColorChips colorFamily={color.orange} />
+                <ColorChips colorFamily={color.amber} />
+                <ColorChips colorFamily={color.yellow} />
+                <ColorChips colorFamily={color.lemon} />
+                <ColorChips colorFamily={color.citron} />
+                <ColorChips colorFamily={color.lime} />
+                <ColorChips colorFamily={color.green} />
+                <ColorChips colorFamily={color.mint} />
+                <ColorChips colorFamily={color.cyan} />
+                <ColorChips colorFamily={color.sky} />
+                <ColorChips colorFamily={color.blue} />
+                <ColorChips colorFamily={color.indigo} />
+                <ColorChips colorFamily={color.purple} />
+                <ColorChips colorFamily={color.pink} />
+                <ColorChips colorFamily={color.rose} />
             </div>
         </main>
     );

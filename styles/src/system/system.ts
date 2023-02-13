@@ -15,6 +15,7 @@ const color = {
   orange: chroma.scale(colorFamily.orange.scale.values).mode("lch").colors(9),
   amber: chroma.scale(colorFamily.amber.scale.values).mode("lch").colors(9),
   yellow: chroma.scale(colorFamily.yellow.scale.values).mode("lch").colors(9),
+  lemon: chroma.scale(colorFamily.lemon.scale.values).mode("lch").colors(9),
   citron: chroma.scale(colorFamily.citron.scale.values).mode("lch").colors(9),
   lime: chroma.scale(colorFamily.lime.scale.values).mode("lch").colors(9),
   green: chroma.scale(colorFamily.green.scale.values).mode("lch").colors(9),

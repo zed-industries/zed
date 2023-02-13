@@ -60,7 +60,9 @@ function generateColor(
   const rgba = color.rgba();
   const hex = color.hex();
 
-  const isLight = lch[0] > 50;
+  // 55 is a magic number. It's the lightness value at which we consider a color to be "light".
+  // It was picked by eye with some testing. We might want to use a more scientific approach in the future.
+  const isLight = lch[0] > 55;
 
   const result: Color = {
     step,

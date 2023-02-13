@@ -82,13 +82,13 @@ export const sunset = generateColorFamily({
   name: "sunset",
   color: {
     hue: {
-      start: 12,
-      end: 12,
+      start: 15,
+      end: 15,
       curve: curve.linear,
     },
     saturation: {
       start: 100,
-      end: 80,
+      end: 90,
       curve: curve.saturation,
     },
     lightness: {
@@ -111,12 +111,12 @@ export const orange = generateColorFamily({
     },
     saturation: {
       start: 100,
-      end: 100,
+      end: 95,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 25,
+      end: 20,
       curve: curve.lightness,
     },
   },
@@ -128,8 +128,8 @@ export const amber = generateColorFamily({
   name: "amber",
   color: {
     hue: {
-      start: 34,
-      end: 34,
+      start: 38,
+      end: 38,
       curve: curve.linear,
     },
     saturation: {
@@ -139,7 +139,7 @@ export const amber = generateColorFamily({
     },
     lightness: {
       start: 97,
-      end: 25,
+      end: 18,
       curve: curve.lightness,
     },
   },
@@ -162,7 +162,30 @@ export const yellow = generateColorFamily({
     },
     lightness: {
       start: 97,
-      end: 28,
+      end: 15,
+      curve: curve.lightness,
+    },
+  },
+});
+
+// Lemon ======================================== //
+
+export const lemon = generateColorFamily({
+  name: "lemon",
+  color: {
+    hue: {
+      start: 55,
+      end: 55,
+      curve: curve.linear,
+    },
+    saturation: {
+      start: 85,
+      end: 95,
+      curve: curve.saturation,
+    },
+    lightness: {
+      start: 97,
+      end: 15,
       curve: curve.lightness,
     },
   },
@@ -174,18 +197,18 @@ export const citron = generateColorFamily({
   name: "citron",
   color: {
     hue: {
-      start: 65,
-      end: 65,
+      start: 70,
+      end: 70,
       curve: curve.linear,
     },
     saturation: {
       start: 85,
-      end: 70,
+      end: 90,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 25,
+      end: 15,
       curve: curve.lightness,
     },
   },
@@ -203,12 +226,12 @@ export const lime = generateColorFamily({
     },
     saturation: {
       start: 85,
-      end: 70,
+      end: 80,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 25,
+      end: 18,
       curve: curve.lightness,
     },
   },
@@ -226,12 +249,12 @@ export const green = generateColorFamily({
     },
     saturation: {
       start: 60,
-      end: 50,
+      end: 70,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 25,
+      end: 18,
       curve: curve.lightness,
     },
   },
@@ -249,7 +272,7 @@ export const mint = generateColorFamily({
     },
     saturation: {
       start: 60,
-      end: 50,
+      end: 75,
       curve: curve.saturation,
     },
     lightness: {
@@ -272,7 +295,7 @@ export const cyan = generateColorFamily({
     },
     saturation: {
       start: 70,
-      end: 60,
+      end: 80,
       curve: curve.saturation,
     },
     lightness: {
@@ -290,17 +313,17 @@ export const sky = generateColorFamily({
   color: {
     hue: {
       start: 195,
-      end: 195,
+      end: 205,
       curve: curve.linear,
     },
     saturation: {
       start: 85,
-      end: 75,
+      end: 90,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 20,
+      end: 15,
       curve: curve.lightness,
     },
   },
@@ -312,18 +335,18 @@ export const blue = generateColorFamily({
   name: "blue",
   color: {
     hue: {
-      start: 210,
-      end: 210,
+      start: 218,
+      end: 218,
       curve: curve.linear,
     },
     saturation: {
-      start: 90,
-      end: 75,
+      start: 85,
+      end: 70,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 20,
+      end: 15,
       curve: curve.lightness,
     },
   },
@@ -335,18 +358,18 @@ export const indigo = generateColorFamily({
   name: "indigo",
   color: {
     hue: {
-      start: 230,
-      end: 230,
+      start: 245,
+      end: 245,
       curve: curve.linear,
     },
     saturation: {
-      start: 80,
+      start: 60,
       end: 50,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 20,
+      end: 22,
       curve: curve.lightness,
     },
   },
@@ -359,12 +382,12 @@ export const purple = generateColorFamily({
   color: {
     hue: {
       start: 260,
-      end: 265,
+      end: 270,
       curve: curve.linear,
     },
     saturation: {
-      start: 80,
-      end: 50,
+      start: 65,
+      end: 55,
       curve: curve.saturation,
     },
     lightness: {
@@ -381,18 +404,18 @@ export const pink = generateColorFamily({
   name: "pink",
   color: {
     hue: {
-      start: 310,
-      end: 310,
+      start: 320,
+      end: 330,
       curve: curve.linear,
     },
     saturation: {
-      start: 80,
-      end: 75,
+      start: 70,
+      end: 65,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 20,
+      end: 32,
       curve: curve.lightness,
     },
   },
@@ -410,12 +433,12 @@ export const rose = generateColorFamily({
     },
     saturation: {
       start: 90,
-      end: 65,
+      end: 70,
       curve: curve.saturation,
     },
     lightness: {
       start: 97,
-      end: 20,
+      end: 32,
       curve: curve.lightness,
     },
   },

@@ -12,7 +12,7 @@ export interface Curves {
 export const curve: Curves = {
   lightness: {
     name: "lightnessCurve",
-    value: [0.2, 0, 0.85, 1.0],
+    value: [0.2, 0, 0.75, 1.0],
   },
   saturation: {
     name: "saturationCurve",
