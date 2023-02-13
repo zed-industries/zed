@@ -1219,7 +1219,7 @@ impl MutableAppContext {
             .bindings_for_action_type(action.as_any().type_id())
             .find_map(|b| {
                 if b.match_context(&contexts) {
-                    b.keystrokes().map(|s| s.into())
+                    Some(b.keystrokes().into())
                 } else {
                     None
                 }
