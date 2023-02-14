@@ -3452,12 +3452,20 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![BracketPair {
-                start: "{".to_string(),
-                end: "}".to_string(),
-                close: true,
-                newline: true,
-            }],
+            brackets: vec![
+                BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                },
+                BracketPair {
+                    start: "/* ".to_string(),
+                    end: "*/".to_string(),
+                    close: true,
+                    ..Default::default()
+                },
+            ],
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -3524,6 +3532,67 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+            ]
+        );
+
+        // Ensure inserting the first character of a multi-byte bracket pair
+        // doesn't surround the selections with the bracket.
+        view.handle_input("/", cx);
+        assert_eq!(
+            view.text(cx),
+            "
+                /
+                /
+                /
+            "
+            .unindent()
+        );
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [
+                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1)
+            ]
+        );
+
+        view.undo(&Undo, cx);
+        assert_eq!(
+            view.text(cx),
+            "
+                a
+                b
+                c
+            "
+            .unindent()
+        );
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+            ]
+        );
+
+        // Ensure inserting the last character of a multi-byte bracket pair
+        // doesn't surround the selections with the bracket.
+        view.handle_input("*", cx);
+        assert_eq!(
+            view.text(cx),
+            "
+                *
+                *
+                *
+            "
+            .unindent()
+        );
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [
+                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1)
             ]
         );
     });
