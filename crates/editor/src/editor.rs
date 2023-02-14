@@ -1816,9 +1816,9 @@ impl Editor {
                             }
                         }
                     }
-                    // If an opening bracket is typed while text is selected, then
-                    // surround that text with the bracket pair.
-                    else if is_bracket_pair_start {
+                    // If an opening bracket is 1 character long and is typed while
+                    // text is selected, then surround that text with the bracket pair.
+                    else if is_bracket_pair_start && bracket_pair.start.chars().count() == 1 {
                         edits.push((selection.start..selection.start, text.clone()));
                         edits.push((
                             selection.end..selection.end,
