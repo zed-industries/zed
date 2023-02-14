@@ -643,6 +643,8 @@ impl Terminal {
                 if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {
                     term.grid_mut().reset_region((new_cursor.line + 1)..);
                 }
+
+                cx.emit(Event::Wakeup);
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
