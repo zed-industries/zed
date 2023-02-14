@@ -65,18 +65,6 @@ pub fn open<P: AsRef<Path>>(path: P) {
     }
 }
 
-pub fn reveal_in_finder<P: AsRef<Path>>(path: P) {
-    let path_to_reveal = path.as_ref().to_string_lossy();
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg("-R") // To reveal in Finder instead of opening the file
-            .arg(path_to_reveal.as_ref())
-            .spawn()
-            .log_err();
-    }
-}
-
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
