@@ -19,6 +19,7 @@ use language::{
 use project::{FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -693,8 +694,8 @@ impl Item for Editor {
         Task::ready(Ok(()))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
-        let mut result = Vec::new();
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        let mut result = SmallVec::new();
         match event {
             Event::Closed => result.push(ItemEvent::CloseItem),
             Event::Saved | Event::TitleChanged => {

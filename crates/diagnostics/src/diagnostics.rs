@@ -21,6 +21,7 @@ use language::{
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -579,7 +580,7 @@ impl Item for ProjectDiagnosticsEditor {
             .update(cx, |editor, cx| editor.git_diff_recalc(project, cx))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         Editor::to_item_events(event)
     }
 

@@ -88,7 +88,7 @@ pub trait Item: View {
     ) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent>;
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]>;
     fn should_close_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -723,6 +723,7 @@ pub(crate) mod test {
         RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+    use smallvec::SmallVec;
     use std::{any::Any, borrow::Cow, cell::Cell, path::Path};
 
     pub struct TestProjectItem {
@@ -985,8 +986,8 @@ pub(crate) mod test {
             Task::ready(Ok(()))
         }
 
-        fn to_item_events(_: &Self::Event) -> Vec<ItemEvent> {
-            vec![ItemEvent::UpdateTab, ItemEvent::Edit]
+        fn to_item_events(_: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+            [ItemEvent::UpdateTab, ItemEvent::Edit].into()
         }
 
         fn serialized_item_kind() -> Option<&'static str> {

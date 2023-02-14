@@ -11,6 +11,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
+use smallvec::SmallVec;
 use theme::{ColorScheme, Layer, Style, StyleSet};
 use workspace::{
     item::{Item, ItemEvent},
@@ -350,8 +351,8 @@ impl Item for ThemeTestbench {
         gpui::Task::ready(Ok(()))
     }
 
-    fn to_item_events(_: &Self::Event) -> Vec<ItemEvent> {
-        Vec::new()
+    fn to_item_events(_: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        SmallVec::new()
     }
 
     fn serialized_item_kind() -> Option<&'static str> {
