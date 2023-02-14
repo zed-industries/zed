@@ -236,6 +236,7 @@ actions!(
         RestartLanguageServer,
         Hover,
         Format,
+        ToggleSoftWrap
     ]
 );
 
@@ -346,6 +347,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::jump);
+    cx.add_action(Editor::toggle_soft_wrap);
     cx.add_async_action(Editor::format);
     cx.add_action(Editor::restart_language_server);
     cx.add_action(Editor::show_character_palette);
@@ -5810,6 +5812,19 @@ impl Editor {
     pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut MutableAppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, cx: &mut ViewContext<Self>) {
+        if self.soft_wrap_mode_override.is_some() {
+            self.soft_wrap_mode_override.take();
+        } else {
+            let soft_wrap = match self.soft_wrap_mode(cx) {
+                SoftWrap::None => settings::SoftWrap::EditorWidth,
+                SoftWrap::EditorWidth | SoftWrap::Column(_) => settings::SoftWrap::None,
+            };
+            self.soft_wrap_mode_override = Some(soft_wrap);
+        }
+        cx.notify();
     }
 
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {

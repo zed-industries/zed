@@ -1534,15 +1534,14 @@ impl Element for EditorElement {
         let snapshot = self.update_view(cx.app, |view, cx| {
             view.set_visible_line_count(size.y() / line_height);
 
+            let editor_width = text_width - gutter_margin - overscroll.x() - em_width;
             let wrap_width = match view.soft_wrap_mode(cx) {
-                SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
-                SoftWrap::EditorWidth => {
-                    Some(text_width - gutter_margin - overscroll.x() - em_width)
-                }
-                SoftWrap::Column(column) => Some(column as f32 * em_advance),
+                SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
+                SoftWrap::EditorWidth => editor_width,
+                SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
             };
 
-            if view.set_wrap_width(wrap_width, cx) {
+            if view.set_wrap_width(Some(wrap_width), cx) {
                 view.snapshot(cx)
             } else {
                 snapshot
