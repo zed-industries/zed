@@ -1009,4 +1009,13 @@ mod test {
                 .await;
         }
     }
+
+    #[gpui::test]
+    async fn test_percent(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        for count in 1..=2 {
+            // let test_case = indoc! {"
+            //     "}
+        }
+    }
 }

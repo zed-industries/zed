@@ -1,6 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
-use editor::test::editor_test_context::EditorTestContext;
+use editor::test::{
+    editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+};
 use gpui::{json::json, AppContext, ContextHandle, ViewHandle};
 use project::Project;
 use search::{BufferSearchBar, ProjectSearchBar};
@@ -11,7 +13,7 @@ use crate::{state::Operator, *};
 use super::VimBindingTestContext;
 
 pub struct VimTestContext<'a> {
-    cx: EditorTestContext<'a>,
+    cx: EditorLspTestContext<'a>,
     workspace: ViewHandle<Workspace>,
 }
 
@@ -26,19 +28,28 @@ impl<'a> VimTestContext<'a> {
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
         });
 
-        let params = cx.update(AppState::test);
-        let project = Project::test(params.fs.clone(), [], cx).await;
-
         cx.update(|cx| {
             cx.update_global(|settings: &mut Settings, _| {
                 settings.vim_mode = enabled;
             });
         });
 
+        let params = cx.update(AppState::test);
+
+        let file_name = "test.rs";
+        let mut fake_servers = language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                ..Default::default()
+            }))
+            .await;
+
+        let project = Project::test(params.fs.clone(), [], cx).await;
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+
         params
             .fs
             .as_fake()
-            .insert_tree("/root", json!({ "dir": { "test.txt": "" } }))
+            .insert_tree("/root", json!({ "dir": { "test.rs": "" } }))
             .await;
 
         let (window_id, workspace) = cx.add_window(|cx| {
@@ -87,11 +98,18 @@ impl<'a> VimTestContext<'a> {
         });
         editor.update(cx, |_, cx| cx.focus_self());
 
+        let lsp = fake_servers.next().await.unwrap();
+
         Self {
-            cx: EditorTestContext {
-                cx,
-                window_id,
-                editor,
+            cx: EditorLspTestContext {
+                cx: EditorTestContext {
+                    cx,
+                    window_id,
+                    editor,
+                },
+                lsp,
+                workspace,
+                buffer_lsp_url: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
             },
             workspace,
         }
@@ -101,7 +119,7 @@ impl<'a> VimTestContext<'a> {
     where
         F: FnOnce(&Workspace, &AppContext) -> T,
     {
-        self.workspace.read_with(self.cx.cx, read)
+        self.workspace.read_with(self.cx.cx.cx, read)
     }
 
     pub fn enable_vim(&mut self) {

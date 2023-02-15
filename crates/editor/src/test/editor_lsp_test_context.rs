@@ -62,7 +62,7 @@ impl<'a> EditorLspTestContext<'a> {
         params
             .fs
             .as_fake()
-            .insert_tree("/root", json!({ "dir": { file_name: "" }}))
+            .insert_tree("/root", json!({ "dir": { file_name.clone(): "" }}))
             .await;
 
         let (window_id, workspace) = cx.add_window(|cx| {
@@ -107,7 +107,7 @@ impl<'a> EditorLspTestContext<'a> {
             },
             lsp,
             workspace,
-            buffer_lsp_url: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
+            buffer_lsp_url: lsp::Url::from_file_path(format!("/root/dir/{file_name}")).unwrap(),
         }
     }
 
