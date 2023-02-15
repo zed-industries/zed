@@ -228,7 +228,12 @@
                     "replace_newest": true
                 }
             ],
-            "cmd-/": "editor::ToggleComments",
+            "cmd-/": [
+                "editor::ToggleComments",
+                {
+                    "advance_downwards": false
+                }
+            ],
             "alt-up": "editor::SelectLargerSyntaxNode",
             "alt-down": "editor::SelectSmallerSyntaxNode",
             "cmd-u": "editor::UndoSelection",

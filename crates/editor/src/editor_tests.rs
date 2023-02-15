@@ -4451,7 +4451,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
                 DisplayPoint::new(3, 5)..DisplayPoint::new(3, 6),
             ])
         });
-        editor.toggle_comments(&ToggleComments, cx);
+        editor.toggle_comments(&ToggleComments::default(), cx);
         assert_eq!(
             editor.text(cx),
             "
@@ -4469,7 +4469,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_display_ranges([DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)])
         });
-        editor.toggle_comments(&ToggleComments, cx);
+        editor.toggle_comments(&ToggleComments::default(), cx);
         assert_eq!(
             editor.text(cx),
             "
@@ -4486,7 +4486,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)])
         });
-        editor.toggle_comments(&ToggleComments, cx);
+        editor.toggle_comments(&ToggleComments::default(), cx);
         assert_eq!(
             editor.text(cx),
             "
@@ -4499,6 +4499,139 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             .unindent()
         );
     });
+}
+
+#[gpui::test]
+async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+    cx.update(|cx| cx.set_global(Settings::test(cx)));
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comment: Some("// ".into()),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ));
+
+    let registry = Arc::new(LanguageRegistry::test());
+    registry.add(language.clone());
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(registry);
+        buffer.set_language(Some(language), cx);
+    });
+
+    let toggle_comments = &ToggleComments {
+        advance_downwards: true,
+    };
+
+    // Single cursor on one line -> advance
+    // Cursor moves horizontally 3 characters as well on non-blank line
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdog();
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+             catˇ();
+        }"
+    ));
+
+    // Single selection on one line -> don't advance
+    cx.set_state(indoc!(
+        "fn a() {
+             «dog()ˇ»;
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // «dog()ˇ»;
+             cat();
+        }"
+    ));
+
+    // Multiple cursors on one line -> advance
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdˇog();
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+             catˇ(ˇ);
+        }"
+    ));
+
+    // Multiple cursors on one line, with selection -> don't advance
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdˇog«()ˇ»;
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // ˇdˇog«()ˇ»;
+             cat();
+        }"
+    ));
+
+    // Single cursor on one line -> advance
+    // Cursor moves to column 0 on blank line
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdog();
+
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+        ˇ
+             cat();
+        }"
+    ));
+
+    // Single cursor on one line -> advance
+    // Cursor starts and ends at column 0
+    cx.set_state(indoc!(
+        "fn a() {
+         ˇ    dog();
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+         ˇ    cat();
+        }"
+    ));
 }
 
 #[gpui::test]
@@ -4551,7 +4684,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         "#
         .unindent(),
     );
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <!-- <p>A</p>ˇ -->
@@ -4560,7 +4693,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         "#
         .unindent(),
     );
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <p>A</p>ˇ
@@ -4582,7 +4715,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         .unindent(),
     );
 
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <!-- <p>A«</p>
@@ -4592,7 +4725,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         "#
         .unindent(),
     );
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <p>A«</p>
@@ -4614,7 +4747,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         .unindent(),
     );
     cx.foreground().run_until_parked();
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <!-- ˇ<script> -->

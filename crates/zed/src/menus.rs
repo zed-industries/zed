@@ -146,7 +146,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Toggle Line Comment",
-                    action: Box::new(editor::ToggleComments),
+                    action: Box::new(editor::ToggleComments::default()),
                 },
                 MenuItem::Action {
                     name: "Emoji & Symbols",
