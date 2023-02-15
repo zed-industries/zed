@@ -452,8 +452,9 @@ fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> D
 
 fn matching(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let offset = point.to_offset(map, Bias::Left);
-    if let Some((open_range, close_range)) =
-        map.buffer_snapshot.enclosing_bracket_ranges(offset..offset)
+    if let Some((open_range, close_range)) = map
+        .buffer_snapshot
+        .innermost_enclosing_bracket_ranges(offset..offset)
     {
         if open_range.contains(&offset) {
             close_range.start.to_display_point(map)

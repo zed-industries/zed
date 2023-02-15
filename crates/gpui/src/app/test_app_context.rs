@@ -621,6 +621,8 @@ impl<T: View> ViewHandle<T> {
     }
 }
 
+/// Tracks string context to be printed when assertions fail.
+/// Often this is done by storing a context string in the manager and returning the handle.
 #[derive(Clone)]
 pub struct AssertionContextManager {
     id: Arc<AtomicUsize>,
@@ -651,6 +653,9 @@ impl AssertionContextManager {
     }
 }
 
+/// Used to track the lifetime of a piece of context so that it can be provided when an assertion fails.
+/// For example, in the EditorTestContext, `set_state` returns a context handle so that if an assertion fails,
+/// the state that was set initially for the failure can be printed in the error message
 pub struct ContextHandle {
     id: usize,
     manager: AssertionContextManager,

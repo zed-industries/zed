@@ -3,6 +3,7 @@ use clock::ReplicaId;
 use collections::BTreeMap;
 use fs::LineEnding;
 use gpui::{ModelHandle, MutableAppContext};
+use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
 use settings::Settings;
@@ -15,7 +16,7 @@ use std::{
 };
 use text::network::Network;
 use unindent::Unindent as _;
-use util::{post_inc, test::marked_text_ranges, RandomCharIter};
+use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -576,53 +577,117 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
-    cx.set_global(Settings::test(cx));
-    let buffer = cx.add_model(|cx| {
-        let text = "
-            mod x {
-                mod y {
+    let mut assert = |selection_text, range_markers| {
+        assert_enclosing_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
+    };
 
+    assert(
+        indoc! {"
+            mod x {
+                moˇd y {
+                
                 }
             }
-        "
-        .unindent();
-        Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx)
-    });
-    let buffer = buffer.read(cx);
-    assert_eq!(
-        buffer.enclosing_bracket_point_ranges(Point::new(1, 6)..Point::new(1, 6)),
-        Some((
-            Point::new(0, 6)..Point::new(0, 7),
-            Point::new(4, 0)..Point::new(4, 1)
-        ))
-    );
-    assert_eq!(
-        buffer.enclosing_bracket_point_ranges(Point::new(1, 10)..Point::new(1, 10)),
-        Some((
-            Point::new(1, 10)..Point::new(1, 11),
-            Point::new(3, 4)..Point::new(3, 5)
-        ))
-    );
-    assert_eq!(
-        buffer.enclosing_bracket_point_ranges(Point::new(3, 5)..Point::new(3, 5)),
-        Some((
-            Point::new(1, 10)..Point::new(1, 11),
-            Point::new(3, 4)..Point::new(3, 5)
-        ))
+            let foo = 1;"},
+        vec![indoc! {"
+            mod x «{»
+                mod y {
+                
+                }
+            «}»
+            let foo = 1;"}],
     );
 
-    assert_eq!(
-        buffer.enclosing_bracket_point_ranges(Point::new(4, 1)..Point::new(4, 1)),
-        Some((
-            Point::new(0, 6)..Point::new(0, 7),
-            Point::new(4, 0)..Point::new(4, 1)
-        ))
+    assert(
+        indoc! {"
+            mod x {
+                mod y ˇ{
+                
+                }
+            }
+            let foo = 1;"},
+        vec![
+            indoc! {"
+                mod x «{»
+                    mod y {
+                    
+                    }
+                «}»
+                let foo = 1;"},
+            indoc! {"
+                mod x {
+                    mod y «{»
+                    
+                    «}»
+                }
+                let foo = 1;"},
+        ],
+    );
+
+    assert(
+        indoc! {"
+            mod x {
+                mod y {
+                
+                }ˇ
+            }
+            let foo = 1;"},
+        vec![
+            indoc! {"
+                mod x «{»
+                    mod y {
+                    
+                    }
+                «}»
+                let foo = 1;"},
+            indoc! {"
+                mod x {
+                    mod y «{»
+                    
+                    «}»
+                }
+                let foo = 1;"},
+        ],
+    );
+
+    assert(
+        indoc! {"
+            mod x {
+                mod y {
+                
+                }
+            ˇ}
+            let foo = 1;"},
+        vec![indoc! {"
+            mod x «{»
+                mod y {
+                
+                }
+            «}»
+            let foo = 1;"}],
+    );
+
+    assert(
+        indoc! {"
+            mod x {
+                mod y {
+                
+                }
+            }
+            let fˇoo = 1;"},
+        vec![],
     );
 
     // Regression test: avoid crash when querying at the end of the buffer.
-    assert_eq!(
-        buffer.enclosing_bracket_point_ranges(Point::new(4, 1)..Point::new(5, 0)),
-        None
+    assert(
+        indoc! {"
+            mod x {
+                mod y {
+                
+                }
+            }
+            let foo = 1;ˇ"},
+        vec![],
     );
 }
 
@@ -630,52 +695,33 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
 fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
     cx: &mut MutableAppContext,
 ) {
-    let javascript_language = Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "JavaScript".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_javascript::language()),
-        )
-        .with_brackets_query(
-            r#"
-            ("{" @open "}" @close)
-            ("(" @open ")" @close)
-            "#,
-        )
-        .unwrap(),
-    );
+    let mut assert = |selection_text, bracket_pair_texts| {
+        assert_enclosing_bracket_pairs(selection_text, bracket_pair_texts, javascript_lang(), cx)
+    };
 
-    cx.set_global(Settings::test(cx));
-    let buffer = cx.add_model(|cx| {
-        let text = "
-            for (const a in b) {
-                // a comment that's longer than the for-loop header
-            }
-        "
-        .unindent();
-        Buffer::new(0, text, cx).with_language(javascript_language, cx)
-    });
-
-    let buffer = buffer.read(cx);
-    assert_eq!(
-        buffer.enclosing_bracket_point_ranges(Point::new(0, 18)..Point::new(0, 18)),
-        Some((
-            Point::new(0, 4)..Point::new(0, 5),
-            Point::new(0, 17)..Point::new(0, 18)
-        ))
+    assert(
+        indoc! {"
+        for (const a in b)ˇ {
+            // a comment that's longer than the for-loop header
+        }"},
+        vec![indoc! {"
+        for «(»const a in b«)» {
+            // a comment that's longer than the for-loop header
+        }"}],
     );
 
     // Regression test: even though the parent node of the parentheses (the for loop) does
     // intersect the given range, the parentheses themselves do not contain the range, so
     // they should not be returned. Only the curly braces contain the range.
-    assert_eq!(
-        buffer.enclosing_bracket_point_ranges(Point::new(0, 20)..Point::new(0, 20)),
-        Some((
-            Point::new(0, 19)..Point::new(0, 20),
-            Point::new(2, 0)..Point::new(2, 1)
-        ))
+    assert(
+        indoc! {"
+        for (const a in b) {ˇ
+            // a comment that's longer than the for-loop header
+        }"},
+        vec![indoc! {"
+        for (const a in b) «{»
+            // a comment that's longer than the for-loop header
+        «}»"}],
     );
 }
 
@@ -1892,21 +1938,6 @@ fn test_contiguous_ranges() {
     );
 }
 
-impl Buffer {
-    pub fn enclosing_bracket_point_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<(Range<Point>, Range<Point>)> {
-        self.snapshot()
-            .enclosing_bracket_ranges(range)
-            .map(|(start, end)| {
-                let point_start = start.start.to_point(self)..start.end.to_point(self);
-                let point_end = end.start.to_point(self)..end.end.to_point(self);
-                (point_start, point_end)
-            })
-    }
-}
-
 fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
@@ -1990,10 +2021,60 @@ fn json_lang() -> Language {
     )
 }
 
+fn javascript_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_javascript::language()),
+    )
+    .with_brackets_query(
+        r#"
+        ("{" @open "}" @close)
+        ("(" @open ")" @close)
+        "#,
+    )
+    .unwrap()
+}
+
 fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
     buffer.read_with(cx, |buffer, _| {
         let snapshot = buffer.snapshot();
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
         layers[0].node.to_sexp()
     })
+}
+
+// Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
+fn assert_enclosing_bracket_pairs(
+    selection_text: &'static str,
+    bracket_pair_texts: Vec<&'static str>,
+    language: Language,
+    cx: &mut MutableAppContext,
+) {
+    cx.set_global(Settings::test(cx));
+    let (expected_text, selection_ranges) = marked_text_ranges(selection_text, false);
+    let buffer = cx.add_model(|cx| {
+        Buffer::new(0, expected_text.clone(), cx).with_language(Arc::new(language), cx)
+    });
+    let buffer = buffer.update(cx, |buffer, _cx| buffer.snapshot());
+
+    let selection_range = selection_ranges[0].clone();
+
+    let bracket_pairs = bracket_pair_texts
+        .into_iter()
+        .map(|pair_text| {
+            let (bracket_text, ranges) = marked_text_ranges(pair_text, false);
+            assert_eq!(bracket_text, expected_text);
+            (ranges[0].clone(), ranges[1].clone())
+        })
+        .collect::<Vec<_>>();
+
+    assert_set_eq!(
+        buffer
+            .enclosing_bracket_ranges(selection_range)
+            .collect::<Vec<_>>(),
+        bracket_pairs
+    );
 }

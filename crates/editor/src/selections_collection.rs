@@ -659,6 +659,31 @@ impl<'a> MutableSelectionsCollection<'a> {
         }
     }
 
+    pub fn move_offsets_with(
+        &mut self,
+        mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<usize>),
+    ) {
+        let mut changed = false;
+        let snapshot = self.buffer().clone();
+        let selections = self
+            .all::<usize>(self.cx)
+            .into_iter()
+            .map(|selection| {
+                let mut moved_selection = selection.clone();
+                move_selection(&snapshot, &mut moved_selection);
+                if selection != moved_selection {
+                    changed = true;
+                }
+                moved_selection
+            })
+            .collect();
+        drop(snapshot);
+
+        if changed {
+            self.select(selections)
+        }
+    }
+
     pub fn move_heads_with(
         &mut self,
         mut update_head: impl FnMut(
