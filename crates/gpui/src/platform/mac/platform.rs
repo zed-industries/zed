@@ -599,6 +599,19 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn reveal_path(&self, path: &Path) {
+        unsafe {
+            let full_path = ns_string(path.to_str().unwrap_or(""));
+            let root_full_path = ns_string("");
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            msg_send![
+                workspace,
+                selectFile: full_path
+                inFileViewerRootedAtPath: root_full_path
+            ]
+        }
+    }
+
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
         let url = CFString::from(url);
         let username = CFString::from(username);
