@@ -19,7 +19,7 @@ use cocoa::{
     appkit::{
         CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger},
@@ -536,6 +536,7 @@ impl Window {
                 .map_or(true, |titlebar| titlebar.appears_transparent)
             {
                 native_window.setTitlebarAppearsTransparent_(YES);
+                native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
             }
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
@@ -734,7 +735,8 @@ impl platform::Window for Window {
             let app = NSApplication::sharedApplication(nil);
             let window = self.0.borrow().native_window;
             let title = ns_string(title);
-            msg_send![app, changeWindowsItem:window title:title filename:false]
+            let _: () = msg_send![app, changeWindowsItem:window title:title filename:false];
+            let _: () = msg_send![window, setTitle: title];
         }
     }
 
