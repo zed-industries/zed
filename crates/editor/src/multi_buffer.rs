@@ -2648,7 +2648,8 @@ impl MultiBufferSnapshot {
         result
     }
 
-    /// Returns enclosingn bracket ranges containing the given range or returns None if the range is not contained in a single excerpt
+    /// Returns enclosinng bracket ranges containing the given range or returns None if the range is
+    /// not contained in a single excerpt
     pub fn enclosing_bracket_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
