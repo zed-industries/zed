@@ -43,7 +43,7 @@ jobs:
           submodules: 'recursive'
 
       - name: Run tests
-        run: cargo test --workspace --no-fail-fast
+        run: RUSTFLAGS="-D warnings" cargo test --workspace --no-fail-fast
 
       - name: Build collab
         run: cargo build -p collab
