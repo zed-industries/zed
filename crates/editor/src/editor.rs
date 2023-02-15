@@ -812,7 +812,7 @@ impl CompletionsMenu {
             fuzzy::match_strings(
                 &self.match_candidates,
                 query,
-                false,
+                query.chars().any(|c| c.is_uppercase()),
                 100,
                 &Default::default(),
                 executor,
