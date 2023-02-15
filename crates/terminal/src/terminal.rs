@@ -731,7 +731,7 @@ impl Terminal {
 
                 if let Some((url, url_match)) = found_url {
                     if *open {
-                        util::open(&url);
+                        cx.platform().open_url(url.as_str());
                     } else {
                         self.update_hyperlink(prev_hyperlink, url, url_match);
                     }
@@ -1072,7 +1072,7 @@ impl Terminal {
             if self.selection_phase == SelectionPhase::Ended {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
-                    util::open(link.uri());
+                    cx.platform().open_url(link.uri());
                 } else {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));

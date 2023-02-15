@@ -9,7 +9,6 @@ use rand::{seq::SliceRandom, Rng};
 use std::{
     cmp::Ordering,
     ops::AddAssign,
-    path::Path,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -51,17 +50,6 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     match truncation_ix {
         Some(length) => s[..length].to_string() + "…",
         None => s.to_string(),
-    }
-}
-
-pub fn open<P: AsRef<Path>>(path: P) {
-    let path_to_open = path.as_ref().to_string_lossy();
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(path_to_open.as_ref())
-            .spawn()
-            .log_err();
     }
 }
 
