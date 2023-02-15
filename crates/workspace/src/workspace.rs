@@ -491,19 +491,24 @@ impl Workspace {
         cx.subscribe(&project, move |this, _, event, cx| {
             match event {
                 project::Event::RemoteIdChanged(remote_id) => {
+                    this.update_window_title(cx);
                     this.project_remote_id_changed(*remote_id, cx);
                 }
+
                 project::Event::CollaboratorLeft(peer_id) => {
                     this.collaborator_left(*peer_id, cx);
                 }
+
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
                     this.serialize_workspace(cx);
                 }
+
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(cx);
                     cx.blur();
                 }
+
                 _ => {}
             }
             cx.notify()
@@ -1841,8 +1846,9 @@ impl Workspace {
     }
 
     fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
-        let mut title = String::new();
         let project = self.project().read(cx);
+        let mut title = String::new();
+
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
             let filename = path
                 .path
@@ -1856,20 +1862,30 @@ impl Workspace {
                             .root_name(),
                     ))
                 });
+
             if let Some(filename) = filename {
                 title.push_str(filename.as_ref());
                 title.push_str(" — ");
             }
         }
+
         for (i, name) in project.worktree_root_names(cx).enumerate() {
             if i > 0 {
                 title.push_str(", ");
             }
             title.push_str(name);
         }
+
         if title.is_empty() {
             title = "empty project".to_string();
         }
+
+        if project.is_remote() {
+            title.push_str(" ↙");
+        } else if project.is_shared() {
+            title.push_str(" ↗");
+        }
+
         cx.set_window_title(&title);
     }
 
