@@ -53,6 +53,7 @@ pub struct Settings {
     pub theme: Arc<Theme>,
     pub telemetry_defaults: TelemetrySettings,
     pub telemetry_overrides: TelemetrySettings,
+    pub auto_update: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -312,6 +313,8 @@ pub struct SettingsFileContent {
     pub theme: Option<String>,
     #[serde(default)]
     pub telemetry: TelemetrySettings,
+    #[serde(default)]
+    pub auto_update: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -375,6 +378,7 @@ impl Settings {
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
             telemetry_defaults: defaults.telemetry,
             telemetry_overrides: Default::default(),
+            auto_update: defaults.auto_update.unwrap(),
         }
     }
 
@@ -427,6 +431,7 @@ impl Settings {
         self.language_overrides = data.languages;
         self.telemetry_overrides = data.telemetry;
         self.lsp = data.lsp;
+        merge(&mut self.auto_update, data.auto_update);
     }
 
     pub fn with_language_defaults(
@@ -573,6 +578,7 @@ impl Settings {
                 metrics: Some(true),
             },
             telemetry_overrides: Default::default(),
+            auto_update: true,
         }
     }
 
