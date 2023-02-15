@@ -9,6 +9,7 @@ use gpui::{
     MutableAppContext, Task, WeakViewHandle,
 };
 use serde::Deserialize;
+use settings::Settings;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
@@ -53,7 +54,23 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut Mutab
         let server_url = server_url;
         let auto_updater = cx.add_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url.clone());
-            updater.start_polling(cx).detach();
+
+            let mut update_subscription = cx
+                .global::<Settings>()
+                .auto_update
+                .then(|| updater.start_polling(cx));
+
+            cx.observe_global::<Settings, _>(move |updater, cx| {
+                if cx.global::<Settings>().auto_update {
+                    if update_subscription.is_none() {
+                        *(&mut update_subscription) = Some(updater.start_polling(cx))
+                    }
+                } else {
+                    (&mut update_subscription).take();
+                }
+            })
+            .detach();
+
             updater
         });
         cx.set_global(Some(auto_updater));

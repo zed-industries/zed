@@ -90,6 +90,8 @@
         // Send anonymized usage data like what languages you're using Zed with.
         "metrics": true
     },
+    // Automatically update Zed
+    "auto_update": true,
     // Git gutter behavior configuration.
     "git": {
         // Control whether the git gutter is shown. May take 2 values:
