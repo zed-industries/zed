@@ -1420,23 +1420,40 @@ impl View for Pane {
         Stack::new()
             .with_child(
                 MouseEventHandler::<MouseNavigationHandler>::new(0, cx, |_, cx| {
+                    let active_item_index = self.active_item_index;
+
                     if let Some(active_item) = self.active_item() {
                         Flex::column()
                             .with_child({
+                                let theme = cx.global::<Settings>().theme.clone();
+
+                                let mut stack = Stack::new();
+
+                                enum TabBarEventHandler {}
+                                stack.add_child(
+                                    MouseEventHandler::<TabBarEventHandler>::new(0, cx, |_, _| {
+                                        Flex::row()
+                                            .contained()
+                                            .with_style(theme.workspace.tab_bar.container)
+                                            .boxed()
+                                    })
+                                    .on_click(MouseButton::Left, move |_, cx| {
+                                        cx.dispatch_action(ActivateItem(active_item_index));
+                                    })
+                                    .boxed(),
+                                );
+
                                 let mut tab_row = Flex::row()
                                     .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
 
-                                // Render pane buttons
-                                let theme = cx.global::<Settings>().theme.clone();
                                 if self.is_active {
                                     tab_row.add_child(self.render_tab_bar_buttons(&theme, cx))
                                 }
 
-                                tab_row
+                                stack.add_child(tab_row.boxed());
+                                stack
                                     .constrained()
                                     .with_height(theme.workspace.tab_bar.height)
-                                    .contained()
-                                    .with_style(theme.workspace.tab_bar.container)
                                     .flex(1., false)
                                     .named("tab bar")
                             })
