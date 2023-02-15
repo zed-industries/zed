@@ -17,7 +17,8 @@ test-support = [
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
-    "tree-sitter-rust"
+    "tree-sitter-rust",
+    "tree-sitter-typescript"
 ]
 
 [dependencies]
