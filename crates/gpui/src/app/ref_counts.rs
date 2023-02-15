@@ -1,11 +1,15 @@
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use lazy_static::lazy_static;
+#[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
 
 use collections::{hash_map::Entry, HashMap, HashSet};
 
-use crate::{util::post_inc, ElementStateId};
+#[cfg(any(test, feature = "test-support"))]
+use crate::util::post_inc;
+use crate::ElementStateId;
 
 lazy_static! {
     static ref LEAK_BACKTRACE: bool =
@@ -30,9 +34,8 @@ pub struct RefCounts {
 }
 
 impl RefCounts {
-    pub fn new(
-        #[cfg(any(test, feature = "test-support"))] leak_detector: Arc<Mutex<LeakDetector>>,
-    ) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new(leak_detector: Arc<Mutex<LeakDetector>>) -> Self {
         Self {
             #[cfg(any(test, feature = "test-support"))]
             leak_detector,

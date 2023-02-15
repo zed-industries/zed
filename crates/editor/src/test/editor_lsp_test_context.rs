@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
@@ -7,7 +8,8 @@ use anyhow::Result;
 
 use futures::Future;
 use gpui::{json, ViewContext, ViewHandle};
-use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig};
+use indoc::indoc;
+use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageQueries};
 use lsp::{notification, request};
 use project::Project;
 use smol::stream::StreamExt;
@@ -121,6 +123,32 @@ impl<'a> EditorLspTestContext<'a> {
             },
             Some(tree_sitter_rust::language()),
         );
+
+        Self::new(language, capabilities, cx).await
+    }
+
+    pub async fn new_typescript(
+        capabilities: lsp::ServerCapabilities,
+        cx: &'a mut gpui::TestAppContext,
+    ) -> EditorLspTestContext<'a> {
+        let language = Language::new(
+            LanguageConfig {
+                name: "Typescript".into(),
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::language_typescript()),
+        )
+        .with_queries(LanguageQueries {
+            brackets: Some(Cow::from(indoc! {r#"
+                ("(" @open ")" @close)
+                ("[" @open "]" @close)
+                ("{" @open "}" @close)
+                ("<" @open ">" @close)
+                ("\"" @open "\"" @close)"#})),
+            ..Default::default()
+        })
+        .expect("Could not parse brackets");
 
         Self::new(language, capabilities, cx).await
     }

@@ -5459,6 +5459,54 @@ fn test_split_words() {
     assert_eq!(split("helloworld"), &["helloworld"]);
 }
 
+#[gpui::test]
+async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+    let mut assert = |before, after| {
+        let _state_context = cx.set_state(before);
+        cx.update_editor(|editor, cx| {
+            editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, cx)
+        });
+        cx.assert_editor_state(after);
+    };
+
+    // Outside bracket jumps to outside of matching bracket
+    assert("console.logˇ(var);", "console.log(var)ˇ;");
+    assert("console.log(var)ˇ;", "console.logˇ(var);");
+
+    // Inside bracket jumps to inside of matching bracket
+    assert("console.log(ˇvar);", "console.log(varˇ);");
+    assert("console.log(varˇ);", "console.log(ˇvar);");
+
+    // When outside a bracket and inside, favor jumping to the inside bracket
+    assert(
+        "console.log('foo', [1, 2, 3]ˇ);",
+        "console.log(ˇ'foo', [1, 2, 3]);",
+    );
+    assert(
+        "console.log(ˇ'foo', [1, 2, 3]);",
+        "console.log('foo', [1, 2, 3]ˇ);",
+    );
+
+    // Bias forward if two options are equally likely
+    assert(
+        "let result = curried_fun()ˇ();",
+        "let result = curried_fun()()ˇ;",
+    );
+
+    // If directly adjacent to a smaller pair but inside a larger (not adjacent), pick the smaller
+    assert(
+        indoc! {"
+            function test() {
+                console.log('test')ˇ
+            }"},
+        indoc! {"
+            function test() {
+                console.logˇ('test')
+            }"},
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point

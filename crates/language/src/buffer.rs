@@ -2346,12 +2346,13 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    pub fn enclosing_bracket_ranges<T: ToOffset>(
-        &self,
+    pub fn enclosing_bracket_ranges<'a, T: ToOffset>(
+        &'a self,
         range: Range<T>,
-    ) -> Option<(Range<usize>, Range<usize>)> {
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self)..range.end.to_offset(self);
+
         let mut matches = self.syntax.matches(
             range.start.saturating_sub(1)..self.len().min(range.end + 1),
             &self.text,
@@ -2363,39 +2364,31 @@ impl BufferSnapshot {
             .map(|grammar| grammar.brackets_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        // Get the ranges of the innermost pair of brackets.
-        let mut result: Option<(Range<usize>, Range<usize>)> = None;
-        while let Some(mat) = matches.peek() {
-            let mut open = None;
-            let mut close = None;
-            let config = &configs[mat.grammar_index];
-            for capture in mat.captures {
-                if capture.index == config.open_capture_ix {
-                    open = Some(capture.node.byte_range());
-                } else if capture.index == config.close_capture_ix {
-                    close = Some(capture.node.byte_range());
+        iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                let mut open = None;
+                let mut close = None;
+                let config = &configs[mat.grammar_index];
+                for capture in mat.captures {
+                    if capture.index == config.open_capture_ix {
+                        open = Some(capture.node.byte_range());
+                    } else if capture.index == config.close_capture_ix {
+                        close = Some(capture.node.byte_range());
+                    }
                 }
-            }
 
-            matches.advance();
+                matches.advance();
 
-            let Some((open, close)) = open.zip(close) else { continue };
-            if open.start > range.start || close.end < range.end {
-                continue;
-            }
-            let len = close.end - open.start;
+                let Some((open, close)) = open.zip(close) else { continue };
 
-            if let Some((existing_open, existing_close)) = &result {
-                let existing_len = existing_close.end - existing_open.start;
-                if len > existing_len {
+                if open.start > range.start || close.end < range.end {
                     continue;
                 }
+
+                return Some((open, close));
             }
-
-            result = Some((open, close));
-        }
-
-        result
+            None
+        })
     }
 
     #[allow(clippy::type_complexity)]
