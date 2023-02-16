@@ -59,7 +59,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use terminal::{Terminal, TerminalBuilder};
 use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
@@ -185,6 +185,7 @@ pub enum LanguageServerState {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
+        simulate_disk_based_diagnostics_completion: Option<Task<()>>,
     },
 }
 
@@ -1716,19 +1717,39 @@ impl Project {
                         .log_err();
                 }
 
-                // After saving a buffer, simulate disk-based diagnostics being finished for languages
-                // that don't support a disk-based progress token.
-                let (lsp_adapter, language_server) =
-                    self.language_server_for_buffer(buffer.read(cx), cx)?;
-                if lsp_adapter.disk_based_diagnostics_progress_token.is_none() {
-                    let server_id = language_server.server_id();
-                    self.disk_based_diagnostics_finished(server_id, cx);
-                    self.broadcast_language_server_update(
-                        server_id,
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                            proto::LspDiskBasedDiagnosticsUpdated {},
-                        ),
-                    );
+                let language_server_id = self.language_server_id_for_buffer(buffer.read(cx), cx)?;
+                if let Some(LanguageServerState::Running {
+                    adapter,
+                    simulate_disk_based_diagnostics_completion,
+                    ..
+                }) = self.language_servers.get_mut(&language_server_id)
+                {
+                    // After saving a buffer using a language server that doesn't provide
+                    // a disk-based progress token, kick off a timer that will reset every
+                    // time the buffer is saved. If the timer eventually fires, simulate
+                    // disk-based diagnostics being finished so that other pieces of UI
+                    // (e.g., project diagnostics view, diagnostic status bar) can update.
+                    // We don't emit an event right away because the language server might take
+                    // some time to publish diagnostics.
+                    if adapter.disk_based_diagnostics_progress_token.is_none() {
+                        const DISK_BASED_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_secs(1);
+
+                        let task = cx.spawn_weak(|this, mut cx| async move {
+                            cx.background().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
+                            if let Some(this) = this.upgrade(&cx) {
+                                this.update(&mut cx, |this, cx | {
+                                    this.disk_based_diagnostics_finished(language_server_id, cx);
+                                    this.broadcast_language_server_update(
+                                        language_server_id,
+                                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                                            proto::LspDiskBasedDiagnosticsUpdated {},
+                                        ),
+                                    );
+                                });
+                            }
+                        });
+                        *simulate_disk_based_diagnostics_completion = Some(task);
+                    }
                 }
             }
             _ => {}
@@ -1749,6 +1770,7 @@ impl Project {
                         adapter,
                         language,
                         server,
+                        ..
                     }) = self.language_servers.get(id)
                     {
                         return Some((adapter, language, server));
@@ -2035,6 +2057,7 @@ impl Project {
                                     adapter: adapter.clone(),
                                     language,
                                     server: language_server.clone(),
+                                    simulate_disk_based_diagnostics_completion: None,
                                 },
                             );
                             this.language_server_statuses.insert(
@@ -3105,6 +3128,7 @@ impl Project {
                         adapter,
                         language,
                         server,
+                        ..
                     }) = self.language_servers.get(server_id)
                     {
                         let adapter = adapter.clone();
@@ -6178,22 +6202,27 @@ impl Project {
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
+        let server_id = self.language_server_id_for_buffer(buffer, cx)?;
+        let server = self.language_servers.get(&server_id)?;
+        if let LanguageServerState::Running {
+            adapter, server, ..
+        } = server
+        {
+            Some((adapter, server))
+        } else {
+            None
+        }
+    }
+
+    fn language_server_id_for_buffer(&self, buffer: &Buffer, cx: &AppContext) -> Option<usize> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let name = language.lsp_adapter()?.name.clone();
             let worktree_id = file.worktree_id(cx);
             let key = (worktree_id, name);
-
-            if let Some(server_id) = self.language_server_ids.get(&key) {
-                if let Some(LanguageServerState::Running {
-                    adapter, server, ..
-                }) = self.language_servers.get(server_id)
-                {
-                    return Some((adapter, server));
-                }
-            }
+            self.language_server_ids.get(&key).copied()
+        } else {
+            None
         }
-
-        None
     }
 }
 
