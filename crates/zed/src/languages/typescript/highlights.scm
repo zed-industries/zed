@@ -175,6 +175,7 @@
   "new"
   "of"
   "return"
+  "satisfies"
   "set"
   "static"
   "switch"

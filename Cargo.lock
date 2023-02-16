@@ -1956,7 +1956,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-javascript",
  "tree-sitter-rust",
- "tree-sitter-typescript",
+ "tree-sitter-typescript 0.20.2",
  "unindent",
  "util",
  "workspace",
@@ -3277,7 +3277,7 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
- "tree-sitter-typescript",
+ "tree-sitter-typescript 0.20.1",
  "unicase",
  "unindent",
  "util",
@@ -7193,6 +7193,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-typescript"
+version = "0.20.2"
+source = "git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259#5d20856f34315b068c41edaee2ac8a100081d259"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=9050a4a4a847ed29e25485b1292a36eab8ae3492#9050a4a4a847ed29e25485b1292a36eab8ae3492"
@@ -8439,7 +8448,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-scheme",
  "tree-sitter-toml",
- "tree-sitter-typescript",
+ "tree-sitter-typescript 0.20.2",
  "tree-sitter-yaml",
  "unindent",
  "url",
