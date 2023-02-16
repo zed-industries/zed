@@ -7004,7 +7004,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.9"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=36b5b6c89e55ad1a502f8b3234bb3e12ec83a5da#36b5b6c89e55ad1a502f8b3234bb3e12ec83a5da"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14#c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14"
 dependencies = [
  "cc",
  "regex",
