@@ -154,6 +154,12 @@ pub struct ConfirmCodeAction {
     pub item_ix: Option<usize>,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleComments {
+    #[serde(default)]
+    pub advance_downwards: bool,
+}
+
 actions!(
     editor,
     [
@@ -216,7 +222,6 @@ actions!(
         AddSelectionBelow,
         Tab,
         TabPrev,
-        ToggleComments,
         ShowCharacterPalette,
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
@@ -251,6 +256,7 @@ impl_actions!(
         MovePageDown,
         ConfirmCompletion,
         ConfirmCodeAction,
+        ToggleComments,
     ]
 );
 
@@ -3804,7 +3810,7 @@ impl Editor {
             }
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if self.mode == EditorMode::SingleLine {
             cx.propagate_action();
             return;
         }
@@ -4466,7 +4472,7 @@ impl Editor {
         }
     }
 
-    pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
+    pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
             let mut edits = Vec::new();
@@ -4685,6 +4691,34 @@ impl Editor {
 
             drop(snapshot);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+
+            let selections = this.selections.all::<Point>(cx);
+            let selections_on_single_row = selections.windows(2).all(|selections| {
+                selections[0].start.row == selections[1].start.row
+                    && selections[0].end.row == selections[1].end.row
+                    && selections[0].start.row == selections[0].end.row
+            });
+            let selections_selecting = selections
+                .iter()
+                .any(|selection| selection.start != selection.end);
+            let advance_downwards = action.advance_downwards
+                && selections_on_single_row
+                && !selections_selecting
+                && this.mode != EditorMode::SingleLine;
+
+            if advance_downwards {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+
+                this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_cursors_with(|display_snapshot, display_point, _| {
+                        let mut point = display_point.to_point(display_snapshot);
+                        point.row += 1;
+                        point = snapshot.clip_point(point, Bias::Left);
+                        let display_point = point.to_display_point(display_snapshot);
+                        (display_point, SelectionGoal::Column(display_point.column()))
+                    })
+                });
+            }
         });
     }
 
