@@ -408,17 +408,19 @@ pub fn build_window_options(
 }
 
 fn restart(_: &Restart, cx: &mut gpui::MutableAppContext) {
-    let cli_process = dbg!(cx.platform().path_for_auxiliary_executable("cli"))
+    let cli_process = cx
+        .platform()
+        .path_for_auxiliary_executable("cli")
         .log_err()
         .and_then(|path| {
             Command::new(path)
-                .args(["--restart-from", &format!("{}", dbg!(std::process::id()))])
+                .args(["--restart-from", &format!("{}", std::process::id())])
                 .spawn()
                 .log_err()
         });
 
     cx.spawn(|mut cx| async move {
-        let did_quit = dbg!(cx.update(quit).await?);
+        let did_quit = cx.update(quit).await?;
         if !did_quit {
             if let Some(mut cli_process) = cli_process {
                 cli_process.kill().log_err();
@@ -467,7 +469,6 @@ fn quit(cx: &mut gpui::MutableAppContext) -> Task<Result<bool>> {
                 return Ok(false);
             }
         }
-        dbg!("about to quit");
         cx.platform().quit();
         anyhow::Ok(true)
     })
