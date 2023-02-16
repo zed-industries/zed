@@ -42,6 +42,9 @@ jobs:
           clean: false
           submodules: 'recursive'
 
+      - name: Run check
+        run: cargo check --workspace
+
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
 
