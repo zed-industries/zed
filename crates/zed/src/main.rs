@@ -567,6 +567,14 @@ async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
+                let paths = if paths.is_empty() {
+                    workspace::last_opened_workspace_paths()
+                        .await
+                        .map(|location| location.paths().to_vec())
+                        .unwrap_or(paths)
+                } else {
+                    paths
+                };
                 let (workspace, items) = cx
                     .update(|cx| workspace::open_paths(&paths, &app_state, cx))
                     .await;

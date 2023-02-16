@@ -14,8 +14,10 @@ use std::{
     fs::{self, OpenOptions},
     io,
     path::{Path, PathBuf},
-    ptr,
+    ptr, thread,
+    time::Duration,
 };
+use sysinfo::{Pid, System, SystemExt};
 
 #[derive(Parser)]
 #[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
@@ -32,6 +34,8 @@ struct Args {
     /// Custom Zed.app path
     #[clap(short, long)]
     bundle_path: Option<PathBuf>,
+    #[clap(short, long)]
+    restart_from: Option<Pid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +62,13 @@ fn main() -> Result<()> {
             bundle_path.to_string_lossy()
         );
         return Ok(());
+    }
+
+    if let Some(parent_pid) = args.restart_from {
+        let mut system = System::new();
+        while system.refresh_process(parent_pid) {
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     for path in args.paths.iter() {
