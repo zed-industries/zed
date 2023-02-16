@@ -3,10 +3,8 @@ use std::ops::{Deref, DerefMut};
 use editor::test::{
     editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
 };
-use gpui::{json::json, AppContext, ContextHandle, ViewHandle};
-use project::Project;
+use gpui::{AppContext, ContextHandle};
 use search::{BufferSearchBar, ProjectSearchBar};
-use workspace::{pane, AppState, WorkspaceHandle};
 
 use crate::{state::Operator, *};
 
@@ -14,19 +12,18 @@ use super::VimBindingTestContext;
 
 pub struct VimTestContext<'a> {
     cx: EditorLspTestContext<'a>,
-    workspace: ViewHandle<Workspace>,
 }
 
 impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
         cx.update(|cx| {
-            editor::init(cx);
-            pane::init(cx);
             search::init(cx);
             crate::init(cx);
 
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
         });
+
+        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
 
         cx.update(|cx| {
             cx.update_global(|settings: &mut Settings, _| {
@@ -34,36 +31,10 @@ impl<'a> VimTestContext<'a> {
             });
         });
 
-        let params = cx.update(AppState::test);
-
-        let file_name = "test.rs";
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                ..Default::default()
-            }))
-            .await;
-
-        let project = Project::test(params.fs.clone(), [], cx).await;
-        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-
-        params
-            .fs
-            .as_fake()
-            .insert_tree("/root", json!({ "dir": { "test.rs": "" } }))
-            .await;
-
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let window_id = cx.window_id;
 
         // Setup search toolbars and keypress hook
-        workspace.update(cx, |workspace, cx| {
+        cx.update_workspace(|workspace, cx| {
             observe_keystrokes(window_id, cx);
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
@@ -75,51 +46,14 @@ impl<'a> VimTestContext<'a> {
             });
         });
 
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
-
-        let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
-        let item = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path(file, None, true, cx)
-            })
-            .await
-            .expect("Could not open test file");
-
-        let editor = cx.update(|cx| {
-            item.act_as::<Editor>(cx)
-                .expect("Opened test file wasn't an editor")
-        });
-        editor.update(cx, |_, cx| cx.focus_self());
-
-        let lsp = fake_servers.next().await.unwrap();
-
-        Self {
-            cx: EditorLspTestContext {
-                cx: EditorTestContext {
-                    cx,
-                    window_id,
-                    editor,
-                },
-                lsp,
-                workspace,
-                buffer_lsp_url: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-            },
-            workspace,
-        }
+        Self { cx }
     }
 
     pub fn workspace<F, T>(&mut self, read: F) -> T
     where
         F: FnOnce(&Workspace, &AppContext) -> T,
     {
-        self.workspace.read_with(self.cx.cx.cx, read)
+        self.cx.workspace.read_with(self.cx.cx.cx, read)
     }
 
     pub fn enable_vim(&mut self) {

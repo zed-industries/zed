@@ -1389,12 +1389,12 @@ impl Buffer {
                 .enumerate()
                 .zip(&edit_operation.as_edit().unwrap().new_text)
                 .map(|((ix, (range, _)), new_text)| {
-                    let new_text_len = new_text.len();
+                    let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_len as isize - (range.end as isize - range.start as isize);
+                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
 
-                    let mut range_of_insertion_to_indent = 0..new_text_len;
+                    let mut range_of_insertion_to_indent = 0..new_text_length;
                     let mut first_line_is_new = false;
                     let mut original_indent_column = None;
 

@@ -122,7 +122,26 @@ impl<'a> EditorLspTestContext<'a> {
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        );
+        )
+        .with_queries(LanguageQueries {
+            indents: Some(Cow::from(indoc! {r#"
+                [
+                    ((where_clause) _ @end)
+                    (field_expression)
+                    (call_expression)
+                    (assignment_expression)
+                    (let_declaration)
+                    (let_chain)
+                    (await_expression)
+                ] @indent
+                
+                (_ "[" "]" @end) @indent
+                (_ "<" ">" @end) @indent
+                (_ "{" "}" @end) @indent
+                (_ "(" ")" @end) @indent"#})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries");
 
         Self::new(language, capabilities, cx).await
     }
@@ -148,7 +167,7 @@ impl<'a> EditorLspTestContext<'a> {
                 ("\"" @open "\"" @close)"#})),
             ..Default::default()
         })
-        .expect("Could not parse brackets");
+        .expect("Could not parse queries");
 
         Self::new(language, capabilities, cx).await
     }

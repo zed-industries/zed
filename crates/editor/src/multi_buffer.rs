@@ -385,9 +385,13 @@ impl MultiBuffer {
             _ => Default::default(),
         };
 
-        #[allow(clippy::type_complexity)]
-        let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, Arc<str>, bool, u32)>> =
-            Default::default();
+        struct BufferEdit {
+            range: Range<usize>,
+            new_text: Arc<str>,
+            is_insertion: bool,
+            original_indent_column: u32,
+        }
+        let mut buffer_edits: HashMap<usize, Vec<BufferEdit>> = Default::default();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         for (ix, (range, new_text)) in edits.enumerate() {
             let new_text: Arc<str> = new_text.into();
@@ -422,12 +426,12 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((
-                        buffer_start..buffer_end,
+                    .push(BufferEdit {
+                        range: buffer_start..buffer_end,
                         new_text,
-                        true,
+                        is_insertion: true,
                         original_indent_column,
-                    ));
+                    });
             } else {
                 let start_excerpt_range = buffer_start
                     ..start_excerpt
@@ -444,21 +448,21 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((
-                        start_excerpt_range,
-                        new_text.clone(),
-                        true,
+                    .push(BufferEdit {
+                        range: start_excerpt_range,
+                        new_text: new_text.clone(),
+                        is_insertion: true,
                         original_indent_column,
-                    ));
+                    });
                 buffer_edits
                     .entry(end_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((
-                        end_excerpt_range,
-                        new_text.clone(),
-                        false,
+                    .push(BufferEdit {
+                        range: end_excerpt_range,
+                        new_text: new_text.clone(),
+                        is_insertion: false,
                         original_indent_column,
-                    ));
+                    });
 
                 cursor.seek(&range.start, Bias::Right, &());
                 cursor.next(&());
@@ -469,19 +473,19 @@ impl MultiBuffer {
                     buffer_edits
                         .entry(excerpt.buffer_id)
                         .or_insert(Vec::new())
-                        .push((
-                            excerpt.range.context.to_offset(&excerpt.buffer),
-                            new_text.clone(),
-                            false,
+                        .push(BufferEdit {
+                            range: excerpt.range.context.to_offset(&excerpt.buffer),
+                            new_text: new_text.clone(),
+                            is_insertion: false,
                             original_indent_column,
-                        ));
+                        });
                     cursor.next(&());
                 }
             }
         }
 
         for (buffer_id, mut edits) in buffer_edits {
-            edits.sort_unstable_by_key(|(range, _, _, _)| range.start);
+            edits.sort_unstable_by_key(|edit| edit.range.start);
             self.buffers.borrow()[&buffer_id]
                 .buffer
                 .update(cx, |buffer, cx| {
@@ -490,14 +494,19 @@ impl MultiBuffer {
                     let mut original_indent_columns = Vec::new();
                     let mut deletions = Vec::new();
                     let empty_str: Arc<str> = "".into();
-                    while let Some((
+                    while let Some(BufferEdit {
                         mut range,
                         new_text,
                         mut is_insertion,
                         original_indent_column,
-                    )) = edits.next()
+                    }) = edits.next()
                     {
-                        while let Some((next_range, _, next_is_insertion, _)) = edits.peek() {
+                        while let Some(BufferEdit {
+                            range: next_range,
+                            is_insertion: next_is_insertion,
+                            ..
+                        }) = edits.peek()
+                        {
                             if range.end >= next_range.start {
                                 range.end = cmp::max(next_range.end, range.end);
                                 is_insertion |= *next_is_insertion;

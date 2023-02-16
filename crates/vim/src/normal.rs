@@ -857,13 +857,15 @@ mod test {
         // Our indentation is smarter than vims. So we don't match here
         cx.assert_manual(
             indoc! {"
-                fn test()
-                    println!(ˇ);"},
+                fn test() {
+                    println!(ˇ);
+                }"},
             Mode::Normal,
             indoc! {"
-                fn test()
+                fn test() {
                     ˇ
-                    println!();"},
+                    println!();
+                }"},
             Mode::Insert,
         );
         cx.assert_manual(
