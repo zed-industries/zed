@@ -1017,6 +1017,24 @@ impl Language {
             ))?;
         }
 
+        for disabled_scope_name in self
+            .config
+            .brackets
+            .disabled_scopes_by_bracket_ix
+            .iter()
+            .flatten()
+        {
+            if !override_configs_by_id
+                .values()
+                .any(|(scope_name, _)| scope_name == disabled_scope_name)
+            {
+                Err(anyhow!(
+                    "language {:?} has overrides in config not in query: {disabled_scope_name:?}",
+                    self.config.name
+                ))?;
+            }
+        }
+
         for (name, override_config) in override_configs_by_id.values_mut() {
             override_config.disabled_bracket_ixs = self
                 .config
