@@ -2630,6 +2630,9 @@ impl MultiBufferSnapshot {
         self.parse_count
     }
 
+    /// Returns the smallest enclosing bracket ranges containing the given range or
+    /// None if no brackets contain range or the range is not contained in a single
+    /// excerpt
     pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -2657,46 +2660,59 @@ impl MultiBufferSnapshot {
         result
     }
 
-    /// Returns enclosinng bracket ranges containing the given range or returns None if the range is
+    /// Returns enclosing bracket ranges containing the given range or returns None if the range is
     /// not contained in a single excerpt
     pub fn enclosing_bracket_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        self.excerpt_containing(range.clone())
-            .map(|(excerpt, excerpt_offset)| {
-                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-                let excerpt_buffer_end = excerpt_buffer_start + excerpt.text_summary.len;
 
-                let start_in_buffer =
-                    excerpt_buffer_start + range.start.saturating_sub(excerpt_offset);
-                let end_in_buffer = excerpt_buffer_start + range.end.saturating_sub(excerpt_offset);
+        self.bracket_ranges(range.clone()).map(|range_pairs| {
+            range_pairs
+                .filter(move |(open, close)| open.start <= range.start && close.end >= range.end)
+        })
+    }
 
-                excerpt
-                    .buffer
-                    .enclosing_bracket_ranges(start_in_buffer..end_in_buffer)
-                    .filter_map(move |(start_bracket_range, end_bracket_range)| {
-                        if start_bracket_range.start < excerpt_buffer_start
-                            || end_bracket_range.end > excerpt_buffer_end
-                        {
-                            return None;
-                        }
+    /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
+    /// not contained in a single excerpt
+    pub fn bracket_ranges<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let excerpt = self.excerpt_containing(range.clone());
+        excerpt.map(|(excerpt, excerpt_offset)| {
+            let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+            let excerpt_buffer_end = excerpt_buffer_start + excerpt.text_summary.len;
 
-                        let mut start_bracket_range = start_bracket_range.clone();
-                        start_bracket_range.start =
-                            excerpt_offset + (start_bracket_range.start - excerpt_buffer_start);
-                        start_bracket_range.end =
-                            excerpt_offset + (start_bracket_range.end - excerpt_buffer_start);
+            let start_in_buffer = excerpt_buffer_start + range.start.saturating_sub(excerpt_offset);
+            let end_in_buffer = excerpt_buffer_start + range.end.saturating_sub(excerpt_offset);
 
-                        let mut end_bracket_range = end_bracket_range.clone();
-                        end_bracket_range.start =
-                            excerpt_offset + (end_bracket_range.start - excerpt_buffer_start);
-                        end_bracket_range.end =
-                            excerpt_offset + (end_bracket_range.end - excerpt_buffer_start);
-                        Some((start_bracket_range, end_bracket_range))
-                    })
-            })
+            excerpt
+                .buffer
+                .bracket_ranges(start_in_buffer..end_in_buffer)
+                .filter_map(move |(start_bracket_range, end_bracket_range)| {
+                    if start_bracket_range.start < excerpt_buffer_start
+                        || end_bracket_range.end > excerpt_buffer_end
+                    {
+                        return None;
+                    }
+
+                    let mut start_bracket_range = start_bracket_range.clone();
+                    start_bracket_range.start =
+                        excerpt_offset + (start_bracket_range.start - excerpt_buffer_start);
+                    start_bracket_range.end =
+                        excerpt_offset + (start_bracket_range.end - excerpt_buffer_start);
+
+                    let mut end_bracket_range = end_bracket_range.clone();
+                    end_bracket_range.start =
+                        excerpt_offset + (end_bracket_range.start - excerpt_buffer_start);
+                    end_bracket_range.end =
+                        excerpt_offset + (end_bracket_range.end - excerpt_buffer_start);
+                    Some((start_bracket_range, end_bracket_range))
+                })
+        })
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -2945,10 +2961,14 @@ impl MultiBufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut cursor = self.excerpts.cursor::<usize>();
-        cursor.seek(&range.start, Bias::Right, &());
+        cursor.seek(&dbg!(range.start), Bias::Right, &());
         let start_excerpt = cursor.item();
 
-        cursor.seek(&range.end, Bias::Right, &());
+        if range.start == range.end {
+            return start_excerpt.map(|excerpt| (excerpt, *cursor.start()));
+        }
+
+        cursor.seek(&dbg!(range.end), Bias::Right, &());
         let end_excerpt = cursor.item();
 
         start_excerpt

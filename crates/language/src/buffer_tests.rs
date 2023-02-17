@@ -2072,9 +2072,7 @@ fn assert_enclosing_bracket_pairs(
         .collect::<Vec<_>>();
 
     assert_set_eq!(
-        buffer
-            .enclosing_bracket_ranges(selection_range)
-            .collect::<Vec<_>>(),
+        buffer.bracket_ranges(selection_range).collect::<Vec<_>>(),
         bracket_pairs
     );
 }

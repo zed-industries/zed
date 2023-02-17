@@ -2346,18 +2346,18 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    pub fn enclosing_bracket_ranges<'a, T: ToOffset>(
+    /// Returns bracket range pairs overlapping `range`
+    pub fn bracket_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
 
-        let mut matches = self.syntax.matches(
-            range.start.saturating_sub(1)..self.len().min(range.end + 1),
-            &self.text,
-            |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
-        );
+        let mut matches = self.syntax.matches(range, &self.text, |grammar| {
+            grammar.brackets_config.as_ref().map(|c| &c.query)
+        });
         let configs = matches
             .grammars()
             .iter()
@@ -2380,11 +2380,6 @@ impl BufferSnapshot {
                 matches.advance();
 
                 let Some((open, close)) = open.zip(close) else { continue };
-
-                if open.start > range.start || close.end < range.end {
-                    continue;
-                }
-
                 return Some((open, close));
             }
             None

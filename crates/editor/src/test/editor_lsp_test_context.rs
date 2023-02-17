@@ -139,6 +139,13 @@ impl<'a> EditorLspTestContext<'a> {
                 (_ "<" ">" @end) @indent
                 (_ "{" "}" @end) @indent
                 (_ "(" ")" @end) @indent"#})),
+            brackets: Some(Cow::from(indoc! {r#"
+                ("(" @open ")" @close)
+                ("[" @open "]" @close)
+                ("{" @open "}" @close)
+                ("<" @open ">" @close)
+                ("\"" @open "\"" @close)
+                (closure_parameters "|" @open "|" @close)"#})),
             ..Default::default()
         })
         .expect("Could not parse queries");
