@@ -14,7 +14,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     platform::{WindowBounds, WindowOptions},
 };
-use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
+use language::{BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
 use project::FakeFs;
 use settings::EditorSettings;
 use util::{
@@ -3002,20 +3002,23 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig {
-                brackets: vec![
-                    BracketPair {
-                        start: "{".to_string(),
-                        end: "}".to_string(),
-                        close: false,
-                        newline: true,
-                    },
-                    BracketPair {
-                        start: "(".to_string(),
-                        end: ")".to_string(),
-                        close: false,
-                        newline: true,
-                    },
-                ],
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".to_string(),
+                            end: "}".to_string(),
+                            close: false,
+                            newline: true,
+                        },
+                        BracketPair {
+                            start: "(".to_string(),
+                            end: ")".to_string(),
+                            close: false,
+                            newline: true,
+                        },
+                    ],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -3059,38 +3062,41 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![
-                BracketPair {
-                    start: "{".to_string(),
-                    end: "}".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "(".to_string(),
-                    end: ")".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "/*".to_string(),
-                    end: " */".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "[".to_string(),
-                    end: "]".to_string(),
-                    close: false,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "\"".to_string(),
-                    end: "\"".to_string(),
-                    close: true,
-                    newline: false,
-                },
-            ],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/*".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        newline: false,
+                    },
+                ],
+                ..Default::default()
+            },
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
@@ -3227,26 +3233,29 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
         Language::new(
             LanguageConfig {
                 name: "HTML".into(),
-                brackets: vec![
-                    BracketPair {
-                        start: "<".into(),
-                        end: ">".into(),
-                        close: true,
-                        ..Default::default()
-                    },
-                    BracketPair {
-                        start: "{".into(),
-                        end: "}".into(),
-                        close: true,
-                        ..Default::default()
-                    },
-                    BracketPair {
-                        start: "(".into(),
-                        end: ")".into(),
-                        close: true,
-                        ..Default::default()
-                    },
-                ],
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "<".into(),
+                            end: ">".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "(".into(),
+                            end: ")".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
@@ -3265,26 +3274,29 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     let javascript_language = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            brackets: vec![
-                BracketPair {
-                    start: "/*".into(),
-                    end: " */".into(),
-                    close: true,
-                    ..Default::default()
-                },
-                BracketPair {
-                    start: "{".into(),
-                    end: "}".into(),
-                    close: true,
-                    ..Default::default()
-                },
-                BracketPair {
-                    start: "(".into(),
-                    end: ")".into(),
-                    close: true,
-                    ..Default::default()
-                },
-            ],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "/*".into(),
+                        end: " */".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
@@ -3452,20 +3464,23 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![
-                BracketPair {
-                    start: "{".to_string(),
-                    end: "}".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "/* ".to_string(),
-                    end: "*/".to_string(),
-                    close: true,
-                    ..Default::default()
-                },
-            ],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/* ".to_string(),
+                        end: "*/".to_string(),
+                        close: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -3603,12 +3618,15 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![BracketPair {
-                start: "{".to_string(),
-                end: "}".to_string(),
-                close: true,
-                newline: true,
-            }],
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                }],
+                ..Default::default()
+            },
             autoclose_before: "}".to_string(),
             ..Default::default()
         },
@@ -5030,20 +5048,23 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig {
-                brackets: vec![
-                    BracketPair {
-                        start: "{".to_string(),
-                        end: "}".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                    BracketPair {
-                        start: "/* ".to_string(),
-                        end: " */".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                ],
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".to_string(),
+                            end: "}".to_string(),
+                            close: true,
+                            newline: true,
+                        },
+                        BracketPair {
+                            start: "/* ".to_string(),
+                            end: " */".to_string(),
+                            close: true,
+                            newline: true,
+                        },
+                    ],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
