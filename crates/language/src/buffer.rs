@@ -661,36 +661,35 @@ impl Buffer {
         new_file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Task<()> {
-        let old_file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(());
-        };
         let mut file_changed = false;
         let mut task = Task::ready(());
 
-        if new_file.path() != old_file.path() {
-            file_changed = true;
-        }
-
-        if new_file.is_deleted() {
-            if !old_file.is_deleted() {
+        if let Some(old_file) = self.file.as_ref() {
+            if new_file.path() != old_file.path() {
                 file_changed = true;
-                if !self.is_dirty() {
-                    cx.emit(Event::DirtyChanged);
+            }
+
+            if new_file.is_deleted() {
+                if !old_file.is_deleted() {
+                    file_changed = true;
+                    if !self.is_dirty() {
+                        cx.emit(Event::DirtyChanged);
+                    }
+                }
+            } else {
+                let new_mtime = new_file.mtime();
+                if new_mtime != old_file.mtime() {
+                    file_changed = true;
+
+                    if !self.is_dirty() {
+                        let reload = self.reload(cx).log_err().map(drop);
+                        task = cx.foreground().spawn(reload);
+                    }
                 }
             }
         } else {
-            let new_mtime = new_file.mtime();
-            if new_mtime != old_file.mtime() {
-                file_changed = true;
-
-                if !self.is_dirty() {
-                    let reload = self.reload(cx).log_err().map(drop);
-                    task = cx.foreground().spawn(reload);
-                }
-            }
-        }
+            file_changed = true;
+        };
 
         if file_changed {
             self.file_update_count += 1;

@@ -2313,6 +2313,33 @@ async fn test_propagate_saves_and_fs_changes(
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
         assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
     });
+
+    let new_buffer_a = project_a
+        .update(cx_a, |p, cx| p.create_buffer("", None, cx))
+        .unwrap();
+    let new_buffer_id = new_buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());
+    let new_buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer_by_id(new_buffer_id, cx))
+        .await
+        .unwrap();
+    new_buffer_b.read_with(cx_b, |buffer, _| {
+        assert!(buffer.file().is_none());
+    });
+
+    project_a
+        .update(cx_a, |project, cx| {
+            project.save_buffer_as(new_buffer_a, "/a/file3.rs".into(), cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+    new_buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(
+            buffer.file().unwrap().path().as_ref(),
+            Path::new("file3.rs")
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
