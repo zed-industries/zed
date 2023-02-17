@@ -81,6 +81,7 @@ pub trait Platform: Send + Sync {
     fn app_version(&self) -> Result<AppVersion>;
     fn os_name(&self) -> &'static str;
     fn os_version(&self) -> Result<AppVersion>;
+    fn restart(&self);
 }
 
 pub(crate) trait ForegroundPlatform {

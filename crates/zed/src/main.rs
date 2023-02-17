@@ -38,7 +38,9 @@ use terminal_view::{get_working_directory, TerminalView};
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
-use util::{channel::RELEASE_CHANNEL, paths, ResultExt, StaffMode, TryFutureExt};
+#[cfg(debug_assertions)]
+use util::StaffMode;
+use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };

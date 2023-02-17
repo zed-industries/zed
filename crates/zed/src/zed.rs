@@ -23,8 +23,7 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, Platform, PromptLevel, Task, TitlebarOptions, ViewContext,
-    WindowKind,
+    AssetSource, AsyncAppContext, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -35,7 +34,7 @@ use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
-use std::{borrow::Cow, env, path::Path, process::Command, str, sync::Arc};
+use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
 use uuid::Uuid;
 pub use workspace;
@@ -130,9 +129,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             }
         },
     );
-    cx.add_global_action(|_: &Quit, cx| {
-        quit(cx).detach_and_log_err(cx);
-    });
+    cx.add_global_action(quit);
     cx.add_global_action(restart);
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
@@ -408,30 +405,10 @@ pub fn build_window_options(
 }
 
 fn restart(_: &Restart, cx: &mut gpui::MutableAppContext) {
-    let cli_process = cx
-        .platform()
-        .path_for_auxiliary_executable("cli")
-        .log_err()
-        .and_then(|path| {
-            Command::new(path)
-                .args(["--restart-from", &format!("{}", std::process::id())])
-                .spawn()
-                .log_err()
-        });
-
-    cx.spawn(|mut cx| async move {
-        let did_quit = cx.update(quit).await?;
-        if !did_quit {
-            if let Some(mut cli_process) = cli_process {
-                cli_process.kill().log_err();
-            }
-        }
-        Ok::<(), anyhow::Error>(())
-    })
-    .detach_and_log_err(cx);
+    cx.platform().restart();
 }
 
-fn quit(cx: &mut gpui::MutableAppContext) -> Task<Result<bool>> {
+fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     let mut workspaces = cx
         .window_ids()
         .filter_map(|window_id| cx.root_view::<Workspace>(window_id))
@@ -454,7 +431,7 @@ fn quit(cx: &mut gpui::MutableAppContext) -> Task<Result<bool>> {
                 .next()
                 .await;
             if answer != Some(0) {
-                return Ok(false);
+                return Ok(());
             }
         }
 
@@ -466,12 +443,13 @@ fn quit(cx: &mut gpui::MutableAppContext) -> Task<Result<bool>> {
                 })
                 .await?
             {
-                return Ok(false);
+                return Ok(());
             }
         }
         cx.platform().quit();
-        anyhow::Ok(true)
+        anyhow::Ok(())
     })
+    .detach_and_log_err(cx);
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
