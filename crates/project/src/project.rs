@@ -2822,126 +2822,126 @@ impl Project {
         trigger: FormatTrigger,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<ProjectTransaction>> {
-        let mut local_buffers = Vec::new();
-        let mut remote_buffers = None;
-        for buffer_handle in buffers {
-            let buffer = buffer_handle.read(cx);
-            if let Some(file) = File::from_dyn(buffer.file()) {
-                if let Some(buffer_abs_path) = file.as_local().map(|f| f.abs_path(cx)) {
-                    if let Some((_, server)) = self.language_server_for_buffer(buffer, cx) {
-                        local_buffers.push((buffer_handle, buffer_abs_path, server.clone()));
-                    }
-                } else {
-                    remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
-                }
-            } else {
-                return Task::ready(Ok(Default::default()));
-            }
-        }
+        if self.is_local() {
+            let mut buffers_with_paths_and_servers = buffers
+                .into_iter()
+                .filter_map(|buffer_handle| {
+                    let buffer = buffer_handle.read(cx);
+                    let file = File::from_dyn(buffer.file())?;
+                    let buffer_abs_path = file.as_local()?.abs_path(cx);
+                    let (_, server) = self.language_server_for_buffer(buffer, cx)?;
+                    Some((buffer_handle, buffer_abs_path, server.clone()))
+                })
+                .collect::<Vec<_>>();
 
-        let remote_buffers = self.remote_id().zip(remote_buffers);
-        let client = self.client.clone();
-
-        cx.spawn(|this, mut cx| async move {
-            let mut project_transaction = ProjectTransaction::default();
-
-            if let Some((project_id, remote_buffers)) = remote_buffers {
-                let response = client
-                    .request(proto::FormatBuffers {
-                        project_id,
-                        trigger: trigger as i32,
-                        buffer_ids: remote_buffers
-                            .iter()
-                            .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
-                            .collect(),
-                    })
-                    .await?
-                    .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
-                project_transaction = this
-                    .update(&mut cx, |this, cx| {
-                        this.deserialize_project_transaction(response, push_to_history, cx)
-                    })
-                    .await?;
-            }
-
-            // Do not allow multiple concurrent formatting requests for the
-            // same buffer.
-            this.update(&mut cx, |this, _| {
-                local_buffers
-                    .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
-            });
-            let _cleanup = defer({
-                let this = this.clone();
-                let mut cx = cx.clone();
-                let local_buffers = &local_buffers;
-                move || {
-                    this.update(&mut cx, |this, _| {
-                        for (buffer, _, _) in local_buffers {
-                            this.buffers_being_formatted.remove(&buffer.id());
-                        }
-                    });
-                }
-            });
-
-            for (buffer, buffer_abs_path, language_server) in &local_buffers {
-                let (format_on_save, formatter, tab_size) = buffer.read_with(&cx, |buffer, cx| {
-                    let settings = cx.global::<Settings>();
-                    let language_name = buffer.language().map(|language| language.name());
-                    (
-                        settings.format_on_save(language_name.as_deref()),
-                        settings.formatter(language_name.as_deref()),
-                        settings.tab_size(language_name.as_deref()),
-                    )
+            cx.spawn(|this, mut cx| async move {
+                // Do not allow multiple concurrent formatting requests for the
+                // same buffer.
+                this.update(&mut cx, |this, _| {
+                    buffers_with_paths_and_servers
+                        .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
                 });
 
-                let transaction = match (formatter, format_on_save) {
-                    (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => continue,
+                let _cleanup = defer({
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    let local_buffers = &buffers_with_paths_and_servers;
+                    move || {
+                        this.update(&mut cx, |this, _| {
+                            for (buffer, _, _) in local_buffers {
+                                this.buffers_being_formatted.remove(&buffer.id());
+                            }
+                        });
+                    }
+                });
 
-                    (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
-                    | (_, FormatOnSave::LanguageServer) => Self::format_via_lsp(
-                        &this,
-                        &buffer,
-                        &buffer_abs_path,
-                        &language_server,
-                        tab_size,
-                        &mut cx,
-                    )
-                    .await
-                    .context("failed to format via language server")?,
+                let mut project_transaction = ProjectTransaction::default();
+                for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
+                    let (format_on_save, formatter, tab_size) =
+                        buffer.read_with(&cx, |buffer, cx| {
+                            let settings = cx.global::<Settings>();
+                            let language_name = buffer.language().map(|language| language.name());
+                            (
+                                settings.format_on_save(language_name.as_deref()),
+                                settings.formatter(language_name.as_deref()),
+                                settings.tab_size(language_name.as_deref()),
+                            )
+                        });
 
-                    (
-                        Formatter::External { command, arguments },
-                        FormatOnSave::On | FormatOnSave::Off,
-                    )
-                    | (_, FormatOnSave::External { command, arguments }) => {
-                        Self::format_via_external_command(
+                    let transaction = match (formatter, format_on_save) {
+                        (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => continue,
+
+                        (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
+                        | (_, FormatOnSave::LanguageServer) => Self::format_via_lsp(
+                            &this,
                             &buffer,
                             &buffer_abs_path,
-                            &command,
-                            &arguments,
+                            &language_server,
+                            tab_size,
                             &mut cx,
                         )
                         .await
-                        .context(format!(
-                            "failed to format via external command {:?}",
-                            command
-                        ))?
-                    }
-                };
+                        .context("failed to format via language server")?,
 
-                if let Some(transaction) = transaction {
-                    if !push_to_history {
-                        buffer.update(&mut cx, |buffer, _| {
-                            buffer.forget_transaction(transaction.id)
-                        });
+                        (
+                            Formatter::External { command, arguments },
+                            FormatOnSave::On | FormatOnSave::Off,
+                        )
+                        | (_, FormatOnSave::External { command, arguments }) => {
+                            Self::format_via_external_command(
+                                &buffer,
+                                &buffer_abs_path,
+                                &command,
+                                &arguments,
+                                &mut cx,
+                            )
+                            .await
+                            .context(format!(
+                                "failed to format via external command {:?}",
+                                command
+                            ))?
+                        }
+                    };
+
+                    if let Some(transaction) = transaction {
+                        if !push_to_history {
+                            buffer.update(&mut cx, |buffer, _| {
+                                buffer.forget_transaction(transaction.id)
+                            });
+                        }
+                        project_transaction.0.insert(buffer.clone(), transaction);
                     }
-                    project_transaction.0.insert(buffer.clone(), transaction);
                 }
-            }
 
-            Ok(project_transaction)
-        })
+                Ok(project_transaction)
+            })
+        } else {
+            let remote_id = self.remote_id();
+            let client = self.client.clone();
+            cx.spawn(|this, mut cx| async move {
+                let mut project_transaction = ProjectTransaction::default();
+                if let Some(project_id) = remote_id {
+                    let response = client
+                        .request(proto::FormatBuffers {
+                            project_id,
+                            trigger: trigger as i32,
+                            buffer_ids: buffers
+                                .iter()
+                                .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
+                                .collect(),
+                        })
+                        .await?
+                        .transaction
+                        .ok_or_else(|| anyhow!("missing transaction"))?;
+                    project_transaction = this
+                        .update(&mut cx, |this, cx| {
+                            this.deserialize_project_transaction(response, push_to_history, cx)
+                        })
+                        .await?;
+                }
+                Ok(project_transaction)
+            })
+        }
     }
 
     async fn format_via_lsp(
