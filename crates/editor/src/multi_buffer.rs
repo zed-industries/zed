@@ -1,7 +1,6 @@
 mod anchor;
 
 pub use anchor::{Anchor, AnchorRangeExt};
-use anyhow::Result;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
@@ -1277,20 +1276,6 @@ impl MultiBuffer {
             .borrow()
             .get(&buffer_id)
             .map(|state| state.buffer.clone())
-    }
-
-    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let mut save_tasks = Vec::new();
-        for BufferState { buffer, .. } in self.buffers.borrow().values() {
-            save_tasks.push(buffer.update(cx, |buffer, cx| buffer.save(cx)));
-        }
-
-        cx.spawn(|_, _| async move {
-            for save in save_tasks {
-                save.await?;
-            }
-            Ok(())
-        })
     }
 
     pub fn is_completion_trigger<T>(&self, position: T, text: &str, cx: &AppContext) -> bool

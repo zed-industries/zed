@@ -2,12 +2,10 @@ use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
-    FORMAT_TIMEOUT,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
-use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -16,7 +14,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{FormatTrigger, Item as _, Project, ProjectPath};
+use project::{Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -613,30 +611,17 @@ impl Item for Editor {
 
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
-        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| {
-            project.format(buffers, true, FormatTrigger::Save, cx)
-        });
+        let save = project.update(cx, |project, cx| project.save_buffers(buffers, cx));
         cx.spawn(|_, mut cx| async move {
-            let transaction = futures::select_biased! {
-                _ = timeout => {
-                    log::warn!("timed out waiting for formatting");
-                    None
-                }
-                transaction = format.log_err().fuse() => transaction,
-            };
-
-            buffer
-                .update(&mut cx, |buffer, cx| {
-                    if let Some(transaction) = transaction {
-                        if !buffer.is_singleton() {
-                            buffer.push_transaction(&transaction.0);
-                        }
+            let (format_transaction, save) = save.await;
+            buffer.update(&mut cx, |buffer, _| {
+                if let Some(transaction) = format_transaction {
+                    if !buffer.is_singleton() {
+                        buffer.push_transaction(&transaction.0);
                     }
-
-                    buffer.save(cx)
-                })
-                .await?;
+                }
+            });
+            save.await?;
             Ok(())
         })
     }

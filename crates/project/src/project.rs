@@ -12,7 +12,7 @@ use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
-    future::Shared,
+    future::{try_join_all, Shared},
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
 use gpui::{
@@ -1426,6 +1426,37 @@ impl Project {
         } else {
             Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
         }
+    }
+
+    pub fn save_buffers(
+        &mut self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<(Option<ProjectTransaction>, Task<Result<()>>)> {
+        const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+
+        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
+        let format = self.format(buffers.clone(), true, FormatTrigger::Save, cx);
+        cx.spawn(|_, cx| async move {
+            let transaction = futures::select_biased! {
+                _ = timeout => {
+                    log::warn!("timed out waiting for formatting");
+                    None
+                }
+                transaction = format.log_err().fuse() => transaction,
+            };
+
+            (
+                transaction,
+                cx.spawn(|mut cx| async move {
+                    let save_tasks = buffers
+                        .iter()
+                        .map(|buffer| buffer.update(&mut cx, |buffer, cx| buffer.save(cx)));
+                    try_join_all(save_tasks).await?;
+                    Ok(())
+                }),
+            )
+        })
     }
 
     pub fn save_buffer_as(
