@@ -554,11 +554,13 @@ impl Project {
             });
         }
 
-        let languages = Arc::new(LanguageRegistry::test());
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.background());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project = cx.update(|cx| Project::local(client, user_store, languages, fs, cx));
+        let project =
+            cx.update(|cx| Project::local(client, user_store, Arc::new(languages), fs, cx));
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
@@ -1789,20 +1791,22 @@ impl Project {
             while let Some(()) = subscription.next().await {
                 if let Some(project) = project.upgrade(&cx) {
                     project.update(&mut cx, |project, cx| {
-                        let mut buffers_without_language = Vec::new();
+                        let mut plain_text_buffers = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for buffer in project.opened_buffers.values() {
                             if let Some(handle) = buffer.upgrade(cx) {
                                 let buffer = &handle.read(cx);
-                                if buffer.language().is_none() {
-                                    buffers_without_language.push(handle);
+                                if buffer.language().is_none()
+                                    || buffer.language() == Some(&*language::PLAIN_TEXT)
+                                {
+                                    plain_text_buffers.push(handle);
                                 } else if buffer.contains_unknown_injections() {
                                     buffers_with_unknown_injections.push(handle);
                                 }
                             }
                         }
 
-                        for buffer in buffers_without_language {
+                        for buffer in plain_text_buffers {
                             project.assign_language_to_buffer(&buffer, cx);
                             project.register_buffer_with_language_server(&buffer, cx);
                         }
