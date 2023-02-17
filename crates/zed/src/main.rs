@@ -38,7 +38,9 @@ use terminal_view::{get_working_directory, TerminalView};
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
-use util::{channel::RELEASE_CHANNEL, paths, ResultExt, StaffMode, TryFutureExt};
+#[cfg(debug_assertions)]
+use util::StaffMode;
+use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
@@ -567,6 +569,14 @@ async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
+                let paths = if paths.is_empty() {
+                    workspace::last_opened_workspace_paths()
+                        .await
+                        .map(|location| location.paths().to_vec())
+                        .unwrap_or(paths)
+                } else {
+                    paths
+                };
                 let (workspace, items) = cx
                     .update(|cx| workspace::open_paths(&paths, &app_state, cx))
                     .await;

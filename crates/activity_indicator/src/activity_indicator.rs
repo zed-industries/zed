@@ -252,7 +252,11 @@ impl ActivityIndicator {
                     "Installing Zed update…".to_string(),
                     None,
                 ),
-                AutoUpdateStatus::Updated => (None, "Restart to update Zed".to_string(), None),
+                AutoUpdateStatus::Updated => (
+                    None,
+                    "Click to restart and update Zed".to_string(),
+                    Some(Box::new(workspace::Restart)),
+                ),
                 AutoUpdateStatus::Errored => (
                     Some(WARNING_ICON),
                     "Auto update failed".to_string(),

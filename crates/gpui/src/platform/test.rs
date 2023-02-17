@@ -226,6 +226,8 @@ impl super::Platform for Platform {
             patch: 0,
         })
     }
+
+    fn restart(&self) {}
 }
 
 #[derive(Debug)]

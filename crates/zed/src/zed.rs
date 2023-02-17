@@ -38,7 +38,7 @@ use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{sidebar::SidebarSide, AppState, Workspace};
+use workspace::{sidebar::SidebarSide, AppState, Restart, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -130,6 +130,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
     cx.add_global_action(quit);
+    cx.add_global_action(restart);
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
         cx.update_global::<Settings, _, _>(|settings, cx| {
@@ -401,6 +402,10 @@ pub fn build_window_options(
         bounds,
         screen,
     }
+}
+
+fn restart(_: &Restart, cx: &mut gpui::MutableAppContext) {
+    cx.platform().restart();
 }
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {

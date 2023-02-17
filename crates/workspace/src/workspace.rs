@@ -101,6 +101,7 @@ actions!(
         NewTerminal,
         NewSearch,
         Feedback,
+        Restart
     ]
 );
 

@@ -504,7 +504,9 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
-        let theme = &cx.global::<Settings>().theme;
+        enum ConnectionStatusButton {}
+
+        let theme = &cx.global::<Settings>().theme.clone();
         match &*workspace.read(cx).client().status().borrow() {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
@@ -527,13 +529,20 @@ impl CollabTitlebarItem {
                 .boxed(),
             ),
             client::Status::UpgradeRequired => Some(
-                Label::new(
-                    "Please update Zed to collaborate".to_string(),
-                    theme.workspace.titlebar.outdated_warning.text.clone(),
-                )
-                .contained()
-                .with_style(theme.workspace.titlebar.outdated_warning.container)
-                .aligned()
+                MouseEventHandler::<ConnectionStatusButton>::new(0, cx, |_, _| {
+                    Label::new(
+                        "Please update Zed to collaborate".to_string(),
+                        theme.workspace.titlebar.outdated_warning.text.clone(),
+                    )
+                    .contained()
+                    .with_style(theme.workspace.titlebar.outdated_warning.container)
+                    .aligned()
+                    .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, |_, cx| {
+                    cx.dispatch_action(auto_update::Check);
+                })
                 .boxed(),
             ),
             _ => None,

@@ -45,6 +45,7 @@ use std::{
     ffi::{c_void, CStr, OsStr},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
+    process::Command,
     ptr,
     rc::Rc,
     slice, str,
@@ -801,6 +802,33 @@ impl platform::Platform for MacPlatform {
                 minor: version.minorVersion as usize,
                 patch: version.patchVersion as usize,
             })
+        }
+    }
+
+    fn restart(&self) {
+        #[cfg(debug_assertions)]
+        let path = std::env::current_exe();
+
+        #[cfg(not(debug_assertions))]
+        let path = unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                std::env::current_exe()
+            } else {
+                let path: id = msg_send![bundle, bundlePath];
+                let path: *mut c_char = msg_send![path, UTF8String];
+
+                Ok(PathBuf::from(OsStr::from_bytes(
+                    CStr::from_ptr(path).to_bytes(),
+                )))
+            }
+        };
+
+        let command = path.and_then(|path| Command::new("/usr/bin/open").arg(path).spawn());
+
+        match command {
+            Err(err) => log::error!("Unable to restart application {}", err),
+            Ok(_) => self.quit(),
         }
     }
 }
