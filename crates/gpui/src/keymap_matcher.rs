@@ -75,29 +75,32 @@ impl KeymapMatcher {
         self.contexts
             .extend(dispatch_path.iter_mut().map(|e| std::mem::take(&mut e.1)));
 
-        for (i, (view_id, _)) in dispatch_path.into_iter().enumerate() {
-            // Don't require pending view entry if there are no pending keystrokes
-            if !first_keystroke && !self.pending_views.contains_key(&view_id) {
-                continue;
-            }
-
-            // If there is a previous view context, invalidate that view if it
-            // has changed
-            if let Some(previous_view_context) = self.pending_views.remove(&view_id) {
-                if previous_view_context != self.contexts[i] {
+        // Find the bindings which map the pending keystrokes and current context
+        // Iterate over the bindings in precedence order before the dispatch path so that
+        // users have more control over precedence rules
+        for binding in self.keymap.bindings().iter().rev() {
+            for (i, (view_id, _)) in dispatch_path.iter().enumerate() {
+                // Don't require pending view entry if there are no pending keystrokes
+                if !first_keystroke && !self.pending_views.contains_key(view_id) {
                     continue;
                 }
-            }
 
-            // Find the bindings which map the pending keystrokes and current context
-            for binding in self.keymap.bindings().iter().rev() {
+                // If there is a previous view context, invalidate that view if it
+                // has changed
+                if let Some(previous_view_context) = self.pending_views.remove(view_id) {
+                    if previous_view_context != self.contexts[i] {
+                        continue;
+                    }
+                }
+
                 match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
                 {
                     BindingMatchResult::Complete(action) => {
-                        matched_bindings.push((view_id, action))
+                        matched_bindings.push((*view_id, action))
                     }
                     BindingMatchResult::Partial => {
-                        self.pending_views.insert(view_id, self.contexts[i].clone());
+                        self.pending_views
+                            .insert(*view_id, self.contexts[i].clone());
                         any_pending = true;
                     }
                     _ => {}

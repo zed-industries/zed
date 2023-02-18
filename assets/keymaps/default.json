@@ -450,15 +450,16 @@
         }
     },
     {
-        "context": "Dock",
+        "context": "Pane",
         "bindings": {
-            "shift-escape": "dock::HideDock"
+            "cmd-escape": "dock::AddTabToDock"
         }
     },
     {
-        "context": "Pane",
+        "context": "Dock",
         "bindings": {
-            "cmd-escape": "dock::MoveActiveItemToDock"
+            "shift-escape": "dock::HideDock",
+            "cmd-escape": "dock::RemoveTabFromDock"
         }
     },
     {

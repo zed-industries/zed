@@ -30,7 +30,8 @@ actions!(
         AnchorDockRight,
         AnchorDockBottom,
         ExpandDock,
-        MoveActiveItemToDock,
+        AddTabToDock,
+        RemoveTabFromDock,
     ]
 );
 impl_internal_actions!(dock, [MoveDock, AddDefaultItemToDock]);
@@ -55,12 +56,49 @@ pub fn init(cx: &mut MutableAppContext) {
         },
     );
     cx.add_action(
-        |workspace: &mut Workspace, _: &MoveActiveItemToDock, cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, _: &AddTabToDock, cx: &mut ViewContext<Workspace>| {
+            eprintln!("Add tab to dock");
             if let Some(active_item) = workspace.active_item(cx) {
                 let item_id = active_item.id();
 
                 let from = workspace.active_pane();
                 let to = workspace.dock_pane();
+                if from.id() == to.id() {
+                    return;
+                }
+
+                let destination_index = to.read(cx).items_len() + 1;
+
+                Pane::move_item(
+                    workspace,
+                    from.clone(),
+                    to.clone(),
+                    item_id,
+                    destination_index,
+                    cx,
+                );
+            }
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &RemoveTabFromDock, cx: &mut ViewContext<Workspace>| {
+            eprintln!("Removing tab from dock");
+            if let Some(active_item) = workspace.active_item(cx) {
+                let item_id = active_item.id();
+
+                let from = workspace.dock_pane();
+                let to = workspace
+                    .last_active_center_pane
+                    .as_ref()
+                    .and_then(|pane| pane.upgrade(cx))
+                    .unwrap_or_else(|| {
+                        workspace
+                            .panes
+                            .first()
+                            .expect("There must be a pane")
+                            .clone()
+                    });
+
                 if from.id() == to.id() {
                     return;
                 }
