@@ -728,8 +728,10 @@ impl LocalWorktree {
         &self,
         buffer_handle: ModelHandle<Buffer>,
         path: Arc<Path>,
+        replace_file: bool,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+        let handle = cx.handle();
         let buffer = buffer_handle.read(cx);
 
         let rpc = self.client.clone();
@@ -742,53 +744,40 @@ impl LocalWorktree {
         let save = self.write_file(path, text, buffer.line_ending(), cx);
 
         cx.as_mut().spawn(|mut cx| async move {
-            let mtime = save.await?.mtime;
+            let entry = save.await?;
+
             if let Some(project_id) = project_id {
                 rpc.send(proto::BufferSaved {
                     project_id,
                     buffer_id,
                     version: serialize_version(&version),
-                    mtime: Some(mtime.into()),
+                    mtime: Some(entry.mtime.into()),
                     fingerprint: serialize_fingerprint(fingerprint),
                 })?;
             }
-            buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), fingerprint, mtime, None, cx);
-            });
-            anyhow::Ok((version, fingerprint, mtime))
-        })
-    }
-
-    pub fn save_buffer_as(
-        &self,
-        buffer_handle: ModelHandle<Buffer>,
-        path: impl Into<Arc<Path>>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<()>> {
-        let handle = cx.handle();
-        let buffer = buffer_handle.read(cx);
-
-        let text = buffer.as_rope().clone();
-        let fingerprint = text.fingerprint();
-        let version = buffer.version();
-        let save = self.write_file(path, text, buffer.line_ending(), cx);
-
-        cx.as_mut().spawn(|mut cx| async move {
-            let entry = save.await?;
-            let file = File {
-                entry_id: entry.id,
-                worktree: handle,
-                path: entry.path,
-                mtime: entry.mtime,
-                is_local: true,
-                is_deleted: false,
-            };
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version, fingerprint, file.mtime, Some(Arc::new(file)), cx);
+                buffer.did_save(
+                    version.clone(),
+                    fingerprint,
+                    entry.mtime,
+                    if replace_file {
+                        Some(Arc::new(File {
+                            entry_id: entry.id,
+                            worktree: handle,
+                            path: entry.path,
+                            mtime: entry.mtime,
+                            is_local: true,
+                            is_deleted: false,
+                        }))
+                    } else {
+                        None
+                    },
+                    cx,
+                );
             });
 
-            Ok(())
+            Ok((version, fingerprint, entry.mtime))
         })
     }
 

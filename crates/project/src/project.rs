@@ -1451,7 +1451,7 @@ impl Project {
         let worktree = file.worktree.clone();
         let path = file.path.clone();
         worktree.update(cx, |worktree, cx| match worktree {
-            Worktree::Local(worktree) => worktree.save_buffer(buffer, path, cx),
+            Worktree::Local(worktree) => worktree.save_buffer(buffer, path, false, cx),
             Worktree::Remote(worktree) => worktree.save_buffer(buffer, cx),
         })
     }
@@ -1474,7 +1474,9 @@ impl Project {
             let (worktree, path) = worktree_task.await?;
             worktree
                 .update(&mut cx, |worktree, cx| match worktree {
-                    Worktree::Local(worktree) => worktree.save_buffer_as(buffer.clone(), path, cx),
+                    Worktree::Local(worktree) => {
+                        worktree.save_buffer(buffer.clone(), path.into(), true, cx)
+                    }
                     Worktree::Remote(_) => panic!("cannot remote buffers as new files"),
                 })
                 .await?;

@@ -2326,19 +2326,27 @@ async fn test_propagate_saves_and_fs_changes(
         assert!(buffer.file().is_none());
     });
 
+    new_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.edit([(0..0, "ok")], None, cx);
+    });
     project_a
         .update(cx_a, |project, cx| {
-            project.save_buffer_as(new_buffer_a, "/a/file3.rs".into(), cx)
+            project.save_buffer_as(new_buffer_a.clone(), "/a/file3.rs".into(), cx)
         })
         .await
         .unwrap();
 
     deterministic.run_until_parked();
-    new_buffer_b.read_with(cx_b, |buffer, _| {
+    new_buffer_b.read_with(cx_b, |buffer_b, _| {
         assert_eq!(
-            buffer.file().unwrap().path().as_ref(),
+            buffer_b.file().unwrap().path().as_ref(),
             Path::new("file3.rs")
         );
+
+        new_buffer_a.read_with(cx_a, |buffer_a, _| {
+            assert_eq!(buffer_b.saved_mtime(), buffer_a.saved_mtime());
+            assert_eq!(buffer_b.saved_version(), buffer_a.saved_version());
+        });
     });
 }
 
@@ -2909,7 +2917,9 @@ async fn test_buffer_conflict_after_save(
         assert!(!buf.has_conflict());
     });
 
-    cx_b.update(|cx| Project::save_buffer(buffer_b.clone(), cx)).await.unwrap();
+    cx_b.update(|cx| Project::save_buffer(buffer_b.clone(), cx))
+        .await
+        .unwrap();
     cx_a.foreground().forbid_parking();
     buffer_b.read_with(cx_b, |buffer_b, _| assert!(!buffer_b.is_dirty()));
     buffer_b.read_with(cx_b, |buf, _| {
