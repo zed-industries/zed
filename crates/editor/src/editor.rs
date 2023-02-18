@@ -77,14 +77,14 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Range, RangeInclusive},
+    ops::{Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt, RangeExt};
 use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
@@ -6991,21 +6991,6 @@ pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str
         None
     })
     .flat_map(|word| word.split_inclusive('_'))
-}
-
-trait RangeExt<T> {
-    fn sorted(&self) -> Range<T>;
-    fn to_inclusive(&self) -> RangeInclusive<T>;
-}
-
-impl<T: Ord + Clone> RangeExt<T> for Range<T> {
-    fn sorted(&self) -> Self {
-        cmp::min(&self.start, &self.end).clone()..cmp::max(&self.start, &self.end).clone()
-    }
-
-    fn to_inclusive(&self) -> RangeInclusive<T> {
-        self.start.clone()..=self.end.clone()
-    }
 }
 
 trait RangeToAnchorExt {

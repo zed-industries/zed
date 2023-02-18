@@ -3,7 +3,7 @@ use std::sync::Arc;
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement, Bias, CharKind, DisplayPoint,
+    movement, Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, MutableAppContext};
 use language::{Point, Selection, SelectionGoal};
@@ -450,19 +450,53 @@ fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> D
     map.clip_point(new_point, Bias::Left)
 }
 
-fn matching(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    let offset = point.to_offset(map, Bias::Left);
-    if let Some((open_range, close_range)) = map
-        .buffer_snapshot
-        .innermost_enclosing_bracket_ranges(offset..offset)
-    {
-        if open_range.contains(&offset) {
-            close_range.start.to_display_point(map)
-        } else {
-            open_range.start.to_display_point(map)
+fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
+    let point = display_point.to_point(map);
+    let offset = point.to_offset(&map.buffer_snapshot);
+
+    // Ensure the range is contained by the current line.
+    let mut line_end = map.next_line_boundary(point).0;
+    if line_end == point {
+        line_end = map.max_point().to_point(map);
+    }
+    line_end.column = line_end.column.saturating_sub(1);
+
+    let line_range = map.prev_line_boundary(point).0..line_end;
+    let ranges = map.buffer_snapshot.bracket_ranges(line_range.clone());
+    if let Some(ranges) = ranges {
+        let line_range = line_range.start.to_offset(&map.buffer_snapshot)
+            ..line_range.end.to_offset(&map.buffer_snapshot);
+        let mut closest_pair_destination = None;
+        let mut closest_distance = usize::MAX;
+
+        for (open_range, close_range) in ranges {
+            if open_range.start >= offset && line_range.contains(&open_range.start) {
+                let distance = open_range.start - offset;
+                if distance < closest_distance {
+                    closest_pair_destination = Some(close_range.start);
+                    closest_distance = distance;
+                    continue;
+                }
+            }
+
+            if close_range.start >= offset && line_range.contains(&close_range.start) {
+                let distance = close_range.start - offset;
+                if distance < closest_distance {
+                    closest_pair_destination = Some(open_range.start);
+                    closest_distance = distance;
+                    continue;
+                }
+            }
+
+            continue;
         }
+
+        closest_pair_destination
+            .map(|destination| destination.to_display_point(map))
+            .unwrap_or(display_point)
     } else {
-        point
+        display_point
     }
 }
 

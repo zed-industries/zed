@@ -41,7 +41,7 @@ pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Opera
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::TryFutureExt as _;
+use util::{RangeExt, TryFutureExt as _};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -1389,12 +1389,12 @@ impl Buffer {
                 .enumerate()
                 .zip(&edit_operation.as_edit().unwrap().new_text)
                 .map(|((ix, (range, _)), new_text)| {
-                    let new_text_len = new_text.len();
+                    let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_len as isize - (range.end as isize - range.start as isize);
+                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
 
-                    let mut range_of_insertion_to_indent = 0..new_text_len;
+                    let mut range_of_insertion_to_indent = 0..new_text_length;
                     let mut first_line_is_new = false;
                     let mut original_indent_column = None;
 
@@ -2358,18 +2358,18 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    pub fn enclosing_bracket_ranges<'a, T: ToOffset>(
+    /// Returns bracket range pairs overlapping or adjacent to `range`
+    pub fn bracket_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
 
-        let mut matches = self.syntax.matches(
-            range.start.saturating_sub(1)..self.len().min(range.end + 1),
-            &self.text,
-            |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
-        );
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            grammar.brackets_config.as_ref().map(|c| &c.query)
+        });
         let configs = matches
             .grammars()
             .iter()
@@ -2393,7 +2393,8 @@ impl BufferSnapshot {
 
                 let Some((open, close)) = open.zip(close) else { continue };
 
-                if open.start > range.start || close.end < range.end {
+                let bracket_range = open.start..=close.end;
+                if !bracket_range.overlaps(&range) {
                     continue;
                 }
 

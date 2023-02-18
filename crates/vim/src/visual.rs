@@ -650,7 +650,7 @@ mod test {
                 The quick brown
                 the 
                 ˇfox jumps over
-                 dog"},
+                dog"},
             Mode::Normal,
         );
     }
