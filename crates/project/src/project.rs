@@ -28,8 +28,8 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    Operation, Patch, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Transaction, Unclipped,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -59,7 +59,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use terminal::{Terminal, TerminalBuilder};
 use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
@@ -1429,33 +1429,30 @@ impl Project {
     }
 
     pub fn save_buffers(
-        &mut self,
         buffers: HashSet<ModelHandle<Buffer>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<(Option<ProjectTransaction>, Task<Result<()>>)> {
-        const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<()>> {
+        cx.spawn(|mut cx| async move {
+            let save_tasks = buffers
+                .into_iter()
+                .map(|buffer| cx.update(|cx| Self::save_buffer(buffer, cx)));
+            try_join_all(save_tasks).await?;
+            Ok(())
+        })
+    }
 
-        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = self.format(buffers.clone(), true, FormatTrigger::Save, cx);
-        cx.spawn(|_, cx| async move {
-            let transaction = futures::select_biased! {
-                _ = timeout => {
-                    log::warn!("timed out waiting for formatting");
-                    None
-                }
-                transaction = format.log_err().fuse() => transaction,
-            };
-
-            (
-                transaction,
-                cx.spawn(|mut cx| async move {
-                    let save_tasks = buffers
-                        .iter()
-                        .map(|buffer| buffer.update(&mut cx, |buffer, cx| buffer.save(cx)));
-                    try_join_all(save_tasks).await?;
-                    Ok(())
-                }),
-            )
+    pub fn save_buffer(
+        buffer: ModelHandle<Buffer>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+        let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+            return Task::ready(Err(anyhow!("buffer doesn't have a file")));
+        };
+        let worktree = file.worktree.clone();
+        let path = file.path.clone();
+        worktree.update(cx, |worktree, cx| match worktree {
+            Worktree::Local(worktree) => worktree.save_buffer(buffer, path, cx),
+            Worktree::Remote(worktree) => worktree.save_buffer(buffer, cx),
         })
     }
 
@@ -1476,11 +1473,9 @@ impl Project {
             }
             let (worktree, path) = worktree_task.await?;
             worktree
-                .update(&mut cx, |worktree, cx| {
-                    worktree
-                        .as_local_mut()
-                        .unwrap()
-                        .save_buffer_as(buffer.clone(), path, cx)
+                .update(&mut cx, |worktree, cx| match worktree {
+                    Worktree::Local(worktree) => worktree.save_buffer_as(buffer.clone(), path, cx),
+                    Worktree::Remote(_) => panic!("cannot remote buffers as new files"),
                 })
                 .await?;
             this.update(&mut cx, |this, cx| {
@@ -5187,7 +5182,7 @@ impl Project {
             .await;
 
         let (saved_version, fingerprint, mtime) =
-            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
+            cx.update(|cx| Self::save_buffer(buffer, cx)).await?;
         Ok(proto::BufferSaved {
             project_id,
             buffer_id,

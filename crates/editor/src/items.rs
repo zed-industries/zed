@@ -608,20 +608,11 @@ impl Item for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_event("save editor", cx);
-
-        let buffer = self.buffer().clone();
-        let buffers = buffer.read(cx).all_buffers();
-        let save = project.update(cx, |project, cx| project.save_buffers(buffers, cx));
+        let format = self.perform_format(project.clone(), cx);
+        let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
-            let (format_transaction, save) = save.await;
-            buffer.update(&mut cx, |buffer, _| {
-                if let Some(transaction) = format_transaction {
-                    if !buffer.is_singleton() {
-                        buffer.push_transaction(&transaction.0);
-                    }
-                }
-            });
-            save.await?;
+            format.await?;
+            cx.update(|cx| Project::save_buffers(buffers, cx)).await?;
             Ok(())
         })
     }
@@ -1144,7 +1135,6 @@ fn path_for_file<'a>(
 mod tests {
     use super::*;
     use gpui::MutableAppContext;
-    use language::RopeFingerprint;
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -1187,17 +1177,6 @@ mod tests {
         }
 
         fn is_deleted(&self) -> bool {
-            todo!()
-        }
-
-        fn save(
-            &self,
-            _: u64,
-            _: language::Rope,
-            _: clock::Global,
-            _: project::LineEnding,
-            _: &mut MutableAppContext,
-        ) -> gpui::Task<anyhow::Result<(clock::Global, RopeFingerprint, SystemTime)>> {
             todo!()
         }
 

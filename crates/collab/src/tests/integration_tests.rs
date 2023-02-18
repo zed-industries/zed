@@ -2244,7 +2244,7 @@ async fn test_propagate_saves_and_fs_changes(
     });
 
     // Edit the buffer as the host and concurrently save as guest B.
-    let save_b = buffer_b.update(cx_b, |buf, cx| buf.save(cx));
+    let save_b = cx_b.update(|cx| Project::save_buffer(buffer_b.clone(), cx));
     buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], None, cx));
     save_b.await.unwrap();
     assert_eq!(
@@ -2909,7 +2909,7 @@ async fn test_buffer_conflict_after_save(
         assert!(!buf.has_conflict());
     });
 
-    buffer_b.update(cx_b, |buf, cx| buf.save(cx)).await.unwrap();
+    cx_b.update(|cx| Project::save_buffer(buffer_b.clone(), cx)).await.unwrap();
     cx_a.foreground().forbid_parking();
     buffer_b.read_with(cx_b, |buffer_b, _| assert!(!buffer_b.is_dirty()));
     buffer_b.read_with(cx_b, |buf, _| {

@@ -243,8 +243,7 @@ async fn test_managing_language_servers(
     );
 
     // Save notifications are reported to all servers.
-    toml_buffer
-        .update(cx, |buffer, cx| buffer.save(cx))
+    cx.update(|cx| Project::save_buffer(toml_buffer, cx))
         .await
         .unwrap();
     assert_eq!(
@@ -2083,12 +2082,12 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
-    buffer
-        .update(cx, |buffer, cx| {
-            assert_eq!(buffer.text(), "the old contents");
-            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
-            buffer.save(cx)
-        })
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "the old contents");
+        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+    });
+
+    cx.update(|cx| Project::save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
 
@@ -2112,11 +2111,11 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
-    buffer
-        .update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
-            buffer.save(cx)
-        })
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+    });
+
+    cx.update(|cx| Project::save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
 
@@ -2703,11 +2702,10 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     });
 
     // Save a file with windows line endings. The file is written correctly.
-    buffer2
-        .update(cx, |buffer, cx| {
-            buffer.set_text("one\ntwo\nthree\nfour\n", cx);
-            buffer.save(cx)
-        })
+    buffer2.update(cx, |buffer, cx| {
+        buffer.set_text("one\ntwo\nthree\nfour\n", cx);
+    });
+    cx.update(|cx| Project::save_buffer(buffer2, cx))
         .await
         .unwrap();
     assert_eq!(

@@ -214,15 +214,6 @@ pub trait File: Send + Sync {
 
     fn is_deleted(&self) -> bool;
 
-    fn save(
-        &self,
-        buffer_id: u64,
-        text: Rope,
-        version: clock::Global,
-        line_ending: LineEnding,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>>;
-
     fn as_any(&self) -> &dyn Any;
 
     fn to_proto(&self) -> rpc::proto::File;
@@ -527,33 +518,6 @@ impl Buffer {
 
     pub fn file(&self) -> Option<&Arc<dyn File>> {
         self.file.as_ref()
-    }
-
-    pub fn save(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-        let text = self.as_rope().clone();
-        let version = self.version();
-        let save = file.save(
-            self.remote_id(),
-            text,
-            version,
-            self.line_ending(),
-            cx.as_mut(),
-        );
-        cx.spawn(|this, mut cx| async move {
-            let (version, fingerprint, mtime) = save.await?;
-            this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), fingerprint, mtime, None, cx);
-            });
-            Ok((version, fingerprint, mtime))
-        })
     }
 
     pub fn saved_version(&self) -> &clock::Global {
