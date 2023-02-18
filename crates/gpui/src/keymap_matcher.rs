@@ -5,7 +5,7 @@ mod keystroke;
 
 use std::{any::TypeId, fmt::Debug};
 
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use smallvec::SmallVec;
 
 use crate::Action;
@@ -60,13 +60,28 @@ impl KeymapMatcher {
         !self.pending_keystrokes.is_empty()
     }
 
+    /// Pushes a keystroke onto the matcher.
+    /// The result of the new keystroke is returned:
+    ///     MatchResult::None =>
+    ///         No match is valid for this key given any pending keystrokes.
+    ///     MatchResult::Pending =>
+    ///         There exist bindings which are still waiting for more keys.
+    ///     MatchResult::Complete(matches) =>
+    ///         1 or more bindings have recieved the necessary key presses.
+    ///         The order of the matched actions is by order in the keymap file first and
+    ///         position of the matching view second.
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,
         mut dispatch_path: Vec<(usize, KeymapContext)>,
     ) -> MatchResult {
         let mut any_pending = false;
-        let mut matched_bindings: Vec<(usize, Box<dyn Action>)> = Vec::new();
+        // Collect matched bindings into an ordered list using the position in the matching binding first,
+        // and then the order the binding matched in the view tree second.
+        // The key is the reverse position of the binding in the bindings list so that later bindings
+        // match before earlier ones in the user's config
+        let mut matched_bindings: BTreeMap<usize, Vec<(usize, Box<dyn Action>)>> =
+            Default::default();
 
         let first_keystroke = self.pending_keystrokes.is_empty();
         self.pending_keystrokes.push(keystroke.clone());
@@ -75,29 +90,33 @@ impl KeymapMatcher {
         self.contexts
             .extend(dispatch_path.iter_mut().map(|e| std::mem::take(&mut e.1)));
 
-        for (i, (view_id, _)) in dispatch_path.into_iter().enumerate() {
+        // Find the bindings which map the pending keystrokes and current context
+        for (i, (view_id, _)) in dispatch_path.iter().enumerate() {
             // Don't require pending view entry if there are no pending keystrokes
-            if !first_keystroke && !self.pending_views.contains_key(&view_id) {
+            if !first_keystroke && !self.pending_views.contains_key(view_id) {
                 continue;
             }
 
             // If there is a previous view context, invalidate that view if it
             // has changed
-            if let Some(previous_view_context) = self.pending_views.remove(&view_id) {
+            if let Some(previous_view_context) = self.pending_views.remove(view_id) {
                 if previous_view_context != self.contexts[i] {
                     continue;
                 }
             }
 
-            // Find the bindings which map the pending keystrokes and current context
-            for binding in self.keymap.bindings().iter().rev() {
+            for (order, binding) in self.keymap.bindings().iter().rev().enumerate() {
                 match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
                 {
                     BindingMatchResult::Complete(action) => {
-                        matched_bindings.push((view_id, action))
+                        matched_bindings
+                            .entry(order)
+                            .or_default()
+                            .push((*view_id, action));
                     }
                     BindingMatchResult::Partial => {
-                        self.pending_views.insert(view_id, self.contexts[i].clone());
+                        self.pending_views
+                            .insert(*view_id, self.contexts[i].clone());
                         any_pending = true;
                     }
                     _ => {}
@@ -110,7 +129,9 @@ impl KeymapMatcher {
         }
 
         if !matched_bindings.is_empty() {
-            MatchResult::Matches(matched_bindings)
+            // Collect the sorted matched bindings into the final vec for ease of use
+            // Matched bindings are in order by precedence
+            MatchResult::Matches(matched_bindings.into_values().flatten().collect())
         } else if any_pending {
             MatchResult::Pending
         } else {

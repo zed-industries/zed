@@ -1432,7 +1432,7 @@ impl View for Pane {
                                 enum TabBarEventHandler {}
                                 stack.add_child(
                                     MouseEventHandler::<TabBarEventHandler>::new(0, cx, |_, _| {
-                                        Flex::row()
+                                        Empty::new()
                                             .contained()
                                             .with_style(theme.workspace.tab_bar.container)
                                             .boxed()
