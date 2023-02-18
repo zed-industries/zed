@@ -76,8 +76,10 @@ impl KeymapMatcher {
         mut dispatch_path: Vec<(usize, KeymapContext)>,
     ) -> MatchResult {
         let mut any_pending = false;
-        // Collect matched bindings into an ordered list using the position in the bindings
-        // list as the precedence
+        // Collect matched bindings into an ordered list using the position in the matching binding first,
+        // and then the order the binding matched in the view tree second.
+        // The key is the reverse position of the binding in the bindings list so that later bindings
+        // match before earlier ones in the user's config
         let mut matched_bindings: BTreeMap<usize, Vec<(usize, Box<dyn Action>)>> =
             Default::default();
 
