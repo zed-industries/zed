@@ -5,7 +5,7 @@ mod keystroke;
 
 use std::{any::TypeId, fmt::Debug};
 
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use smallvec::SmallVec;
 
 use crate::Action;
@@ -66,7 +66,10 @@ impl KeymapMatcher {
         mut dispatch_path: Vec<(usize, KeymapContext)>,
     ) -> MatchResult {
         let mut any_pending = false;
-        let mut matched_bindings: Vec<(usize, Box<dyn Action>)> = Vec::new();
+        // Collect matched bindings into an ordered list using the position in the bindings
+        // list as the precedence
+        let mut matched_bindings: BTreeMap<usize, Vec<(usize, Box<dyn Action>)>> =
+            Default::default();
 
         let first_keystroke = self.pending_keystrokes.is_empty();
         self.pending_keystrokes.push(keystroke.clone());
@@ -76,27 +79,28 @@ impl KeymapMatcher {
             .extend(dispatch_path.iter_mut().map(|e| std::mem::take(&mut e.1)));
 
         // Find the bindings which map the pending keystrokes and current context
-        // Iterate over the bindings in precedence order before the dispatch path so that
-        // users have more control over precedence rules
-        for binding in self.keymap.bindings().iter().rev() {
-            for (i, (view_id, _)) in dispatch_path.iter().enumerate() {
-                // Don't require pending view entry if there are no pending keystrokes
-                if !first_keystroke && !self.pending_views.contains_key(view_id) {
+        for (i, (view_id, _)) in dispatch_path.iter().enumerate() {
+            // Don't require pending view entry if there are no pending keystrokes
+            if !first_keystroke && !self.pending_views.contains_key(view_id) {
+                continue;
+            }
+
+            // If there is a previous view context, invalidate that view if it
+            // has changed
+            if let Some(previous_view_context) = self.pending_views.remove(view_id) {
+                if previous_view_context != self.contexts[i] {
                     continue;
                 }
+            }
 
-                // If there is a previous view context, invalidate that view if it
-                // has changed
-                if let Some(previous_view_context) = self.pending_views.remove(view_id) {
-                    if previous_view_context != self.contexts[i] {
-                        continue;
-                    }
-                }
-
+            for (order, binding) in self.keymap.bindings().iter().rev().enumerate() {
                 match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
                 {
                     BindingMatchResult::Complete(action) => {
-                        matched_bindings.push((*view_id, action))
+                        matched_bindings
+                            .entry(order)
+                            .or_default()
+                            .push((*view_id, action));
                     }
                     BindingMatchResult::Partial => {
                         self.pending_views
@@ -113,7 +117,7 @@ impl KeymapMatcher {
         }
 
         if !matched_bindings.is_empty() {
-            MatchResult::Matches(matched_bindings)
+            MatchResult::Matches(matched_bindings.into_values().flatten().collect())
         } else if any_pending {
             MatchResult::Pending
         } else {
