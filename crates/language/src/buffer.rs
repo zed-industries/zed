@@ -41,7 +41,7 @@ pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Opera
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::TryFutureExt as _;
+use util::{RangeExt, TryFutureExt as _};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -2382,7 +2382,7 @@ impl BufferSnapshot {
                 let Some((open, close)) = open.zip(close) else { continue };
 
                 let bracket_range = open.start..=close.end;
-                if !bracket_range.contains(&range.start) && !bracket_range.contains(&range.end) {
+                if !bracket_range.overlaps(&range) {
                     continue;
                 }
 

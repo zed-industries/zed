@@ -2961,14 +2961,14 @@ impl MultiBufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut cursor = self.excerpts.cursor::<usize>();
-        cursor.seek(&dbg!(range.start), Bias::Right, &());
+        cursor.seek(&range.start, Bias::Right, &());
         let start_excerpt = cursor.item();
 
         if range.start == range.end {
             return start_excerpt.map(|excerpt| (excerpt, *cursor.start()));
         }
 
-        cursor.seek(&dbg!(range.end), Bias::Right, &());
+        cursor.seek(&range.end, Bias::Right, &());
         let end_excerpt = cursor.item();
 
         start_excerpt
