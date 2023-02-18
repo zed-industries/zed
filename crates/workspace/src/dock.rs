@@ -1,19 +1,20 @@
+mod toggle_dock_button;
+
+use serde::Deserialize;
+
 use collections::HashMap;
 use gpui::{
     actions,
-    elements::{ChildView, Container, Empty, MouseEventHandler, ParentElement, Side, Stack, Svg},
+    elements::{ChildView, Container, Empty, MouseEventHandler, ParentElement, Side, Stack},
     geometry::vector::Vector2F,
-    impl_internal_actions, Border, CursorStyle, Element, ElementBox, Entity, MouseButton,
-    MutableAppContext, RenderContext, SizeConstraint, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    impl_internal_actions, Border, CursorStyle, Element, ElementBox, MouseButton,
+    MutableAppContext, RenderContext, SizeConstraint, ViewContext, ViewHandle,
 };
-use serde::Deserialize;
 use settings::{DockAnchor, Settings};
 use theme::Theme;
 
-use crate::{
-    handle_dropped_item, sidebar::SidebarSide, ItemHandle, Pane, StatusItemView, Workspace,
-};
+use crate::{sidebar::SidebarSide, ItemHandle, Pane, Workspace};
+pub use toggle_dock_button::ToggleDockButton;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct MoveDock(pub DockAnchor);
@@ -376,108 +377,6 @@ impl Dock {
     }
 }
 
-pub struct ToggleDockButton {
-    workspace: WeakViewHandle<Workspace>,
-}
-
-impl ToggleDockButton {
-    pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
-        // When dock moves, redraw so that the icon and toggle status matches.
-        cx.subscribe(&workspace, |_, _, _, cx| cx.notify()).detach();
-
-        Self {
-            workspace: workspace.downgrade(),
-        }
-    }
-}
-
-impl Entity for ToggleDockButton {
-    type Event = ();
-}
-
-impl View for ToggleDockButton {
-    fn ui_name() -> &'static str {
-        "Dock Toggle"
-    }
-
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let workspace = self.workspace.upgrade(cx);
-
-        if workspace.is_none() {
-            return Empty::new().boxed();
-        }
-
-        let workspace = workspace.unwrap();
-        let dock_position = workspace.read(cx).dock.position;
-
-        let theme = cx.global::<Settings>().theme.clone();
-
-        let button = MouseEventHandler::<Self>::new(0, cx, {
-            let theme = theme.clone();
-            move |state, _| {
-                let style = theme
-                    .workspace
-                    .status_bar
-                    .sidebar_buttons
-                    .item
-                    .style_for(state, dock_position.is_visible());
-
-                Svg::new(icon_for_dock_anchor(dock_position.anchor()))
-                    .with_color(style.icon_color)
-                    .constrained()
-                    .with_width(style.icon_size)
-                    .with_height(style.icon_size)
-                    .contained()
-                    .with_style(style.container)
-                    .boxed()
-            }
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_up(MouseButton::Left, move |event, cx| {
-            let dock_pane = workspace.read(cx.app).dock_pane();
-            let drop_index = dock_pane.read(cx.app).items_len() + 1;
-            handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
-        });
-
-        if dock_position.is_visible() {
-            button
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(HideDock);
-                })
-                .with_tooltip::<Self, _>(
-                    0,
-                    "Hide Dock".into(),
-                    Some(Box::new(HideDock)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-        } else {
-            button
-                .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(FocusDock);
-                })
-                .with_tooltip::<Self, _>(
-                    0,
-                    "Focus Dock".into(),
-                    Some(Box::new(FocusDock)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-        }
-        .boxed()
-    }
-}
-
-impl StatusItemView for ToggleDockButton {
-    fn set_active_pane_item(
-        &mut self,
-        _active_pane_item: Option<&dyn crate::ItemHandle>,
-        _cx: &mut ViewContext<Self>,
-    ) {
-        //Not applicable
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -485,7 +384,7 @@ mod tests {
         path::PathBuf,
     };
 
-    use gpui::{AppContext, TestAppContext, UpdateView, ViewContext};
+    use gpui::{AppContext, TestAppContext, UpdateView, View, ViewContext};
     use project::{FakeFs, Project};
     use settings::Settings;
 
