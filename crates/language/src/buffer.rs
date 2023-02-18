@@ -2346,7 +2346,7 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    /// Returns bracket range pairs overlapping `range`
+    /// Returns bracket range pairs overlapping or adjacent to `range`
     pub fn bracket_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -2355,7 +2355,7 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self).saturating_sub(1)
             ..self.len().min(range.end.to_offset(self) + 1);
 
-        let mut matches = self.syntax.matches(range, &self.text, |grammar| {
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.brackets_config.as_ref().map(|c| &c.query)
         });
         let configs = matches
@@ -2380,6 +2380,12 @@ impl BufferSnapshot {
                 matches.advance();
 
                 let Some((open, close)) = open.zip(close) else { continue };
+
+                let bracket_range = open.start..=close.end;
+                if !bracket_range.contains(&range.start) && !bracket_range.contains(&range.end) {
+                    continue;
+                }
+
                 return Some((open, close));
             }
             None

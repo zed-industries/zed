@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [lib]
+path = "src/util.rs"
 doctest = false
 
 [features]
@@ -21,7 +22,6 @@ tempdir = { version = "0.3.7", optional = true }
 serde_json = { version = "1.0", features = ["preserve_order"], optional = true }
 git2 = { version = "0.15", default-features = false, optional = true }
 dirs = "3.0"
-
 
 [dev-dependencies]
 tempdir = { version = "0.3.7" }

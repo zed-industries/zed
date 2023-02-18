@@ -101,6 +101,7 @@ actions!(
         NewTerminal,
         NewSearch,
         Feedback,
+        Restart
     ]
 );
 
@@ -1329,7 +1330,19 @@ impl Workspace {
         focus_item: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        let pane = pane.unwrap_or_else(|| self.active_pane().downgrade());
+        let pane = pane.unwrap_or_else(|| {
+            if !self.dock_active() {
+                self.active_pane().downgrade()
+            } else {
+                self.last_active_center_pane.clone().unwrap_or_else(|| {
+                    self.panes
+                        .first()
+                        .expect("There must be an active pane")
+                        .downgrade()
+                })
+            }
+        });
+
         let task = self.load_path(path.into(), cx);
         cx.spawn(|this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
@@ -1634,6 +1647,10 @@ impl Workspace {
 
     pub fn dock_pane(&self) -> &ViewHandle<Pane> {
         self.dock.pane()
+    }
+
+    fn dock_active(&self) -> bool {
+        &self.active_pane == self.dock.pane()
     }
 
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {

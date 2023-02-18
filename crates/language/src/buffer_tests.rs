@@ -578,7 +578,7 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
     let mut assert = |selection_text, range_markers| {
-        assert_enclosing_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
+        assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
     };
 
     assert(
@@ -696,7 +696,7 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
     cx: &mut MutableAppContext,
 ) {
     let mut assert = |selection_text, bracket_pair_texts| {
-        assert_enclosing_bracket_pairs(selection_text, bracket_pair_texts, javascript_lang(), cx)
+        assert_bracket_pairs(selection_text, bracket_pair_texts, javascript_lang(), cx)
     };
 
     assert(
@@ -710,6 +710,7 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
         }"}],
     );
 
+    eprintln!("-----------------------");
     // Regression test: even though the parent node of the parentheses (the for loop) does
     // intersect the given range, the parentheses themselves do not contain the range, so
     // they should not be returned. Only the curly braces contain the range.
@@ -2047,7 +2048,7 @@ fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> Str
 }
 
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
-fn assert_enclosing_bracket_pairs(
+fn assert_bracket_pairs(
     selection_text: &'static str,
     bracket_pair_texts: Vec<&'static str>,
     language: Language,
