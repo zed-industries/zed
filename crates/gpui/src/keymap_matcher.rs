@@ -60,6 +60,16 @@ impl KeymapMatcher {
         !self.pending_keystrokes.is_empty()
     }
 
+    /// Pushes a keystroke onto the matcher.
+    /// The result of the new keystroke is returned:
+    ///     MatchResult::None =>
+    ///         No match is valid for this key given any pending keystrokes.
+    ///     MatchResult::Pending =>
+    ///         There exist bindings which are still waiting for more keys.
+    ///     MatchResult::Complete(matches) =>
+    ///         1 or more bindings have recieved the necessary key presses.
+    ///         The order of the matched actions is by order in the keymap file first and
+    ///         position of the matching view second.
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,
@@ -117,6 +127,8 @@ impl KeymapMatcher {
         }
 
         if !matched_bindings.is_empty() {
+            // Collect the sorted matched bindings into the final vec for ease of use
+            // Matched bindings are in order by precedence
             MatchResult::Matches(matched_bindings.into_values().flatten().collect())
         } else if any_pending {
             MatchResult::Pending
