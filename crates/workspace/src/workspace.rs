@@ -34,7 +34,10 @@ use futures::{
 use gpui::{
     actions,
     elements::*,
-    geometry::vector::Vector2F,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
@@ -47,7 +50,7 @@ use language::LanguageRegistry;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cmp,
+    cmp, env,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -58,6 +61,7 @@ use crate::{
     notifications::simple_message_notification::{MessageNotification, OsOpen},
     persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
 };
+use lazy_static::lazy_static;
 use log::{error, warn};
 use notifications::NotificationHandle;
 pub use pane::*;
@@ -78,6 +82,17 @@ pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
+
+lazy_static! {
+    static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_position_env_var);
+    static ref ZED_WINDOW_POSITION: Option<Vector2F> = env::var("ZED_WINDOW_POSITION")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_position_env_var);
+}
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -683,28 +698,47 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            let (bounds, display) = serialized_workspace
-                .as_ref()
-                .and_then(|sw| sw.bounds.zip(sw.display))
-                .and_then(|(mut bounds, display)| {
-                    // Stored bounds are relative to the containing display. So convert back to global coordinates if that screen still exists
-                    if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                        if let Some(screen) = cx.platform().screen_by_id(display) {
-                            let screen_bounds = screen.bounds();
-                            window_bounds
-                                .set_origin_x(window_bounds.origin_x() + screen_bounds.origin_x());
-                            window_bounds
-                                .set_origin_y(window_bounds.origin_y() + screen_bounds.origin_y());
-                            bounds = WindowBounds::Fixed(window_bounds);
-                        } else {
-                            // Screen no longer exists. Return none here.
-                            return None;
-                        }
-                    }
+            let window_bounds_override =
+                ZED_WINDOW_POSITION
+                    .zip(*ZED_WINDOW_SIZE)
+                    .map(|(position, size)| {
+                        WindowBounds::Fixed(RectF::new(
+                            cx.platform().screens()[0].bounds().origin() + position,
+                            size,
+                        ))
+                    });
 
-                    Some((bounds, display))
-                })
-                .unzip();
+            let (bounds, display) = if let Some(bounds) = window_bounds_override {
+                (Some(bounds), None)
+            } else {
+                serialized_workspace
+                    .as_ref()
+                    .and_then(|serialized_workspace| {
+                        let display = serialized_workspace.display?;
+                        let mut bounds = serialized_workspace.bounds?;
+
+                        // Stored bounds are relative to the containing display.
+                        // So convert back to global coordinates if that screen still exists
+                        if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                            if let Some(screen) = cx.platform().screen_by_id(display) {
+                                let screen_bounds = screen.bounds();
+                                window_bounds.set_origin_x(
+                                    window_bounds.origin_x() + screen_bounds.origin_x(),
+                                );
+                                window_bounds.set_origin_y(
+                                    window_bounds.origin_y() + screen_bounds.origin_y(),
+                                );
+                                bounds = WindowBounds::Fixed(window_bounds);
+                            } else {
+                                // Screen no longer exists. Return none here.
+                                return None;
+                            }
+                        }
+
+                        Some((bounds, display))
+                    })
+                    .unzip()
+            };
 
             // Use the serialized workspace to construct the new window
             let (_, workspace) = cx.add_window(
@@ -2829,6 +2863,13 @@ pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<(
             }
         })
     })
+}
+
+fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
+    let mut parts = value.split(',');
+    let width: usize = parts.next()?.parse().ok()?;
+    let height: usize = parts.next()?.parse().ok()?;
+    Some(vec2f(width as f32, height as f32))
 }
 
 #[cfg(test)]

@@ -17,16 +17,12 @@ use feedback::{
 use futures::StreamExt;
 use gpui::{
     actions,
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
+    geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
     AssetSource, AsyncAppContext, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
-use lazy_static::lazy_static;
 pub use lsp;
 pub use project;
 use project_panel::ProjectPanel;
@@ -75,17 +71,6 @@ actions!(
 );
 
 const MIN_FONT_SIZE: f32 = 6.0;
-
-lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
-        .ok()
-        .as_deref()
-        .and_then(parse_pixel_position_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Vector2F> = env::var("ZED_WINDOW_POSITION")
-        .ok()
-        .as_deref()
-        .and_then(parse_pixel_position_env_var);
-}
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(about);
@@ -378,14 +363,7 @@ pub fn build_window_options(
     display: Option<Uuid>,
     platform: &dyn Platform,
 ) -> WindowOptions<'static> {
-    let bounds = bounds
-        .or_else(|| {
-            ZED_WINDOW_POSITION
-                .zip(*ZED_WINDOW_SIZE)
-                .map(|(position, size)| WindowBounds::Fixed(RectF::new(position, size)))
-        })
-        .unwrap_or(WindowBounds::Maximized);
-
+    let bounds = bounds.unwrap_or(WindowBounds::Maximized);
     let screen = display.and_then(|display| platform.screen_by_id(display));
 
     WindowOptions {
@@ -681,13 +659,6 @@ fn open_bundled_file(
 fn schema_file_match(path: &Path) -> &Path {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
         .unwrap()
-}
-
-fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
-    let mut parts = value.split(',');
-    let width: usize = parts.next()?.parse().ok()?;
-    let height: usize = parts.next()?.parse().ok()?;
-    Some(vec2f(width as f32, height as f32))
 }
 
 #[cfg(test)]
