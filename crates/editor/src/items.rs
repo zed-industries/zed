@@ -610,9 +610,11 @@ impl Item for Editor {
         self.report_event("save editor", cx);
         let format = self.perform_format(project.clone(), cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
-        cx.spawn(|_, mut cx| async move {
+        cx.as_mut().spawn(|mut cx| async move {
             format.await?;
-            cx.update(|cx| Project::save_buffers(buffers, cx)).await?;
+            project
+                .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))
+                .await?;
             Ok(())
         })
     }

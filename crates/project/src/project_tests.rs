@@ -243,7 +243,8 @@ async fn test_managing_language_servers(
     );
 
     // Save notifications are reported to all servers.
-    cx.update(|cx| Project::save_buffer(toml_buffer, cx))
+    project
+        .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
         .await
         .unwrap();
     assert_eq!(
@@ -2087,7 +2088,8 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
     });
 
-    cx.update(|cx| Project::save_buffer(buffer.clone(), cx))
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
 
@@ -2115,7 +2117,8 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
     });
 
-    cx.update(|cx| Project::save_buffer(buffer.clone(), cx))
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
 
@@ -2704,7 +2707,8 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     buffer2.update(cx, |buffer, cx| {
         buffer.set_text("one\ntwo\nthree\nfour\n", cx);
     });
-    cx.update(|cx| Project::save_buffer(buffer2, cx))
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer2, cx))
         .await
         .unwrap();
     assert_eq!(

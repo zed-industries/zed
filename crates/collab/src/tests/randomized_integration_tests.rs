@@ -1073,7 +1073,7 @@ async fn randomly_query_and_mutate_buffers(
                 );
                 buffer.version()
             });
-            let save = cx.update(|cx| Project::save_buffer(buffer, cx));
+            let save = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
             let save = cx.background().spawn(async move {
                 let (saved_version, _, _) = save
                     .await

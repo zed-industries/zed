@@ -1429,21 +1429,23 @@ impl Project {
     }
 
     pub fn save_buffers(
+        &self,
         buffers: HashSet<ModelHandle<Buffer>>,
-        cx: &mut MutableAppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let save_tasks = buffers
                 .into_iter()
-                .map(|buffer| cx.update(|cx| Self::save_buffer(buffer, cx)));
+                .map(|buffer| this.update(&mut cx, |this, cx| this.save_buffer(buffer, cx)));
             try_join_all(save_tasks).await?;
             Ok(())
         })
     }
 
     pub fn save_buffer(
+        &self,
         buffer: ModelHandle<Buffer>,
-        cx: &mut MutableAppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
         let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
             return Task::ready(Err(anyhow!("buffer doesn't have a file")));
@@ -1460,7 +1462,7 @@ impl Project {
         &mut self,
         buffer: ModelHandle<Buffer>,
         abs_path: PathBuf,
-        cx: &mut ModelContext<Project>,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
         let old_path =
@@ -5186,8 +5188,9 @@ impl Project {
             })
             .await;
 
-        let (saved_version, fingerprint, mtime) =
-            cx.update(|cx| Self::save_buffer(buffer, cx)).await?;
+        let (saved_version, fingerprint, mtime) = this
+            .update(&mut cx, |this, cx| this.save_buffer(buffer, cx))
+            .await?;
         Ok(proto::BufferSaved {
             project_id,
             buffer_id,
