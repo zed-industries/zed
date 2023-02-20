@@ -41,7 +41,7 @@ pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Opera
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::TryFutureExt as _;
+use util::{RangeExt, TryFutureExt as _};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -213,15 +213,6 @@ pub trait File: Send + Sync {
     fn file_name<'a>(&'a self, cx: &'a AppContext) -> &'a OsStr;
 
     fn is_deleted(&self) -> bool;
-
-    fn save(
-        &self,
-        buffer_id: u64,
-        text: Rope,
-        version: clock::Global,
-        line_ending: LineEnding,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>>;
 
     fn as_any(&self) -> &dyn Any;
 
@@ -529,33 +520,6 @@ impl Buffer {
         self.file.as_ref()
     }
 
-    pub fn save(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-        let text = self.as_rope().clone();
-        let version = self.version();
-        let save = file.save(
-            self.remote_id(),
-            text,
-            version,
-            self.line_ending(),
-            cx.as_mut(),
-        );
-        cx.spawn(|this, mut cx| async move {
-            let (version, fingerprint, mtime) = save.await?;
-            this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), fingerprint, mtime, None, cx);
-            });
-            Ok((version, fingerprint, mtime))
-        })
-    }
-
     pub fn saved_version(&self) -> &clock::Global {
         &self.saved_version
     }
@@ -585,16 +549,11 @@ impl Buffer {
         version: clock::Global,
         fingerprint: RopeFingerprint,
         mtime: SystemTime,
-        new_file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
         self.saved_version_fingerprint = fingerprint;
         self.saved_mtime = mtime;
-        if let Some(new_file) = new_file {
-            self.file = Some(new_file);
-            self.file_update_count += 1;
-        }
         cx.emit(Event::Saved);
         cx.notify();
     }
@@ -661,36 +620,35 @@ impl Buffer {
         new_file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Task<()> {
-        let old_file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(());
-        };
         let mut file_changed = false;
         let mut task = Task::ready(());
 
-        if new_file.path() != old_file.path() {
-            file_changed = true;
-        }
-
-        if new_file.is_deleted() {
-            if !old_file.is_deleted() {
+        if let Some(old_file) = self.file.as_ref() {
+            if new_file.path() != old_file.path() {
                 file_changed = true;
-                if !self.is_dirty() {
-                    cx.emit(Event::DirtyChanged);
+            }
+
+            if new_file.is_deleted() {
+                if !old_file.is_deleted() {
+                    file_changed = true;
+                    if !self.is_dirty() {
+                        cx.emit(Event::DirtyChanged);
+                    }
+                }
+            } else {
+                let new_mtime = new_file.mtime();
+                if new_mtime != old_file.mtime() {
+                    file_changed = true;
+
+                    if !self.is_dirty() {
+                        let reload = self.reload(cx).log_err().map(drop);
+                        task = cx.foreground().spawn(reload);
+                    }
                 }
             }
         } else {
-            let new_mtime = new_file.mtime();
-            if new_mtime != old_file.mtime() {
-                file_changed = true;
-
-                if !self.is_dirty() {
-                    let reload = self.reload(cx).log_err().map(drop);
-                    task = cx.foreground().spawn(reload);
-                }
-            }
-        }
+            file_changed = true;
+        };
 
         if file_changed {
             self.file_update_count += 1;
@@ -797,6 +755,10 @@ impl Buffer {
         self.parsing_in_background
     }
 
+    pub fn contains_unknown_injections(&self) -> bool {
+        self.syntax_map.lock().contains_unknown_injections()
+    }
+
     #[cfg(test)]
     pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
         self.sync_parse_timeout = timeout;
@@ -825,7 +787,7 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
-    fn reparse(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn reparse(&mut self, cx: &mut ModelContext<Self>) {
         if self.parsing_in_background {
             return;
         }
@@ -842,13 +804,13 @@ impl Buffer {
         syntax_map.interpolate(&text);
         let language_registry = syntax_map.language_registry();
         let mut syntax_snapshot = syntax_map.snapshot();
-        let syntax_map_version = syntax_map.parsed_version();
         drop(syntax_map);
 
         let parse_task = cx.background().spawn({
             let language = language.clone();
+            let language_registry = language_registry.clone();
             async move {
-                syntax_snapshot.reparse(&syntax_map_version, &text, language_registry, language);
+                syntax_snapshot.reparse(&text, language_registry, language);
                 syntax_snapshot
             }
         });
@@ -858,7 +820,7 @@ impl Buffer {
             .block_with_timeout(self.sync_parse_timeout, parse_task)
         {
             Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, parsed_version, cx);
+                self.did_finish_parsing(new_syntax_snapshot, cx);
                 return;
             }
             Err(parse_task) => {
@@ -870,9 +832,15 @@ impl Buffer {
                             this.language.as_ref().map_or(true, |current_language| {
                                 !Arc::ptr_eq(&language, current_language)
                             });
-                        let parse_again =
-                            this.version.changed_since(&parsed_version) || grammar_changed;
-                        this.did_finish_parsing(new_syntax_map, parsed_version, cx);
+                        let language_registry_changed = new_syntax_map
+                            .contains_unknown_injections()
+                            && language_registry.map_or(false, |registry| {
+                                registry.version() != new_syntax_map.language_registry_version()
+                            });
+                        let parse_again = language_registry_changed
+                            || grammar_changed
+                            || this.version.changed_since(&parsed_version);
+                        this.did_finish_parsing(new_syntax_map, cx);
                         this.parsing_in_background = false;
                         if parse_again {
                             this.reparse(cx);
@@ -884,14 +852,9 @@ impl Buffer {
         }
     }
 
-    fn did_finish_parsing(
-        &mut self,
-        syntax_snapshot: SyntaxSnapshot,
-        version: clock::Global,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut ModelContext<Self>) {
         self.parse_count += 1;
-        self.syntax_map.lock().did_parse(syntax_snapshot, version);
+        self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
         cx.notify();
@@ -1384,12 +1347,12 @@ impl Buffer {
                 .enumerate()
                 .zip(&edit_operation.as_edit().unwrap().new_text)
                 .map(|((ix, (range, _)), new_text)| {
-                    let new_text_len = new_text.len();
+                    let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_len as isize - (range.end as isize - range.start as isize);
+                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
 
-                    let mut range_of_insertion_to_indent = 0..new_text_len;
+                    let mut range_of_insertion_to_indent = 0..new_text_length;
                     let mut first_line_is_new = false;
                     let mut original_indent_column = None;
 
@@ -2242,7 +2205,6 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        let mut chunks = self.chunks(0..self.len(), true);
         let mut stack = Vec::<Range<usize>>::new();
         let mut items = Vec::new();
         while let Some(mat) = matches.peek() {
@@ -2261,9 +2223,7 @@ impl BufferSnapshot {
                 continue;
             }
 
-            let mut text = String::new();
-            let mut name_ranges = Vec::new();
-            let mut highlight_ranges = Vec::new();
+            let mut buffer_ranges = Vec::new();
             for capture in mat.captures {
                 let node_is_name;
                 if capture.index == config.name_capture_ix {
@@ -2281,12 +2241,27 @@ impl BufferSnapshot {
                         range.start + self.line_len(start.row as u32) as usize - start.column;
                 }
 
+                buffer_ranges.push((range, node_is_name));
+            }
+
+            if buffer_ranges.is_empty() {
+                continue;
+            }
+
+            let mut text = String::new();
+            let mut highlight_ranges = Vec::new();
+            let mut name_ranges = Vec::new();
+            let mut chunks = self.chunks(
+                buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
+                true,
+            );
+            for (buffer_range, is_name) in buffer_ranges {
                 if !text.is_empty() {
                     text.push(' ');
                 }
-                if node_is_name {
+                if is_name {
                     let mut start = text.len();
-                    let end = start + range.len();
+                    let end = start + buffer_range.len();
 
                     // When multiple names are captured, then the matcheable text
                     // includes the whitespace in between the names.
@@ -2297,12 +2272,12 @@ impl BufferSnapshot {
                     name_ranges.push(start..end);
                 }
 
-                let mut offset = range.start;
+                let mut offset = buffer_range.start;
                 chunks.seek(offset);
                 for mut chunk in chunks.by_ref() {
-                    if chunk.text.len() > range.end - offset {
-                        chunk.text = &chunk.text[0..(range.end - offset)];
-                        offset = range.end;
+                    if chunk.text.len() > buffer_range.end - offset {
+                        chunk.text = &chunk.text[0..(buffer_range.end - offset)];
+                        offset = buffer_range.end;
                     } else {
                         offset += chunk.text.len();
                     }
@@ -2316,7 +2291,7 @@ impl BufferSnapshot {
                         highlight_ranges.push((start..end, style));
                     }
                     text.push_str(chunk.text);
-                    if offset >= range.end {
+                    if offset >= buffer_range.end {
                         break;
                     }
                 }
@@ -2341,56 +2316,50 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    pub fn enclosing_bracket_ranges<T: ToOffset>(
-        &self,
+    /// Returns bracket range pairs overlapping or adjacent to `range`
+    pub fn bracket_ranges<'a, T: ToOffset>(
+        &'a self,
         range: Range<T>,
-    ) -> Option<(Range<usize>, Range<usize>)> {
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut matches = self.syntax.matches(
-            range.start.saturating_sub(1)..self.len().min(range.end + 1),
-            &self.text,
-            |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
-        );
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            grammar.brackets_config.as_ref().map(|c| &c.query)
+        });
         let configs = matches
             .grammars()
             .iter()
             .map(|grammar| grammar.brackets_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        // Get the ranges of the innermost pair of brackets.
-        let mut result: Option<(Range<usize>, Range<usize>)> = None;
-        while let Some(mat) = matches.peek() {
-            let mut open = None;
-            let mut close = None;
-            let config = &configs[mat.grammar_index];
-            for capture in mat.captures {
-                if capture.index == config.open_capture_ix {
-                    open = Some(capture.node.byte_range());
-                } else if capture.index == config.close_capture_ix {
-                    close = Some(capture.node.byte_range());
+        iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                let mut open = None;
+                let mut close = None;
+                let config = &configs[mat.grammar_index];
+                for capture in mat.captures {
+                    if capture.index == config.open_capture_ix {
+                        open = Some(capture.node.byte_range());
+                    } else if capture.index == config.close_capture_ix {
+                        close = Some(capture.node.byte_range());
+                    }
                 }
-            }
 
-            matches.advance();
+                matches.advance();
 
-            let Some((open, close)) = open.zip(close) else { continue };
-            if open.start > range.start || close.end < range.end {
-                continue;
-            }
-            let len = close.end - open.start;
+                let Some((open, close)) = open.zip(close) else { continue };
 
-            if let Some((existing_open, existing_close)) = &result {
-                let existing_len = existing_close.end - existing_open.start;
-                if len > existing_len {
+                let bracket_range = open.start..=close.end;
+                if !bracket_range.overlaps(&range) {
                     continue;
                 }
+
+                return Some((open, close));
             }
-
-            result = Some((open, close));
-        }
-
-        result
+            None
+        })
     }
 
     #[allow(clippy::type_complexity)]

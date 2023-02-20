@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - "v*"
+      - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
   pull_request:
@@ -41,6 +41,9 @@ jobs:
         with:
           clean: false
           submodules: 'recursive'
+
+      - name: Run check
+        run: cargo check --workspace
 
       - name: Run tests
         run: cargo test --workspace --no-fail-fast

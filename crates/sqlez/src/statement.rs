@@ -238,12 +238,11 @@ impl<'a> Statement<'a> {
 
     pub fn bind<T: Bind>(&self, value: T, index: i32) -> Result<i32> {
         debug_assert!(index > 0);
-        value.bind(self, index)
+        Ok(value.bind(self, index)?)
     }
 
     pub fn column<T: Column>(&mut self) -> Result<T> {
-        let (result, _) = T::column(self, 0)?;
-        Ok(result)
+        Ok(T::column(self, 0)?.0)
     }
 
     pub fn column_type(&mut self, index: i32) -> Result<SqlType> {

@@ -9,7 +9,7 @@ pub use isahc::{
     Error,
 };
 use smol::future::FutureExt;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 pub use url::Url;
 
 pub type Request = isahc::Request<AsyncBody>;
@@ -41,7 +41,13 @@ pub trait HttpClient: Send + Sync {
 }
 
 pub fn client() -> Arc<dyn HttpClient> {
-    Arc::new(isahc::HttpClient::builder().build().unwrap())
+    Arc::new(
+        isahc::HttpClient::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .low_speed_timeout(100, Duration::from_secs(5))
+            .build()
+            .unwrap(),
+    )
 }
 
 impl HttpClient for isahc::HttpClient {

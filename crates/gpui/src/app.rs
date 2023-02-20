@@ -1,7 +1,10 @@
 pub mod action;
 mod callback_collection;
+mod menu;
+pub(crate) mod ref_counts;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_app_context;
+mod window_input_handler;
 
 use std::{
     any::{type_name, Any, TypeId},
@@ -19,30 +22,37 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use pathfinder_geometry::vector::Vector2F;
 use postage::oneshot;
 use smallvec::SmallVec;
 use smol::prelude::*;
+use uuid::Uuid;
 
 pub use action::*;
 use callback_collection::CallbackCollection;
 use collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
+pub use menu::*;
 use platform::Event;
 #[cfg(any(test, feature = "test-support"))]
+use ref_counts::LeakDetector;
+#[cfg(any(test, feature = "test-support"))]
 pub use test_app_context::{ContextHandle, TestAppContext};
+use window_input_handler::WindowInputHandler;
 
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
-    geometry::rect::RectF,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, KeyUpEvent,
+    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, KeyUpEvent,
     ModifiersChangedEvent, MouseButton, MouseRegionId, PathPromptOptions, TextLayoutCache,
+    WindowBounds,
 };
+
+use self::ref_counts::RefCounts;
 
 pub trait Entity: 'static {
     type Event;
@@ -171,36 +181,17 @@ pub trait UpdateView {
         T: View;
 }
 
-pub struct Menu<'a> {
-    pub name: &'a str,
-    pub items: Vec<MenuItem<'a>>,
-}
-
-pub enum MenuItem<'a> {
-    Separator,
-    Submenu(Menu<'a>),
-    Action {
-        name: &'a str,
-        action: Box<dyn Action>,
-    },
-}
-
 #[derive(Clone)]
 pub struct App(Rc<RefCell<MutableAppContext>>);
 
 #[derive(Clone)]
 pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 
-pub struct WindowInputHandler {
-    app: Rc<RefCell<MutableAppContext>>,
-    window_id: usize,
-}
-
 impl App {
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
         let platform = platform::current::platform();
-        let foreground_platform = platform::current::foreground_platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
+        let foreground_platform = platform::current::foreground_platform(foreground.clone());
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
@@ -217,33 +208,7 @@ impl App {
                 cx.borrow_mut().quit();
             }
         }));
-        foreground_platform.on_will_open_menu(Box::new({
-            let cx = app.0.clone();
-            move || {
-                let mut cx = cx.borrow_mut();
-                cx.keystroke_matcher.clear_pending();
-            }
-        }));
-        foreground_platform.on_validate_menu_command(Box::new({
-            let cx = app.0.clone();
-            move |action| {
-                let cx = cx.borrow_mut();
-                !cx.keystroke_matcher.has_pending_keystrokes() && cx.is_action_available(action)
-            }
-        }));
-        foreground_platform.on_menu_command(Box::new({
-            let cx = app.0.clone();
-            move |action| {
-                let mut cx = cx.borrow_mut();
-                if let Some(key_window_id) = cx.cx.platform.key_window_id() {
-                    if let Some(view_id) = cx.focused_view_id(key_window_id) {
-                        cx.handle_dispatch_action_from_effect(key_window_id, Some(view_id), action);
-                        return;
-                    }
-                }
-                cx.dispatch_global_action_any(action);
-            }
-        }));
+        setup_menu_handlers(foreground_platform.as_ref(), &app);
 
         app.0.borrow_mut().weak_self = Some(Rc::downgrade(&app.0));
         Ok(app)
@@ -343,94 +308,6 @@ impl App {
         let result = state.update(callback);
         state.pending_notifications.clear();
         result
-    }
-}
-
-impl WindowInputHandler {
-    fn read_focused_view<T, F>(&self, f: F) -> Option<T>
-    where
-        F: FnOnce(&dyn AnyView, &AppContext) -> T,
-    {
-        // Input-related application hooks are sometimes called by the OS during
-        // a call to a window-manipulation API, like prompting the user for file
-        // paths. In that case, the AppContext will already be borrowed, so any
-        // InputHandler methods need to fail gracefully.
-        //
-        // See https://github.com/zed-industries/feedback/issues/444
-        let app = self.app.try_borrow().ok()?;
-
-        let view_id = app.focused_view_id(self.window_id)?;
-        let view = app.cx.views.get(&(self.window_id, view_id))?;
-        let result = f(view.as_ref(), &app);
-        Some(result)
-    }
-
-    fn update_focused_view<T, F>(&mut self, f: F) -> Option<T>
-    where
-        F: FnOnce(usize, usize, &mut dyn AnyView, &mut MutableAppContext) -> T,
-    {
-        let mut app = self.app.try_borrow_mut().ok()?;
-        app.update(|app| {
-            let view_id = app.focused_view_id(self.window_id)?;
-            let mut view = app.cx.views.remove(&(self.window_id, view_id))?;
-            let result = f(self.window_id, view_id, view.as_mut(), &mut *app);
-            app.cx.views.insert((self.window_id, view_id), view);
-            Some(result)
-        })
-    }
-}
-
-impl InputHandler for WindowInputHandler {
-    fn text_for_range(&self, range: Range<usize>) -> Option<String> {
-        self.read_focused_view(|view, cx| view.text_for_range(range.clone(), cx))
-            .flatten()
-    }
-
-    fn selected_text_range(&self) -> Option<Range<usize>> {
-        self.read_focused_view(|view, cx| view.selected_text_range(cx))
-            .flatten()
-    }
-
-    fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.replace_text_in_range(range, text, cx, window_id, view_id);
-        });
-    }
-
-    fn marked_text_range(&self) -> Option<Range<usize>> {
-        self.read_focused_view(|view, cx| view.marked_text_range(cx))
-            .flatten()
-    }
-
-    fn unmark_text(&mut self) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.unmark_text(cx, window_id, view_id);
-        });
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range: Option<Range<usize>>,
-        new_text: &str,
-        new_selected_range: Option<Range<usize>>,
-    ) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.replace_and_mark_text_in_range(
-                range,
-                new_text,
-                new_selected_range,
-                cx,
-                window_id,
-                view_id,
-            );
-        });
-    }
-
-    fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
-        let app = self.app.borrow();
-        let (presenter, _) = app.presenters_and_platform_windows.get(&self.window_id)?;
-        let presenter = presenter.borrow();
-        presenter.rect_for_text_range(range_utf16, &app)
     }
 }
 
@@ -593,6 +470,7 @@ type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
+type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool>;
 type KeystrokeCallback = Box<
     dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut MutableAppContext) -> bool,
 >;
@@ -623,6 +501,7 @@ pub struct MutableAppContext {
     action_dispatch_observations: CallbackCollection<(), ActionObservationCallback>,
     window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
     window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
+    window_bounds_observations: CallbackCollection<usize, WindowBoundsCallback>,
     keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
 
     #[allow(clippy::type_complexity)]
@@ -680,6 +559,7 @@ impl MutableAppContext {
             global_observations: Default::default(),
             window_activation_observations: Default::default(),
             window_fullscreen_observations: Default::default(),
+            window_bounds_observations: Default::default(),
             keystroke_observations: Default::default(),
             action_dispatch_observations: Default::default(),
             presenters_and_platform_windows: Default::default(),
@@ -865,8 +745,16 @@ impl MutableAppContext {
         }
     }
 
+    pub fn is_topmost_window_for_position(&self, window_id: usize, position: Vector2F) -> bool {
+        self.presenters_and_platform_windows
+            .get(&window_id)
+            .map_or(false, |(_, window)| {
+                window.is_topmost_for_position(position)
+            })
+    }
+
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
-        self.cx.windows.keys().cloned()
+        self.cx.windows.keys().copied()
     }
 
     pub fn activate_window(&self, window_id: usize) {
@@ -896,8 +784,14 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_fullscreen)
     }
 
-    pub fn window_bounds(&self, window_id: usize) -> RectF {
-        self.presenters_and_platform_windows[&window_id].1.bounds()
+    pub fn window_bounds(&self, window_id: usize) -> Option<WindowBounds> {
+        let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
+        Some(window.bounds())
+    }
+
+    pub fn window_display_uuid(&self, window_id: usize) -> Option<Uuid> {
+        let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
+        window.screen().display_uuid()
     }
 
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
@@ -964,11 +858,6 @@ impl MutableAppContext {
         result
     }
 
-    pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        self.foreground_platform
-            .set_menus(menus, &self.keystroke_matcher);
-    }
-
     fn show_character_palette(&self, window_id: usize) {
         let (_, window) = &self.presenters_and_platform_windows[&window_id];
         window.show_character_palette();
@@ -1009,6 +898,10 @@ impl MutableAppContext {
 
     pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         self.foreground_platform.prompt_for_new_path(directory)
+    }
+
+    pub fn reveal_path(&self, path: &Path) {
+        self.foreground_platform.reveal_path(path)
     }
 
     pub fn emit_global<E: Any>(&mut self, payload: E) {
@@ -1231,6 +1124,23 @@ impl MutableAppContext {
         )
     }
 
+    fn observe_window_bounds<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowBoundsObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowBoundsObservation(
+            self.window_bounds_observations
+                .subscribe(window_id, subscription_id),
+        )
+    }
+
     pub fn observe_keystrokes<F>(&mut self, window_id: usize, callback: F) -> Subscription
     where
         F: 'static
@@ -1295,6 +1205,31 @@ impl MutableAppContext {
         self.action_deserializers.keys().copied()
     }
 
+    /// Return keystrokes that would dispatch the given action on the given view.
+    pub(crate) fn keystrokes_for_action(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        let mut contexts = Vec::new();
+        for view_id in self.ancestors(window_id, view_id) {
+            if let Some(view) = self.views.get(&(window_id, view_id)) {
+                contexts.push(view.keymap_context(self));
+            }
+        }
+
+        self.keystroke_matcher
+            .bindings_for_action_type(action.as_any().type_id())
+            .find_map(|b| {
+                if b.match_context(&contexts) {
+                    Some(b.keystrokes().into())
+                } else {
+                    None
+                }
+            })
+    }
+
     pub fn available_actions(
         &self,
         window_id: usize,
@@ -1302,8 +1237,10 @@ impl MutableAppContext {
     ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
         let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
 
+        let mut contexts = Vec::new();
         for view_id in self.ancestors(window_id, view_id) {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
+                contexts.push(view.keymap_context(self));
                 let view_type = view.as_any().type_id();
                 if let Some(actions) = self.actions.get(&view_type) {
                     action_types.extend(actions.keys().copied());
@@ -1320,6 +1257,7 @@ impl MutableAppContext {
                         deserialize("{}").ok()?,
                         self.keystroke_matcher
                             .bindings_for_action_type(*type_id)
+                            .filter(|b| b.match_context(&contexts))
                             .collect(),
                     ))
                 } else {
@@ -1345,34 +1283,6 @@ impl MutableAppContext {
             }
         }
         self.global_actions.contains_key(&action_type)
-    }
-
-    /// Return keystrokes that would dispatch the given action closest to the focused view, if there are any.
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        window_id: usize,
-        view_stack: &[usize],
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        self.keystroke_matcher.contexts.clear();
-        for view_id in view_stack.iter().rev() {
-            let view = self
-                .cx
-                .views
-                .get(&(window_id, *view_id))
-                .expect("view in responder chain does not exist");
-            self.keystroke_matcher
-                .contexts
-                .push(view.keymap_context(self.as_ref()));
-            let keystrokes = self
-                .keystroke_matcher
-                .keystrokes_for_action(action, &self.keystroke_matcher.contexts);
-            if keystrokes.is_some() {
-                return keystrokes;
-            }
-        }
-
-        None
     }
 
     // Traverses the parent tree. Walks down the tree toward the passed
@@ -1403,21 +1313,6 @@ impl MutableAppContext {
         }
 
         true
-    }
-
-    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
-    /// Includes the passed view itself
-    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
-        std::iter::once(view_id)
-            .into_iter()
-            .chain(std::iter::from_fn(move || {
-                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
-                    view_id = *parent_id;
-                    Some(view_id)
-                } else {
-                    None
-                }
-            }))
     }
 
     fn actions_mut(
@@ -1767,6 +1662,13 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
+            window.on_moved(Box::new(move || {
+                app.update(|cx| cx.window_was_moved(window_id))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
             window.on_fullscreen(Box::new(move |is_fullscreen| {
                 app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
             }));
@@ -1886,10 +1788,11 @@ impl MutableAppContext {
     {
         self.update(|this| {
             let view_id = post_inc(&mut this.next_entity_id);
+            // Make sure we can tell child views about their parent
+            this.cx.parents.insert((window_id, view_id), parent_id);
             let mut cx = ViewContext::new(this, window_id, view_id);
             let handle = if let Some(view) = build_view(&mut cx) {
                 this.cx.views.insert((window_id, view_id), Box::new(view));
-                this.cx.parents.insert((window_id, view_id), parent_id);
                 if let Some(window) = this.cx.windows.get_mut(&window_id) {
                     window
                         .invalidation
@@ -1899,6 +1802,7 @@ impl MutableAppContext {
                 }
                 Some(ViewHandle::new(window_id, view_id, &this.cx.ref_counts))
             } else {
+                this.cx.parents.remove(&(window_id, view_id));
                 None
             };
             handle
@@ -2062,6 +1966,11 @@ impl MutableAppContext {
                                     .invalidation
                                     .get_or_insert(WindowInvalidation::default());
                             }
+                            self.handle_window_moved(window_id);
+                        }
+
+                        Effect::MoveWindow { window_id } => {
+                            self.handle_window_moved(window_id);
                         }
 
                         Effect::WindowActivationObservation {
@@ -2093,6 +2002,16 @@ impl MutableAppContext {
                             window_id,
                             is_fullscreen,
                         } => self.handle_fullscreen_effect(window_id, is_fullscreen),
+
+                        Effect::WindowBoundsObservation {
+                            window_id,
+                            subscription_id,
+                            callback,
+                        } => self.window_bounds_observations.add_callback(
+                            window_id,
+                            subscription_id,
+                            callback,
+                        ),
 
                         Effect::RefreshWindows => {
                             refreshing = true;
@@ -2186,6 +2105,11 @@ impl MutableAppContext {
     fn window_was_resized(&mut self, window_id: usize) {
         self.pending_effects
             .push_back(Effect::ResizeWindow { window_id });
+    }
+
+    fn window_was_moved(&mut self, window_id: usize) {
+        self.pending_effects
+            .push_back(Effect::MoveWindow { window_id });
     }
 
     fn window_was_fullscreen_changed(&mut self, window_id: usize, is_fullscreen: bool) {
@@ -2320,10 +2244,20 @@ impl MutableAppContext {
             let window = this.cx.windows.get_mut(&window_id)?;
             window.is_fullscreen = is_fullscreen;
 
-            let mut observations = this.window_fullscreen_observations.clone();
-            observations.emit(window_id, this, |callback, this| {
+            let mut fullscreen_observations = this.window_fullscreen_observations.clone();
+            fullscreen_observations.emit(window_id, this, |callback, this| {
                 callback(is_fullscreen, this)
             });
+
+            if let Some((uuid, bounds)) = this
+                .window_display_uuid(window_id)
+                .zip(this.window_bounds(window_id))
+            {
+                let mut bounds_observations = this.window_bounds_observations.clone();
+                bounds_observations.emit(window_id, this, |callback, this| {
+                    callback(bounds, uuid, this)
+                });
+            }
 
             Some(())
         });
@@ -2498,6 +2432,20 @@ impl MutableAppContext {
         let mut app = self.upgrade();
         if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
             window.on_should_close(Box::new(move || app.update(|cx| callback(cx))))
+        }
+    }
+
+    fn handle_window_moved(&mut self, window_id: usize) {
+        if let Some((display, bounds)) = self
+            .window_display_uuid(window_id)
+            .zip(self.window_bounds(window_id))
+        {
+            self.window_bounds_observations
+                .clone()
+                .emit(window_id, self, move |callback, this| {
+                    callback(bounds, display, this);
+                    true
+                });
         }
     }
 
@@ -2724,6 +2672,42 @@ impl AppContext {
             panic!("no global has been added for {}", type_name::<T>());
         }
     }
+
+    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
+    /// Includes the passed view itself
+    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(view_id)
+            .into_iter()
+            .chain(std::iter::from_fn(move || {
+                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
+                    view_id = *parent_id;
+                    Some(view_id)
+                } else {
+                    None
+                }
+            }))
+    }
+
+    /// Returns the id of the parent of the given view, or none if the given
+    /// view is the root.
+    fn parent(&self, window_id: usize, view_id: usize) -> Option<usize> {
+        if let Some(ParentId::View(view_id)) = self.parents.get(&(window_id, view_id)) {
+            Some(*view_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_child_focused(&self, view: impl Into<AnyViewHandle>) -> bool {
+        let view = view.into();
+        if let Some(focused_view_id) = self.focused_view_id(view.window_id) {
+            self.ancestors(view.window_id, focused_view_id)
+                .skip(1) // Skip self id
+                .any(|parent| parent == view.view_id)
+        } else {
+            false
+        }
+    }
 }
 
 impl ReadModel for AppContext {
@@ -2878,9 +2862,8 @@ pub enum Effect {
     ResizeWindow {
         window_id: usize,
     },
-    FullscreenWindow {
+    MoveWindow {
         window_id: usize,
-        is_fullscreen: bool,
     },
     ActivateWindow {
         window_id: usize,
@@ -2891,10 +2874,19 @@ pub enum Effect {
         subscription_id: usize,
         callback: WindowActivationCallback,
     },
+    FullscreenWindow {
+        window_id: usize,
+        is_fullscreen: bool,
+    },
     WindowFullscreenObservation {
         window_id: usize,
         subscription_id: usize,
         callback: WindowFullscreenCallback,
+    },
+    WindowBoundsObservation {
+        window_id: usize,
+        subscription_id: usize,
+        callback: WindowBoundsCallback,
     },
     Keystroke {
         window_id: usize,
@@ -3006,6 +2998,10 @@ impl Debug for Effect {
                 .debug_struct("Effect::RefreshWindow")
                 .field("window_id", window_id)
                 .finish(),
+            Effect::MoveWindow { window_id } => f
+                .debug_struct("Effect::MoveWindow")
+                .field("window_id", window_id)
+                .finish(),
             Effect::WindowActivationObservation {
                 window_id,
                 subscription_id,
@@ -3037,6 +3033,16 @@ impl Debug for Effect {
                 callback: _,
             } => f
                 .debug_struct("Effect::WindowFullscreenObservation")
+                .field("window_id", window_id)
+                .field("subscription_id", subscription_id)
+                .finish(),
+
+            Effect::WindowBoundsObservation {
+                window_id,
+                subscription_id,
+                callback: _,
+            } => f
+                .debug_struct("Effect::WindowBoundsObservation")
                 .field("window_id", window_id)
                 .field("subscription_id", subscription_id)
                 .finish(),
@@ -3615,10 +3621,6 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.toggle_window_full_screen(self.window_id)
     }
 
-    pub fn window_bounds(&self) -> RectF {
-        self.app.window_bounds(self.window_id)
-    }
-
     pub fn prompt(
         &self,
         level: PromptLevel,
@@ -3637,6 +3639,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         self.app.prompt_for_new_path(directory)
+    }
+
+    pub fn reveal_path(&self, path: &Path) {
+        self.app.reveal_path(path)
     }
 
     pub fn debug_elements(&self) -> crate::json::Value {
@@ -3733,6 +3739,10 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         self.app
             .build_and_insert_view(self.window_id, ParentId::View(self.view_id), build_view)
+    }
+
+    pub fn parent(&mut self) -> Option<usize> {
+        self.cx.parent(self.window_id, self.view_id)
     }
 
     pub fn reparent(&mut self, view_handle: impl Into<AnyViewHandle>) {
@@ -3892,7 +3902,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             })
     }
 
-    pub fn observe_keystroke<F>(&mut self, mut callback: F) -> Subscription
+    pub fn observe_keystrokes<F>(&mut self, mut callback: F) -> Subscription
     where
         F: 'static
             + FnMut(
@@ -3917,6 +3927,24 @@ impl<'a, T: View> ViewContext<'a, T> {
                 }
             },
         )
+    }
+
+    pub fn observe_window_bounds<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, WindowBounds, Uuid, &mut ViewContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app
+            .observe_window_bounds(self.window_id(), move |bounds, display, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, bounds, display, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -4781,6 +4809,12 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
     }
 }
 
+impl<T> PartialEq<ViewHandle<T>> for AnyViewHandle {
+    fn eq(&self, other: &ViewHandle<T>) -> bool {
+        self.window_id == other.window_id && self.view_id == other.view_id
+    }
+}
+
 impl Drop for AnyViewHandle {
     fn drop(&mut self) {
         self.ref_counts
@@ -5083,6 +5117,7 @@ pub enum Subscription {
     FocusObservation(callback_collection::Subscription<usize, FocusObservationCallback>),
     WindowActivationObservation(callback_collection::Subscription<usize, WindowActivationCallback>),
     WindowFullscreenObservation(callback_collection::Subscription<usize, WindowFullscreenCallback>),
+    WindowBoundsObservation(callback_collection::Subscription<usize, WindowBoundsCallback>),
     KeystrokeObservation(callback_collection::Subscription<usize, KeystrokeCallback>),
     ReleaseObservation(callback_collection::Subscription<usize, ReleaseObservationCallback>),
     ActionObservation(callback_collection::Subscription<(), ActionObservationCallback>),
@@ -5098,6 +5133,7 @@ impl Subscription {
             Subscription::FocusObservation(subscription) => subscription.id(),
             Subscription::WindowActivationObservation(subscription) => subscription.id(),
             Subscription::WindowFullscreenObservation(subscription) => subscription.id(),
+            Subscription::WindowBoundsObservation(subscription) => subscription.id(),
             Subscription::KeystrokeObservation(subscription) => subscription.id(),
             Subscription::ReleaseObservation(subscription) => subscription.id(),
             Subscription::ActionObservation(subscription) => subscription.id(),
@@ -5114,208 +5150,10 @@ impl Subscription {
             Subscription::KeystrokeObservation(subscription) => subscription.detach(),
             Subscription::WindowActivationObservation(subscription) => subscription.detach(),
             Subscription::WindowFullscreenObservation(subscription) => subscription.detach(),
+            Subscription::WindowBoundsObservation(subscription) => subscription.detach(),
             Subscription::ReleaseObservation(subscription) => subscription.detach(),
             Subscription::ActionObservation(subscription) => subscription.detach(),
         }
-    }
-}
-
-lazy_static! {
-    static ref LEAK_BACKTRACE: bool =
-        std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Default)]
-pub struct LeakDetector {
-    next_handle_id: usize,
-    #[allow(clippy::type_complexity)]
-    handle_backtraces: HashMap<
-        usize,
-        (
-            Option<&'static str>,
-            HashMap<usize, Option<backtrace::Backtrace>>,
-        ),
-    >,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl LeakDetector {
-    fn handle_created(&mut self, type_name: Option<&'static str>, entity_id: usize) -> usize {
-        let handle_id = post_inc(&mut self.next_handle_id);
-        let entry = self.handle_backtraces.entry(entity_id).or_default();
-        let backtrace = if *LEAK_BACKTRACE {
-            Some(backtrace::Backtrace::new_unresolved())
-        } else {
-            None
-        };
-        if let Some(type_name) = type_name {
-            entry.0.get_or_insert(type_name);
-        }
-        entry.1.insert(handle_id, backtrace);
-        handle_id
-    }
-
-    fn handle_dropped(&mut self, entity_id: usize, handle_id: usize) {
-        if let Some((_, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
-            assert!(backtraces.remove(&handle_id).is_some());
-            if backtraces.is_empty() {
-                self.handle_backtraces.remove(&entity_id);
-            }
-        }
-    }
-
-    pub fn assert_dropped(&mut self, entity_id: usize) {
-        if let Some((type_name, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
-            for trace in backtraces.values_mut().flatten() {
-                trace.resolve();
-                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-            }
-
-            let hint = if *LEAK_BACKTRACE {
-                ""
-            } else {
-                " – set LEAK_BACKTRACE=1 for more information"
-            };
-
-            panic!(
-                "{} handles to {} {} still exist{}",
-                backtraces.len(),
-                type_name.unwrap_or("entity"),
-                entity_id,
-                hint
-            );
-        }
-    }
-
-    pub fn detect(&mut self) {
-        let mut found_leaks = false;
-        for (id, (type_name, backtraces)) in self.handle_backtraces.iter_mut() {
-            eprintln!(
-                "leaked {} handles to {} {}",
-                backtraces.len(),
-                type_name.unwrap_or("entity"),
-                id
-            );
-            for trace in backtraces.values_mut().flatten() {
-                trace.resolve();
-                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-            }
-            found_leaks = true;
-        }
-
-        let hint = if *LEAK_BACKTRACE {
-            ""
-        } else {
-            " – set LEAK_BACKTRACE=1 for more information"
-        };
-        assert!(!found_leaks, "detected leaked handles{}", hint);
-    }
-}
-
-#[derive(Default)]
-struct RefCounts {
-    entity_counts: HashMap<usize, usize>,
-    element_state_counts: HashMap<ElementStateId, ElementStateRefCount>,
-    dropped_models: HashSet<usize>,
-    dropped_views: HashSet<(usize, usize)>,
-    dropped_element_states: HashSet<ElementStateId>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    leak_detector: Arc<Mutex<LeakDetector>>,
-}
-
-struct ElementStateRefCount {
-    ref_count: usize,
-    frame_id: usize,
-}
-
-impl RefCounts {
-    fn inc_model(&mut self, model_id: usize) {
-        match self.entity_counts.entry(model_id) {
-            Entry::Occupied(mut entry) => {
-                *entry.get_mut() += 1;
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(1);
-                self.dropped_models.remove(&model_id);
-            }
-        }
-    }
-
-    fn inc_view(&mut self, window_id: usize, view_id: usize) {
-        match self.entity_counts.entry(view_id) {
-            Entry::Occupied(mut entry) => *entry.get_mut() += 1,
-            Entry::Vacant(entry) => {
-                entry.insert(1);
-                self.dropped_views.remove(&(window_id, view_id));
-            }
-        }
-    }
-
-    fn inc_element_state(&mut self, id: ElementStateId, frame_id: usize) {
-        match self.element_state_counts.entry(id) {
-            Entry::Occupied(mut entry) => {
-                let entry = entry.get_mut();
-                if entry.frame_id == frame_id || entry.ref_count >= 2 {
-                    panic!("used the same element state more than once in the same frame");
-                }
-                entry.ref_count += 1;
-                entry.frame_id = frame_id;
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(ElementStateRefCount {
-                    ref_count: 1,
-                    frame_id,
-                });
-                self.dropped_element_states.remove(&id);
-            }
-        }
-    }
-
-    fn dec_model(&mut self, model_id: usize) {
-        let count = self.entity_counts.get_mut(&model_id).unwrap();
-        *count -= 1;
-        if *count == 0 {
-            self.entity_counts.remove(&model_id);
-            self.dropped_models.insert(model_id);
-        }
-    }
-
-    fn dec_view(&mut self, window_id: usize, view_id: usize) {
-        let count = self.entity_counts.get_mut(&view_id).unwrap();
-        *count -= 1;
-        if *count == 0 {
-            self.entity_counts.remove(&view_id);
-            self.dropped_views.insert((window_id, view_id));
-        }
-    }
-
-    fn dec_element_state(&mut self, id: ElementStateId) {
-        let entry = self.element_state_counts.get_mut(&id).unwrap();
-        entry.ref_count -= 1;
-        if entry.ref_count == 0 {
-            self.element_state_counts.remove(&id);
-            self.dropped_element_states.insert(id);
-        }
-    }
-
-    fn is_entity_alive(&self, entity_id: usize) -> bool {
-        self.entity_counts.contains_key(&entity_id)
-    }
-
-    fn take_dropped(
-        &mut self,
-    ) -> (
-        HashSet<usize>,
-        HashSet<(usize, usize)>,
-        HashSet<ElementStateId>,
-    ) {
-        (
-            std::mem::take(&mut self.dropped_models),
-            std::mem::take(&mut self.dropped_views),
-            std::mem::take(&mut self.dropped_element_states),
-        )
     }
 }
 
@@ -6374,6 +6212,8 @@ mod tests {
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
+        assert!(cx.is_child_focused(view_1.clone()));
+        assert!(!cx.is_child_focused(view_2.clone()));
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             [
@@ -6398,6 +6238,8 @@ mod tests {
         );
 
         view_1.update(cx, |_, cx| cx.focus(&view_1));
+        assert!(!cx.is_child_focused(view_1.clone()));
+        assert!(!cx.is_child_focused(view_2.clone()));
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             ["view 2 blurred", "view 1 focused"],

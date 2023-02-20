@@ -162,10 +162,13 @@ impl<'a> EditorTestContext<'a> {
     /// embedded range markers that represent the ranges and directions of
     /// each selection.
     ///
+    /// Returns a context handle so that assertion failures can print what
+    /// editor state was needed to cause the failure.
+    ///
     /// See the `util::test::marked_text_ranges` function for more information.
     pub fn set_state(&mut self, marked_text: &str) -> ContextHandle {
         let _state_context = self.add_assertion_context(format!(
-            "Editor State: \"{}\"",
+            "Initial Editor State: \"{}\"",
             marked_text.escape_debug().to_string()
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);

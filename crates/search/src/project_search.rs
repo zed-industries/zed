@@ -16,6 +16,7 @@ use gpui::{
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     mem,
@@ -259,11 +260,7 @@ impl Item for ProjectSearchView {
                     .boxed(),
             )
             .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
-                let query_text = if query.as_str().len() > MAX_TAB_TITLE_LEN {
-                    query.as_str()[..MAX_TAB_TITLE_LEN].to_string() + "…"
-                } else {
-                    query.as_str().to_string()
-                };
+                let query_text = util::truncate_and_trailoff(query.as_str(), MAX_TAB_TITLE_LEN);
 
                 Label::new(query_text, tab_theme.label.clone())
                     .aligned()
@@ -349,11 +346,13 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.git_diff_recalc(project, cx))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
-            ViewEvent::UpdateTab => vec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab],
+            ViewEvent::UpdateTab => {
+                smallvec::smallvec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab]
+            }
             ViewEvent::EditorEvent(editor_event) => Editor::to_item_events(editor_event),
-            _ => Vec::new(),
+            _ => SmallVec::new(),
         }
     }
 
@@ -575,9 +574,9 @@ impl ProjectSearchView {
             self.active_match_index = None;
         } else {
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
-            let reset_selections = self.search_id != prev_search_id;
+            let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
-                if reset_selections {
+                if is_new_search {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_ranges(match_ranges.first().cloned())
                     });
@@ -588,7 +587,7 @@ impl ProjectSearchView {
                     cx,
                 );
             });
-            if self.query_editor.is_focused(cx) {
+            if is_new_search && self.query_editor.is_focused(cx) {
                 self.focus_results_editor(cx);
             }
         }

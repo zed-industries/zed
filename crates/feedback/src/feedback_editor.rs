@@ -1,91 +1,57 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    any::TypeId,
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 
 use anyhow::bail;
-use client::{Client, ZED_SECRET_CLIENT_TOKEN};
+use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use editor::{Anchor, Editor};
 use futures::AsyncReadExt;
 use gpui::{
     actions,
-    elements::{ChildView, Flex, Label, MouseEventHandler, ParentElement, Stack, Text},
-    serde_json, AnyViewHandle, AppContext, CursorStyle, Element, ElementBox, Entity, ModelHandle,
-    MouseButton, MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext,
-    ViewHandle,
+    elements::{ChildView, Flex, Label, ParentElement},
+    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle,
+    MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
 use postage::prelude::Stream;
 
-use lazy_static::lazy_static;
 use project::Project;
 use serde::Serialize;
-use settings::Settings;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    StatusItemView, Workspace,
+    smallvec::SmallVec,
+    AppState, Workspace,
 };
 
-use crate::system_specs::SystemSpecs;
+use crate::{submit_feedback_button::SubmitFeedbackButton, system_specs::SystemSpecs};
 
-lazy_static! {
-    pub static ref ZED_SERVER_URL: String =
-        std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
-}
-
-const FEEDBACK_CHAR_COUNT_RANGE: Range<usize> = Range {
-    start: 10,
-    end: 1000,
-};
-
-const FEEDBACK_PLACEHOLDER_TEXT: &str = "Thanks for spending time with Zed. Enter your feedback here as Markdown. Save the tab to submit your feedback.";
+const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
-actions!(feedback, [SubmitFeedback, GiveFeedback, DeployFeedback]);
+actions!(feedback, [GiveFeedback, SubmitFeedback]);
 
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(FeedbackEditor::deploy);
-}
+pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+    cx.add_action({
+        move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
+            FeedbackEditor::deploy(system_specs.clone(), workspace, app_state.clone(), cx);
+        }
+    });
 
-pub struct FeedbackButton;
-
-impl Entity for FeedbackButton {
-    type Event = ();
-}
-
-impl View for FeedbackButton {
-    fn ui_name() -> &'static str {
-        "FeedbackButton"
-    }
-
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
-        Stack::new()
-            .with_child(
-                MouseEventHandler::<Self>::new(0, cx, |state, cx| {
-                    let theme = &cx.global::<Settings>().theme;
-                    let theme = &theme.workspace.status_bar.feedback;
-
-                    Text::new(
-                        "Give Feedback".to_string(),
-                        theme.style_for(state, true).clone(),
-                    )
-                    .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(GiveFeedback))
-                .boxed(),
-            )
-            .boxed()
-    }
-}
-
-impl StatusItemView for FeedbackButton {
-    fn set_active_pane_item(
-        &mut self,
-        _: Option<&dyn ItemHandle>,
-        _: &mut gpui::ViewContext<Self>,
-    ) {
-    }
+    cx.add_async_action(
+        |submit_feedback_button: &mut SubmitFeedbackButton, _: &SubmitFeedback, cx| {
+            if let Some(active_item) = submit_feedback_button.active_item.as_ref() {
+                Some(active_item.update(cx, |feedback_editor, cx| feedback_editor.handle_save(cx)))
+            } else {
+                None
+            }
+        },
+    );
 }
 
 #[derive(Serialize)]
@@ -93,17 +59,20 @@ struct FeedbackRequestBody<'a> {
     feedback_text: &'a str,
     metrics_id: Option<Arc<str>>,
     system_specs: SystemSpecs,
+    is_staff: bool,
     token: &'a str,
 }
 
 #[derive(Clone)]
-struct FeedbackEditor {
+pub(crate) struct FeedbackEditor {
+    system_specs: SystemSpecs,
     editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
 }
 
 impl FeedbackEditor {
-    fn new_with_buffer(
+    fn new(
+        system_specs: SystemSpecs,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
@@ -111,46 +80,40 @@ impl FeedbackEditor {
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
-            editor.set_placeholder_text(FEEDBACK_PLACEHOLDER_TEXT, cx);
             editor
         });
 
         cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
             .detach();
 
-        let this = Self { editor, project };
-        this
+        Self {
+            system_specs: system_specs.clone(),
+            editor,
+            project,
+        }
     }
 
-    fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        let markdown_language = project.read(cx).languages().get_language("Markdown");
+    fn handle_save(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+        let feedback_text = self.editor.read(cx).text(cx);
+        let feedback_char_count = feedback_text.chars().count();
+        let feedback_text = feedback_text.trim().to_string();
 
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.create_buffer("", markdown_language, cx)
-            })
-            .expect("creating buffers on a local workspace always succeeds");
+        let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
+            Some(format!(
+                "Feedback can't be shorter than {} characters.",
+                FEEDBACK_CHAR_LIMIT.start()
+            ))
+        } else if feedback_char_count > *FEEDBACK_CHAR_LIMIT.end() {
+            Some(format!(
+                "Feedback can't be longer than {} characters.",
+                FEEDBACK_CHAR_LIMIT.end()
+            ))
+        } else {
+            None
+        };
 
-        Self::new_with_buffer(project, buffer, cx)
-    }
-
-    fn handle_save(
-        &mut self,
-        _: gpui::ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        let feedback_text_length = self.editor.read(cx).buffer().read(cx).len(cx);
-
-        if feedback_text_length <= FEEDBACK_CHAR_COUNT_RANGE.start {
-            cx.prompt(
-                PromptLevel::Critical,
-                &format!(
-                    "Feedback must be longer than {} characters",
-                    FEEDBACK_CHAR_COUNT_RANGE.start
-                ),
-                &["OK"],
-            );
-
+        if let Some(error) = error {
+            cx.prompt(PromptLevel::Critical, &error, &["OK"]);
             return Task::ready(Ok(()));
         }
 
@@ -162,8 +125,7 @@ impl FeedbackEditor {
 
         let this = cx.handle();
         let client = cx.global::<Arc<Client>>().clone();
-        let feedback_text = self.editor.read(cx).text(cx);
-        let specs = SystemSpecs::new(cx);
+        let specs = self.system_specs.clone();
 
         cx.spawn(|_, mut cx| async move {
             let answer = answer.recv().await;
@@ -206,12 +168,14 @@ impl FeedbackEditor {
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
 
         let metrics_id = zed_client.metrics_id();
+        let is_staff = zed_client.is_staff();
         let http_client = zed_client.http_client();
 
         let request = FeedbackRequestBody {
             feedback_text: &feedback_text,
             metrics_id,
             system_specs,
+            is_staff: is_staff.unwrap_or(false),
             token: ZED_SECRET_CLIENT_TOKEN,
         };
 
@@ -236,10 +200,26 @@ impl FeedbackEditor {
 }
 
 impl FeedbackEditor {
-    pub fn deploy(workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>) {
-        let feedback_editor =
-            cx.add_view(|cx| FeedbackEditor::new(workspace.project().clone(), cx));
-        workspace.add_item(Box::new(feedback_editor), cx);
+    pub fn deploy(
+        system_specs: SystemSpecs,
+        workspace: &mut Workspace,
+        app_state: Arc<AppState>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace
+            .with_local_workspace(&app_state, cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                let markdown_language = project.read(cx).languages().language_for_name("Markdown");
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.create_buffer("", markdown_language, cx)
+                    })
+                    .expect("creating buffers on a local workspace always succeeds");
+                let feedback_editor =
+                    cx.add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
+                workspace.add_item(Box::new(feedback_editor), cx);
+            })
+            .detach();
     }
 }
 
@@ -264,12 +244,7 @@ impl Entity for FeedbackEditor {
 }
 
 impl Item for FeedbackEditor {
-    fn tab_content(
-        &self,
-        _: Option<usize>,
-        style: &theme::Tab,
-        _: &gpui::AppContext,
-    ) -> ElementBox {
+    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
         Flex::row()
             .with_child(
                 Label::new("Feedback".to_string(), style.label.clone())
@@ -284,40 +259,40 @@ impl Item for FeedbackEditor {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn to_item_events(_: &Self::Event) -> Vec<workspace::item::ItemEvent> {
-        Vec::new()
+    fn to_item_events(_: &Self::Event) -> SmallVec<[workspace::item::ItemEvent; 2]> {
+        SmallVec::new()
     }
 
-    fn is_singleton(&self, _: &gpui::AppContext) -> bool {
+    fn is_singleton(&self, _: &AppContext) -> bool {
         true
     }
 
     fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
 
-    fn can_save(&self, _: &gpui::AppContext) -> bool {
+    fn can_save(&self, _: &AppContext) -> bool {
         true
     }
 
     fn save(
         &mut self,
-        project: gpui::ModelHandle<Project>,
+        _: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(project, cx)
+        self.handle_save(cx)
     }
 
     fn save_as(
         &mut self,
-        project: gpui::ModelHandle<Project>,
+        _: ModelHandle<Project>,
         _: std::path::PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(project, cx)
+        self.handle_save(cx)
     }
 
     fn reload(
         &mut self,
-        _: gpui::ModelHandle<Project>,
+        _: ModelHandle<Project>,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         unreachable!("reload should not have been called")
@@ -339,7 +314,8 @@ impl Item for FeedbackEditor {
             .as_singleton()
             .expect("Feedback buffer is only ever singleton");
 
-        Some(Self::new_with_buffer(
+        Some(Self::new(
+            self.system_specs.clone(),
             self.project.clone(),
             buffer.clone(),
             cx,
@@ -351,8 +327,8 @@ impl Item for FeedbackEditor {
     }
 
     fn deserialize(
-        _: gpui::ModelHandle<Project>,
-        _: gpui::WeakViewHandle<Workspace>,
+        _: ModelHandle<Project>,
+        _: WeakViewHandle<Workspace>,
         _: workspace::WorkspaceId,
         _: workspace::ItemId,
         _: &mut ViewContext<workspace::Pane>,
@@ -362,6 +338,21 @@ impl Item for FeedbackEditor {
 
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn act_as_type(
+        &self,
+        type_id: TypeId,
+        self_handle: &ViewHandle<Self>,
+        _: &AppContext,
+    ) -> Option<AnyViewHandle> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some((&self.editor).into())
+        } else {
+            None
+        }
     }
 }
 

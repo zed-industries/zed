@@ -1,5 +1,6 @@
 mod align;
 mod canvas;
+mod clipped;
 mod constrained_box;
 mod container;
 mod empty;
@@ -19,12 +20,12 @@ mod text;
 mod tooltip;
 mod uniform_list;
 
-use self::expanded::Expanded;
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, flex::*, hook::*, image::*,
     keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, resizable::*,
     stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
+use self::{clipped::Clipped, expanded::Expanded};
 pub use crate::presenter::ChildView;
 use crate::{
     geometry::{
@@ -133,6 +134,13 @@ pub trait Element {
         Self: 'static + Sized,
     {
         Align::new(self.boxed())
+    }
+
+    fn clipped(self) -> Clipped
+    where
+        Self: 'static + Sized,
+    {
+        Clipped::new(self.boxed())
     }
 
     fn contained(self) -> Container

@@ -3,7 +3,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
-use auto_update::ZED_APP_VERSION;
 use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
@@ -12,7 +11,7 @@ use cli::{
 use client::{
     self,
     http::{self, HttpClient},
-    UserStore, ZED_SECRET_CLIENT_TOKEN,
+    UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
 };
 
 use futures::{
@@ -24,7 +23,7 @@ use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::{Fs, HomeDir};
+use project::Fs;
 use serde_json::json;
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
@@ -32,13 +31,15 @@ use settings::{
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
-use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{fs::OpenOptions, os::unix::prelude::OsStrExt};
 use terminal_view::{get_working_directory, TerminalView};
 
 use fs::RealFs;
 use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
+#[cfg(debug_assertions)]
+use util::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
@@ -90,7 +91,10 @@ fn main() {
             let paths: Vec<_> = urls
                 .iter()
                 .flat_map(|url| url.strip_prefix("file://"))
-                .map(|path| PathBuf::from(path))
+                .map(|url| {
+                    let decoded = urlencoding::decode_binary(url.as_bytes());
+                    PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
+                })
                 .collect();
             open_paths_tx
                 .unbounded_send(paths)
@@ -101,7 +105,9 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
-        cx.set_global(HomeDir(paths::HOME.to_path_buf()));
+
+        #[cfg(debug_assertions)]
+        cx.set_global(StaffMode(true));
 
         let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
 
@@ -117,11 +123,10 @@ fn main() {
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let init_languages = cx
-            .background()
-            .spawn(languages::init(languages.clone(), cx.background().clone()));
+        languages::init(languages.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         watch_keymap_file(keymap_file, cx);
@@ -133,7 +138,6 @@ fn main() {
         client::init(client.clone(), cx);
         command_palette::init(cx);
         editor::init(cx);
-        feedback::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
         outline::init(cx);
@@ -149,14 +153,7 @@ fn main() {
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
 
-        cx.spawn({
-            let languages = languages.clone();
-            |cx| async move {
-                cx.read(|cx| languages.set_theme(cx.global::<Settings>().theme.clone()));
-                init_languages.await;
-            }
-        })
-        .detach();
+        languages.set_theme(cx.global::<Settings>().theme.clone());
         cx.observe_global::<Settings, _>({
             let languages = languages.clone();
             move |cx| languages.set_theme(cx.global::<Settings>().theme.clone())
@@ -188,6 +185,7 @@ fn main() {
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
         collab_ui::init(app_state.clone(), cx);
+        feedback::init(app_state.clone(), cx);
 
         cx.set_menus(menus::menus());
 
@@ -571,6 +569,14 @@ async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
+                let paths = if paths.is_empty() {
+                    workspace::last_opened_workspace_paths()
+                        .await
+                        .map(|location| location.paths().to_vec())
+                        .unwrap_or(paths)
+                } else {
+                    paths
+                };
                 let (workspace, items) = cx
                     .update(|cx| workspace::open_paths(&paths, &app_state, cx))
                     .await;

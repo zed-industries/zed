@@ -7,7 +7,7 @@ use super::{KeymapContext, KeymapContextPredicate, Keystroke};
 
 pub struct Binding {
     action: Box<dyn Action>,
-    keystrokes: Option<SmallVec<[Keystroke; 2]>>,
+    keystrokes: SmallVec<[Keystroke; 2]>,
     context_predicate: Option<KeymapContextPredicate>,
 }
 
@@ -23,16 +23,10 @@ impl Binding {
             None
         };
 
-        let keystrokes = if keystrokes == "*" {
-            None // Catch all context
-        } else {
-            Some(
-                keystrokes
-                    .split_whitespace()
-                    .map(Keystroke::parse)
-                    .collect::<Result<_>>()?,
-            )
-        };
+        let keystrokes = keystrokes
+            .split_whitespace()
+            .map(Keystroke::parse)
+            .collect::<Result<_>>()?;
 
         Ok(Self {
             keystrokes,
@@ -41,7 +35,7 @@ impl Binding {
         })
     }
 
-    fn match_context(&self, contexts: &[KeymapContext]) -> bool {
+    pub fn match_context(&self, contexts: &[KeymapContext]) -> bool {
         self.context_predicate
             .as_ref()
             .map(|predicate| predicate.eval(contexts))
@@ -53,20 +47,10 @@ impl Binding {
         pending_keystrokes: &Vec<Keystroke>,
         contexts: &[KeymapContext],
     ) -> BindingMatchResult {
-        if self
-            .keystrokes
-            .as_ref()
-            .map(|keystrokes| keystrokes.starts_with(&pending_keystrokes))
-            .unwrap_or(true)
-            && self.match_context(contexts)
+        if self.keystrokes.as_ref().starts_with(&pending_keystrokes) && self.match_context(contexts)
         {
             // If the binding is completed, push it onto the matches list
-            if self
-                .keystrokes
-                .as_ref()
-                .map(|keystrokes| keystrokes.len() == pending_keystrokes.len())
-                .unwrap_or(true)
-            {
+            if self.keystrokes.as_ref().len() == pending_keystrokes.len() {
                 BindingMatchResult::Complete(self.action.boxed_clone())
             } else {
                 BindingMatchResult::Partial
@@ -82,14 +66,14 @@ impl Binding {
         contexts: &[KeymapContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         if self.action.eq(action) && self.match_context(contexts) {
-            self.keystrokes.clone()
+            Some(self.keystrokes.clone())
         } else {
             None
         }
     }
 
-    pub fn keystrokes(&self) -> Option<&[Keystroke]> {
-        self.keystrokes.as_deref()
+    pub fn keystrokes(&self) -> &[Keystroke] {
+        self.keystrokes.as_slice()
     }
 
     pub fn action(&self) -> &dyn Action {

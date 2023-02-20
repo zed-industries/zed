@@ -11,7 +11,7 @@ use client::{
     EstablishConnectionError, UserStore,
 };
 use collections::{HashMap, HashSet};
-use fs::{FakeFs, HomeDir};
+use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use gpui::{
     executor::Deterministic, test::EmptyView, ModelHandle, Task, TestAppContext, ViewHandle,
@@ -101,7 +101,6 @@ impl TestServer {
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
-            cx.set_global(HomeDir(Path::new("/tmp/").to_path_buf()));
             cx.set_global(Settings::test(cx));
         });
 
@@ -197,7 +196,7 @@ impl TestServer {
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
-            build_window_options: Default::default,
+            build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _| unimplemented!(),
             dock_default_item_factory: |_, _| unimplemented!(),
         });

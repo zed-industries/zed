@@ -9,6 +9,12 @@ use anyhow::{Context, Result};
 
 use crate::statement::{SqlType, Statement};
 
+pub trait StaticColumnCount {
+    fn column_count() -> usize {
+        1
+    }
+}
+
 pub trait Bind {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32>;
 }
@@ -17,6 +23,7 @@ pub trait Column: Sized {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)>;
 }
 
+impl StaticColumnCount for bool {}
 impl Bind for bool {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -33,6 +40,7 @@ impl Column for bool {
     }
 }
 
+impl StaticColumnCount for &[u8] {}
 impl Bind for &[u8] {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -42,6 +50,7 @@ impl Bind for &[u8] {
     }
 }
 
+impl<const C: usize> StaticColumnCount for &[u8; C] {}
 impl<const C: usize> Bind for &[u8; C] {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -51,6 +60,15 @@ impl<const C: usize> Bind for &[u8; C] {
     }
 }
 
+impl<const C: usize> Column for [u8; C] {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let bytes_slice = statement.column_blob(start_index)?;
+        let array = bytes_slice.try_into()?;
+        Ok((array, start_index + 1))
+    }
+}
+
+impl StaticColumnCount for Vec<u8> {}
 impl Bind for Vec<u8> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -70,6 +88,7 @@ impl Column for Vec<u8> {
     }
 }
 
+impl StaticColumnCount for f64 {}
 impl Bind for f64 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -89,6 +108,7 @@ impl Column for f64 {
     }
 }
 
+impl StaticColumnCount for f32 {}
 impl Bind for f32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -109,6 +129,7 @@ impl Column for f32 {
     }
 }
 
+impl StaticColumnCount for i32 {}
 impl Bind for i32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -126,6 +147,7 @@ impl Column for i32 {
     }
 }
 
+impl StaticColumnCount for i64 {}
 impl Bind for i64 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
@@ -142,6 +164,7 @@ impl Column for i64 {
     }
 }
 
+impl StaticColumnCount for u32 {}
 impl Bind for u32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         (*self as i64)
@@ -157,6 +180,7 @@ impl Column for u32 {
     }
 }
 
+impl StaticColumnCount for usize {}
 impl Bind for usize {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         (*self as i64)
@@ -172,6 +196,7 @@ impl Column for usize {
     }
 }
 
+impl StaticColumnCount for &str {}
 impl Bind for &str {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_text(start_index, self)?;
@@ -179,6 +204,7 @@ impl Bind for &str {
     }
 }
 
+impl StaticColumnCount for Arc<str> {}
 impl Bind for Arc<str> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_text(start_index, self.as_ref())?;
@@ -186,6 +212,7 @@ impl Bind for Arc<str> {
     }
 }
 
+impl StaticColumnCount for String {}
 impl Bind for String {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind_text(start_index, self)?;
@@ -207,27 +234,40 @@ impl Column for String {
     }
 }
 
-impl<T: Bind> Bind for Option<T> {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+impl<T: StaticColumnCount> StaticColumnCount for Option<T> {
+    fn column_count() -> usize {
+        T::column_count()
+    }
+}
+impl<T: Bind + StaticColumnCount> Bind for Option<T> {
+    fn bind(&self, statement: &Statement, mut start_index: i32) -> Result<i32> {
         if let Some(this) = self {
             this.bind(statement, start_index)
         } else {
-            statement.bind_null(start_index)?;
-            Ok(start_index + 1)
+            for _ in 0..T::column_count() {
+                statement.bind_null(start_index)?;
+                start_index += 1;
+            }
+            Ok(start_index)
         }
     }
 }
 
-impl<T: Column> Column for Option<T> {
+impl<T: Column + StaticColumnCount> Column for Option<T> {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         if let SqlType::Null = statement.column_type(start_index)? {
-            Ok((None, start_index + 1))
+            Ok((None, start_index + T::column_count() as i32))
         } else {
             T::column(statement, start_index).map(|(result, next_index)| (Some(result), next_index))
         }
     }
 }
 
+impl<T: StaticColumnCount, const COUNT: usize> StaticColumnCount for [T; COUNT] {
+    fn column_count() -> usize {
+        T::column_count() * COUNT
+    }
+}
 impl<T: Bind, const COUNT: usize> Bind for [T; COUNT] {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let mut current_index = start_index;
@@ -239,51 +279,21 @@ impl<T: Bind, const COUNT: usize> Bind for [T; COUNT] {
     }
 }
 
-impl<T: Column + Default + Copy, const COUNT: usize> Column for [T; COUNT] {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let mut array = [Default::default(); COUNT];
-        let mut current_index = start_index;
-        for i in 0..COUNT {
-            (array[i], current_index) = T::column(statement, current_index)?;
-        }
-        Ok((array, current_index))
-    }
-}
-
-impl<T: Bind> Bind for Vec<T> {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let mut current_index = start_index;
-        for binding in self.iter() {
-            current_index = binding.bind(statement, current_index)?
-        }
-
-        Ok(current_index)
-    }
-}
-
-impl<T: Bind> Bind for &[T] {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let mut current_index = start_index;
-        for binding in *self {
-            current_index = binding.bind(statement, current_index)?
-        }
-
-        Ok(current_index)
-    }
-}
-
+impl StaticColumnCount for &Path {}
 impl Bind for &Path {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         self.as_os_str().as_bytes().bind(statement, start_index)
     }
 }
 
+impl StaticColumnCount for Arc<Path> {}
 impl Bind for Arc<Path> {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         self.as_ref().bind(statement, start_index)
     }
 }
 
+impl StaticColumnCount for PathBuf {}
 impl Bind for PathBuf {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         (self.as_ref() as &Path).bind(statement, start_index)
@@ -301,6 +311,30 @@ impl Column for PathBuf {
     }
 }
 
+impl StaticColumnCount for uuid::Uuid {
+    fn column_count() -> usize {
+        1
+    }
+}
+
+impl Bind for uuid::Uuid {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.as_bytes().bind(statement, start_index)
+    }
+}
+
+impl Column for uuid::Uuid {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (bytes, next_index) = Column::column(statement, start_index)?;
+        Ok((uuid::Uuid::from_bytes(bytes), next_index))
+    }
+}
+
+impl StaticColumnCount for () {
+    fn column_count() -> usize {
+        0
+    }
+}
 /// Unit impls do nothing. This simplifies query macros
 impl Bind for () {
     fn bind(&self, _statement: &Statement, start_index: i32) -> Result<i32> {
@@ -314,74 +348,79 @@ impl Column for () {
     }
 }
 
-impl<T1: Bind, T2: Bind> Bind for (T1, T2) {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = self.0.bind(statement, start_index)?;
-        self.1.bind(statement, next_index)
+macro_rules! impl_tuple_row_traits {
+    ( $($local:ident: $type:ident),+ ) => {
+        impl<$($type: StaticColumnCount),+> StaticColumnCount for ($($type,)+) {
+            fn column_count() -> usize {
+                let mut count = 0;
+                $(count += $type::column_count();)+
+                count
+            }
+        }
+
+        impl<$($type: Bind),+> Bind for ($($type,)+) {
+            fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+                let mut next_index = start_index;
+                let ($($local,)+) = self;
+                $(next_index = $local.bind(statement, next_index)?;)+
+                Ok(next_index)
+            }
+        }
+
+        impl<$($type: Column),+> Column for ($($type,)+) {
+            fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+                let mut next_index = start_index;
+                Ok((
+                    (
+                        $({
+                            let value;
+                            (value, next_index) = $type::column(statement, next_index)?;
+                            value
+                        },)+
+                    ),
+                    next_index,
+                ))
+            }
+        }
     }
 }
 
-impl<T1: Column, T2: Column> Column for (T1, T2) {
-    fn column<'a>(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (first, next_index) = T1::column(statement, start_index)?;
-        let (second, next_index) = T2::column(statement, next_index)?;
-        Ok(((first, second), next_index))
-    }
-}
-
-impl<T1: Bind, T2: Bind, T3: Bind> Bind for (T1, T2, T3) {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = self.0.bind(statement, start_index)?;
-        let next_index = self.1.bind(statement, next_index)?;
-        self.2.bind(statement, next_index)
-    }
-}
-
-impl<T1: Column, T2: Column, T3: Column> Column for (T1, T2, T3) {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (first, next_index) = T1::column(statement, start_index)?;
-        let (second, next_index) = T2::column(statement, next_index)?;
-        let (third, next_index) = T3::column(statement, next_index)?;
-        Ok(((first, second, third), next_index))
-    }
-}
-
-impl<T1: Bind, T2: Bind, T3: Bind, T4: Bind> Bind for (T1, T2, T3, T4) {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = self.0.bind(statement, start_index)?;
-        let next_index = self.1.bind(statement, next_index)?;
-        let next_index = self.2.bind(statement, next_index)?;
-        self.3.bind(statement, next_index)
-    }
-}
-
-impl<T1: Column, T2: Column, T3: Column, T4: Column> Column for (T1, T2, T3, T4) {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (first, next_index) = T1::column(statement, start_index)?;
-        let (second, next_index) = T2::column(statement, next_index)?;
-        let (third, next_index) = T3::column(statement, next_index)?;
-        let (fourth, next_index) = T4::column(statement, next_index)?;
-        Ok(((first, second, third, fourth), next_index))
-    }
-}
-
-impl<T1: Bind, T2: Bind, T3: Bind, T4: Bind, T5: Bind> Bind for (T1, T2, T3, T4, T5) {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = self.0.bind(statement, start_index)?;
-        let next_index = self.1.bind(statement, next_index)?;
-        let next_index = self.2.bind(statement, next_index)?;
-        let next_index = self.3.bind(statement, next_index)?;
-        self.4.bind(statement, next_index)
-    }
-}
-
-impl<T1: Column, T2: Column, T3: Column, T4: Column, T5: Column> Column for (T1, T2, T3, T4, T5) {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (first, next_index) = T1::column(statement, start_index)?;
-        let (second, next_index) = T2::column(statement, next_index)?;
-        let (third, next_index) = T3::column(statement, next_index)?;
-        let (fourth, next_index) = T4::column(statement, next_index)?;
-        let (fifth, next_index) = T5::column(statement, next_index)?;
-        Ok(((first, second, third, fourth, fifth), next_index))
-    }
-}
+impl_tuple_row_traits!(t1: T1, t2: T2);
+impl_tuple_row_traits!(t1: T1, t2: T2, t3: T3);
+impl_tuple_row_traits!(t1: T1, t2: T2, t3: T3, t4: T4);
+impl_tuple_row_traits!(t1: T1, t2: T2, t3: T3, t4: T4, t5: T5);
+impl_tuple_row_traits!(t1: T1, t2: T2, t3: T3, t4: T4, t5: T5, t6: T6);
+impl_tuple_row_traits!(t1: T1, t2: T2, t3: T3, t4: T4, t5: T5, t6: T6, t7: T7);
+impl_tuple_row_traits!(
+    t1: T1,
+    t2: T2,
+    t3: T3,
+    t4: T4,
+    t5: T5,
+    t6: T6,
+    t7: T7,
+    t8: T8
+);
+impl_tuple_row_traits!(
+    t1: T1,
+    t2: T2,
+    t3: T3,
+    t4: T4,
+    t5: T5,
+    t6: T6,
+    t7: T7,
+    t8: T8,
+    t9: T9
+);
+impl_tuple_row_traits!(
+    t1: T1,
+    t2: T2,
+    t3: T3,
+    t4: T4,
+    t5: T5,
+    t6: T6,
+    t7: T7,
+    t8: T8,
+    t9: T9,
+    t10: T10
+);

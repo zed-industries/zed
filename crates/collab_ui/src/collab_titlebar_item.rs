@@ -1,4 +1,4 @@
-use crate::{contact_notification::ContactNotification, contacts_popover};
+use crate::{contact_notification::ContactNotification, contacts_popover, ToggleScreenSharing};
 use call::{ActiveCall, ParticipantLocation};
 use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
 use clock::ReplicaId;
@@ -10,21 +10,17 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     Border, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::ops::Range;
 use theme::Theme;
 use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
-actions!(
-    collab,
-    [ToggleCollaborationMenu, ToggleScreenSharing, ShareProject]
-);
+actions!(collab, [ToggleCollaborationMenu, ShareProject]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
-    cx.add_action(CollabTitlebarItem::toggle_screen_sharing);
     cx.add_action(CollabTitlebarItem::share_project);
 }
 
@@ -170,19 +166,6 @@ impl CollabTitlebarItem {
             }
         }
         cx.notify();
-    }
-
-    pub fn toggle_screen_sharing(&mut self, _: &ToggleScreenSharing, cx: &mut ViewContext<Self>) {
-        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-            let toggle_screen_sharing = room.update(cx, |room, cx| {
-                if room.is_screen_sharing() {
-                    Task::ready(room.unshare_screen(cx))
-                } else {
-                    room.share_screen(cx)
-                }
-            });
-            toggle_screen_sharing.detach_and_log_err(cx);
-        }
     }
 
     fn render_toggle_contacts_button(
@@ -521,7 +504,9 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
-        let theme = &cx.global::<Settings>().theme;
+        enum ConnectionStatusButton {}
+
+        let theme = &cx.global::<Settings>().theme.clone();
         match &*workspace.read(cx).client().status().borrow() {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
@@ -544,13 +529,20 @@ impl CollabTitlebarItem {
                 .boxed(),
             ),
             client::Status::UpgradeRequired => Some(
-                Label::new(
-                    "Please update Zed to collaborate".to_string(),
-                    theme.workspace.titlebar.outdated_warning.text.clone(),
-                )
-                .contained()
-                .with_style(theme.workspace.titlebar.outdated_warning.container)
-                .aligned()
+                MouseEventHandler::<ConnectionStatusButton>::new(0, cx, |_, _| {
+                    Label::new(
+                        "Please update Zed to collaborate".to_string(),
+                        theme.workspace.titlebar.outdated_warning.text.clone(),
+                    )
+                    .contained()
+                    .with_style(theme.workspace.titlebar.outdated_warning.container)
+                    .aligned()
+                    .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, |_, cx| {
+                    cx.dispatch_action(auto_update::Check);
+                })
                 .boxed(),
             ),
             _ => None,

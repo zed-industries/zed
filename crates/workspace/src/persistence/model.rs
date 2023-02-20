@@ -6,15 +6,16 @@ use std::{
 use anyhow::{Context, Result};
 
 use async_recursion::async_recursion;
-use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle};
+use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WindowBounds};
 
 use db::sqlez::{
-    bindable::{Bind, Column},
+    bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use project::Project;
 use settings::DockAnchor;
 use util::ResultExt;
+use uuid::Uuid;
 
 use crate::{
     dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
@@ -40,6 +41,7 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
     }
 }
 
+impl StaticColumnCount for WorkspaceLocation {}
 impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         bincode::serialize(&self.0)
@@ -58,7 +60,7 @@ impl Column for WorkspaceLocation {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
@@ -66,6 +68,8 @@ pub struct SerializedWorkspace {
     pub center_group: SerializedPaneGroup,
     pub dock_pane: SerializedPane,
     pub left_sidebar_open: bool,
+    pub bounds: Option<WindowBounds>,
+    pub display: Option<Uuid>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -237,6 +241,11 @@ impl Default for SerializedItem {
     }
 }
 
+impl StaticColumnCount for SerializedItem {
+    fn column_count() -> usize {
+        3
+    }
+}
 impl Bind for &SerializedItem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(self.kind.clone(), start_index)?;
@@ -261,6 +270,11 @@ impl Column for SerializedItem {
     }
 }
 
+impl StaticColumnCount for DockPosition {
+    fn column_count() -> usize {
+        2
+    }
+}
 impl Bind for DockPosition {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(self.is_visible(), start_index)?;

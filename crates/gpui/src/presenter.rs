@@ -4,7 +4,6 @@ use crate::{
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
-    keymap_matcher::Keystroke,
     platform::{CursorStyle, Event},
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
@@ -23,7 +22,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use smallvec::SmallVec;
 use sqlez::{
-    bindable::{Bind, Column},
+    bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use std::{
@@ -316,7 +315,10 @@ impl Presenter {
                         break;
                     }
                 }
-                cx.platform().set_cursor_style(style_to_assign);
+
+                if cx.is_topmost_window_for_position(self.window_id, *position) {
+                    cx.platform().set_cursor_style(style_to_assign);
+                }
 
                 if !event_reused {
                     if pressed_button.is_some() {
@@ -601,14 +603,6 @@ pub struct LayoutContext<'a> {
 }
 
 impl<'a> LayoutContext<'a> {
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        self.app
-            .keystrokes_for_action(self.window_id, &self.view_stack, action)
-    }
-
     fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
         let print_error = |view_id| {
             format!(
@@ -929,6 +923,7 @@ impl ToJson for Axis {
     }
 }
 
+impl StaticColumnCount for Axis {}
 impl Bind for Axis {
     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
         match self {

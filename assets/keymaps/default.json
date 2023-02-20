@@ -38,7 +38,7 @@
             "cmd-n": "workspace::NewFile",
             "cmd-shift-n": "workspace::NewWindow",
             "cmd-o": "workspace::Open",
-            "alt-cmd-o": "recent_projects::Toggle",
+            "alt-cmd-o": "projects::OpenRecent",
             "ctrl-`": "workspace::NewTerminal"
         }
     },
@@ -164,6 +164,7 @@
         "bindings": {
             "enter": "editor::Newline",
             "cmd-enter": "editor::NewlineBelow",
+            "alt-z": "editor::ToggleSoftWrap",
             "cmd-f": [
                 "buffer_search::Deploy",
                 {
@@ -227,7 +228,12 @@
                     "replace_newest": true
                 }
             ],
-            "cmd-/": "editor::ToggleComments",
+            "cmd-/": [
+                "editor::ToggleComments",
+                {
+                    "advance_downwards": false
+                }
+            ],
             "alt-up": "editor::SelectLargerSyntaxNode",
             "alt-down": "editor::SelectSmallerSyntaxNode",
             "cmd-u": "editor::UndoSelection",
@@ -433,8 +439,7 @@
     {
         "context": "Workspace",
         "bindings": {
-            "shift-escape": "dock::FocusDock",
-            "cmd-shift-b": "workspace::ToggleRightSidebar"
+            "shift-escape": "dock::FocusDock"
         }
     },
     {
@@ -445,15 +450,16 @@
         }
     },
     {
-        "context": "Dock",
+        "context": "Pane",
         "bindings": {
-            "shift-escape": "dock::HideDock"
+            "cmd-escape": "dock::AddTabToDock"
         }
     },
     {
-        "context": "Pane",
+        "context": "Dock",
         "bindings": {
-            "cmd-escape": "dock::MoveActiveItemToDock"
+            "shift-escape": "dock::HideDock",
+            "cmd-escape": "dock::RemoveTabFromDock"
         }
     },
     {

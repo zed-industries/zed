@@ -243,8 +243,8 @@ async fn test_managing_language_servers(
     );
 
     // Save notifications are reported to all servers.
-    toml_buffer
-        .update(cx, |buffer, cx| buffer.save(cx))
+    project
+        .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
         .await
         .unwrap();
     assert_eq!(
@@ -2083,12 +2083,13 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
-    buffer
-        .update(cx, |buffer, cx| {
-            assert_eq!(buffer.text(), "the old contents");
-            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
-            buffer.save(cx)
-        })
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "the old contents");
+        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+    });
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
 
@@ -2112,11 +2113,12 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
         .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
-    buffer
-        .update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
-            buffer.save(cx)
-        })
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+    });
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
 
@@ -2130,6 +2132,20 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     fs.insert_tree("/dir", json!({})).await;
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.register(
+        "/some/path",
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".into()],
+            ..Default::default()
+        },
+        tree_sitter_rust::language(),
+        None,
+        |_| Default::default(),
+    );
+
     let buffer = project.update(cx, |project, cx| {
         project.create_buffer("", None, cx).unwrap()
     });
@@ -2137,23 +2153,30 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
+        assert_eq!(buffer.language().unwrap().name().as_ref(), "Plain Text");
     });
     project
         .update(cx, |project, cx| {
-            project.save_buffer_as(buffer.clone(), "/dir/file1".into(), cx)
+            project.save_buffer_as(buffer.clone(), "/dir/file1.rs".into(), cx)
         })
         .await
         .unwrap();
-    assert_eq!(fs.load(Path::new("/dir/file1")).await.unwrap(), "abc");
+    assert_eq!(fs.load(Path::new("/dir/file1.rs")).await.unwrap(), "abc");
+
+    cx.foreground().run_until_parked();
     buffer.read_with(cx, |buffer, cx| {
-        assert_eq!(buffer.file().unwrap().full_path(cx), Path::new("dir/file1"));
+        assert_eq!(
+            buffer.file().unwrap().full_path(cx),
+            Path::new("dir/file1.rs")
+        );
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
+        assert_eq!(buffer.language().unwrap().name().as_ref(), "Rust");
     });
 
     let opened_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/file1", cx)
+            project.open_local_buffer("/dir/file1.rs", cx)
         })
         .await
         .unwrap();
@@ -2462,7 +2485,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             buffer.version(),
             buffer.as_rope().fingerprint(),
             buffer.file().unwrap().mtime(),
-            None,
             cx,
         );
     });
@@ -2682,11 +2704,11 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     });
 
     // Save a file with windows line endings. The file is written correctly.
-    buffer2
-        .update(cx, |buffer, cx| {
-            buffer.set_text("one\ntwo\nthree\nfour\n", cx);
-            buffer.save(cx)
-        })
+    buffer2.update(cx, |buffer, cx| {
+        buffer.set_text("one\ntwo\nthree\nfour\n", cx);
+    });
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer2, cx))
         .await
         .unwrap();
     assert_eq!(

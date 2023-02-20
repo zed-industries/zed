@@ -331,7 +331,7 @@ impl InfoPopover {
                 if let Some(language) = content
                     .language
                     .clone()
-                    .and_then(|language| project.languages().get_language(&language))
+                    .and_then(|language| project.languages().language_for_name(&language))
                 {
                     let runs = language
                         .highlight_text(&content.text.as_str().into(), 0..content.text.len());

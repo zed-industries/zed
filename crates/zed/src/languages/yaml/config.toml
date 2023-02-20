@@ -1,0 +1,17 @@
+name = "YAML"
+path_suffixes = ["yml", "yaml"]
+line_comment = "# "
+autoclose_before = ",]}"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false },
+]
+
+increase_indent_pattern = ":\\s*[|>]?\\s*$"
+
+[overrides.string]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+]

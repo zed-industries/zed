@@ -2,7 +2,7 @@ mod change;
 mod delete;
 mod yank;
 
-use std::{borrow::Cow, cmp::Ordering};
+use std::{borrow::Cow, cmp::Ordering, sync::Arc};
 
 use crate::{
     motion::Motion,
@@ -424,7 +424,7 @@ fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Edito
     }
 }
 
-pub(crate) fn normal_replace(text: &str, cx: &mut MutableAppContext) {
+pub(crate) fn normal_replace(text: Arc<str>, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -453,7 +453,7 @@ pub(crate) fn normal_replace(text: &str, cx: &mut MutableAppContext) {
                         (
                             range.start.to_offset(&map, Bias::Left)
                                 ..range.end.to_offset(&map, Bias::Left),
-                            text,
+                            text.clone(),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -824,17 +824,34 @@ mod test {
                 ˇ
                 brown fox"})
             .await;
-        cx.assert(indoc! {"
+
+        cx.assert_manual(
+            indoc! {"
                 fn test() {
                     println!(ˇ);
-                }
-            "})
-            .await;
-        cx.assert(indoc! {"
+                }"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    println!();
+                    ˇ
+                }"},
+            Mode::Insert,
+        );
+
+        cx.assert_manual(
+            indoc! {"
                 fn test(ˇ) {
                     println!();
-                }"})
-            .await;
+                }"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    ˇ
+                    println!();
+                }"},
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
@@ -857,13 +874,15 @@ mod test {
         // Our indentation is smarter than vims. So we don't match here
         cx.assert_manual(
             indoc! {"
-                fn test()
-                    println!(ˇ);"},
+                fn test() {
+                    println!(ˇ);
+                }"},
             Mode::Normal,
             indoc! {"
-                fn test()
+                fn test() {
                     ˇ
-                    println!();"},
+                    println!();
+                }"},
             Mode::Insert,
         );
         cx.assert_manual(
@@ -994,19 +1013,28 @@ mod test {
     #[gpui::test]
     async fn test_capital_f_and_capital_t(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        for count in 1..=3 {
-            let test_case = indoc! {"
-                ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
-                ˇ    ˇbˇaaˇa ˇbˇbˇb
-                ˇ   
-                ˇb
+        let test_case = indoc! {"
+            ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
+            ˇ    ˇbˇaaˇa ˇbˇbˇb
+            ˇ   
+            ˇb
             "};
 
+        for count in 1..=3 {
             cx.assert_binding_matches_all([&count.to_string(), "shift-f", "b"], test_case)
                 .await;
 
             cx.assert_binding_matches_all([&count.to_string(), "shift-t", "b"], test_case)
                 .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_percent(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["%"]);
+        cx.assert_all("ˇconsole.logˇ(ˇvaˇrˇ)ˇ;").await;
+        cx.assert_all("ˇconsole.logˇ(ˇ'var', ˇ[ˇ1, ˇ2, 3ˇ]ˇ)ˇ;")
+            .await;
+        cx.assert_all("let result = curried_funˇ(ˇ)ˇ(ˇ)ˇ;").await;
     }
 }

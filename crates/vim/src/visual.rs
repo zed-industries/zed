@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use collections::HashMap;
 use editor::{
@@ -313,7 +313,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
     });
 }
 
-pub(crate) fn visual_replace(text: &str, line: bool, cx: &mut MutableAppContext) {
+pub(crate) fn visual_replace(text: Arc<str>, line: bool, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -650,7 +650,7 @@ mod test {
                 The quick brown
                 the 
                 ˇfox jumps over
-                 dog"},
+                dog"},
             Mode::Normal,
         );
     }

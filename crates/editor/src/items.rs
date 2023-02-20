@@ -2,12 +2,10 @@ use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
-    FORMAT_TIMEOUT,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
-use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -16,9 +14,10 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{FormatTrigger, Item as _, Project, ProjectPath};
+use project::{Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -609,32 +608,12 @@ impl Item for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_event("save editor", cx);
-
-        let buffer = self.buffer().clone();
-        let buffers = buffer.read(cx).all_buffers();
-        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| {
-            project.format(buffers, true, FormatTrigger::Save, cx)
-        });
-        cx.spawn(|_, mut cx| async move {
-            let transaction = futures::select_biased! {
-                _ = timeout => {
-                    log::warn!("timed out waiting for formatting");
-                    None
-                }
-                transaction = format.log_err().fuse() => transaction,
-            };
-
-            buffer
-                .update(&mut cx, |buffer, cx| {
-                    if let Some(transaction) = transaction {
-                        if !buffer.is_singleton() {
-                            buffer.push_transaction(&transaction.0);
-                        }
-                    }
-
-                    buffer.save(cx)
-                })
+        let format = self.perform_format(project.clone(), cx);
+        let buffers = self.buffer().clone().read(cx).all_buffers();
+        cx.as_mut().spawn(|mut cx| async move {
+            format.await?;
+            project
+                .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))
                 .await?;
             Ok(())
         })
@@ -693,8 +672,8 @@ impl Item for Editor {
         Task::ready(Ok(()))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
-        let mut result = Vec::new();
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        let mut result = SmallVec::new();
         match event {
             Event::Closed => result.push(ItemEvent::CloseItem),
             Event::Saved | Event::TitleChanged => {
@@ -1094,7 +1073,7 @@ impl StatusItemView for CursorPosition {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
             self.update_position(editor, cx);
         } else {
@@ -1158,7 +1137,6 @@ fn path_for_file<'a>(
 mod tests {
     use super::*;
     use gpui::MutableAppContext;
-    use language::RopeFingerprint;
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -1201,17 +1179,6 @@ mod tests {
         }
 
         fn is_deleted(&self) -> bool {
-            todo!()
-        }
-
-        fn save(
-            &self,
-            _: u64,
-            _: language::Rope,
-            _: clock::Global,
-            _: project::LineEnding,
-            _: &mut MutableAppContext,
-        ) -> gpui::Task<anyhow::Result<(clock::Global, RopeFingerprint, SystemTime)>> {
             todo!()
         }
 

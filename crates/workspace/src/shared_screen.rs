@@ -13,6 +13,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     path::PathBuf,
     sync::{Arc, Weak},
@@ -177,9 +178,9 @@ impl Item for SharedScreen {
         Task::ready(Err(anyhow!("Item::reload called on SharedScreen")))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
-            Event::Close => vec![ItemEvent::CloseItem],
+            Event::Close => smallvec::smallvec!(ItemEvent::CloseItem),
         }
     }
 

@@ -1,18 +1,22 @@
 pub mod participant;
 pub mod room;
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use client::{proto, Client, TypedEnvelope, User, UserStore};
 use collections::HashSet;
+use futures::{future::Shared, FutureExt};
+use postage::watch;
+
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Subscription, Task, WeakModelHandle,
 };
-pub use participant::ParticipantLocation;
-use postage::watch;
 use project::Project;
+
+pub use participant::ParticipantLocation;
 pub use room::Room;
-use std::sync::Arc;
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
@@ -27,8 +31,10 @@ pub struct IncomingCall {
     pub initial_project: Option<proto::ParticipantProject>,
 }
 
+/// Singleton global maintaining the user's participation in a room across workspaces.
 pub struct ActiveCall {
     room: Option<(ModelHandle<Room>, Vec<Subscription>)>,
+    pending_room_creation: Option<Shared<Task<Result<ModelHandle<Room>, Arc<anyhow::Error>>>>>,
     location: Option<WeakModelHandle<Project>>,
     pending_invites: HashSet<u64>,
     incoming_call: (
@@ -52,6 +58,7 @@ impl ActiveCall {
     ) -> Self {
         Self {
             room: None,
+            pending_room_creation: None,
             location: None,
             pending_invites: Default::default(),
             incoming_call: watch::channel(),
@@ -120,45 +127,74 @@ impl ActiveCall {
         initial_project: Option<ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let client = self.client.clone();
-        let user_store = self.user_store.clone();
         if !self.pending_invites.insert(called_user_id) {
             return Task::ready(Err(anyhow!("user was already invited")));
         }
-
         cx.notify();
-        cx.spawn(|this, mut cx| async move {
-            let invite = async {
-                if let Some(room) = this.read_with(&cx, |this, _| this.room().cloned()) {
-                    let initial_project_id = if let Some(initial_project) = initial_project {
-                        Some(
-                            room.update(&mut cx, |room, cx| {
-                                room.share_project(initial_project, cx)
-                            })
+
+        let room = if let Some(room) = self.room().cloned() {
+            Some(Task::ready(Ok(room)).shared())
+        } else {
+            self.pending_room_creation.clone()
+        };
+
+        let invite = if let Some(room) = room {
+            cx.spawn_weak(|_, mut cx| async move {
+                let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
+
+                let initial_project_id = if let Some(initial_project) = initial_project {
+                    Some(
+                        room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))
                             .await?,
-                        )
-                    } else {
-                        None
-                    };
-
-                    room.update(&mut cx, |room, cx| {
-                        room.call(called_user_id, initial_project_id, cx)
-                    })
-                    .await?;
+                    )
                 } else {
-                    let room = cx
-                        .update(|cx| {
-                            Room::create(called_user_id, initial_project, client, user_store, cx)
-                        })
-                        .await?;
-
-                    this.update(&mut cx, |this, cx| this.set_room(Some(room), cx))
-                        .await?;
+                    None
                 };
 
-                Ok(())
-            };
+                room.update(&mut cx, |room, cx| {
+                    room.call(called_user_id, initial_project_id, cx)
+                })
+                .await?;
 
+                anyhow::Ok(())
+            })
+        } else {
+            let client = self.client.clone();
+            let user_store = self.user_store.clone();
+            let room = cx
+                .spawn(|this, mut cx| async move {
+                    let create_room = async {
+                        let room = cx
+                            .update(|cx| {
+                                Room::create(
+                                    called_user_id,
+                                    initial_project,
+                                    client,
+                                    user_store,
+                                    cx,
+                                )
+                            })
+                            .await?;
+
+                        this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
+                            .await?;
+
+                        anyhow::Ok(room)
+                    };
+
+                    let room = create_room.await;
+                    this.update(&mut cx, |this, _| this.pending_room_creation = None);
+                    room.map_err(Arc::new)
+                })
+                .shared();
+            self.pending_room_creation = Some(room.clone());
+            cx.foreground().spawn(async move {
+                room.await.map_err(|err| anyhow!("{:?}", err))?;
+                anyhow::Ok(())
+            })
+        };
+
+        cx.spawn(|this, mut cx| async move {
             let result = invite.await;
             this.update(&mut cx, |this, cx| {
                 this.pending_invites.remove(&called_user_id);

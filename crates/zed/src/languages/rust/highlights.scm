@@ -12,6 +12,15 @@
       field: (field_identifier) @function.method)
   ])
 
+(generic_function
+  function: [
+    (identifier) @function
+    (scoped_identifier
+      name: (identifier) @function)
+    (field_expression
+      field: (field_identifier) @function.method)
+  ])
+
 (function_item name: (identifier) @function.definition)
 (function_signature_item name: (identifier) @function.definition)
 

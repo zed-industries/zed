@@ -121,7 +121,6 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
-    use std::process::Command;
 
     use gpui::{
         actions,
@@ -147,14 +146,8 @@ pub mod simple_message_notification {
     pub fn init(cx: &mut MutableAppContext) {
         cx.add_action(MessageNotification::dismiss);
         cx.add_action(
-            |_workspace: &mut Workspace, open_action: &OsOpen, _cx: &mut ViewContext<Workspace>| {
-                #[cfg(target_os = "macos")]
-                {
-                    let mut command = Command::new("open");
-                    command.arg(open_action.0.clone());
-
-                    command.spawn().ok();
-                }
+            |_workspace: &mut Workspace, open_action: &OsOpen, cx: &mut ViewContext<Workspace>| {
+                cx.platform().open_url(open_action.0.as_str());
             },
         )
     }
@@ -174,7 +167,7 @@ pub mod simple_message_notification {
     }
 
     impl MessageNotification {
-        pub fn new_messsage<S: AsRef<str>>(message: S) -> MessageNotification {
+        pub fn new_message<S: AsRef<str>>(message: S) -> MessageNotification {
             Self {
                 message: message.as_ref().to_string(),
                 click_action: None,
@@ -320,7 +313,7 @@ where
             Err(err) => {
                 workspace.show_notification(0, cx, |cx| {
                     cx.add_view(|_cx| {
-                        simple_message_notification::MessageNotification::new_messsage(format!(
+                        simple_message_notification::MessageNotification::new_message(format!(
                             "Error: {:?}",
                             err,
                         ))

@@ -1,13 +1,8 @@
 import chroma from "chroma-js";
+import { Meta as Metadata } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Solarized";
-const author = "Ethan Schoonover";
-const url = "https://github.com/altercation/solarized";
-const license = {
-  type: "MIT",
-  url: "https://github.com/altercation/solarized/blob/master/README.md",
-};
 
 const ramps = {
   neutral: chroma
@@ -34,3 +29,15 @@ const ramps = {
 
 export const dark = createColorScheme(`${name} Dark`, false, ramps);
 export const light = createColorScheme(`${name} Light`, true, ramps);
+
+export const meta: Metadata = {
+  name,
+  author: "Ethan Schoonover",
+  license: {
+    SPDX: "MIT",
+    https_url: "https://raw.githubusercontent.com/altercation/solarized/master/LICENSE",
+    license_checksum: "494aefdabf86acce06bd63001ad8aedad4ee38da23509d3f917d95aa3368b9a6"
+  },
+  url: "https://github.com/altercation/solarized"
+}
+

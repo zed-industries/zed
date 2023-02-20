@@ -19,12 +19,10 @@ use cocoa::{
     appkit::{
         CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowStyleMask,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
-    foundation::{
-        NSAutoreleasePool, NSInteger, NSNotFound, NSPoint, NSRect, NSSize, NSString, NSUInteger,
-    },
+    foundation::{NSAutoreleasePool, NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger},
 };
 use core_graphics::display::CGRect;
 use ctor::ctor;
@@ -52,6 +50,11 @@ use std::{
     time::Duration,
 };
 
+use super::{
+    geometry::{NSRectExt, Vector2FExt},
+    ns_string, NSRange,
+};
+
 const WINDOW_STATE_IVAR: &str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
@@ -75,56 +78,6 @@ const NSTrackingActiveAlways: NSUInteger = 0x80;
 const NSTrackingInVisibleRect: NSUInteger = 0x200;
 #[allow(non_upper_case_globals)]
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-struct NSRange {
-    pub location: NSUInteger,
-    pub length: NSUInteger,
-}
-
-impl NSRange {
-    fn invalid() -> Self {
-        Self {
-            location: NSNotFound as NSUInteger,
-            length: 0,
-        }
-    }
-
-    fn is_valid(&self) -> bool {
-        self.location != NSNotFound as NSUInteger
-    }
-
-    fn to_range(self) -> Option<Range<usize>> {
-        if self.is_valid() {
-            let start = self.location as usize;
-            let end = start + self.length as usize;
-            Some(start..end)
-        } else {
-            None
-        }
-    }
-}
-
-impl From<Range<usize>> for NSRange {
-    fn from(range: Range<usize>) -> Self {
-        NSRange {
-            location: range.start as NSUInteger,
-            length: range.len() as NSUInteger,
-        }
-    }
-}
-
-unsafe impl objc::Encode for NSRange {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{NSRange={}{}}}",
-            NSUInteger::encode().as_str(),
-            NSUInteger::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
-}
 
 #[ctor]
 unsafe fn build_classes() {
@@ -296,6 +249,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
+        sel!(windowDidMove:),
+        window_did_move as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
         sel!(windowDidBecomeKey:),
         window_did_change_key_status as extern "C" fn(&Object, Sel, id),
     );
@@ -311,8 +268,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.register()
 }
 
-pub struct Window(Rc<RefCell<WindowState>>);
-
 ///Used to track what the IME does when we send it a keystroke.
 ///This is only used to handle the case where the IME mysteriously
 ///swallows certain keys.
@@ -325,6 +280,11 @@ enum ImeState {
     None,
 }
 
+struct InsertText {
+    replacement_range: Option<Range<usize>>,
+    text: String,
+}
+
 struct WindowState {
     id: usize,
     native_window: id,
@@ -333,6 +293,7 @@ struct WindowState {
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
     fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
+    moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
@@ -352,10 +313,108 @@ struct WindowState {
     ime_text: Option<String>,
 }
 
-struct InsertText {
-    replacement_range: Option<Range<usize>>,
-    text: String,
+impl WindowState {
+    fn move_traffic_light(&self) {
+        if let Some(traffic_light_position) = self.traffic_light_position {
+            let titlebar_height = self.titlebar_height();
+
+            unsafe {
+                let close_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowCloseButton
+                ];
+                let min_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
+                ];
+                let zoom_button: id = msg_send![
+                    self.native_window,
+                    standardWindowButton: NSWindowButton::NSWindowZoomButton
+                ];
+
+                let mut close_button_frame: CGRect = msg_send![close_button, frame];
+                let mut min_button_frame: CGRect = msg_send![min_button, frame];
+                let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
+                let mut origin = vec2f(
+                    traffic_light_position.x(),
+                    titlebar_height
+                        - traffic_light_position.y()
+                        - close_button_frame.size.height as f32,
+                );
+                let button_spacing =
+                    (min_button_frame.origin.x - close_button_frame.origin.x) as f32;
+
+                close_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![close_button, setFrame: close_button_frame];
+                origin.set_x(origin.x() + button_spacing);
+
+                min_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![min_button, setFrame: min_button_frame];
+                origin.set_x(origin.x() + button_spacing);
+
+                zoom_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
+                let _: () = msg_send![zoom_button, setFrame: zoom_button_frame];
+            }
+        }
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        unsafe {
+            let style_mask = self.native_window.styleMask();
+            style_mask.contains(NSWindowStyleMask::NSFullScreenWindowMask)
+        }
+    }
+
+    fn bounds(&self) -> WindowBounds {
+        unsafe {
+            if self.is_fullscreen() {
+                return WindowBounds::Fullscreen;
+            }
+
+            let window_frame = self.frame();
+            if window_frame == self.native_window.screen().visibleFrame().to_rectf() {
+                WindowBounds::Maximized
+            } else {
+                WindowBounds::Fixed(window_frame)
+            }
+        }
+    }
+
+    // Returns the window bounds in window coordinates
+    fn frame(&self) -> RectF {
+        unsafe {
+            let ns_frame = NSWindow::frame(self.native_window);
+            ns_frame.to_rectf()
+        }
+    }
+
+    fn content_size(&self) -> Vector2F {
+        let NSSize { width, height, .. } =
+            unsafe { NSView::frame(self.native_window.contentView()) }.size;
+        vec2f(width as f32, height as f32)
+    }
+
+    fn scale_factor(&self) -> f32 {
+        get_scale_factor(self.native_window)
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        unsafe {
+            let frame = NSWindow::frame(self.native_window);
+            let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
+            (frame.size.height - content_layout_rect.size.height) as f32
+        }
+    }
+
+    fn present_scene(&mut self, scene: Scene) {
+        self.scene_to_render = Some(scene);
+        unsafe {
+            let _: () = msg_send![self.native_window.contentView(), setNeedsDisplay: YES];
+        }
+    }
 }
+
+pub struct Window(Rc<RefCell<WindowState>>);
 
 impl Window {
     pub fn open(
@@ -390,7 +449,7 @@ impl Window {
                 }
             };
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
-                RectF::new(Default::default(), vec2f(1024., 768.)).to_ns_rect(),
+                NSRect::new(NSPoint::new(0., 0.), NSSize::new(1024., 768.)),
                 style_mask,
                 NSBackingStoreBuffered,
                 NO,
@@ -405,30 +464,26 @@ impl Window {
 
             let screen = native_window.screen();
             match options.bounds {
+                WindowBounds::Fullscreen => {
+                    native_window.toggleFullScreen_(nil);
+                }
                 WindowBounds::Maximized => {
                     native_window.setFrame_display_(screen.visibleFrame(), YES);
                 }
-                WindowBounds::Fixed(top_left_bounds) => {
-                    let frame = screen.visibleFrame();
-                    let bottom_left_bounds = RectF::new(
-                        vec2f(
-                            top_left_bounds.origin_x(),
-                            frame.size.height as f32
-                                - top_left_bounds.origin_y()
-                                - top_left_bounds.height(),
-                        ),
-                        top_left_bounds.size(),
-                    )
-                    .to_ns_rect();
-                    native_window.setFrame_display_(
-                        native_window.convertRectToScreen_(bottom_left_bounds),
-                        YES,
-                    );
+                WindowBounds::Fixed(rect) => {
+                    let screen_frame = screen.visibleFrame();
+                    let ns_rect = rect.to_ns_rect();
+                    if ns_rect.intersects(screen_frame) {
+                        native_window.setFrame_display_(ns_rect, YES);
+                    } else {
+                        native_window.setFrame_display_(screen_frame, YES);
+                    }
                 }
             }
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
+
             assert!(!native_view.is_null());
 
             let window = Self(Rc::new(RefCell::new(WindowState {
@@ -441,6 +496,7 @@ impl Window {
                 close_callback: None,
                 activate_callback: None,
                 fullscreen_callback: None,
+                moved_callback: None,
                 appearance_changed_callback: None,
                 input_handler: None,
                 pending_key_down: None,
@@ -480,6 +536,7 @@ impl Window {
                 .map_or(true, |titlebar| titlebar.appears_transparent)
             {
                 native_window.setTitlebarAppearsTransparent_(YES);
+                native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
             }
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
@@ -576,32 +633,39 @@ impl Drop for Window {
 }
 
 impl platform::Window for Window {
+    fn bounds(&self) -> WindowBounds {
+        self.0.as_ref().borrow().bounds()
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.0.as_ref().borrow().content_size()
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.0.as_ref().borrow().scale_factor()
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        self.0.as_ref().borrow().titlebar_height()
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        unsafe {
+            let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
+            crate::Appearance::from_native(appearance)
+        }
+    }
+
+    fn screen(&self) -> Rc<dyn crate::Screen> {
+        unsafe {
+            Rc::new(Screen {
+                native_screen: self.0.as_ref().borrow().native_window.screen(),
+            })
+        }
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
-    }
-
-    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>) {
-        self.0.as_ref().borrow_mut().event_callback = Some(callback);
-    }
-
-    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().borrow_mut().resize_callback = Some(callback);
-    }
-
-    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().borrow_mut().fullscreen_callback = Some(callback);
-    }
-
-    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.as_ref().borrow_mut().should_close_callback = Some(callback);
-    }
-
-    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
-        self.0.as_ref().borrow_mut().close_callback = Some(callback);
-    }
-
-    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().borrow_mut().activate_callback = Some(callback);
     }
 
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>) {
@@ -671,7 +735,8 @@ impl platform::Window for Window {
             let app = NSApplication::sharedApplication(nil);
             let window = self.0.borrow().native_window;
             let title = ns_string(title);
-            msg_send![app, changeWindowsItem:window title:title filename:false]
+            let _: () = msg_send![app, changeWindowsItem:window title:title filename:false];
+            let _: () = msg_send![window, setTitle: title];
         }
     }
 
@@ -713,6 +778,10 @@ impl platform::Window for Window {
             .detach();
     }
 
+    fn present_scene(&mut self, scene: Scene) {
+        self.0.as_ref().borrow_mut().present_scene(scene);
+    }
+
     fn toggle_full_screen(&self) {
         let this = self.0.borrow();
         let window = this.native_window;
@@ -725,122 +794,63 @@ impl platform::Window for Window {
             .detach();
     }
 
-    fn bounds(&self) -> RectF {
-        self.0.as_ref().borrow().bounds()
+    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>) {
+        self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
 
-    fn content_size(&self) -> Vector2F {
-        self.0.as_ref().borrow().content_size()
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().activate_callback = Some(callback);
     }
 
-    fn scale_factor(&self) -> f32 {
-        self.0.as_ref().borrow().scale_factor()
+    fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
 
-    fn present_scene(&mut self, scene: Scene) {
-        self.0.as_ref().borrow_mut().present_scene(scene);
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().fullscreen_callback = Some(callback);
     }
 
-    fn titlebar_height(&self) -> f32 {
-        self.0.as_ref().borrow().titlebar_height()
+    fn on_moved(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().borrow_mut().moved_callback = Some(callback);
     }
 
-    fn appearance(&self) -> crate::Appearance {
-        unsafe {
-            let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
-            crate::Appearance::from_native(appearance)
-        }
+    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.as_ref().borrow_mut().should_close_callback = Some(callback);
+    }
+
+    fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
+        self.0.as_ref().borrow_mut().close_callback = Some(callback);
     }
 
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
-}
 
-impl WindowState {
-    fn move_traffic_light(&self) {
-        if let Some(traffic_light_position) = self.traffic_light_position {
-            let titlebar_height = self.titlebar_height();
+    fn is_topmost_for_position(&self, position: Vector2F) -> bool {
+        let self_borrow = self.0.borrow();
+        let self_id = self_borrow.id;
 
-            unsafe {
-                let close_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowCloseButton
-                ];
-                let min_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
-                ];
-                let zoom_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowZoomButton
-                ];
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
 
-                let mut close_button_frame: CGRect = msg_send![close_button, frame];
-                let mut min_button_frame: CGRect = msg_send![min_button, frame];
-                let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
-                let mut origin = vec2f(
-                    traffic_light_position.x(),
-                    titlebar_height
-                        - traffic_light_position.y()
-                        - close_button_frame.size.height as f32,
-                );
-                let button_spacing =
-                    (min_button_frame.origin.x - close_button_frame.origin.x) as f32;
+            // Convert back to screen coordinates
+            let screen_point = position.to_screen_ns_point(
+                self_borrow.native_window,
+                self_borrow.content_size().y() as f64,
+            );
 
-                close_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
-                let _: () = msg_send![close_button, setFrame: close_button_frame];
-                origin.set_x(origin.x() + button_spacing);
+            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
+            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
 
-                min_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
-                let _: () = msg_send![min_button, setFrame: min_button_frame];
-                origin.set_x(origin.x() + button_spacing);
-
-                zoom_button_frame.origin = CGPoint::new(origin.x() as f64, origin.y() as f64);
-                let _: () = msg_send![zoom_button, setFrame: zoom_button_frame];
+            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
+            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
+            if is_panel == YES || is_window == YES {
+                let topmost_window_id = get_window_state(&*top_most_window).borrow().id;
+                topmost_window_id == self_id
+            } else {
+                // Someone else's window is on top
+                false
             }
-        }
-    }
-
-    fn bounds(&self) -> RectF {
-        unsafe {
-            let screen_frame = self.native_window.screen().visibleFrame();
-            let window_frame = NSWindow::frame(self.native_window);
-            let origin = vec2f(
-                window_frame.origin.x as f32,
-                (window_frame.origin.y - screen_frame.size.height - window_frame.size.height)
-                    as f32,
-            );
-            let size = vec2f(
-                window_frame.size.width as f32,
-                window_frame.size.height as f32,
-            );
-            RectF::new(origin, size)
-        }
-    }
-
-    fn content_size(&self) -> Vector2F {
-        let NSSize { width, height, .. } =
-            unsafe { NSView::frame(self.native_window.contentView()) }.size;
-        vec2f(width as f32, height as f32)
-    }
-
-    fn scale_factor(&self) -> f32 {
-        get_scale_factor(self.native_window)
-    }
-
-    fn titlebar_height(&self) -> f32 {
-        unsafe {
-            let frame = NSWindow::frame(self.native_window);
-            let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
-            (frame.size.height - content_layout_rect.size.height) as f32
-        }
-    }
-
-    fn present_scene(&mut self, scene: Scene) {
-        self.scene_to_render = Some(scene);
-        unsafe {
-            let _: () = msg_send![self.native_window.contentView(), setNeedsDisplay: YES];
         }
     }
 }
@@ -1103,6 +1113,16 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
         drop(window_state_borrow);
         callback(is_fullscreen);
         window_state.borrow_mut().fullscreen_callback = Some(callback);
+    }
+}
+
+extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    if let Some(mut callback) = window_state_borrow.moved_callback.take() {
+        drop(window_state_borrow);
+        callback();
+        window_state.borrow_mut().moved_callback = Some(callback);
     }
 }
 
@@ -1466,10 +1486,6 @@ async fn synthetic_drag(
             }
         }
     }
-}
-
-unsafe fn ns_string(string: &str) -> id {
-    NSString::alloc(nil).init_str(string).autorelease()
 }
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>

@@ -77,14 +77,14 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Range, RangeInclusive},
+    ops::{Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt, RangeExt};
 use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
@@ -154,6 +154,12 @@ pub struct ConfirmCodeAction {
     pub item_ix: Option<usize>,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleComments {
+    #[serde(default)]
+    pub advance_downwards: bool,
+}
+
 actions!(
     editor,
     [
@@ -216,7 +222,6 @@ actions!(
         AddSelectionBelow,
         Tab,
         TabPrev,
-        ToggleComments,
         ShowCharacterPalette,
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
@@ -236,6 +241,7 @@ actions!(
         RestartLanguageServer,
         Hover,
         Format,
+        ToggleSoftWrap
     ]
 );
 
@@ -250,6 +256,7 @@ impl_actions!(
         MovePageDown,
         ConfirmCompletion,
         ConfirmCodeAction,
+        ToggleComments,
     ]
 );
 
@@ -346,6 +353,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::jump);
+    cx.add_action(Editor::toggle_soft_wrap);
     cx.add_async_action(Editor::format);
     cx.add_action(Editor::restart_language_server);
     cx.add_action(Editor::show_character_palette);
@@ -400,7 +408,7 @@ pub enum SelectMode {
     All,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
     SingleLine,
     AutoHeight { max_lines: usize },
@@ -810,7 +818,7 @@ impl CompletionsMenu {
             fuzzy::match_strings(
                 &self.match_candidates,
                 query,
-                false,
+                query.chars().any(|c| c.is_uppercase()),
                 100,
                 &Default::default(),
                 executor,
@@ -1732,11 +1740,13 @@ impl Editor {
     }
 
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        let text: Arc<str> = text.into();
+
         if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text });
             return;
         }
 
-        let text: Arc<str> = text.into();
         let selections = self.selections.all_adjusted(cx);
         let mut edits = Vec::new();
         let mut new_selections = Vec::with_capacity(selections.len());
@@ -1814,9 +1824,9 @@ impl Editor {
                             }
                         }
                     }
-                    // If an opening bracket is typed while text is selected, then
-                    // surround that text with the bracket pair.
-                    else if is_bracket_pair_start {
+                    // If an opening bracket is 1 character long and is typed while
+                    // text is selected, then surround that text with the bracket pair.
+                    else if is_bracket_pair_start && bracket_pair.start.chars().count() == 1 {
                         edits.push((selection.start..selection.start, text.clone()));
                         edits.push((
                             selection.end..selection.end,
@@ -3800,7 +3810,7 @@ impl Editor {
             }
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if self.mode == EditorMode::SingleLine {
             cx.propagate_action();
             return;
         }
@@ -4462,7 +4472,7 @@ impl Editor {
         }
     }
 
-    pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
+    pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
             let mut edits = Vec::new();
@@ -4681,6 +4691,34 @@ impl Editor {
 
             drop(snapshot);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+
+            let selections = this.selections.all::<Point>(cx);
+            let selections_on_single_row = selections.windows(2).all(|selections| {
+                selections[0].start.row == selections[1].start.row
+                    && selections[0].end.row == selections[1].end.row
+                    && selections[0].start.row == selections[0].end.row
+            });
+            let selections_selecting = selections
+                .iter()
+                .any(|selection| selection.start != selection.end);
+            let advance_downwards = action.advance_downwards
+                && selections_on_single_row
+                && !selections_selecting
+                && this.mode != EditorMode::SingleLine;
+
+            if advance_downwards {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+
+                this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_cursors_with(|display_snapshot, display_point, _| {
+                        let mut point = display_point.to_point(display_snapshot);
+                        point.row += 1;
+                        point = snapshot.clip_point(point, Bias::Left);
+                        let display_point = point.to_display_point(display_snapshot);
+                        (display_point, SelectionGoal::Column(display_point.column()))
+                    })
+                });
+            }
         });
     }
 
@@ -4750,27 +4788,52 @@ impl Editor {
         _: &MoveToEnclosingBracket,
         cx: &mut ViewContext<Self>,
     ) {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selections = self.selections.all::<usize>(cx);
-        for selection in &mut selections {
-            if let Some((open_range, close_range)) =
-                buffer.enclosing_bracket_ranges(selection.start..selection.end)
-            {
-                let close_range = close_range.to_inclusive();
-                let destination = if close_range.contains(&selection.start)
-                    && close_range.contains(&selection.end)
-                {
-                    open_range.end
-                } else {
-                    *close_range.start()
-                };
-                selection.start = destination;
-                selection.end = destination;
-            }
-        }
-
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.select(selections);
+            s.move_offsets_with(|snapshot, selection| {
+                let Some(enclosing_bracket_ranges) = snapshot.enclosing_bracket_ranges(selection.start..selection.end) else { return; };
+                
+                let mut best_length = usize::MAX;
+                let mut best_inside = false;
+                let mut best_in_bracket_range = false;
+                let mut best_destination = None;
+                for (open, close) in enclosing_bracket_ranges {
+                    let close = close.to_inclusive();
+                    let length = close.end() - open.start;
+                    let inside = selection.start >= open.end && selection.end <= *close.start();
+                    let in_bracket_range = open.to_inclusive().contains(&selection.head()) || close.contains(&selection.head());
+                    
+                    // If best is next to a bracket and current isn't, skip
+                    if !in_bracket_range && best_in_bracket_range {
+                        continue;
+                    }
+                    
+                    // Prefer smaller lengths unless best is inside and current isn't
+                    if length > best_length && (best_inside || !inside) {
+                        continue;
+                    }
+                    
+                    best_length = length;
+                    best_inside = inside;
+                    best_in_bracket_range = in_bracket_range;
+                    best_destination = Some(if close.contains(&selection.start) && close.contains(&selection.end) {
+                        if inside {
+                            open.end
+                        } else {
+                            open.start
+                        }
+                    } else {
+                        if inside {
+                            *close.start()
+                        } else {
+                            *close.end()
+                        }
+                    });
+                }
+                
+                if let Some(destination) = best_destination {
+                    selection.collapse_to(destination, SelectionGoal::None);
+                }
+            })
         });
     }
 
@@ -5042,7 +5105,7 @@ impl Editor {
 
                 pane.update(cx, |pane, _| pane.enable_history());
             });
-        } else {
+        } else if !definitions.is_empty() {
             let replica_id = editor_handle.read(cx).replica_id(cx);
             let title = definitions
                 .iter()
@@ -5810,6 +5873,19 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, cx: &mut ViewContext<Self>) {
+        if self.soft_wrap_mode_override.is_some() {
+            self.soft_wrap_mode_override.take();
+        } else {
+            let soft_wrap = match self.soft_wrap_mode(cx) {
+                SoftWrap::None => settings::SoftWrap::EditorWidth,
+                SoftWrap::EditorWidth | SoftWrap::Column(_) => settings::SoftWrap::None,
+            };
+            self.soft_wrap_mode_override = Some(soft_wrap);
+        }
+        cx.notify();
+    }
+
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
         self.highlighted_rows = rows;
     }
@@ -6187,6 +6263,9 @@ impl Deref for EditorSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    InputIgnored {
+        text: Arc<str>,
+    },
     ExcerptsAdded {
         buffer: ModelHandle<Buffer>,
         predecessor: ExcerptId,
@@ -6253,8 +6332,10 @@ impl View for Editor {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        let focused_event = EditorFocused(cx.handle());
-        cx.emit_global(focused_event);
+        if cx.is_self_focused() {
+            let focused_event = EditorFocused(cx.handle());
+            cx.emit_global(focused_event);
+        }
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
         } else {
@@ -6393,25 +6474,28 @@ impl View for Editor {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
+        self.transact(cx, |this, cx| {
+            if this.input_enabled {
+                let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                    let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                    Some(this.selection_replacement_ranges(range_utf16, cx))
+                } else {
+                    this.marked_text_ranges(cx)
+                };
+
+                if let Some(new_selected_ranges) = new_selected_ranges {
+                    this.change_selections(None, cx, |selections| {
+                        selections.select_ranges(new_selected_ranges)
+                    });
+                }
+            }
+
+            this.handle_input(text, cx);
+        });
+
         if !self.input_enabled {
             return;
         }
-
-        self.transact(cx, |this, cx| {
-            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else {
-                this.marked_text_ranges(cx)
-            };
-
-            if let Some(new_selected_ranges) = new_selected_ranges {
-                this.change_selections(None, cx, |selections| {
-                    selections.select_ranges(new_selected_ranges)
-                });
-            }
-            this.handle_input(text, cx);
-        });
 
         if let Some(transaction) = self.ime_transaction {
             self.buffer.update(cx, |buffer, cx| {
@@ -6907,21 +6991,6 @@ pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str
         None
     })
     .flat_map(|word| word.split_inclusive('_'))
-}
-
-trait RangeExt<T> {
-    fn sorted(&self) -> Range<T>;
-    fn to_inclusive(&self) -> RangeInclusive<T>;
-}
-
-impl<T: Ord + Clone> RangeExt<T> for Range<T> {
-    fn sorted(&self) -> Self {
-        cmp::min(&self.start, &self.end).clone()..cmp::max(&self.start, &self.end).clone()
-    }
-
-    fn to_inclusive(&self) -> RangeInclusive<T> {
-        self.start.clone()..=self.end.clone()
-    }
 }
 
 trait RangeToAnchorExt {

@@ -52,8 +52,8 @@ pub fn deploy_context_menu(
             AnchorCorner::TopLeft,
             vec![
                 ContextMenuItem::item("Rename Symbol", Rename),
-                ContextMenuItem::item("Go To Definition", GoToDefinition),
-                ContextMenuItem::item("Go To Type Definition", GoToTypeDefinition),
+                ContextMenuItem::item("Go to Definition", GoToDefinition),
+                ContextMenuItem::item("Go to Type Definition", GoToTypeDefinition),
                 ContextMenuItem::item("Find All References", FindAllReferences),
                 ContextMenuItem::item(
                     "Code Actions",

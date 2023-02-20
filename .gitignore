@@ -7,9 +7,8 @@
 /crates/collab/static/styles.css
 /vendor/bin
 /assets/themes/*.json
-/assets/themes/Internal/*.json
-/assets/themes/Experiments/*.json
-/assets/licenses.md
+/assets/*licenses.md
+/assets/themes/staff/*.json
 **/venv
 .build
 Packages

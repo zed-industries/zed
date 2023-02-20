@@ -1,6 +1,6 @@
 ## Description of feature or change
 
-## Link to related issues from zed or insiders
+## Link to related issues from zed or community
 
 ## Before Merging 
 

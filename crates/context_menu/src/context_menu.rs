@@ -63,6 +63,7 @@ pub struct ContextMenu {
     visible: bool,
     previously_focused_view_id: Option<usize>,
     clicked: bool,
+    parent_view_id: usize,
     _actions_observation: Subscription,
 }
 
@@ -114,6 +115,8 @@ impl View for ContextMenu {
 
 impl ContextMenu {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let parent_view_id = cx.parent().unwrap();
+
         Self {
             show_count: 0,
             anchor_position: Default::default(),
@@ -123,6 +126,7 @@ impl ContextMenu {
             visible: Default::default(),
             previously_focused_view_id: Default::default(),
             clicked: false,
+            parent_view_id,
             _actions_observation: cx.observe_actions(Self::action_dispatched),
         }
     }
@@ -251,6 +255,7 @@ impl ContextMenu {
     }
 
     fn render_menu_for_measurement(&self, cx: &mut RenderContext<Self>) -> impl Element {
+        let window_id = cx.window_id();
         let style = cx.global::<Settings>().theme.context_menu.clone();
         Flex::row()
             .with_child(
@@ -289,6 +294,8 @@ impl ContextMenu {
                                     Some(ix) == self.selected_index,
                                 );
                                 KeystrokeLabel::new(
+                                    window_id,
+                                    self.parent_view_id,
                                     action.boxed_clone(),
                                     style.keystroke.container,
                                     style.keystroke.text.clone(),
@@ -318,6 +325,7 @@ impl ContextMenu {
 
         let style = cx.global::<Settings>().theme.context_menu.clone();
 
+        let window_id = cx.window_id();
         MouseEventHandler::<Menu>::new(0, cx, |_, cx| {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
@@ -337,6 +345,8 @@ impl ContextMenu {
                                     )
                                     .with_child({
                                         KeystrokeLabel::new(
+                                            window_id,
+                                            self.parent_view_id,
                                             action.boxed_clone(),
                                             style.keystroke.container,
                                             style.keystroke.text.clone(),

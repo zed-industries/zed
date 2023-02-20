@@ -1,11 +1,15 @@
+pub mod deploy_feedback_button;
+pub mod feedback_editor;
+pub mod feedback_info_text;
+pub mod submit_feedback_button;
+
 use std::sync::Arc;
 
-pub mod feedback_editor;
 mod system_specs;
-use gpui::{actions, impl_actions, ClipboardItem, ViewContext};
+use gpui::{actions, impl_actions, ClipboardItem, MutableAppContext, PromptLevel, ViewContext};
 use serde::Deserialize;
 use system_specs::SystemSpecs;
-use workspace::Workspace;
+use workspace::{AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -16,30 +20,39 @@ impl_actions!(zed, [OpenBrowser]);
 
 actions!(
     zed,
-    [CopySystemSpecsIntoClipboard, FileBugReport, RequestFeature,]
+    [CopySystemSpecsIntoClipboard, FileBugReport, RequestFeature]
 );
 
-pub fn init(cx: &mut gpui::MutableAppContext) {
-    feedback_editor::init(cx);
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+    let system_specs = SystemSpecs::new(&cx);
+    let system_specs_text = system_specs.to_string();
+
+    feedback_editor::init(system_specs, app_state, cx);
 
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
 
+    let url = format!(
+        "https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
+        urlencoding::encode(&system_specs_text)
+    );
+
     cx.add_action(
-        |_: &mut Workspace, _: &CopySystemSpecsIntoClipboard, cx: &mut ViewContext<Workspace>| {
-            let system_specs = SystemSpecs::new(cx).to_string();
-            let item = ClipboardItem::new(system_specs.clone());
+        move |_: &mut Workspace,
+              _: &CopySystemSpecsIntoClipboard,
+              cx: &mut ViewContext<Workspace>| {
             cx.prompt(
-                gpui::PromptLevel::Info,
-                &format!("Copied into clipboard:\n\n{system_specs}"),
+                PromptLevel::Info,
+                &format!("Copied into clipboard:\n\n{system_specs_text}"),
                 &["OK"],
             );
+            let item = ClipboardItem::new(system_specs_text.clone());
             cx.write_to_clipboard(item);
         },
     );
 
     cx.add_action(
         |_: &mut Workspace, _: &RequestFeature, cx: &mut ViewContext<Workspace>| {
-            let url = "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
+            let url = "https://github.com/zed-industries/community/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
             cx.dispatch_action(OpenBrowser {
                 url: url.into(),
             });
@@ -47,14 +60,9 @@ pub fn init(cx: &mut gpui::MutableAppContext) {
     );
 
     cx.add_action(
-        |_: &mut Workspace, _: &FileBugReport, cx: &mut ViewContext<Workspace>| {
-            let system_specs_text = SystemSpecs::new(cx).to_string();
-            let url = format!(
-                "https://github.com/zed-industries/feedback/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
-                urlencoding::encode(&system_specs_text)
-            );
+        move |_: &mut Workspace, _: &FileBugReport, cx: &mut ViewContext<Workspace>| {
             cx.dispatch_action(OpenBrowser {
-                url: url.into(),
+                url: url.clone().into(),
             });
         },
     );

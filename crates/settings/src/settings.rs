@@ -15,7 +15,7 @@ use schemars::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use sqlez::{
-    bindable::{Bind, Column},
+    bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
@@ -27,7 +27,6 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 
 #[derive(Clone)]
 pub struct Settings {
-    pub experiments: FeatureFlags,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
@@ -36,6 +35,7 @@ pub struct Settings {
     pub confirm_quit: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
+    pub show_call_status_icon: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
     pub default_dock_anchor: DockAnchor,
@@ -53,7 +53,7 @@ pub struct Settings {
     pub theme: Arc<Theme>,
     pub telemetry_defaults: TelemetrySettings,
     pub telemetry_overrides: TelemetrySettings,
-    pub staff_mode: bool,
+    pub auto_update: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -68,17 +68,6 @@ impl TelemetrySettings {
     }
     pub fn diagnostics(&self) -> bool {
         self.diagnostics.unwrap()
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct FeatureFlags {
-    pub experimental_themes: bool,
-}
-
-impl FeatureFlags {
-    pub fn keymap_files(&self) -> Vec<&'static str> {
-        vec![]
     }
 }
 
@@ -253,6 +242,7 @@ pub enum DockAnchor {
     Expanded,
 }
 
+impl StaticColumnCount for DockAnchor {}
 impl Bind for DockAnchor {
     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
         match self {
@@ -282,7 +272,6 @@ impl Column for DockAnchor {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
-    pub experiments: Option<FeatureFlags>,
     #[serde(default)]
     pub projects_online_by_default: Option<bool>,
     #[serde(default)]
@@ -299,6 +288,8 @@ pub struct SettingsFileContent {
     pub hover_popover_enabled: Option<bool>,
     #[serde(default)]
     pub show_completions_on_input: Option<bool>,
+    #[serde(default)]
+    pub show_call_status_icon: Option<bool>,
     #[serde(default)]
     pub vim_mode: Option<bool>,
     #[serde(default)]
@@ -323,7 +314,7 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub telemetry: TelemetrySettings,
     #[serde(default)]
-    pub staff_mode: Option<bool>,
+    pub auto_update: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -351,7 +342,6 @@ impl Settings {
         .unwrap();
 
         Self {
-            experiments: FeatureFlags::default(),
             buffer_font_family: font_cache
                 .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
                 .unwrap(),
@@ -362,6 +352,7 @@ impl Settings {
             cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
+            show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
@@ -387,7 +378,7 @@ impl Settings {
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
             telemetry_defaults: defaults.telemetry,
             telemetry_overrides: Default::default(),
-            staff_mode: false,
+            auto_update: defaults.auto_update.unwrap(),
         }
     }
 
@@ -424,8 +415,6 @@ impl Settings {
         );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
-        merge(&mut self.experiments, data.experiments);
-        merge(&mut self.staff_mode, data.staff_mode);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
 
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
@@ -442,6 +431,7 @@ impl Settings {
         self.language_overrides = data.languages;
         self.telemetry_overrides = data.telemetry;
         self.lsp = data.lsp;
+        merge(&mut self.auto_update, data.auto_update);
     }
 
     pub fn with_language_defaults(
@@ -551,7 +541,6 @@ impl Settings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
-            experiments: FeatureFlags::default(),
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
@@ -560,6 +549,7 @@ impl Settings {
             cursor_blink: true,
             hover_popover_enabled: true,
             show_completions_on_input: true,
+            show_call_status_icon: true,
             vim_mode: false,
             autosave: Autosave::Off,
             default_dock_anchor: DockAnchor::Bottom,
@@ -588,7 +578,7 @@ impl Settings {
                 metrics: Some(true),
             },
             telemetry_overrides: Default::default(),
-            staff_mode: false,
+            auto_update: true,
         }
     }
 
@@ -646,8 +636,6 @@ pub fn settings_file_json_schema(
     ]);
     let root_schema_object = &mut root_schema.schema.object.as_mut().unwrap();
 
-    // Avoid automcomplete for non-user facing settings
-    root_schema_object.properties.remove("staff_mode");
     root_schema_object.properties.extend([
         (
             "theme".to_owned(),

@@ -1,13 +1,8 @@
 import chroma from "chroma-js";
+import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "One Dark";
-const author = "simurai";
-const url = "https://github.com/atom/atom/tree/master/packages/one-dark-ui";
-const license = {
-  type: "MIT",
-  url: "https://github.com/atom/atom/blob/master/packages/one-dark-ui/LICENSE.md",
-};
 
 export const dark = createColorScheme(`${name}`, false, {
   neutral: chroma
@@ -32,3 +27,14 @@ export const dark = createColorScheme(`${name}`, false, {
   violet: colorRamp(chroma("#c678dd")),
   magenta: colorRamp(chroma("#be5046")),
 });
+
+export const meta: Meta = {
+  name,
+  author: "simurai",
+  license: {
+    SPDX: "MIT",
+    https_url: "https://raw.githubusercontent.com/atom/atom/master/packages/one-light-ui/LICENSE.md",
+    license_checksum: "d5af8fc171f6f600c0ab4e7597dca398dda80dbe6821ce01cef78e859e7a00f8"
+  },
+  url: "https://github.com/atom/atom/tree/master/packages/one-dark-ui"
+}

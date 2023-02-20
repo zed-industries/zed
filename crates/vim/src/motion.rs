@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement, Bias, CharKind, DisplayPoint,
+    movement, Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, MutableAppContext};
 use language::{Point, Selection, SelectionGoal};
@@ -15,7 +17,7 @@ use crate::{
     Vim,
 };
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Motion {
     Left,
     Backspace,
@@ -32,8 +34,8 @@ pub enum Motion {
     StartOfDocument,
     EndOfDocument,
     Matching,
-    FindForward { before: bool, character: char },
-    FindBackward { after: bool, character: char },
+    FindForward { before: bool, text: Arc<str> },
+    FindBackward { after: bool, text: Arc<str> },
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -134,7 +136,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut MutableAppContext) {
 // Motion handling is specified here:
 // https://github.com/vim/vim/blob/master/runtime/doc/motion.txt
 impl Motion {
-    pub fn linewise(self) -> bool {
+    pub fn linewise(&self) -> bool {
         use Motion::*;
         matches!(
             self,
@@ -142,12 +144,12 @@ impl Motion {
         )
     }
 
-    pub fn infallible(self) -> bool {
+    pub fn infallible(&self) -> bool {
         use Motion::*;
         matches!(self, StartOfDocument | CurrentLine | EndOfDocument)
     }
 
-    pub fn inclusive(self) -> bool {
+    pub fn inclusive(&self) -> bool {
         use Motion::*;
         match self {
             Down
@@ -171,13 +173,14 @@ impl Motion {
     }
 
     pub fn move_point(
-        self,
+        &self,
         map: &DisplaySnapshot,
         point: DisplayPoint,
         goal: SelectionGoal,
         times: usize,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         use Motion::*;
+        let infallible = self.infallible();
         let (new_point, goal) = match self {
             Left => (left(map, point, times), SelectionGoal::None),
             Backspace => (backspace(map, point, times), SelectionGoal::None),
@@ -185,15 +188,15 @@ impl Motion {
             Up => up(map, point, goal, times),
             Right => (right(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
-                next_word_start(map, point, ignore_punctuation, times),
+                next_word_start(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
             ),
             NextWordEnd { ignore_punctuation } => (
-                next_word_end(map, point, ignore_punctuation, times),
+                next_word_end(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
             ),
             PreviousWordStart { ignore_punctuation } => (
-                previous_word_start(map, point, ignore_punctuation, times),
+                previous_word_start(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
             ),
             FirstNonWhitespace => (first_non_whitespace(map, point), SelectionGoal::None),
@@ -203,22 +206,22 @@ impl Motion {
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (end_of_document(map, point, times), SelectionGoal::None),
             Matching => (matching(map, point), SelectionGoal::None),
-            FindForward { before, character } => (
-                find_forward(map, point, before, character, times),
+            FindForward { before, text } => (
+                find_forward(map, point, *before, text.clone(), times),
                 SelectionGoal::None,
             ),
-            FindBackward { after, character } => (
-                find_backward(map, point, after, character, times),
+            FindBackward { after, text } => (
+                find_backward(map, point, *after, text.clone(), times),
                 SelectionGoal::None,
             ),
         };
 
-        (new_point != point || self.infallible()).then_some((new_point, goal))
+        (new_point != point || infallible).then_some((new_point, goal))
     }
 
     // Expands a selection using self motion for an operator
     pub fn expand_selection(
-        self,
+        &self,
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         times: usize,
@@ -254,7 +257,7 @@ impl Motion {
                 // but "d}" will not include that line.
                 let mut inclusive = self.inclusive();
                 if !inclusive
-                    && self != Motion::Backspace
+                    && self != &Motion::Backspace
                     && selection.end.row() > selection.start.row()
                     && selection.end.column() == 0
                 {
@@ -447,18 +450,53 @@ fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> D
     map.clip_point(new_point, Bias::Left)
 }
 
-fn matching(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    let offset = point.to_offset(map, Bias::Left);
-    if let Some((open_range, close_range)) =
-        map.buffer_snapshot.enclosing_bracket_ranges(offset..offset)
-    {
-        if open_range.contains(&offset) {
-            close_range.start.to_display_point(map)
-        } else {
-            open_range.start.to_display_point(map)
+fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
+    let point = display_point.to_point(map);
+    let offset = point.to_offset(&map.buffer_snapshot);
+
+    // Ensure the range is contained by the current line.
+    let mut line_end = map.next_line_boundary(point).0;
+    if line_end == point {
+        line_end = map.max_point().to_point(map);
+    }
+    line_end.column = line_end.column.saturating_sub(1);
+
+    let line_range = map.prev_line_boundary(point).0..line_end;
+    let ranges = map.buffer_snapshot.bracket_ranges(line_range.clone());
+    if let Some(ranges) = ranges {
+        let line_range = line_range.start.to_offset(&map.buffer_snapshot)
+            ..line_range.end.to_offset(&map.buffer_snapshot);
+        let mut closest_pair_destination = None;
+        let mut closest_distance = usize::MAX;
+
+        for (open_range, close_range) in ranges {
+            if open_range.start >= offset && line_range.contains(&open_range.start) {
+                let distance = open_range.start - offset;
+                if distance < closest_distance {
+                    closest_pair_destination = Some(close_range.start);
+                    closest_distance = distance;
+                    continue;
+                }
+            }
+
+            if close_range.start >= offset && line_range.contains(&close_range.start) {
+                let distance = close_range.start - offset;
+                if distance < closest_distance {
+                    closest_pair_destination = Some(open_range.start);
+                    closest_distance = distance;
+                    continue;
+                }
+            }
+
+            continue;
         }
+
+        closest_pair_destination
+            .map(|destination| destination.to_display_point(map))
+            .unwrap_or(display_point)
     } else {
-        point
+        display_point
     }
 }
 
@@ -466,45 +504,42 @@ fn find_forward(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     before: bool,
-    target: char,
-    mut times: usize,
+    target: Arc<str>,
+    times: usize,
 ) -> DisplayPoint {
-    let mut previous_point = from;
-
-    for (ch, point) in map.chars_at(from) {
-        if ch == target && point != from {
-            times -= 1;
-            if times == 0 {
-                return if before { previous_point } else { point };
+    map.find_while(from, target.as_ref(), |ch, _| ch != '\n')
+        .skip_while(|found_at| found_at == &from)
+        .nth(times - 1)
+        .map(|mut found| {
+            if before {
+                *found.column_mut() -= 1;
+                found = map.clip_point(found, Bias::Right);
+                found
+            } else {
+                found
             }
-        } else if ch == '\n' {
-            break;
-        }
-        previous_point = point;
-    }
-
-    from
+        })
+        .unwrap_or(from)
 }
 
 fn find_backward(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     after: bool,
-    target: char,
-    mut times: usize,
+    target: Arc<str>,
+    times: usize,
 ) -> DisplayPoint {
-    let mut previous_point = from;
-    for (ch, point) in map.reverse_chars_at(from) {
-        if ch == target && point != from {
-            times -= 1;
-            if times == 0 {
-                return if after { previous_point } else { point };
+    map.reverse_find_while(from, target.as_ref(), |ch, _| ch != '\n')
+        .skip_while(|found_at| found_at == &from)
+        .nth(times - 1)
+        .map(|mut found| {
+            if after {
+                *found.column_mut() += 1;
+                found = map.clip_point(found, Bias::Left);
+                found
+            } else {
+                found
             }
-        } else if ch == '\n' {
-            break;
-        }
-        previous_point = point;
-    }
-
-    from
+        })
+        .unwrap_or(from)
 }

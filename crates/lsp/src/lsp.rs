@@ -1,3 +1,4 @@
+use log::warn;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
@@ -64,6 +65,7 @@ struct Request<'a, T> {
 
 #[derive(Serialize, Deserialize)]
 struct AnyResponse<'a> {
+    jsonrpc: &'a str,
     id: usize,
     #[serde(default)]
     error: Option<Error>,
@@ -203,8 +205,9 @@ impl LanguageServer {
                         } else {
                             on_unhandled_notification(msg);
                         }
-                    } else if let Ok(AnyResponse { id, error, result }) =
-                        serde_json::from_slice(&buffer)
+                    } else if let Ok(AnyResponse {
+                        id, error, result, ..
+                    }) = serde_json::from_slice(&buffer)
                     {
                         if let Some(handler) = response_handlers
                             .lock()
@@ -220,10 +223,10 @@ impl LanguageServer {
                             }
                         }
                     } else {
-                        return Err(anyhow!(
-                            "failed to deserialize message:\n{}",
+                        warn!(
+                            "Failed to deserialize message:\n{}",
                             std::str::from_utf8(&buffer)?
-                        ));
+                        );
                     }
 
                     // Don't starve the main thread when receiving lots of messages at once.
@@ -460,35 +463,57 @@ impl LanguageServer {
             method,
             Box::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    if let Some(params) = serde_json::from_str(params).log_err() {
-                        let response = f(params, cx.clone());
-                        cx.foreground()
-                            .spawn({
-                                let outbound_tx = outbound_tx.clone();
-                                async move {
-                                    let response = match response.await {
-                                        Ok(result) => Response {
-                                            jsonrpc: JSON_RPC_VERSION,
-                                            id,
-                                            result: Some(result),
-                                            error: None,
-                                        },
-                                        Err(error) => Response {
-                                            jsonrpc: JSON_RPC_VERSION,
-                                            id,
-                                            result: None,
-                                            error: Some(Error {
-                                                message: error.to_string(),
-                                            }),
-                                        },
-                                    };
-                                    if let Some(response) = serde_json::to_vec(&response).log_err()
-                                    {
-                                        outbound_tx.try_send(response).ok();
+                    match serde_json::from_str(params) {
+                        Ok(params) => {
+                            let response = f(params, cx.clone());
+                            cx.foreground()
+                                .spawn({
+                                    let outbound_tx = outbound_tx.clone();
+                                    async move {
+                                        let response = match response.await {
+                                            Ok(result) => Response {
+                                                jsonrpc: JSON_RPC_VERSION,
+                                                id,
+                                                result: Some(result),
+                                                error: None,
+                                            },
+                                            Err(error) => Response {
+                                                jsonrpc: JSON_RPC_VERSION,
+                                                id,
+                                                result: None,
+                                                error: Some(Error {
+                                                    message: error.to_string(),
+                                                }),
+                                            },
+                                        };
+                                        if let Some(response) =
+                                            serde_json::to_vec(&response).log_err()
+                                        {
+                                            outbound_tx.try_send(response).ok();
+                                        }
                                     }
-                                }
-                            })
-                            .detach();
+                                })
+                                .detach();
+                        }
+                        Err(error) => {
+                            log::error!(
+                                "error deserializing {} request: {:?}, message: {:?}",
+                                method,
+                                error,
+                                params
+                            );
+                            let response = AnyResponse {
+                                jsonrpc: JSON_RPC_VERSION,
+                                id,
+                                result: None,
+                                error: Some(Error {
+                                    message: error.to_string(),
+                                }),
+                            };
+                            if let Some(response) = serde_json::to_vec(&response).log_err() {
+                                outbound_tx.try_send(response).ok();
+                            }
+                        }
                     }
                 }
             }),

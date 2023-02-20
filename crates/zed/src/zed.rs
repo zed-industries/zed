@@ -11,6 +11,9 @@ use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
+use feedback::{
+    feedback_info_text::FeedbackInfoText, submit_feedback_button::SubmitFeedbackButton,
+};
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -20,7 +23,7 @@ use gpui::{
     },
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 use lazy_static::lazy_static;
@@ -32,9 +35,10 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{borrow::Cow, env, path::Path, str, sync::Arc};
-use util::{channel::ReleaseChannel, paths, ResultExt};
+use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
+use uuid::Uuid;
 pub use workspace;
-use workspace::{sidebar::SidebarSide, AppState, Workspace};
+use workspace::{sidebar::SidebarSide, AppState, Restart, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -126,6 +130,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
     cx.add_global_action(quit);
+    cx.add_global_action(restart);
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
         cx.update_global::<Settings, _, _>(|settings, cx| {
@@ -234,7 +239,11 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
             let content = to_string_pretty(&cx.debug_elements()).unwrap();
             let project = workspace.project().clone();
-            let json_language = project.read(cx).languages().get_language("JSON").unwrap();
+            let json_language = project
+                .read(cx)
+                .languages()
+                .language_for_name("JSON")
+                .unwrap();
             if project.read(cx).is_remote() {
                 cx.propagate_action();
             } else if let Some(buffer) = project
@@ -282,6 +291,10 @@ pub fn initialize_workspace(
                         toolbar.add_item(buffer_search_bar, cx);
                         let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                         toolbar.add_item(project_search_bar, cx);
+                        let submit_feedback_button = cx.add_view(|_| SubmitFeedbackButton::new());
+                        toolbar.add_item(submit_feedback_button, cx);
+                        let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
+                        toolbar.add_item(feedback_info_text, cx);
                     })
                 });
             }
@@ -292,17 +305,12 @@ pub fn initialize_workspace(
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
     cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
 
-    let settings = cx.global::<Settings>();
-
     let theme_names = app_state
         .themes
-        .list(
-            settings.staff_mode,
-            settings.experiments.experimental_themes,
-        )
+        .list(**cx.default_global::<StaffMode>())
         .map(|meta| meta.name)
         .collect();
-    let language_names = &languages::LANGUAGE_NAMES;
+    let language_names = app_state.languages.language_names();
 
     workspace.project().update(cx, |project, cx| {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
@@ -314,7 +322,7 @@ pub fn initialize_workspace(
                 "schemas": [
                     {
                         "fileMatch": [schema_file_match(&paths::SETTINGS)],
-                        "schema": settings_file_json_schema(theme_names, language_names),
+                        "schema": settings_file_json_schema(theme_names, &language_names),
                     },
                     {
                         "fileMatch": [schema_file_match(&paths::KEYMAP)],
@@ -344,7 +352,8 @@ pub fn initialize_workspace(
     let activity_indicator =
         activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    let feedback_button = cx.add_view(|_| feedback::feedback_editor::FeedbackButton {});
+    let feedback_button =
+        cx.add_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton {});
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
@@ -355,7 +364,7 @@ pub fn initialize_workspace(
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 
     let window_id = cx.window_id();
-    vim::observe_keypresses(window_id, cx);
+    vim::observe_keystrokes(window_id, cx);
 
     cx.on_window_should_close(|workspace, cx| {
         if let Some(task) = workspace.close(&Default::default(), cx) {
@@ -365,14 +374,22 @@ pub fn initialize_workspace(
     });
 }
 
-pub fn build_window_options() -> WindowOptions<'static> {
-    let bounds = if let Some((position, size)) = ZED_WINDOW_POSITION.zip(*ZED_WINDOW_SIZE) {
-        WindowBounds::Fixed(RectF::new(position, size))
-    } else {
-        WindowBounds::Maximized
-    };
+pub fn build_window_options(
+    bounds: Option<WindowBounds>,
+    display: Option<Uuid>,
+    platform: &dyn Platform,
+) -> WindowOptions<'static> {
+    let bounds = bounds
+        .or_else(|| {
+            ZED_WINDOW_POSITION
+                .zip(*ZED_WINDOW_SIZE)
+                .map(|(position, size)| WindowBounds::Fixed(RectF::new(position, size)))
+        })
+        .unwrap_or(WindowBounds::Maximized);
+
+    let screen = display.and_then(|display| platform.screen_by_id(display));
+
     WindowOptions {
-        bounds,
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
@@ -382,8 +399,13 @@ pub fn build_window_options() -> WindowOptions<'static> {
         focus: true,
         kind: WindowKind::Normal,
         is_movable: true,
-        screen: None,
+        bounds,
+        screen,
     }
+}
+
+fn restart(_: &Restart, cx: &mut gpui::MutableAppContext) {
+    cx.platform().restart();
 }
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
@@ -597,13 +619,13 @@ fn open_telemetry_log_file(
                     .update(cx, |project, cx| project.create_buffer("", None, cx))
                     .expect("creating buffers on a local workspace always succeeds");
                 buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(app_state.languages.get_language("JSON"), cx);
+                    buffer.set_language(app_state.languages.language_for_name("JSON"), cx);
                     buffer.edit(
                         [(
                             0..0,
                             concat!(
                                 "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
-                                "// After the beta release, we'll provide the ability to opt out of this telemetry.\n",
+                                "// Telemetry can be disabled via the `settings.json` file.\n",
                                 "// Here is the data that has been reported for the current session:\n",
                                 "\n"
                             ),
@@ -646,7 +668,7 @@ fn open_bundled_file(
                     .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
                 let text = str::from_utf8(text.as_ref()).unwrap();
                 project
-                    .create_buffer(text, project.languages().get_language(language), cx)
+                    .create_buffer(text, project.languages().language_for_name(language), cx)
                     .expect("creating buffers on a local workspace always succeeds")
             });
             let buffer =
@@ -1854,7 +1876,7 @@ mod tests {
         let settings = Settings::defaults(Assets, cx.font_cache(), &themes);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list(false, false).map(|meta| meta.name) {
+        for theme_name in themes.list(false).map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             if theme.meta.name == settings.theme.meta.name {
                 has_default_theme = true;

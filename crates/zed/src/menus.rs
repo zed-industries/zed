@@ -81,7 +81,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Action {
                     name: "Open Recent...",
-                    action: Box::new(recent_projects::Toggle),
+                    action: Box::new(recent_projects::OpenRecent),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
@@ -146,7 +146,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Toggle Line Comment",
-                    action: Box::new(editor::ToggleComments),
+                    action: Box::new(editor::ToggleComments::default()),
                 },
                 MenuItem::Action {
                     name: "Emoji & Symbols",
@@ -219,10 +219,6 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "Toggle Left Sidebar",
                     action: Box::new(workspace::ToggleLeftSidebar),
                 },
-                MenuItem::Action {
-                    name: "Toggle Right Sidebar",
-                    action: Box::new(workspace::ToggleRightSidebar),
-                },
                 MenuItem::Submenu(Menu {
                     name: "Editor Layout",
                     items: vec![
@@ -293,7 +289,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(editor::GoToTypeDefinition),
                 },
                 MenuItem::Action {
-                    name: "Go to References",
+                    name: "Find All References",
                     action: Box::new(editor::FindAllReferences),
                 },
                 MenuItem::Action {
@@ -336,6 +332,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::Action {
                     name: "View Telemetry Log",
                     action: Box::new(crate::OpenTelemetryLog),
+                },
+                MenuItem::Action {
+                    name: "View Dependency Licenses",
+                    action: Box::new(crate::OpenLicenses),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {

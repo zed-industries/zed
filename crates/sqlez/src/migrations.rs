@@ -4,12 +4,36 @@
 // to creating a new db?)
 // Otherwise any missing migrations are run on the connection
 
-use anyhow::{anyhow, Result};
+use std::ffi::CString;
+
+use anyhow::{anyhow, Context, Result};
 use indoc::{formatdoc, indoc};
+use libsqlite3_sys::sqlite3_exec;
 
 use crate::connection::Connection;
 
 impl Connection {
+    fn eager_exec(&self, sql: &str) -> anyhow::Result<()> {
+        let sql_str = CString::new(sql).context("Error creating cstr")?;
+        unsafe {
+            sqlite3_exec(
+                self.sqlite3,
+                sql_str.as_c_str().as_ptr(),
+                None,
+                0 as *mut _,
+                0 as *mut _,
+            );
+        }
+        self.last_error()
+            .with_context(|| format!("Prepare call failed for query:\n{}", sql))?;
+
+        Ok(())
+    }
+
+    /// Migrate the database, for the given domain.
+    /// Note: Unlike everything else in SQLez, migrations are run eagerly, without first
+    /// preparing the SQL statements. This makes it possible to do multi-statement schema
+    /// updates in a single string without running into prepare errors.
     pub fn migrate(&self, domain: &'static str, migrations: &[&'static str]) -> Result<()> {
         self.with_savepoint("migrating", || {
             // Setup the migrations table unconditionally
@@ -47,7 +71,7 @@ impl Connection {
                     }
                 }
 
-                self.exec(migration)?()?;
+                self.eager_exec(migration)?;
                 store_completed_migration((domain, index, *migration))?;
             }
 
@@ -256,5 +280,39 @@ mod test {
 
         // Verify new migration returns error when run
         assert!(second_migration_result.is_err())
+    }
+
+    #[test]
+    fn test_create_alter_drop() {
+        let connection = Connection::open_memory(Some("test_create_alter_drop"));
+
+        connection
+            .migrate("first_migration", &["CREATE TABLE table1(a TEXT) STRICT;"])
+            .unwrap();
+
+        connection
+            .exec("INSERT INTO table1(a) VALUES (\"test text\");")
+            .unwrap()()
+        .unwrap();
+
+        connection
+            .migrate(
+                "second_migration",
+                &[indoc! {"
+                    CREATE TABLE table2(b TEXT) STRICT;
+
+                    INSERT INTO table2 (b)
+                    SELECT a FROM table1;
+
+                    DROP TABLE table1;
+
+                    ALTER TABLE table2 RENAME TO table1;
+                "}],
+            )
+            .unwrap();
+
+        let res = &connection.select::<String>("SELECT b FROM table1").unwrap()().unwrap()[0];
+
+        assert_eq!(res, "test text");
     }
 }

@@ -2,28 +2,22 @@ mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
 use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
+use client::{ZED_APP_PATH, ZED_APP_VERSION};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, WeakViewHandle,
 };
-use lazy_static::lazy_static;
 use serde::Deserialize;
+use settings::Settings;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
-use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
+use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
 use util::channel::ReleaseChannel;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
-
-lazy_static! {
-    pub static ref ZED_APP_VERSION: Option<AppVersion> = env::var("ZED_APP_VERSION")
-        .ok()
-        .and_then(|v| v.parse().ok());
-    pub static ref ZED_APP_PATH: Option<PathBuf> = env::var("ZED_APP_PATH").ok().map(PathBuf::from);
-}
 
 actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes]);
 
@@ -60,7 +54,23 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut Mutab
         let server_url = server_url;
         let auto_updater = cx.add_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url.clone());
-            updater.start_polling(cx).detach();
+
+            let mut update_subscription = cx
+                .global::<Settings>()
+                .auto_update
+                .then(|| updater.start_polling(cx));
+
+            cx.observe_global::<Settings, _>(move |updater, cx| {
+                if cx.global::<Settings>().auto_update {
+                    if update_subscription.is_none() {
+                        *(&mut update_subscription) = Some(updater.start_polling(cx))
+                    }
+                } else {
+                    (&mut update_subscription).take();
+                }
+            })
+            .detach();
+
             updater
         });
         cx.set_global(Some(auto_updater));

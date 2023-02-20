@@ -3452,12 +3452,20 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![BracketPair {
-                start: "{".to_string(),
-                end: "}".to_string(),
-                close: true,
-                newline: true,
-            }],
+            brackets: vec![
+                BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                },
+                BracketPair {
+                    start: "/* ".to_string(),
+                    end: "*/".to_string(),
+                    close: true,
+                    ..Default::default()
+                },
+            ],
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -3524,6 +3532,67 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+            ]
+        );
+
+        // Ensure inserting the first character of a multi-byte bracket pair
+        // doesn't surround the selections with the bracket.
+        view.handle_input("/", cx);
+        assert_eq!(
+            view.text(cx),
+            "
+                /
+                /
+                /
+            "
+            .unindent()
+        );
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [
+                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1)
+            ]
+        );
+
+        view.undo(&Undo, cx);
+        assert_eq!(
+            view.text(cx),
+            "
+                a
+                b
+                c
+            "
+            .unindent()
+        );
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+            ]
+        );
+
+        // Ensure inserting the last character of a multi-byte bracket pair
+        // doesn't surround the selections with the bracket.
+        view.handle_input("*", cx);
+        assert_eq!(
+            view.text(cx),
+            "
+                *
+                *
+                *
+            "
+            .unindent()
+        );
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [
+                DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1)
             ]
         );
     });
@@ -4382,7 +4451,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
                 DisplayPoint::new(3, 5)..DisplayPoint::new(3, 6),
             ])
         });
-        editor.toggle_comments(&ToggleComments, cx);
+        editor.toggle_comments(&ToggleComments::default(), cx);
         assert_eq!(
             editor.text(cx),
             "
@@ -4400,7 +4469,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_display_ranges([DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)])
         });
-        editor.toggle_comments(&ToggleComments, cx);
+        editor.toggle_comments(&ToggleComments::default(), cx);
         assert_eq!(
             editor.text(cx),
             "
@@ -4417,7 +4486,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)])
         });
-        editor.toggle_comments(&ToggleComments, cx);
+        editor.toggle_comments(&ToggleComments::default(), cx);
         assert_eq!(
             editor.text(cx),
             "
@@ -4430,6 +4499,139 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             .unindent()
         );
     });
+}
+
+#[gpui::test]
+async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+    cx.update(|cx| cx.set_global(Settings::test(cx)));
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comment: Some("// ".into()),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ));
+
+    let registry = Arc::new(LanguageRegistry::test());
+    registry.add(language.clone());
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(registry);
+        buffer.set_language(Some(language), cx);
+    });
+
+    let toggle_comments = &ToggleComments {
+        advance_downwards: true,
+    };
+
+    // Single cursor on one line -> advance
+    // Cursor moves horizontally 3 characters as well on non-blank line
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdog();
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+             catˇ();
+        }"
+    ));
+
+    // Single selection on one line -> don't advance
+    cx.set_state(indoc!(
+        "fn a() {
+             «dog()ˇ»;
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // «dog()ˇ»;
+             cat();
+        }"
+    ));
+
+    // Multiple cursors on one line -> advance
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdˇog();
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+             catˇ(ˇ);
+        }"
+    ));
+
+    // Multiple cursors on one line, with selection -> don't advance
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdˇog«()ˇ»;
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // ˇdˇog«()ˇ»;
+             cat();
+        }"
+    ));
+
+    // Single cursor on one line -> advance
+    // Cursor moves to column 0 on blank line
+    cx.set_state(indoc!(
+        "fn a() {
+             ˇdog();
+
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+        ˇ
+             cat();
+        }"
+    ));
+
+    // Single cursor on one line -> advance
+    // Cursor starts and ends at column 0
+    cx.set_state(indoc!(
+        "fn a() {
+         ˇ    dog();
+             cat();
+        }"
+    ));
+    cx.update_editor(|editor, cx| {
+        editor.toggle_comments(toggle_comments, cx);
+    });
+    cx.assert_editor_state(indoc!(
+        "fn a() {
+             // dog();
+         ˇ    cat();
+        }"
+    ));
 }
 
 #[gpui::test]
@@ -4482,7 +4684,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         "#
         .unindent(),
     );
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <!-- <p>A</p>ˇ -->
@@ -4491,7 +4693,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         "#
         .unindent(),
     );
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <p>A</p>ˇ
@@ -4513,7 +4715,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         .unindent(),
     );
 
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <!-- <p>A«</p>
@@ -4523,7 +4725,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         "#
         .unindent(),
     );
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <p>A«</p>
@@ -4545,7 +4747,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         .unindent(),
     );
     cx.foreground().run_until_parked();
-    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+    cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments::default(), cx));
     cx.assert_editor_state(
         &r#"
             <!-- ˇ<script> -->
@@ -5457,6 +5659,54 @@ fn test_split_words() {
     assert_eq!(split("Hello_World"), &["Hello_", "World"]);
     assert_eq!(split("helloWOrld"), &["hello", "WOrld"]);
     assert_eq!(split("helloworld"), &["helloworld"]);
+}
+
+#[gpui::test]
+async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+    let mut assert = |before, after| {
+        let _state_context = cx.set_state(before);
+        cx.update_editor(|editor, cx| {
+            editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, cx)
+        });
+        cx.assert_editor_state(after);
+    };
+
+    // Outside bracket jumps to outside of matching bracket
+    assert("console.logˇ(var);", "console.log(var)ˇ;");
+    assert("console.log(var)ˇ;", "console.logˇ(var);");
+
+    // Inside bracket jumps to inside of matching bracket
+    assert("console.log(ˇvar);", "console.log(varˇ);");
+    assert("console.log(varˇ);", "console.log(ˇvar);");
+
+    // When outside a bracket and inside, favor jumping to the inside bracket
+    assert(
+        "console.log('foo', [1, 2, 3]ˇ);",
+        "console.log(ˇ'foo', [1, 2, 3]);",
+    );
+    assert(
+        "console.log(ˇ'foo', [1, 2, 3]);",
+        "console.log('foo', [1, 2, 3]ˇ);",
+    );
+
+    // Bias forward if two options are equally likely
+    assert(
+        "let result = curried_fun()ˇ();",
+        "let result = curried_fun()()ˇ;",
+    );
+
+    // If directly adjacent to a smaller pair but inside a larger (not adjacent), pick the smaller
+    assert(
+        indoc! {"
+            function test() {
+                console.log('test')ˇ
+            }"},
+        indoc! {"
+            function test() {
+                console.logˇ('test')
+            }"},
+    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

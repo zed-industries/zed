@@ -1,13 +1,8 @@
 import chroma from "chroma-js";
+import { Meta } from "./common/colorScheme";
 import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "Atelier Sulphurpool";
-const author = "atelierbram";
-const url = "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/";
-const license = {
-  type: "MIT",
-  url: "https://github.com/atelierbram/syntax-highlighting/blob/master/LICENSE",
-};
 
 const ramps = {
   neutral: chroma
@@ -34,3 +29,14 @@ const ramps = {
 
 export const dark = createColorScheme(`${name} Dark`, false, ramps);
 export const light = createColorScheme(`${name} Light`, true, ramps);
+
+export const meta: Meta = {
+  name,
+  author: "atelierbram",
+  license: {
+    SPDX: "MIT",
+    https_url: "https://atelierbram.mit-license.org/license.txt",
+    license_checksum: "f95ce526ef4e7eecf7a832bba0e3451cc1000f9ce63eb01ed6f64f8109f5d0a5"
+  },
+  url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/sulphurpool/"
+}

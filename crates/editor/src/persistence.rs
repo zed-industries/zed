@@ -6,7 +6,7 @@ use db::{define_connection, query};
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 define_connection!(
-    // Current table shape using pseudo-rust syntax:
+    // Current schema shape using pseudo-rust syntax:
     // editors(
     //   item_id: usize,
     //   workspace_id: usize,

@@ -1,3 +1,6 @@
+// NOTE – This should be removed
+// I (Nate) need to come back and check if we are still using this anywhere
+
 import chroma, { Color, Scale } from "chroma-js";
 import { fontWeights } from "../../common";
 import { withOpacity } from "../../utils/color";

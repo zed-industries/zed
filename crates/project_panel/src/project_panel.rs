@@ -119,6 +119,7 @@ actions!(
         AddFile,
         Copy,
         CopyPath,
+        RevealInFinder,
         Cut,
         Paste,
         Delete,
@@ -147,6 +148,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::cancel);
     cx.add_action(ProjectPanel::copy);
     cx.add_action(ProjectPanel::copy_path);
+    cx.add_action(ProjectPanel::reveal_in_finder);
     cx.add_action(ProjectPanel::cut);
     cx.add_action(
         |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
@@ -305,6 +307,7 @@ impl ProjectPanel {
             }
             menu_entries.push(ContextMenuItem::item("New File", AddFile));
             menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
+            menu_entries.push(ContextMenuItem::item("Reveal in Finder", RevealInFinder));
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::item("Copy", Copy));
             menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
@@ -784,6 +787,12 @@ impl ProjectPanel {
             path.push(worktree.root_name());
             path.push(&entry.path);
             cx.write_to_clipboard(ClipboardItem::new(path.to_string_lossy().to_string()));
+        }
+    }
+
+    fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            cx.reveal_path(&worktree.abs_path().join(&entry.path));
         }
     }
 

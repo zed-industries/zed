@@ -397,16 +397,18 @@ async fn apply_server_operation(
             log::info!("Added connection for {}", username);
         }
 
-        Operation::RemoveConnection { user_id } => {
-            log::info!("Simulating full disconnection of user {}", user_id);
+        Operation::RemoveConnection {
+            user_id: removed_user_id,
+        } => {
+            log::info!("Simulating full disconnection of user {}", removed_user_id);
             let client_ix = clients
                 .iter()
-                .position(|(client, cx)| client.current_user_id(cx) == user_id);
+                .position(|(client, cx)| client.current_user_id(cx) == removed_user_id);
             let Some(client_ix) = client_ix else { return false };
             let user_connection_ids = server
                 .connection_pool
                 .lock()
-                .user_connection_ids(user_id)
+                .user_connection_ids(removed_user_id)
                 .collect::<Vec<_>>();
             assert_eq!(user_connection_ids.len(), 1);
             let removed_peer_id = user_connection_ids[0].into();
@@ -417,7 +419,7 @@ async fn apply_server_operation(
             server.disconnect_client(removed_peer_id);
             deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
             deterministic.start_waiting();
-            log::info!("Waiting for user {} to exit...", user_id);
+            log::info!("Waiting for user {} to exit...", removed_user_id);
             client_task.await;
             deterministic.finish_waiting();
             server.allow_connections();
@@ -441,19 +443,17 @@ async fn apply_server_operation(
                     .unwrap();
                 let pool = server.connection_pool.lock();
                 for contact in contacts {
-                    if let db::Contact::Accepted { user_id: id, .. } = contact {
-                        if pool.is_user_online(id) {
-                            assert_ne!(
-                                id, user_id,
-                                "removed client is still a contact of another peer"
-                            );
+                    if let db::Contact::Accepted { user_id, busy, .. } = contact {
+                        if user_id == removed_user_id {
+                            assert!(!pool.is_user_online(user_id));
+                            assert!(!busy);
                         }
                     }
                 }
             }
 
             log::info!("{} removed", client.username);
-            plan.lock().user(user_id).online = false;
+            plan.lock().user(removed_user_id).online = false;
             client_cx.update(|cx| {
                 cx.clear_globals();
                 drop(client);
@@ -806,8 +806,8 @@ async fn apply_client_operation(
             );
 
             ensure_project_shared(&project, client, cx).await;
-            let (requested_version, save) =
-                buffer.update(cx, |buffer, cx| (buffer.version(), buffer.save(cx)));
+            let requested_version = buffer.read_with(cx, |buffer, _| buffer.version());
+            let save = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
             let save = cx.background().spawn(async move {
                 let (saved_version, _, _) = save
                     .await
@@ -1971,16 +1971,4 @@ fn path_env_var(name: &str) -> Option<PathBuf> {
         path = abs_path
     }
     Some(path)
-}
-
-async fn child_file_paths(client: &TestClient, dir_path: &Path) -> Vec<PathBuf> {
-    let mut child_paths = client.fs.read_dir(dir_path).await.unwrap();
-    let mut child_file_paths = Vec::new();
-    while let Some(child_path) = child_paths.next().await {
-        let child_path = child_path.unwrap();
-        if client.fs.is_file(&child_path).await {
-            child_file_paths.push(child_path);
-        }
-    }
-    child_file_paths
 }

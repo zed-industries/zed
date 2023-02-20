@@ -3,15 +3,27 @@ pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-pub use backtrace::Backtrace;
-use futures::Future;
-use rand::{seq::SliceRandom, Rng};
 use std::{
-    cmp::Ordering,
-    ops::AddAssign,
+    cmp::{self, Ordering},
+    ops::{AddAssign, Range, RangeInclusive},
     pin::Pin,
     task::{Context, Poll},
 };
+
+pub use backtrace::Backtrace;
+use futures::Future;
+use rand::{seq::SliceRandom, Rng};
+
+#[derive(Debug, Default)]
+pub struct StaffMode(pub bool);
+
+impl std::ops::Deref for StaffMode {
+    type Target = bool;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -35,10 +47,10 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
 pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
-    if s.len() > max_chars {
-        format!("{}…", truncate(s, max_chars.saturating_sub(3)))
-    } else {
-        s.to_string()
+    let truncation_ix = s.char_indices().map(|(i, _)| i).nth(max_chars);
+    match truncation_ix {
+        Some(length) => s[..length].to_string() + "…",
+        None => s.to_string(),
     }
 }
 
@@ -234,6 +246,46 @@ macro_rules! async_iife {
     };
 }
 
+pub trait RangeExt<T> {
+    fn sorted(&self) -> Self;
+    fn to_inclusive(&self) -> RangeInclusive<T>;
+    fn overlaps(&self, other: &Range<T>) -> bool;
+}
+
+impl<T: Ord + Clone> RangeExt<T> for Range<T> {
+    fn sorted(&self) -> Self {
+        cmp::min(&self.start, &self.end).clone()..cmp::max(&self.start, &self.end).clone()
+    }
+
+    fn to_inclusive(&self) -> RangeInclusive<T> {
+        self.start.clone()..=self.end.clone()
+    }
+
+    fn overlaps(&self, other: &Range<T>) -> bool {
+        self.contains(&other.start)
+            || self.contains(&other.end)
+            || other.contains(&self.start)
+            || other.contains(&self.end)
+    }
+}
+
+impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
+    fn sorted(&self) -> Self {
+        cmp::min(self.start(), self.end()).clone()..=cmp::max(self.start(), self.end()).clone()
+    }
+
+    fn to_inclusive(&self) -> RangeInclusive<T> {
+        self.clone()
+    }
+
+    fn overlaps(&self, other: &Range<T>) -> bool {
+        self.contains(&other.start)
+            || self.contains(&other.end)
+            || other.contains(&self.start())
+            || other.contains(&self.end())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +316,13 @@ mod tests {
         });
 
         assert_eq!(foo, None);
+    }
+
+    #[test]
+    fn test_trancate_and_trailoff() {
+        assert_eq!(truncate_and_trailoff("", 5), "");
+        assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
+        assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
+        assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
     }
 }

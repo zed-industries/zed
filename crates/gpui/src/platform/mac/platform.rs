@@ -16,7 +16,7 @@ use cocoa::{
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
-    base::{id, nil, selector, YES},
+    base::{id, nil, selector, BOOL, YES},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
         NSUInteger, NSURL,
@@ -45,6 +45,7 @@ use std::{
     ffi::{c_void, CStr, OsStr},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
+    process::Command,
     ptr,
     rc::Rc,
     slice, str,
@@ -113,10 +114,8 @@ unsafe fn build_classes() {
     }
 }
 
-#[derive(Default)]
 pub struct MacForegroundPlatform(RefCell<MacForegroundPlatformState>);
 
-#[derive(Default)]
 pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
@@ -128,9 +127,26 @@ pub struct MacForegroundPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     menu_actions: Vec<Box<dyn Action>>,
+    foreground: Rc<executor::Foreground>,
 }
 
 impl MacForegroundPlatform {
+    pub fn new(foreground: Rc<executor::Foreground>) -> Self {
+        Self(RefCell::new(MacForegroundPlatformState {
+            become_active: Default::default(),
+            resign_active: Default::default(),
+            quit: Default::default(),
+            event: Default::default(),
+            menu_command: Default::default(),
+            validate_menu_command: Default::default(),
+            will_open_menu: Default::default(),
+            open_urls: Default::default(),
+            finish_launching: Default::default(),
+            menu_actions: Default::default(),
+            foreground,
+        }))
+    }
+
     unsafe fn create_menu_bar(
         &self,
         menus: Vec<Menu>,
@@ -184,7 +200,7 @@ impl MacForegroundPlatform {
                     .map(|binding| binding.keystrokes());
 
                 let item;
-                if let Some(keystrokes) = keystrokes.flatten() {
+                if let Some(keystrokes) = keystrokes {
                     if keystrokes.len() == 1 {
                         let keystroke = &keystrokes[0];
                         let mut mask = NSEventModifierFlags::empty();
@@ -398,6 +414,26 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
             done_rx
         }
     }
+
+    fn reveal_path(&self, path: &Path) {
+        unsafe {
+            let path = path.to_path_buf();
+            self.0
+                .borrow()
+                .foreground
+                .spawn(async move {
+                    let full_path = ns_string(path.to_str().unwrap_or(""));
+                    let root_full_path = ns_string("");
+                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+                    let _: BOOL = msg_send![
+                        workspace,
+                        selectFile: full_path
+                        inFileViewerRootedAtPath: root_full_path
+                    ];
+                })
+                .detach();
+        }
+    }
 }
 
 pub struct MacPlatform {
@@ -438,6 +474,10 @@ unsafe impl Sync for MacPlatform {}
 impl platform::Platform for MacPlatform {
     fn dispatcher(&self) -> Arc<dyn platform::Dispatcher> {
         self.dispatcher.clone()
+    }
+
+    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
+        self.fonts.clone()
     }
 
     fn activate(&self, ignoring_other_apps: bool) {
@@ -488,6 +528,10 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn screen_by_id(&self, id: uuid::Uuid) -> Option<Rc<dyn crate::Screen>> {
+        Screen::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
+    }
+
     fn screens(&self) -> Vec<Rc<dyn platform::Screen>> {
         Screen::all()
             .into_iter()
@@ -510,10 +554,6 @@ impl platform::Platform for MacPlatform {
 
     fn add_status_item(&self) -> Box<dyn platform::Window> {
         Box::new(StatusItem::add(self.fonts()))
-    }
-
-    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
-        self.fonts.clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -699,7 +739,9 @@ impl platform::Platform for MacPlatform {
         unsafe {
             let cursor: id = match style {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeLeftRight => {
+                    msg_send![class!(NSCursor), resizeLeftRightCursor]
+                }
                 CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
                 CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
@@ -784,6 +826,21 @@ impl platform::Platform for MacPlatform {
             })
         }
     }
+
+    fn restart(&self) {
+        #[cfg(debug_assertions)]
+        let path = std::env::current_exe();
+
+        #[cfg(not(debug_assertions))]
+        let path = self.app_path().or_else(|_| std::env::current_exe());
+
+        let command = path.and_then(|path| Command::new("/usr/bin/open").arg(path).spawn());
+
+        match command {
+            Err(err) => log::error!("Unable to restart application {}", err),
+            Ok(_child) => self.quit(),
+        }
+    }
 }
 
 unsafe fn path_from_objc(path: id) -> PathBuf {
@@ -853,8 +910,8 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
         (0..urls.count())
             .into_iter()
             .filter_map(|i| {
-                let path = urls.objectAtIndex(i);
-                match CStr::from_ptr(path.absoluteString().UTF8String() as *mut c_char).to_str() {
+                let url = urls.objectAtIndex(i);
+                match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {
                     Ok(string) => Some(string.to_string()),
                     Err(err) => {
                         log::error!("error converting path to string: {}", err);
