@@ -1480,42 +1480,34 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
             LanguageConfig {
                 name: "JavaScript".into(),
                 line_comment: Some("// ".into()),
-                brackets: vec![
-                    BracketPair {
-                        start: "{".into(),
-                        end: "}".into(),
-                        close: true,
-                        newline: false,
-                    },
-                    BracketPair {
-                        start: "'".into(),
-                        end: "'".into(),
-                        close: true,
-                        newline: false,
-                    },
-                ],
-                overrides: [
-                    (
-                        "element".into(),
-                        LanguageConfigOverride {
-                            line_comment: Override::Remove { remove: true },
-                            block_comment: Override::Set(("{/*".into(), "*/}".into())),
-                            ..Default::default()
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            newline: false,
                         },
-                    ),
-                    (
-                        "string".into(),
-                        LanguageConfigOverride {
-                            brackets: Override::Set(vec![BracketPair {
-                                start: "{".into(),
-                                end: "}".into(),
-                                close: true,
-                                newline: false,
-                            }]),
-                            ..Default::default()
+                        BracketPair {
+                            start: "'".into(),
+                            end: "'".into(),
+                            close: true,
+                            newline: false,
                         },
-                    ),
-                ]
+                    ],
+                    disabled_scopes_by_bracket_ix: vec![
+                        Vec::new(), //
+                        vec!["string".into()],
+                    ],
+                },
+                overrides: [(
+                    "element".into(),
+                    LanguageConfigOverride {
+                        line_comment: Override::Remove { remove: true },
+                        block_comment: Override::Set(("{/*".into(), "*/}".into())),
+                        ..Default::default()
+                    },
+                )]
                 .into_iter()
                 .collect(),
                 ..Default::default()
@@ -1537,11 +1529,19 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
 
         let config = snapshot.language_scope_at(0).unwrap();
         assert_eq!(config.line_comment_prefix().unwrap().as_ref(), "// ");
-        assert_eq!(config.brackets().len(), 2);
+        // Both bracket pairs are enabled
+        assert_eq!(
+            config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
 
         let string_config = snapshot.language_scope_at(3).unwrap();
-        assert_eq!(config.line_comment_prefix().unwrap().as_ref(), "// ");
-        assert_eq!(string_config.brackets().len(), 1);
+        assert_eq!(string_config.line_comment_prefix().unwrap().as_ref(), "// ");
+        // Second bracket pair is disabled
+        assert_eq!(
+            string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
+        );
 
         let element_config = snapshot.language_scope_at(10).unwrap();
         assert_eq!(element_config.line_comment_prefix(), None);
@@ -1549,7 +1549,11 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
             element_config.block_comment_delimiters(),
             Some((&"{/*".into(), &"*/}".into()))
         );
-        assert_eq!(element_config.brackets().len(), 2);
+        // Both bracket pairs are enabled
+        assert_eq!(
+            element_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
 
         buffer
     });

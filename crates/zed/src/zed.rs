@@ -696,8 +696,9 @@ mod tests {
     use assets::Assets;
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
+        executor::Deterministic, AssetSource, MutableAppContext, Task, TestAppContext, ViewHandle,
     };
+    use language::LanguageRegistry;
     use project::{Project, ProjectPath};
     use serde_json::json;
     use std::{
@@ -1879,6 +1880,18 @@ mod tests {
             assert_eq!(theme.meta.name, theme_name);
         }
         assert!(has_default_theme);
+    }
+
+    #[gpui::test]
+    fn test_bundled_languages(cx: &mut MutableAppContext) {
+        let mut languages = LanguageRegistry::new(Task::ready(()));
+        languages.set_executor(cx.background().clone());
+        let languages = Arc::new(languages);
+        languages::init(languages.clone());
+        for name in languages.language_names() {
+            languages.language_for_name(&name);
+        }
+        cx.foreground().run_until_parked();
     }
 
     fn init(cx: &mut TestAppContext) -> Arc<AppState> {

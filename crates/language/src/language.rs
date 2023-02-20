@@ -231,7 +231,7 @@ pub struct CodeLabel {
 pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
-    pub brackets: Vec<BracketPair>,
+    pub brackets: BracketPairConfig,
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -258,7 +258,7 @@ pub struct LanguageQueries {
     pub overrides: Option<Cow<'static, str>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LanguageScope {
     language: Arc<Language>,
     override_id: Option<u32>,
@@ -270,8 +270,8 @@ pub struct LanguageConfigOverride {
     pub line_comment: Override<Arc<str>>,
     #[serde(default)]
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
-    #[serde(default)]
-    pub brackets: Override<Vec<BracketPair>>,
+    #[serde(skip_deserializing)]
+    pub disabled_bracket_ixs: Vec<u16>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -336,7 +336,41 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_sources: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default)]
+pub struct BracketPairConfig {
+    pub pairs: Vec<BracketPair>,
+    pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
+}
+
+impl<'de> Deserialize<'de> for BracketPairConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        pub struct Entry {
+            #[serde(flatten)]
+            pub bracket_pair: BracketPair,
+            #[serde(default)]
+            pub not_in: Vec<String>,
+        }
+
+        let result = Vec::<Entry>::deserialize(deserializer)?;
+        let mut brackets = Vec::with_capacity(result.len());
+        let mut disabled_scopes_by_bracket_ix = Vec::with_capacity(result.len());
+        for entry in result {
+            brackets.push(entry.bracket_pair);
+            disabled_scopes_by_bracket_ix.push(entry.not_in);
+        }
+
+        Ok(BracketPairConfig {
+            pairs: brackets,
+            disabled_scopes_by_bracket_ix,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct BracketPair {
     pub start: String,
     pub end: String,
@@ -393,7 +427,7 @@ struct InjectionConfig {
 
 struct OverrideConfig {
     query: Query,
-    values: HashMap<u32, LanguageConfigOverride>,
+    values: HashMap<u32, (String, LanguageConfigOverride)>,
 }
 
 #[derive(Default, Clone)]
@@ -967,16 +1001,11 @@ impl Language {
     pub fn with_override_query(mut self, source: &str) -> Result<Self> {
         let query = Query::new(self.grammar_mut().ts_language, source)?;
 
-        let mut values = HashMap::default();
+        let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if !name.starts_with('_') {
-                let value = self.config.overrides.remove(name).ok_or_else(|| {
-                    anyhow!(
-                        "language {:?} has override in query but not in config: {name:?}",
-                        self.config.name
-                    )
-                })?;
-                values.insert(ix as u32, value);
+                let value = self.config.overrides.remove(name).unwrap_or_default();
+                override_configs_by_id.insert(ix as u32, (name.clone(), value));
             }
         }
 
@@ -988,7 +1017,46 @@ impl Language {
             ))?;
         }
 
-        self.grammar_mut().override_config = Some(OverrideConfig { query, values });
+        for disabled_scope_name in self
+            .config
+            .brackets
+            .disabled_scopes_by_bracket_ix
+            .iter()
+            .flatten()
+        {
+            if !override_configs_by_id
+                .values()
+                .any(|(scope_name, _)| scope_name == disabled_scope_name)
+            {
+                Err(anyhow!(
+                    "language {:?} has overrides in config not in query: {disabled_scope_name:?}",
+                    self.config.name
+                ))?;
+            }
+        }
+
+        for (name, override_config) in override_configs_by_id.values_mut() {
+            override_config.disabled_bracket_ixs = self
+                .config
+                .brackets
+                .disabled_scopes_by_bracket_ix
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, disabled_scope_names)| {
+                    if disabled_scope_names.contains(name) {
+                        Some(ix as u16)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+
+        self.config.brackets.disabled_scopes_by_bracket_ix.clear();
+        self.grammar_mut().override_config = Some(OverrideConfig {
+            query,
+            values: override_configs_by_id,
+        });
         Ok(self)
     }
 
@@ -1132,12 +1200,26 @@ impl LanguageScope {
         .map(|e| (&e.0, &e.1))
     }
 
-    pub fn brackets(&self) -> &[BracketPair] {
-        Override::as_option(
-            self.config_override().map(|o| &o.brackets),
-            Some(&self.language.config.brackets),
-        )
-        .map_or(&[], Vec::as_slice)
+    pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
+        let mut disabled_ids = self
+            .config_override()
+            .map_or(&[] as _, |o| o.disabled_bracket_ixs.as_slice());
+        self.language
+            .config
+            .brackets
+            .pairs
+            .iter()
+            .enumerate()
+            .map(move |(ix, bracket)| {
+                let mut is_enabled = true;
+                if let Some(next_disabled_ix) = disabled_ids.first() {
+                    if ix == *next_disabled_ix as usize {
+                        disabled_ids = &disabled_ids[1..];
+                        is_enabled = false;
+                    }
+                }
+                (bracket, is_enabled)
+            })
     }
 
     pub fn should_autoclose_before(&self, c: char) -> bool {
@@ -1148,7 +1230,7 @@ impl LanguageScope {
         let id = self.override_id?;
         let grammar = self.language.grammar.as_ref()?;
         let override_config = grammar.override_config.as_ref()?;
-        override_config.values.get(&id)
+        override_config.values.get(&id).map(|e| &e.1)
     }
 }
 

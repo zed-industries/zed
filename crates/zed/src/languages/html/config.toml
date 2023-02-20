@@ -1,26 +1,12 @@
 name = "HTML"
 path_suffixes = ["html"]
 autoclose_before = ">})"
-brackets = [
-    { start = "<", end = ">", close = true, newline = true },
-    { start = "{", end = "}", close = true, newline = true },
-    { start = "(", end = ")", close = true, newline = true },
-    { start = "\"", end = "\"", close = true, newline = false },
-    { start = "!--", end = " --", close = true, newline = false },
-]
-
 block_comment = ["<!-- ", " -->"]
-
-[overrides.comment]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },
     { start = "(", end = ")", close = true, newline = true },
-]
-
-[overrides.string]
-brackets = [
-    { start = "{", end = "}", close = true, newline = true },
-    { start = "[", end = "]", close = true, newline = true },
-    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["comment", "string"] },
+    { start = "<", end = ">", close = true, newline = true, not_in = ["comment", "string"] },
+    { start = "!--", end = " --", close = true, newline = false, not_in = ["comment", "string"] },
 ]

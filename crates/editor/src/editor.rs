@@ -1755,8 +1755,8 @@ impl Editor {
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
-                for pair in language.brackets() {
-                    if pair.close && pair.start.ends_with(text.as_ref()) {
+                for (pair, enabled) in language.brackets() {
+                    if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
                         bracket_pair = Some(pair.clone());
                         is_bracket_pair_start = true;
                         break;
@@ -1924,11 +1924,12 @@ impl Editor {
                                 .map(|c| c.len_utf8())
                                 .sum::<usize>();
 
-                            insert_extra_newline = language.brackets().iter().any(|pair| {
+                            insert_extra_newline = language.brackets().any(|(pair, enabled)| {
                                 let pair_start = pair.start.trim_end();
                                 let pair_end = pair.end.trim_start();
 
-                                pair.newline
+                                enabled
+                                    && pair.newline
                                     && buffer
                                         .contains_str_at(end + trailing_whitespace_len, pair_end)
                                     && buffer.contains_str_at(

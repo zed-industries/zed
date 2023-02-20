@@ -32,11 +32,10 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
 
 #[cfg(test)]
 mod tests {
-    use crate::test::editor_lsp_test_context::EditorLspTestContext;
-
     use super::*;
+    use crate::test::editor_lsp_test_context::EditorLspTestContext;
     use indoc::indoc;
-    use language::{BracketPair, Language, LanguageConfig};
+    use language::{BracketPair, BracketPairConfig, Language, LanguageConfig};
 
     #[gpui::test]
     async fn test_matching_bracket_highlights(cx: &mut gpui::TestAppContext) {
@@ -45,20 +44,23 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    brackets: vec![
-                        BracketPair {
-                            start: "{".to_string(),
-                            end: "}".to_string(),
-                            close: false,
-                            newline: true,
-                        },
-                        BracketPair {
-                            start: "(".to_string(),
-                            end: ")".to_string(),
-                            close: false,
-                            newline: true,
-                        },
-                    ],
+                    brackets: BracketPairConfig {
+                        pairs: vec![
+                            BracketPair {
+                                start: "{".to_string(),
+                                end: "}".to_string(),
+                                close: false,
+                                newline: true,
+                            },
+                            BracketPair {
+                                start: "(".to_string(),
+                                end: ")".to_string(),
+                                close: false,
+                                newline: true,
+                            },
+                        ],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
