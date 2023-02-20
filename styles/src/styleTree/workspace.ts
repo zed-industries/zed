@@ -29,6 +29,16 @@ export default function workspace(colorScheme: ColorScheme) {
       background: background(layer, "variant", "hovered"),
       border: border(layer, "variant", "hovered"),
     },
+    clicked: {
+      ...text(layer, "sans", "variant", "pressed", { size: "xs" }),
+      background: background(layer, "variant", "pressed"),
+      border: border(layer, "variant", "pressed"),
+    },
+    active: {
+      ...text(layer, "sans", "variant", "active", { size: "xs" }),
+      background: background(layer, "variant", "active"),
+      border: border(layer, "variant", "active"),
+    },
   };
   const avatarWidth = 18;
 
@@ -177,6 +187,10 @@ export default function workspace(colorScheme: ColorScheme) {
         active: {
           background: background(layer, "variant", "active"),
           color: foreground(layer, "variant", "active"),
+        },
+        clicked: {
+          background: background(layer, "variant", "pressed"),
+          color: foreground(layer, "variant", "pressed"),
         },
         hover: {
           background: background(layer, "variant", "hovered"),
