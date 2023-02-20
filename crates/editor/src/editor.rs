@@ -84,7 +84,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
-use util::{post_inc, ResultExt, TryFutureExt, RangeExt};
+use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
@@ -1934,7 +1934,8 @@ impl Editor {
                                 let pair_start = pair.start.trim_end();
                                 let pair_end = pair.end.trim_start();
 
-                                enabled && pair.newline
+                                enabled
+                                    && pair.newline
                                     && buffer
                                         .contains_str_at(end + trailing_whitespace_len, pair_end)
                                     && buffer.contains_str_at(
@@ -4790,8 +4791,10 @@ impl Editor {
     ) {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_offsets_with(|snapshot, selection| {
-                let Some(enclosing_bracket_ranges) = snapshot.enclosing_bracket_ranges(selection.start..selection.end) else { return; };
-                
+                let Some(enclosing_bracket_ranges) = snapshot.enclosing_bracket_ranges(selection.start..selection.end) else {
+                    return;
+                };
+
                 let mut best_length = usize::MAX;
                 let mut best_inside = false;
                 let mut best_in_bracket_range = false;
@@ -4801,17 +4804,17 @@ impl Editor {
                     let length = close.end() - open.start;
                     let inside = selection.start >= open.end && selection.end <= *close.start();
                     let in_bracket_range = open.to_inclusive().contains(&selection.head()) || close.contains(&selection.head());
-                    
+
                     // If best is next to a bracket and current isn't, skip
                     if !in_bracket_range && best_in_bracket_range {
                         continue;
                     }
-                    
+
                     // Prefer smaller lengths unless best is inside and current isn't
                     if length > best_length && (best_inside || !inside) {
                         continue;
                     }
-                    
+
                     best_length = length;
                     best_inside = inside;
                     best_in_bracket_range = in_bracket_range;
@@ -4829,7 +4832,7 @@ impl Editor {
                         }
                     });
                 }
-                
+
                 if let Some(destination) = best_destination {
                     selection.collapse_to(destination, SelectionGoal::None);
                 }
