@@ -214,15 +214,6 @@ pub trait File: Send + Sync {
 
     fn is_deleted(&self) -> bool;
 
-    fn save(
-        &self,
-        buffer_id: u64,
-        text: Rope,
-        version: clock::Global,
-        line_ending: LineEnding,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>>;
-
     fn as_any(&self) -> &dyn Any;
 
     fn to_proto(&self) -> rpc::proto::File;
@@ -529,33 +520,6 @@ impl Buffer {
         self.file.as_ref()
     }
 
-    pub fn save(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-        let text = self.as_rope().clone();
-        let version = self.version();
-        let save = file.save(
-            self.remote_id(),
-            text,
-            version,
-            self.line_ending(),
-            cx.as_mut(),
-        );
-        cx.spawn(|this, mut cx| async move {
-            let (version, fingerprint, mtime) = save.await?;
-            this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), fingerprint, mtime, None, cx);
-            });
-            Ok((version, fingerprint, mtime))
-        })
-    }
-
     pub fn saved_version(&self) -> &clock::Global {
         &self.saved_version
     }
@@ -585,16 +549,11 @@ impl Buffer {
         version: clock::Global,
         fingerprint: RopeFingerprint,
         mtime: SystemTime,
-        new_file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
         self.saved_version_fingerprint = fingerprint;
         self.saved_mtime = mtime;
-        if let Some(new_file) = new_file {
-            self.file = Some(new_file);
-            self.file_update_count += 1;
-        }
         cx.emit(Event::Saved);
         cx.notify();
     }
@@ -661,36 +620,35 @@ impl Buffer {
         new_file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Task<()> {
-        let old_file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(());
-        };
         let mut file_changed = false;
         let mut task = Task::ready(());
 
-        if new_file.path() != old_file.path() {
-            file_changed = true;
-        }
-
-        if new_file.is_deleted() {
-            if !old_file.is_deleted() {
+        if let Some(old_file) = self.file.as_ref() {
+            if new_file.path() != old_file.path() {
                 file_changed = true;
-                if !self.is_dirty() {
-                    cx.emit(Event::DirtyChanged);
+            }
+
+            if new_file.is_deleted() {
+                if !old_file.is_deleted() {
+                    file_changed = true;
+                    if !self.is_dirty() {
+                        cx.emit(Event::DirtyChanged);
+                    }
+                }
+            } else {
+                let new_mtime = new_file.mtime();
+                if new_mtime != old_file.mtime() {
+                    file_changed = true;
+
+                    if !self.is_dirty() {
+                        let reload = self.reload(cx).log_err().map(drop);
+                        task = cx.foreground().spawn(reload);
+                    }
                 }
             }
         } else {
-            let new_mtime = new_file.mtime();
-            if new_mtime != old_file.mtime() {
-                file_changed = true;
-
-                if !self.is_dirty() {
-                    let reload = self.reload(cx).log_err().map(drop);
-                    task = cx.foreground().spawn(reload);
-                }
-            }
-        }
+            file_changed = true;
+        };
 
         if file_changed {
             self.file_update_count += 1;

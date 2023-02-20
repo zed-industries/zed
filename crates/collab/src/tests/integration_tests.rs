@@ -2244,7 +2244,7 @@ async fn test_propagate_saves_and_fs_changes(
     });
 
     // Edit the buffer as the host and concurrently save as guest B.
-    let save_b = buffer_b.update(cx_b, |buf, cx| buf.save(cx));
+    let save_b = project_b.update(cx_b, |project, cx| project.save_buffer(buffer_b.clone(), cx));
     buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], None, cx));
     save_b.await.unwrap();
     assert_eq!(
@@ -2312,6 +2312,41 @@ async fn test_propagate_saves_and_fs_changes(
     buffer_c.read_with(cx_c, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
         assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
+    });
+
+    let new_buffer_a = project_a
+        .update(cx_a, |p, cx| p.create_buffer("", None, cx))
+        .unwrap();
+    let new_buffer_id = new_buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());
+    let new_buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer_by_id(new_buffer_id, cx))
+        .await
+        .unwrap();
+    new_buffer_b.read_with(cx_b, |buffer, _| {
+        assert!(buffer.file().is_none());
+    });
+
+    new_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.edit([(0..0, "ok")], None, cx);
+    });
+    project_a
+        .update(cx_a, |project, cx| {
+            project.save_buffer_as(new_buffer_a.clone(), "/a/file3.rs".into(), cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+    new_buffer_b.read_with(cx_b, |buffer_b, _| {
+        assert_eq!(
+            buffer_b.file().unwrap().path().as_ref(),
+            Path::new("file3.rs")
+        );
+
+        new_buffer_a.read_with(cx_a, |buffer_a, _| {
+            assert_eq!(buffer_b.saved_mtime(), buffer_a.saved_mtime());
+            assert_eq!(buffer_b.saved_version(), buffer_a.saved_version());
+        });
     });
 }
 
@@ -2882,7 +2917,9 @@ async fn test_buffer_conflict_after_save(
         assert!(!buf.has_conflict());
     });
 
-    buffer_b.update(cx_b, |buf, cx| buf.save(cx)).await.unwrap();
+    project_b.update(cx_b, |project, cx| project.save_buffer(buffer_b.clone(), cx))
+        .await
+        .unwrap();
     cx_a.foreground().forbid_parking();
     buffer_b.read_with(cx_b, |buffer_b, _| assert!(!buffer_b.is_dirty()));
     buffer_b.read_with(cx_b, |buf, _| {

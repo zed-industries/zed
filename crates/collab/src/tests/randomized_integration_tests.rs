@@ -1064,15 +1064,16 @@ async fn randomly_query_and_mutate_buffers(
             }
         }
         30..=39 if buffer.read_with(cx, |buffer, _| buffer.is_dirty()) => {
-            let (requested_version, save) = buffer.update(cx, |buffer, cx| {
+            let requested_version = buffer.update(cx, |buffer, cx| {
                 log::info!(
                     "{}: saving buffer {} ({:?})",
                     client.username,
                     buffer.remote_id(),
                     buffer.file().unwrap().full_path(cx)
                 );
-                (buffer.version(), buffer.save(cx))
+                buffer.version()
             });
+            let save = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
             let save = cx.background().spawn(async move {
                 let (saved_version, _, _) = save
                     .await

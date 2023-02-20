@@ -20,6 +20,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
+use language::File as _;
 use language::{
     proto::{
         deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
@@ -724,34 +725,69 @@ impl LocalWorktree {
         })
     }
 
-    pub fn save_buffer_as(
+    pub fn save_buffer(
         &self,
         buffer_handle: ModelHandle<Buffer>,
-        path: impl Into<Arc<Path>>,
+        path: Arc<Path>,
+        has_changed_file: bool,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+        let handle = cx.handle();
         let buffer = buffer_handle.read(cx);
+
+        let rpc = self.client.clone();
+        let buffer_id = buffer.remote_id();
+        let project_id = self.share.as_ref().map(|share| share.project_id);
+
         let text = buffer.as_rope().clone();
         let fingerprint = text.fingerprint();
         let version = buffer.version();
         let save = self.write_file(path, text, buffer.line_ending(), cx);
-        let handle = cx.handle();
+
         cx.as_mut().spawn(|mut cx| async move {
             let entry = save.await?;
-            let file = File {
-                entry_id: entry.id,
-                worktree: handle,
-                path: entry.path,
-                mtime: entry.mtime,
-                is_local: true,
-                is_deleted: false,
-            };
+
+            if has_changed_file {
+                let new_file = Arc::new(File {
+                    entry_id: entry.id,
+                    worktree: handle,
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: true,
+                    is_deleted: false,
+                });
+
+                if let Some(project_id) = project_id {
+                    rpc.send(proto::UpdateBufferFile {
+                        project_id,
+                        buffer_id,
+                        file: Some(new_file.to_proto()),
+                    })
+                    .log_err();
+                }
+
+                buffer_handle.update(&mut cx, |buffer, cx| {
+                    if has_changed_file {
+                        buffer.file_updated(new_file, cx).detach();
+                    }
+                });
+            }
+
+            if let Some(project_id) = project_id {
+                rpc.send(proto::BufferSaved {
+                    project_id,
+                    buffer_id,
+                    version: serialize_version(&version),
+                    mtime: Some(entry.mtime.into()),
+                    fingerprint: serialize_fingerprint(fingerprint),
+                })?;
+            }
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version, fingerprint, file.mtime, Some(Arc::new(file)), cx);
+                buffer.did_save(version.clone(), fingerprint, entry.mtime, cx);
             });
 
-            Ok(())
+            Ok((version, fingerprint, entry.mtime))
         })
     }
 
@@ -1083,6 +1119,39 @@ impl RemoteWorktree {
         self.updates_tx.take();
         self.snapshot_subscriptions.clear();
         self.disconnected = true;
+    }
+
+    pub fn save_buffer(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+        let version = buffer.version();
+        let rpc = self.client.clone();
+        let project_id = self.project_id;
+        cx.as_mut().spawn(|mut cx| async move {
+            let response = rpc
+                .request(proto::SaveBuffer {
+                    project_id,
+                    buffer_id,
+                    version: serialize_version(&version),
+                })
+                .await?;
+            let version = deserialize_version(response.version);
+            let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
+            let mtime = response
+                .mtime
+                .ok_or_else(|| anyhow!("missing mtime"))?
+                .into();
+
+            buffer_handle.update(&mut cx, |buffer, cx| {
+                buffer.did_save(version.clone(), fingerprint, mtime, cx);
+            });
+
+            Ok((version, fingerprint, mtime))
+        })
     }
 
     pub fn update_from_remote(&mut self, update: proto::UpdateWorktree) {
@@ -1857,57 +1926,6 @@ impl language::File for File {
 
     fn is_deleted(&self) -> bool {
         self.is_deleted
-    }
-
-    fn save(
-        &self,
-        buffer_id: u64,
-        text: Rope,
-        version: clock::Global,
-        line_ending: LineEnding,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
-        self.worktree.update(cx, |worktree, cx| match worktree {
-            Worktree::Local(worktree) => {
-                let rpc = worktree.client.clone();
-                let project_id = worktree.share.as_ref().map(|share| share.project_id);
-                let fingerprint = text.fingerprint();
-                let save = worktree.write_file(self.path.clone(), text, line_ending, cx);
-                cx.background().spawn(async move {
-                    let entry = save.await?;
-                    if let Some(project_id) = project_id {
-                        rpc.send(proto::BufferSaved {
-                            project_id,
-                            buffer_id,
-                            version: serialize_version(&version),
-                            mtime: Some(entry.mtime.into()),
-                            fingerprint: serialize_fingerprint(fingerprint),
-                        })?;
-                    }
-                    Ok((version, fingerprint, entry.mtime))
-                })
-            }
-            Worktree::Remote(worktree) => {
-                let rpc = worktree.client.clone();
-                let project_id = worktree.project_id;
-                cx.foreground().spawn(async move {
-                    let response = rpc
-                        .request(proto::SaveBuffer {
-                            project_id,
-                            buffer_id,
-                            version: serialize_version(&version),
-                        })
-                        .await?;
-                    let version = deserialize_version(response.version);
-                    let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
-                    let mtime = response
-                        .mtime
-                        .ok_or_else(|| anyhow!("missing mtime"))?
-                        .into();
-                    Ok((version, fingerprint, mtime))
-                })
-            }
-        })
     }
 
     fn as_any(&self) -> &dyn Any {

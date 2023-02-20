@@ -12,7 +12,7 @@ use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
-    future::Shared,
+    future::{try_join_all, Shared},
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
 use gpui::{
@@ -28,8 +28,8 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    Operation, Patch, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Transaction, Unclipped,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -59,7 +59,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use terminal::{Terminal, TerminalBuilder};
 use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
@@ -554,11 +554,13 @@ impl Project {
             });
         }
 
-        let languages = Arc::new(LanguageRegistry::test());
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.background());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project = cx.update(|cx| Project::local(client, user_store, languages, fs, cx));
+        let project =
+            cx.update(|cx| Project::local(client, user_store, Arc::new(languages), fs, cx));
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
@@ -1426,11 +1428,41 @@ impl Project {
         }
     }
 
+    pub fn save_buffers(
+        &self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        cx.spawn(|this, mut cx| async move {
+            let save_tasks = buffers
+                .into_iter()
+                .map(|buffer| this.update(&mut cx, |this, cx| this.save_buffer(buffer, cx)));
+            try_join_all(save_tasks).await?;
+            Ok(())
+        })
+    }
+
+    pub fn save_buffer(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+        let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+            return Task::ready(Err(anyhow!("buffer doesn't have a file")));
+        };
+        let worktree = file.worktree.clone();
+        let path = file.path.clone();
+        worktree.update(cx, |worktree, cx| match worktree {
+            Worktree::Local(worktree) => worktree.save_buffer(buffer, path, false, cx),
+            Worktree::Remote(worktree) => worktree.save_buffer(buffer, cx),
+        })
+    }
+
     pub fn save_buffer_as(
         &mut self,
         buffer: ModelHandle<Buffer>,
         abs_path: PathBuf,
-        cx: &mut ModelContext<Project>,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
         let old_path =
@@ -1443,11 +1475,11 @@ impl Project {
             }
             let (worktree, path) = worktree_task.await?;
             worktree
-                .update(&mut cx, |worktree, cx| {
-                    worktree
-                        .as_local_mut()
-                        .unwrap()
-                        .save_buffer_as(buffer.clone(), path, cx)
+                .update(&mut cx, |worktree, cx| match worktree {
+                    Worktree::Local(worktree) => {
+                        worktree.save_buffer(buffer.clone(), path.into(), true, cx)
+                    }
+                    Worktree::Remote(_) => panic!("cannot remote buffers as new files"),
                 })
                 .await?;
             this.update(&mut cx, |this, cx| {
@@ -1789,20 +1821,22 @@ impl Project {
             while let Some(()) = subscription.next().await {
                 if let Some(project) = project.upgrade(&cx) {
                     project.update(&mut cx, |project, cx| {
-                        let mut buffers_without_language = Vec::new();
+                        let mut plain_text_buffers = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for buffer in project.opened_buffers.values() {
                             if let Some(handle) = buffer.upgrade(cx) {
                                 let buffer = &handle.read(cx);
-                                if buffer.language().is_none() {
-                                    buffers_without_language.push(handle);
+                                if buffer.language().is_none()
+                                    || buffer.language() == Some(&*language::PLAIN_TEXT)
+                                {
+                                    plain_text_buffers.push(handle);
                                 } else if buffer.contains_unknown_injections() {
                                     buffers_with_unknown_injections.push(handle);
                                 }
                             }
                         }
 
-                        for buffer in buffers_without_language {
+                        for buffer in plain_text_buffers {
                             project.assign_language_to_buffer(&buffer, cx);
                             project.register_buffer_with_language_server(&buffer, cx);
                         }
@@ -2818,126 +2852,126 @@ impl Project {
         trigger: FormatTrigger,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<ProjectTransaction>> {
-        let mut local_buffers = Vec::new();
-        let mut remote_buffers = None;
-        for buffer_handle in buffers {
-            let buffer = buffer_handle.read(cx);
-            if let Some(file) = File::from_dyn(buffer.file()) {
-                if let Some(buffer_abs_path) = file.as_local().map(|f| f.abs_path(cx)) {
-                    if let Some((_, server)) = self.language_server_for_buffer(buffer, cx) {
-                        local_buffers.push((buffer_handle, buffer_abs_path, server.clone()));
-                    }
-                } else {
-                    remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
-                }
-            } else {
-                return Task::ready(Ok(Default::default()));
-            }
-        }
+        if self.is_local() {
+            let mut buffers_with_paths_and_servers = buffers
+                .into_iter()
+                .filter_map(|buffer_handle| {
+                    let buffer = buffer_handle.read(cx);
+                    let file = File::from_dyn(buffer.file())?;
+                    let buffer_abs_path = file.as_local()?.abs_path(cx);
+                    let (_, server) = self.language_server_for_buffer(buffer, cx)?;
+                    Some((buffer_handle, buffer_abs_path, server.clone()))
+                })
+                .collect::<Vec<_>>();
 
-        let remote_buffers = self.remote_id().zip(remote_buffers);
-        let client = self.client.clone();
-
-        cx.spawn(|this, mut cx| async move {
-            let mut project_transaction = ProjectTransaction::default();
-
-            if let Some((project_id, remote_buffers)) = remote_buffers {
-                let response = client
-                    .request(proto::FormatBuffers {
-                        project_id,
-                        trigger: trigger as i32,
-                        buffer_ids: remote_buffers
-                            .iter()
-                            .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
-                            .collect(),
-                    })
-                    .await?
-                    .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
-                project_transaction = this
-                    .update(&mut cx, |this, cx| {
-                        this.deserialize_project_transaction(response, push_to_history, cx)
-                    })
-                    .await?;
-            }
-
-            // Do not allow multiple concurrent formatting requests for the
-            // same buffer.
-            this.update(&mut cx, |this, _| {
-                local_buffers
-                    .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
-            });
-            let _cleanup = defer({
-                let this = this.clone();
-                let mut cx = cx.clone();
-                let local_buffers = &local_buffers;
-                move || {
-                    this.update(&mut cx, |this, _| {
-                        for (buffer, _, _) in local_buffers {
-                            this.buffers_being_formatted.remove(&buffer.id());
-                        }
-                    });
-                }
-            });
-
-            for (buffer, buffer_abs_path, language_server) in &local_buffers {
-                let (format_on_save, formatter, tab_size) = buffer.read_with(&cx, |buffer, cx| {
-                    let settings = cx.global::<Settings>();
-                    let language_name = buffer.language().map(|language| language.name());
-                    (
-                        settings.format_on_save(language_name.as_deref()),
-                        settings.formatter(language_name.as_deref()),
-                        settings.tab_size(language_name.as_deref()),
-                    )
+            cx.spawn(|this, mut cx| async move {
+                // Do not allow multiple concurrent formatting requests for the
+                // same buffer.
+                this.update(&mut cx, |this, _| {
+                    buffers_with_paths_and_servers
+                        .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
                 });
 
-                let transaction = match (formatter, format_on_save) {
-                    (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => continue,
+                let _cleanup = defer({
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    let local_buffers = &buffers_with_paths_and_servers;
+                    move || {
+                        this.update(&mut cx, |this, _| {
+                            for (buffer, _, _) in local_buffers {
+                                this.buffers_being_formatted.remove(&buffer.id());
+                            }
+                        });
+                    }
+                });
 
-                    (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
-                    | (_, FormatOnSave::LanguageServer) => Self::format_via_lsp(
-                        &this,
-                        &buffer,
-                        &buffer_abs_path,
-                        &language_server,
-                        tab_size,
-                        &mut cx,
-                    )
-                    .await
-                    .context("failed to format via language server")?,
+                let mut project_transaction = ProjectTransaction::default();
+                for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
+                    let (format_on_save, formatter, tab_size) =
+                        buffer.read_with(&cx, |buffer, cx| {
+                            let settings = cx.global::<Settings>();
+                            let language_name = buffer.language().map(|language| language.name());
+                            (
+                                settings.format_on_save(language_name.as_deref()),
+                                settings.formatter(language_name.as_deref()),
+                                settings.tab_size(language_name.as_deref()),
+                            )
+                        });
 
-                    (
-                        Formatter::External { command, arguments },
-                        FormatOnSave::On | FormatOnSave::Off,
-                    )
-                    | (_, FormatOnSave::External { command, arguments }) => {
-                        Self::format_via_external_command(
+                    let transaction = match (formatter, format_on_save) {
+                        (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => continue,
+
+                        (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
+                        | (_, FormatOnSave::LanguageServer) => Self::format_via_lsp(
+                            &this,
                             &buffer,
                             &buffer_abs_path,
-                            &command,
-                            &arguments,
+                            &language_server,
+                            tab_size,
                             &mut cx,
                         )
                         .await
-                        .context(format!(
-                            "failed to format via external command {:?}",
-                            command
-                        ))?
-                    }
-                };
+                        .context("failed to format via language server")?,
 
-                if let Some(transaction) = transaction {
-                    if !push_to_history {
-                        buffer.update(&mut cx, |buffer, _| {
-                            buffer.forget_transaction(transaction.id)
-                        });
+                        (
+                            Formatter::External { command, arguments },
+                            FormatOnSave::On | FormatOnSave::Off,
+                        )
+                        | (_, FormatOnSave::External { command, arguments }) => {
+                            Self::format_via_external_command(
+                                &buffer,
+                                &buffer_abs_path,
+                                &command,
+                                &arguments,
+                                &mut cx,
+                            )
+                            .await
+                            .context(format!(
+                                "failed to format via external command {:?}",
+                                command
+                            ))?
+                        }
+                    };
+
+                    if let Some(transaction) = transaction {
+                        if !push_to_history {
+                            buffer.update(&mut cx, |buffer, _| {
+                                buffer.forget_transaction(transaction.id)
+                            });
+                        }
+                        project_transaction.0.insert(buffer.clone(), transaction);
                     }
-                    project_transaction.0.insert(buffer.clone(), transaction);
                 }
-            }
 
-            Ok(project_transaction)
-        })
+                Ok(project_transaction)
+            })
+        } else {
+            let remote_id = self.remote_id();
+            let client = self.client.clone();
+            cx.spawn(|this, mut cx| async move {
+                let mut project_transaction = ProjectTransaction::default();
+                if let Some(project_id) = remote_id {
+                    let response = client
+                        .request(proto::FormatBuffers {
+                            project_id,
+                            trigger: trigger as i32,
+                            buffer_ids: buffers
+                                .iter()
+                                .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
+                                .collect(),
+                        })
+                        .await?
+                        .transaction
+                        .ok_or_else(|| anyhow!("missing transaction"))?;
+                    project_transaction = this
+                        .update(&mut cx, |this, cx| {
+                            this.deserialize_project_transaction(response, push_to_history, cx)
+                        })
+                        .await?;
+                }
+                Ok(project_transaction)
+            })
+        }
     }
 
     async fn format_via_lsp(
@@ -4429,16 +4463,19 @@ impl Project {
                             renamed_buffers.push((cx.handle(), old_path));
                         }
 
-                        if let Some(project_id) = self.remote_id() {
-                            self.client
-                                .send(proto::UpdateBufferFile {
-                                    project_id,
-                                    buffer_id: *buffer_id as u64,
-                                    file: Some(new_file.to_proto()),
-                                })
-                                .log_err();
+                        if new_file != *old_file {
+                            if let Some(project_id) = self.remote_id() {
+                                self.client
+                                    .send(proto::UpdateBufferFile {
+                                        project_id,
+                                        buffer_id: *buffer_id as u64,
+                                        file: Some(new_file.to_proto()),
+                                    })
+                                    .log_err();
+                            }
+
+                            buffer.file_updated(Arc::new(new_file), cx).detach();
                         }
-                        buffer.file_updated(Arc::new(new_file), cx).detach();
                     }
                 });
             } else {
@@ -5151,8 +5188,9 @@ impl Project {
             })
             .await;
 
-        let (saved_version, fingerprint, mtime) =
-            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
+        let (saved_version, fingerprint, mtime) = this
+            .update(&mut cx, |this, cx| this.save_buffer(buffer, cx))
+            .await?;
         Ok(proto::BufferSaved {
             project_id,
             buffer_id,
@@ -6022,7 +6060,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, fingerprint, mtime, None, cx);
+                    buffer.did_save(version, fingerprint, mtime, cx);
                 });
             }
             Ok(())
