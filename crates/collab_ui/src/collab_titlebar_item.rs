@@ -140,7 +140,7 @@ impl CollabTitlebarItem {
         let active_call = ActiveCall::global(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
-        subscriptions.push(cx.observe(&active_call, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(|this, active, cx| {
             this.window_activation_changed(active, cx)
         }));
@@ -189,6 +189,13 @@ impl CollabTitlebarItem {
                 .update(cx, |call, cx| call.set_location(project.as_ref(), cx))
                 .detach_and_log_err(cx);
         }
+    }
+
+    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
+        if ActiveCall::global(cx).read(cx).room().is_none() {
+            self.contacts_popover = None;
+        }
+        cx.notify();
     }
 
     fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
@@ -397,7 +404,11 @@ impl CollabTitlebarItem {
                 .boxed(),
             )
             .with_children(badge)
-            .with_children(self.contacts_popover_host(ContactsPopoverSide::Left, titlebar, cx))
+            .with_children(self.render_contacts_popover_host(
+                ContactsPopoverSide::Left,
+                titlebar,
+                cx,
+            ))
             .boxed()
     }
 
@@ -499,7 +510,11 @@ impl CollabTitlebarItem {
                 )
                 .boxed(),
             )
-            .with_children(self.contacts_popover_host(ContactsPopoverSide::Right, titlebar, cx))
+            .with_children(self.render_contacts_popover_host(
+                ContactsPopoverSide::Right,
+                titlebar,
+                cx,
+            ))
             .aligned()
             .contained()
             .with_margin_left(theme.workspace.titlebar.avatar_margin)
@@ -543,7 +558,11 @@ impl CollabTitlebarItem {
                 )
                 .boxed(),
             )
-            .with_children(self.contacts_popover_host(ContactsPopoverSide::Right, titlebar, cx))
+            .with_children(self.render_contacts_popover_host(
+                ContactsPopoverSide::Right,
+                titlebar,
+                cx,
+            ))
             .aligned()
             .contained()
             .with_margin_left(theme.workspace.titlebar.avatar_margin)
@@ -551,7 +570,7 @@ impl CollabTitlebarItem {
             .boxed()
     }
 
-    fn contacts_popover_host<'a>(
+    fn render_contacts_popover_host<'a>(
         &'a self,
         side: ContactsPopoverSide,
         theme: &'a theme::Titlebar,
