@@ -31,7 +31,7 @@ use uuid::Uuid;
 
 pub use action::*;
 use callback_collection::CallbackCollection;
-use collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
+use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
 pub use menu::*;
 use platform::Event;
 #[cfg(any(test, feature = "test-support"))]
@@ -474,6 +474,7 @@ type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut MutableAppCon
 type KeystrokeCallback = Box<
     dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut MutableAppContext) -> bool,
 >;
+type ActiveLabeledTasksCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
@@ -503,6 +504,7 @@ pub struct MutableAppContext {
     window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
     window_bounds_observations: CallbackCollection<usize, WindowBoundsCallback>,
     keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
+    active_labeled_task_observations: CallbackCollection<(), ActiveLabeledTasksCallback>,
 
     #[allow(clippy::type_complexity)]
     presenters_and_platform_windows:
@@ -514,6 +516,8 @@ pub struct MutableAppContext {
     pending_flushes: usize,
     flushing_effects: bool,
     halt_action_dispatch: bool,
+    next_labeled_task_id: usize,
+    active_labeled_tasks: BTreeMap<usize, &'static str>,
 }
 
 impl MutableAppContext {
@@ -562,6 +566,7 @@ impl MutableAppContext {
             window_bounds_observations: Default::default(),
             keystroke_observations: Default::default(),
             action_dispatch_observations: Default::default(),
+            active_labeled_task_observations: Default::default(),
             presenters_and_platform_windows: Default::default(),
             foreground,
             pending_effects: VecDeque::new(),
@@ -570,6 +575,8 @@ impl MutableAppContext {
             pending_flushes: 0,
             flushing_effects: false,
             halt_action_dispatch: false,
+            next_labeled_task_id: 0,
+            active_labeled_tasks: Default::default(),
         }
     }
 
@@ -792,6 +799,12 @@ impl MutableAppContext {
     pub fn window_display_uuid(&self, window_id: usize) -> Option<Uuid> {
         let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
         window.screen().display_uuid()
+    }
+
+    pub fn active_labeled_tasks<'a>(
+        &'a self,
+    ) -> impl DoubleEndedIterator<Item = &'static str> + 'a {
+        self.active_labeled_tasks.values().cloned()
     }
 
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
@@ -1153,6 +1166,19 @@ impl MutableAppContext {
         Subscription::KeystrokeObservation(
             self.keystroke_observations
                 .subscribe(window_id, subscription_id),
+        )
+    }
+
+    pub fn observe_active_labeled_tasks<F>(&mut self, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut MutableAppContext) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.active_labeled_task_observations
+            .add_callback((), subscription_id, Box::new(callback));
+        Subscription::ActiveLabeledTasksObservation(
+            self.active_labeled_task_observations
+                .subscribe((), subscription_id),
         )
     }
 
@@ -2038,6 +2064,17 @@ impl MutableAppContext {
                             handled_by,
                             result,
                         } => self.handle_keystroke_effect(window_id, keystroke, handled_by, result),
+                        Effect::ActiveLabeledTasksChanged => {
+                            self.handle_active_labeled_tasks_changed_effect()
+                        }
+                        Effect::ActiveLabeledTasksObservation {
+                            subscription_id,
+                            callback,
+                        } => self.active_labeled_task_observations.add_callback(
+                            (),
+                            subscription_id,
+                            callback,
+                        ),
                     }
                     self.pending_notifications.clear();
                     self.remove_dropped_entities();
@@ -2445,24 +2482,66 @@ impl MutableAppContext {
         }
     }
 
+    fn handle_active_labeled_tasks_changed_effect(&mut self) {
+        self.active_labeled_task_observations
+            .clone()
+            .emit((), self, move |callback, this| {
+                callback(this);
+                true
+            });
+    }
+
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
         self.pending_effects
             .push_back(Effect::Focus { window_id, view_id });
     }
 
-    pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
+    fn spawn_internal<F, Fut, T>(&mut self, task_name: Option<&'static str>, f: F) -> Task<T>
     where
         F: FnOnce(AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = T>,
         T: 'static,
     {
+        let label_id = task_name.map(|task_name| {
+            let id = post_inc(&mut self.next_labeled_task_id);
+            self.active_labeled_tasks.insert(id, task_name);
+            self.pending_effects
+                .push_back(Effect::ActiveLabeledTasksChanged);
+            id
+        });
+
         let future = f(self.to_async());
         let cx = self.to_async();
         self.foreground.spawn(async move {
             let result = future.await;
-            cx.0.borrow_mut().flush_effects();
+            let mut cx = cx.0.borrow_mut();
+
+            if let Some(completed_label_id) = label_id {
+                cx.active_labeled_tasks.remove(&completed_label_id);
+                cx.pending_effects
+                    .push_back(Effect::ActiveLabeledTasksChanged);
+            }
+            cx.flush_effects();
             result
         })
+    }
+
+    pub fn spawn_labeled<F, Fut, T>(&mut self, task_name: &'static str, f: F) -> Task<T>
+    where
+        F: FnOnce(AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = T>,
+        T: 'static,
+    {
+        self.spawn_internal(Some(task_name), f)
+    }
+
+    pub fn spawn<F, Fut, T>(&mut self, f: F) -> Task<T>
+    where
+        F: FnOnce(AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = T>,
+        T: 'static,
+    {
+        self.spawn_internal(None, f)
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -2903,6 +2982,11 @@ pub enum Effect {
         window_id: usize,
         callback: WindowShouldCloseSubscriptionCallback,
     },
+    ActiveLabeledTasksChanged,
+    ActiveLabeledTasksObservation {
+        subscription_id: usize,
+        callback: ActiveLabeledTasksCallback,
+    },
 }
 
 impl Debug for Effect {
@@ -3061,6 +3145,16 @@ impl Debug for Effect {
                     &handled_by.as_ref().map(|handled_by| handled_by.name()),
                 )
                 .field("result", result)
+                .finish(),
+            Effect::ActiveLabeledTasksChanged => {
+                f.debug_struct("Effect::ActiveLabeledTasksChanged").finish()
+            }
+            Effect::ActiveLabeledTasksObservation {
+                subscription_id,
+                callback: _,
+            } => f
+                .debug_struct("Effect::ActiveLabeledTasksObservation")
+                .field("subscription_id", subscription_id)
                 .finish(),
         }
     }
@@ -3476,7 +3570,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         WeakModelHandle::new(self.model_id)
     }
 
-    pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
+    pub fn spawn<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
         F: FnOnce(ModelHandle<T>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
@@ -3486,7 +3580,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         self.app.spawn(|cx| f(handle, cx))
     }
 
-    pub fn spawn_weak<F, Fut, S>(&self, f: F) -> Task<S>
+    pub fn spawn_weak<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
         F: FnOnce(WeakModelHandle<T>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
@@ -3939,6 +4033,23 @@ impl<'a, T: View> ViewContext<'a, T> {
             })
     }
 
+    pub fn observe_active_labeled_tasks<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, &mut ViewContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app.observe_active_labeled_tasks(move |cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| {
+                    callback(observer, cx);
+                });
+                true
+            } else {
+                false
+            }
+        })
+    }
+
     pub fn emit(&mut self, payload: T::Event) {
         self.app.pending_effects.push_back(Effect::Event {
             entity_id: self.view_id,
@@ -3985,7 +4096,17 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.halt_action_dispatch = false;
     }
 
-    pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
+    pub fn spawn_labeled<F, Fut, S>(&mut self, task_label: &'static str, f: F) -> Task<S>
+    where
+        F: FnOnce(ViewHandle<T>, AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = S>,
+        S: 'static,
+    {
+        let handle = self.handle();
+        self.app.spawn_labeled(task_label, |cx| f(handle, cx))
+    }
+
+    pub fn spawn<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
         F: FnOnce(ViewHandle<T>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
@@ -3995,7 +4116,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.spawn(|cx| f(handle, cx))
     }
 
-    pub fn spawn_weak<F, Fut, S>(&self, f: F) -> Task<S>
+    pub fn spawn_weak<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
         F: FnOnce(WeakViewHandle<T>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
@@ -5113,6 +5234,9 @@ pub enum Subscription {
     KeystrokeObservation(callback_collection::Subscription<usize, KeystrokeCallback>),
     ReleaseObservation(callback_collection::Subscription<usize, ReleaseObservationCallback>),
     ActionObservation(callback_collection::Subscription<(), ActionObservationCallback>),
+    ActiveLabeledTasksObservation(
+        callback_collection::Subscription<(), ActiveLabeledTasksCallback>,
+    ),
 }
 
 impl Subscription {
@@ -5129,6 +5253,7 @@ impl Subscription {
             Subscription::KeystrokeObservation(subscription) => subscription.id(),
             Subscription::ReleaseObservation(subscription) => subscription.id(),
             Subscription::ActionObservation(subscription) => subscription.id(),
+            Subscription::ActiveLabeledTasksObservation(subscription) => subscription.id(),
         }
     }
 
@@ -5145,6 +5270,7 @@ impl Subscription {
             Subscription::WindowBoundsObservation(subscription) => subscription.detach(),
             Subscription::ReleaseObservation(subscription) => subscription.detach(),
             Subscription::ActionObservation(subscription) => subscription.detach(),
+            Subscription::ActiveLabeledTasksObservation(subscription) => subscription.detach(),
         }
     }
 }

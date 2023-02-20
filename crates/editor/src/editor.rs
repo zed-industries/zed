@@ -5066,7 +5066,7 @@ impl Editor {
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
         });
 
-        cx.spawn(|workspace, mut cx| async move {
+        cx.spawn_labeled("Fetching Definition...", |workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
@@ -5146,7 +5146,7 @@ impl Editor {
 
         let project = workspace.project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn(|workspace, mut cx| async move {
+        Some(cx.spawn_labeled("Finding All References...", |workspace, mut cx| async move {
             let locations = references.await?;
             if locations.is_empty() {
                 return Ok(());
