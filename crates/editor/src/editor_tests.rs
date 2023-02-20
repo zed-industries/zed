@@ -13,6 +13,7 @@ use gpui::{
     executor::Deterministic,
     geometry::{rect::RectF, vector::vec2f},
     platform::{WindowBounds, WindowOptions},
+    serde_json,
 };
 use language::{BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
 use project::FakeFs;
@@ -3454,6 +3455,103 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
                     var x = 1;/*ˇ */
                 </script>
             </body>/*ˇ
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    let rust_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                brackets: serde_json::from_value(json!([
+                    { "start": "{", "end": "}", "close": true, "newline": true },
+                    { "start": "\"", "end": "\"", "close": true, "newline": false, "not_in": ["string"] },
+                ]))
+                .unwrap(),
+                autoclose_before: "})]>".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )
+        .with_override_query("(string_literal) @string")
+        .unwrap(),
+    );
+
+    let registry = Arc::new(LanguageRegistry::test());
+    registry.add(rust_language.clone());
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(registry);
+        buffer.set_language(Some(rust_language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            let x = ˇ
+        "#
+        .unindent(),
+    );
+
+    // Inserting a quotation mark. A closing quotation mark is automatically inserted.
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = "ˇ"
+        "#
+        .unindent(),
+    );
+
+    // Inserting another quotation mark. The cursor moves across the existing
+    // automatically-inserted quotation mark.
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = ""ˇ
+        "#
+        .unindent(),
+    );
+
+    // Reset
+    cx.set_state(
+        &r#"
+            let x = ˇ
+        "#
+        .unindent(),
+    );
+
+    // Inserting a quotation mark inside of a string. A second quotation mark is not inserted.
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\"", cx);
+        editor.handle_input(" ", cx);
+        editor.move_left(&Default::default(), cx);
+        editor.handle_input("\\", cx);
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = "\"ˇ "
+        "#
+        .unindent(),
+    );
+
+    // Inserting a closing quotation mark at the position of an automatically-inserted quotation
+    // mark. Nothing is inserted.
+    cx.update_editor(|editor, cx| {
+        editor.move_right(&Default::default(), cx);
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = "\" "ˇ
         "#
         .unindent(),
     );

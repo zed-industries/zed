@@ -258,7 +258,7 @@ pub struct LanguageQueries {
     pub overrides: Option<Cow<'static, str>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LanguageScope {
     language: Arc<Language>,
     override_id: Option<u32>,
