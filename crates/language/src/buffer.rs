@@ -549,16 +549,11 @@ impl Buffer {
         version: clock::Global,
         fingerprint: RopeFingerprint,
         mtime: SystemTime,
-        new_file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
         self.saved_version_fingerprint = fingerprint;
         self.saved_mtime = mtime;
-        if let Some(new_file) = new_file {
-            self.file = Some(new_file);
-            self.file_update_count += 1;
-        }
         cx.emit(Event::Saved);
         cx.notify();
     }

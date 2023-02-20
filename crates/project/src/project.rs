@@ -4461,16 +4461,19 @@ impl Project {
                             renamed_buffers.push((cx.handle(), old_path));
                         }
 
-                        if let Some(project_id) = self.remote_id() {
-                            self.client
-                                .send(proto::UpdateBufferFile {
-                                    project_id,
-                                    buffer_id: *buffer_id as u64,
-                                    file: Some(new_file.to_proto()),
-                                })
-                                .log_err();
+                        if new_file != *old_file {
+                            if let Some(project_id) = self.remote_id() {
+                                self.client
+                                    .send(proto::UpdateBufferFile {
+                                        project_id,
+                                        buffer_id: *buffer_id as u64,
+                                        file: Some(new_file.to_proto()),
+                                    })
+                                    .log_err();
+                            }
+
+                            buffer.file_updated(Arc::new(new_file), cx).detach();
                         }
-                        buffer.file_updated(Arc::new(new_file), cx).detach();
                     }
                 });
             } else {
@@ -6054,7 +6057,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, fingerprint, mtime, None, cx);
+                    buffer.did_save(version, fingerprint, mtime, cx);
                 });
             }
             Ok(())

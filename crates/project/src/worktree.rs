@@ -20,6 +20,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
+use language::File as _;
 use language::{
     proto::{
         deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
@@ -728,7 +729,7 @@ impl LocalWorktree {
         &self,
         buffer_handle: ModelHandle<Buffer>,
         path: Arc<Path>,
-        replace_file: bool,
+        has_changed_file: bool,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
         let handle = cx.handle();
@@ -746,6 +747,32 @@ impl LocalWorktree {
         cx.as_mut().spawn(|mut cx| async move {
             let entry = save.await?;
 
+            if has_changed_file {
+                let new_file = Arc::new(File {
+                    entry_id: entry.id,
+                    worktree: handle,
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: true,
+                    is_deleted: false,
+                });
+
+                if let Some(project_id) = project_id {
+                    rpc.send(proto::UpdateBufferFile {
+                        project_id,
+                        buffer_id,
+                        file: Some(new_file.to_proto()),
+                    })
+                    .log_err();
+                }
+
+                buffer_handle.update(&mut cx, |buffer, cx| {
+                    if has_changed_file {
+                        buffer.file_updated(new_file, cx).detach();
+                    }
+                });
+            }
+
             if let Some(project_id) = project_id {
                 rpc.send(proto::BufferSaved {
                     project_id,
@@ -757,24 +784,7 @@ impl LocalWorktree {
             }
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(
-                    version.clone(),
-                    fingerprint,
-                    entry.mtime,
-                    if replace_file {
-                        Some(Arc::new(File {
-                            entry_id: entry.id,
-                            worktree: handle,
-                            path: entry.path,
-                            mtime: entry.mtime,
-                            is_local: true,
-                            is_deleted: false,
-                        }))
-                    } else {
-                        None
-                    },
-                    cx,
-                );
+                buffer.did_save(version.clone(), fingerprint, entry.mtime, cx);
             });
 
             Ok((version, fingerprint, entry.mtime))
@@ -1137,7 +1147,7 @@ impl RemoteWorktree {
                 .into();
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), fingerprint, mtime, None, cx);
+                buffer.did_save(version.clone(), fingerprint, mtime, cx);
             });
 
             Ok((version, fingerprint, mtime))

@@ -2482,7 +2482,6 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             buffer.version(),
             buffer.as_rope().fingerprint(),
             buffer.file().unwrap().mtime(),
-            None,
             cx,
         );
     });
