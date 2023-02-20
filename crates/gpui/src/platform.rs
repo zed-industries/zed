@@ -65,7 +65,6 @@ pub trait Platform: Send + Sync {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn open_url(&self, url: &str);
-    fn reveal_path(&self, path: &Path);
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()>;
     fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
@@ -100,6 +99,7 @@ pub(crate) trait ForegroundPlatform {
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>;
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
+    fn reveal_path(&self, path: &Path);
 }
 
 pub trait Dispatcher: Send + Sync {

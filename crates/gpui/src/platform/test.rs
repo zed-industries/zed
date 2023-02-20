@@ -92,6 +92,8 @@ impl super::ForegroundPlatform for ForegroundPlatform {
         *self.last_prompt_for_new_path_args.borrow_mut() = Some((path.to_path_buf(), done_tx));
         done_rx
     }
+
+    fn reveal_path(&self, _: &Path) {}
 }
 
 pub fn platform() -> Platform {
@@ -172,8 +174,6 @@ impl super::Platform for Platform {
     }
 
     fn open_url(&self, _: &str) {}
-
-    fn reveal_path(&self, _: &Path) {}
 
     fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Result<()> {
         Ok(())

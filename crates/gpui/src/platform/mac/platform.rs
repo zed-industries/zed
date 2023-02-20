@@ -16,7 +16,7 @@ use cocoa::{
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
-    base::{id, nil, selector, YES},
+    base::{id, nil, selector, BOOL, YES},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
         NSUInteger, NSURL,
@@ -113,10 +113,8 @@ unsafe fn build_classes() {
     }
 }
 
-#[derive(Default)]
 pub struct MacForegroundPlatform(RefCell<MacForegroundPlatformState>);
 
-#[derive(Default)]
 pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
@@ -128,9 +126,26 @@ pub struct MacForegroundPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     menu_actions: Vec<Box<dyn Action>>,
+    foreground: Rc<executor::Foreground>,
 }
 
 impl MacForegroundPlatform {
+    pub fn new(foreground: Rc<executor::Foreground>) -> Self {
+        Self(RefCell::new(MacForegroundPlatformState {
+            become_active: Default::default(),
+            resign_active: Default::default(),
+            quit: Default::default(),
+            event: Default::default(),
+            menu_command: Default::default(),
+            validate_menu_command: Default::default(),
+            will_open_menu: Default::default(),
+            open_urls: Default::default(),
+            finish_launching: Default::default(),
+            menu_actions: Default::default(),
+            foreground,
+        }))
+    }
+
     unsafe fn create_menu_bar(
         &self,
         menus: Vec<Menu>,
@@ -398,6 +413,26 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
             done_rx
         }
     }
+
+    fn reveal_path(&self, path: &Path) {
+        unsafe {
+            let path = path.to_path_buf();
+            self.0
+                .borrow()
+                .foreground
+                .spawn(async move {
+                    let full_path = ns_string(path.to_str().unwrap_or(""));
+                    let root_full_path = ns_string("");
+                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+                    let _: BOOL = msg_send![
+                        workspace,
+                        selectFile: full_path
+                        inFileViewerRootedAtPath: root_full_path
+                    ];
+                })
+                .detach();
+        }
+    }
 }
 
 pub struct MacPlatform {
@@ -596,19 +631,6 @@ impl platform::Platform for MacPlatform {
                 .autorelease();
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
-        }
-    }
-
-    fn reveal_path(&self, path: &Path) {
-        unsafe {
-            let full_path = ns_string(path.to_str().unwrap_or(""));
-            let root_full_path = ns_string("");
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-            msg_send![
-                workspace,
-                selectFile: full_path
-                inFileViewerRootedAtPath: root_full_path
-            ]
         }
     }
 
