@@ -190,8 +190,8 @@ pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 impl App {
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
         let platform = platform::current::platform();
-        let foreground_platform = platform::current::foreground_platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
+        let foreground_platform = platform::current::foreground_platform(foreground.clone());
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
@@ -898,6 +898,10 @@ impl MutableAppContext {
 
     pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         self.foreground_platform.prompt_for_new_path(directory)
+    }
+
+    pub fn reveal_path(&self, path: &Path) {
+        self.foreground_platform.reveal_path(path)
     }
 
     pub fn emit_global<E: Any>(&mut self, payload: E) {
@@ -3635,6 +3639,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         self.app.prompt_for_new_path(directory)
+    }
+
+    pub fn reveal_path(&self, path: &Path) {
+        self.app.reveal_path(path)
     }
 
     pub fn debug_elements(&self) -> crate::json::Value {
