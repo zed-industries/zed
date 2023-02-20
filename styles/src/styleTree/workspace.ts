@@ -157,27 +157,6 @@ export default function workspace(colorScheme: ColorScheme) {
           color: foreground(layer, "variant", "hovered"),
         },
       },
-      toggleCollaboratorsButton: {
-        margin: { left: 6 },
-        cornerRadius: 6,
-        color: foreground(layer, "variant"),
-        width: 12,
-        active: {
-          background: background(layer, "variant", "active"),
-          color: foreground(layer, "variant", "active"),
-        },
-        hover: {
-          background: background(layer, "variant", "hovered"),
-          color: foreground(layer, "variant", "hovered"),
-        },
-      },
-      collaboratorCount: {
-        ...text(layer, "mono", { size: "sm" }),
-        margin: {
-          left: 4,
-          right: 6,
-        },
-      },
       toggleContactsButton: {
         margin: { left: 6 },
         cornerRadius: 6,

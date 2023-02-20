@@ -91,7 +91,6 @@ impl View for CollabTitlebarItem {
         );
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-            left_container.add_child(self.render_toggle_collaborator_list_button(&theme, cx));
             left_container.add_child(self.render_current_user(&workspace, &theme, &user, cx));
             left_container.add_children(self.render_collaborators(&workspace, &theme, room, cx));
             left_container.add_child(self.render_toggle_contacts_button(&theme, cx));
@@ -216,77 +215,6 @@ impl CollabTitlebarItem {
                 .update(cx, |call, cx| call.unshare_project(project, cx))
                 .log_err();
         }
-    }
-
-    fn render_toggle_collaborator_list_button(
-        &self,
-        theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let titlebar = &theme.workspace.titlebar;
-
-        Stack::new()
-            .with_child(
-                MouseEventHandler::<ToggleCollaboratorList>::new(0, cx, |state, cx| {
-                    let collaborator_count_style = titlebar.collaborator_count.clone();
-                    let style = titlebar
-                        .toggle_collaborators_button
-                        .style_for(state, self.collaborator_list_popover.is_some());
-
-                    let active_call = ActiveCall::global(cx);
-                    let collaborator_count = active_call
-                        .read(cx)
-                        .room()
-                        .map_or(0, |room| room.read(cx).remote_participants().len())
-                        + 1;
-
-                    Flex::row()
-                        .with_child(
-                            Svg::new("icons/user_group_12.svg")
-                                .with_color(style.color)
-                                .constrained()
-                                .with_width(style.width)
-                                .aligned()
-                                .contained()
-                                .with_style(style.container)
-                                .boxed(),
-                        )
-                        .with_child(
-                            Label::new(
-                                format!("{collaborator_count}"),
-                                collaborator_count_style.text,
-                            )
-                            .contained()
-                            .with_style(collaborator_count_style.container)
-                            .aligned()
-                            .boxed(),
-                        )
-                        .contained()
-                        .with_style(style.container)
-                        .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(ToggleCollaboratorList);
-                })
-                .aligned()
-                .boxed(),
-            )
-            .with_children(self.collaborator_list_popover.as_ref().map(|popover| {
-                Overlay::new(
-                    ChildView::new(popover, cx)
-                        .contained()
-                        .with_margin_top(titlebar.height)
-                        .with_margin_left(titlebar.toggle_collaborators_button.default.width)
-                        .with_margin_right(-titlebar.toggle_collaborators_button.default.width)
-                        .boxed(),
-                )
-                .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                .with_anchor_corner(AnchorCorner::BottomLeft)
-                .with_z_index(999)
-                .boxed()
-            }))
-            .boxed()
     }
 
     pub fn toggle_collaborator_list_popover(
