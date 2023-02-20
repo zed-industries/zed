@@ -792,8 +792,7 @@ impl ProjectPanel {
 
     fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            cx.platform()
-                .reveal_path(&worktree.abs_path().join(&entry.path));
+            cx.reveal_path(&worktree.abs_path().join(&entry.path));
         }
     }
 
