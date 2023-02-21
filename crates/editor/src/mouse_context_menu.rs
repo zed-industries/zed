@@ -6,7 +6,7 @@ use gpui::{
 
 use crate::{
     DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToTypeDefinition,
-    Rename, SelectMode, ToggleCodeActions,
+    Rename, RevealInFinder, SelectMode, ToggleCodeActions,
 };
 
 #[derive(Clone, PartialEq)]
@@ -61,6 +61,8 @@ pub fn deploy_context_menu(
                         deployed_from_indicator: false,
                     },
                 ),
+                ContextMenuItem::Separator,
+                ContextMenuItem::item("Reveal in Finder", RevealInFinder),
             ],
             cx,
         );
