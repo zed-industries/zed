@@ -119,7 +119,7 @@ export default function workspace(colorScheme: ColorScheme) {
           width: 1,
         },
       },
-      followerAvatarOverlap: 4,
+      followerAvatarOverlap: 6,
       avatarRibbon: {
         height: 3,
         width: 12,

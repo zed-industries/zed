@@ -1,6 +1,7 @@
 use crate::{
     collaborator_list_popover, collaborator_list_popover::CollaboratorListPopover,
-    contact_notification::ContactNotification, contacts_popover, ToggleScreenSharing,
+    contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
+    ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
@@ -627,7 +628,7 @@ impl CollabTitlebarItem {
 
         let content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
-                let flex = Flex::row()
+                let face_pile = FacePile::new(theme.workspace.titlebar.follower_avatar_overlap)
                     .with_child(Self::render_face(avatar.clone(), avatar_style.clone()))
                     .with_children(
                         (|| {
@@ -652,16 +653,10 @@ impl CollabTitlebarItem {
                                         }
                                     })?;
 
-                                Some(
-                                    Container::new(Self::render_face(
-                                        avatar.clone(),
-                                        theme.workspace.titlebar.follower_avatar.clone(),
-                                    ))
-                                    .with_margin_left(
-                                        -1.0 * theme.workspace.titlebar.follower_avatar_overlap,
-                                    )
-                                    .boxed(),
-                                )
+                                Some(Self::render_face(
+                                    avatar.clone(),
+                                    theme.workspace.titlebar.follower_avatar.clone(),
+                                ))
                             }))
                         })()
                         .into_iter()
@@ -679,11 +674,11 @@ impl CollabTitlebarItem {
                             });
                     if followed_by_self {
                         let color = theme.editor.replica_selection_style(replica_id).selection;
-                        return flex.contained().with_background_color(color).boxed();
+                        return face_pile.contained().with_background_color(color).boxed();
                     }
                 }
 
-                flex.boxed()
+                face_pile.boxed()
             }))
             .with_children((|| {
                 let replica_id = replica_id?;

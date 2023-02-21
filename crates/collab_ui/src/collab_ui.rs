@@ -4,6 +4,7 @@ mod contact_finder;
 mod contact_list;
 mod contact_notification;
 mod contacts_popover;
+mod face_pile;
 mod incoming_call_notification;
 mod notifications;
 mod project_shared_notification;
