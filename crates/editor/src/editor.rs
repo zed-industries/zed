@@ -241,7 +241,8 @@ actions!(
         RestartLanguageServer,
         Hover,
         Format,
-        ToggleSoftWrap
+        ToggleSoftWrap,
+        RevealInFinder
     ]
 );
 
@@ -354,6 +355,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::jump);
     cx.add_action(Editor::toggle_soft_wrap);
+    cx.add_action(Editor::reveal_in_finder);
     cx.add_async_action(Editor::format);
     cx.add_action(Editor::restart_language_server);
     cx.add_action(Editor::show_character_palette);
@@ -5887,6 +5889,14 @@ impl Editor {
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
         cx.notify();
+    }
+
+    pub fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                cx.reveal_path(&file.abs_path(cx));
+            }
+        }
     }
 
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
