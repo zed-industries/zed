@@ -78,7 +78,7 @@ fn main() {
     };
 
     let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
-    let (open_paths_tx, open_paths_rx) = mpsc::unbounded();
+    let (open_paths_tx, mut open_paths_rx) = mpsc::unbounded();
     app.on_open_urls(move |urls, _| {
         if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
             if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
@@ -189,9 +189,6 @@ fn main() {
 
         cx.set_menus(menus::menus());
 
-        cx.spawn(|cx| handle_open_paths(open_paths_rx, app_state.clone(), cx))
-            .detach();
-
         if stdout_is_a_pty() {
             cx.platform().activate(true);
             let paths = collect_path_args();
@@ -205,13 +202,32 @@ fn main() {
             if let Ok(Some(connection)) = cli_connections_rx.try_next() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
+            } else if let Ok(Some(paths)) = open_paths_rx.try_next() {
+                cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                    .detach();
             } else {
                 cx.spawn(|cx| async move { restore_or_create_workspace(cx).await })
                     .detach()
             }
-            cx.spawn(|cx| async move {
-                while let Some(connection) = cli_connections_rx.next().await {
-                    handle_cli_connection(connection, app_state.clone(), cx.clone()).await;
+
+            cx.spawn(|cx| {
+                let app_state = app_state.clone();
+                async move {
+                    while let Some(connection) = cli_connections_rx.next().await {
+                        handle_cli_connection(connection, app_state.clone(), cx.clone()).await;
+                    }
+                }
+            })
+            .detach();
+
+            cx.spawn(|mut cx| {
+                let app_state = app_state.clone();
+                async move {
+                    while let Some(paths) = open_paths_rx.next().await {
+                        log::error!("OPEN PATHS FROM HANDLE");
+                        cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                            .detach();
+                    }
                 }
             })
             .detach();
@@ -519,17 +535,6 @@ fn load_config_files(
         })
         .detach();
     rx
-}
-
-async fn handle_open_paths(
-    mut rx: mpsc::UnboundedReceiver<Vec<PathBuf>>,
-    app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
-) {
-    while let Some(paths) = rx.next().await {
-        cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
-            .detach();
-    }
 }
 
 fn connect_to_cli(
