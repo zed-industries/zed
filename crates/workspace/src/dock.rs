@@ -57,7 +57,6 @@ pub fn init(cx: &mut MutableAppContext) {
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &AddTabToDock, cx: &mut ViewContext<Workspace>| {
-            eprintln!("Add tab to dock");
             if let Some(active_item) = workspace.active_item(cx) {
                 let item_id = active_item.id();
 
@@ -82,7 +81,6 @@ pub fn init(cx: &mut MutableAppContext) {
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &RemoveTabFromDock, cx: &mut ViewContext<Workspace>| {
-            eprintln!("Removing tab from dock");
             if let Some(active_item) = workspace.active_item(cx) {
                 let item_id = active_item.id();
 
