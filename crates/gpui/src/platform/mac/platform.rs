@@ -807,17 +807,24 @@ impl platform::Platform for MacPlatform {
 
     fn restart(&self) {
         #[cfg(debug_assertions)]
-        let path = std::env::current_exe();
+        let path = std::env::current_exe().unwrap();
 
         #[cfg(not(debug_assertions))]
-        let path = self.app_path().or_else(|_| std::env::current_exe());
+        let path = self
+            .app_path()
+            .unwrap_or_else(|_| std::env::current_exe().unwrap());
 
-        let command = path.and_then(|path| Command::new("/usr/bin/open").arg(path).spawn());
+        let script = r#"lsof -p "$0" +r 1 &>/dev/null && open "$1""#;
 
-        match command {
-            Err(err) => log::error!("Unable to restart application {}", err),
-            Ok(_child) => self.quit(),
-        }
+        Command::new("/bin/bash")
+            .arg("-c")
+            .arg(script)
+            .arg(std::process::id().to_string())
+            .arg(path)
+            .spawn()
+            .ok();
+
+        self.quit();
     }
 }
 
