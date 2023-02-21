@@ -93,7 +93,8 @@ pub struct Titlebar {
 pub struct AvatarStyle {
     #[serde(flatten)]
     pub image: ImageStyle,
-    pub width: f32,
+    pub outer_width: f32,
+    pub outer_corner_radius: f32,
 }
 
 #[derive(Deserialize, Default)]

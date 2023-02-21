@@ -610,6 +610,16 @@ impl CollabTitlebarItem {
     ) -> ElementBox {
         let room = ActiveCall::global(cx).read(cx).room();
         let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
+        let followed_by_self = room
+            .map(|room| {
+                is_being_followed
+                    && room
+                        .read(cx)
+                        .followers_for(peer_id)
+                        .iter()
+                        .any(|&follower| Some(follower) == workspace.read(cx).client().peer_id())
+            })
+            .unwrap_or(false);
 
         let avatar_style;
         if let Some(location) = location {
@@ -626,10 +636,28 @@ impl CollabTitlebarItem {
             avatar_style = &theme.workspace.titlebar.avatar;
         }
 
+        let mut background_color = theme
+            .workspace
+            .titlebar
+            .container
+            .background_color
+            .unwrap_or_default();
+        if let Some(replica_id) = replica_id {
+            if followed_by_self {
+                let selection = dbg!(theme.editor.replica_selection_style(replica_id).selection);
+                background_color = dbg!(Color::blend(selection, background_color));
+                background_color.a = 255;
+            }
+        }
+
         let content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
                 let face_pile = FacePile::new(theme.workspace.titlebar.follower_avatar_overlap)
-                    .with_child(Self::render_face(avatar.clone(), avatar_style.clone()))
+                    .with_child(Self::render_face(
+                        avatar.clone(),
+                        avatar_style.clone(),
+                        background_color,
+                    ))
                     .with_children(
                         (|| {
                             let room = room?.read(cx);
@@ -656,6 +684,7 @@ impl CollabTitlebarItem {
                                 Some(Self::render_face(
                                     avatar.clone(),
                                     theme.workspace.titlebar.follower_avatar.clone(),
+                                    background_color,
                                 ))
                             }))
                         })()
@@ -663,15 +692,7 @@ impl CollabTitlebarItem {
                         .flatten(),
                     );
 
-                if let (Some(replica_id), Some(room)) = (replica_id, room) {
-                    let followed_by_self = is_being_followed
-                        && room
-                            .read(cx)
-                            .followers_for(peer_id)
-                            .iter()
-                            .any(|&follower| {
-                                Some(follower) == workspace.read(cx).client().peer_id()
-                            });
+                if let Some(replica_id) = replica_id {
                     if followed_by_self {
                         let color = theme.editor.replica_selection_style(replica_id).selection;
                         return face_pile.contained().with_background_color(color).boxed();
@@ -744,14 +765,20 @@ impl CollabTitlebarItem {
         }
     }
 
-    fn render_face(avatar: Arc<ImageData>, avatar_style: AvatarStyle) -> ElementBox {
+    fn render_face(
+        avatar: Arc<ImageData>,
+        avatar_style: AvatarStyle,
+        background_color: Color,
+    ) -> ElementBox {
         Image::new(avatar)
             .with_style(avatar_style.image)
-            .constrained()
-            .with_width(avatar_style.width)
+            .aligned()
             .contained()
-            .with_background_color(Color::white())
-            .with_corner_radius(avatar_style.image.corner_radius)
+            .with_background_color(background_color)
+            .with_corner_radius(avatar_style.outer_corner_radius)
+            .constrained()
+            .with_width(avatar_style.outer_width)
+            .with_height(avatar_style.outer_width)
             .aligned()
             .boxed()
     }

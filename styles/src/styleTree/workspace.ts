@@ -41,7 +41,9 @@ export default function workspace(colorScheme: ColorScheme) {
     },
   };
   const avatarWidth = 18;
+  const avatarOuterWidth = avatarWidth + 4;
   const followerAvatarWidth = 14;
+  const followerAvatarOuterWidth = followerAvatarWidth + 4;
 
   return {
     background: background(layer),
@@ -96,30 +98,24 @@ export default function workspace(colorScheme: ColorScheme) {
       // Collaborators
       avatar: {
         width: avatarWidth,
+        outerWidth: avatarOuterWidth,
         cornerRadius: avatarWidth / 2,
-        border: {
-          color: "#00000088",
-          width: 1,
-        },
+        outerCornerRadius: avatarOuterWidth / 2,
       },
       inactiveAvatar: {
         width: avatarWidth,
+        outerWidth: avatarOuterWidth,
         cornerRadius: avatarWidth / 2,
-        border: {
-          color: "#00000088",
-          width: 1,
-        },
+        outerCornerRadius: avatarOuterWidth / 2,
         grayscale: true,
       },
       followerAvatar: {
         width: followerAvatarWidth,
+        outerWidth: followerAvatarOuterWidth,
         cornerRadius: followerAvatarWidth / 2,
-        border: {
-          color: "#00000088",
-          width: 1,
-        },
+        outerCornerRadius: followerAvatarOuterWidth / 2,
       },
-      followerAvatarOverlap: 6,
+      followerAvatarOverlap: 8,
       avatarRibbon: {
         height: 3,
         width: 12,

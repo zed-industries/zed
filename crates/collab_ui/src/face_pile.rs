@@ -59,7 +59,9 @@ impl Element for FacePile {
         for face in self.faces.iter_mut().rev() {
             let size = face.size();
             origin_x -= size.x();
-            face.paint(vec2f(origin_x, origin_y), visible_bounds, cx);
+            cx.paint_layer(None, |cx| {
+                face.paint(vec2f(origin_x, origin_y), visible_bounds, cx);
+            });
             origin_x += self.overlap;
         }
 
