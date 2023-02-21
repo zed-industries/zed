@@ -20,7 +20,6 @@ struct ScrollState {
 
 pub struct Flex {
     axis: Axis,
-    paint_reversed: bool,
     children: Vec<ElementBox>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
 }
@@ -29,7 +28,6 @@ impl Flex {
     pub fn new(axis: Axis) -> Self {
         Self {
             axis,
-            paint_reversed: false,
             children: Default::default(),
             scroll_state: None,
         }
@@ -41,11 +39,6 @@ impl Flex {
 
     pub fn column() -> Self {
         Self::new(Axis::Vertical)
-    }
-
-    pub fn with_reversed_paint_order(mut self) -> Self {
-        self.paint_reversed = true;
-        self
     }
 
     pub fn scrollable<Tag, V>(
@@ -303,7 +296,7 @@ impl Element for Flex {
             }
         }
 
-        let mut child_action = |child: &mut ElementBox| {
+        for child in &mut self.children {
             if remaining_space > 0. {
                 if let Some(metadata) = child.metadata::<FlexParentData>() {
                     if metadata.float {
@@ -321,16 +314,6 @@ impl Element for Flex {
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
                 Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
-            }
-        };
-
-        if self.paint_reversed {
-            for child in self.children.iter_mut().rev() {
-                child_action(child);
-            }
-        } else {
-            for child in &mut self.children {
-                child_action(child);
             }
         }
 

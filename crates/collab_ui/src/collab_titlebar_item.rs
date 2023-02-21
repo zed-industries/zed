@@ -628,7 +628,6 @@ impl CollabTitlebarItem {
         let content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
                 let flex = Flex::row()
-                    // .with_reversed_paint_order()
                     .with_child(Self::render_face(avatar.clone(), avatar_style.clone()))
                     .with_children(
                         (|| {
