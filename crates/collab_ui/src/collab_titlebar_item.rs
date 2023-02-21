@@ -17,7 +17,7 @@ use gpui::{
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
-use theme::Theme;
+use theme::{AvatarStyle, Theme};
 use util::ResultExt;
 use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
@@ -614,21 +614,22 @@ impl CollabTitlebarItem {
         if let Some(location) = location {
             if let ParticipantLocation::SharedProject { project_id } = location {
                 if Some(project_id) == workspace.read(cx).project().read(cx).remote_id() {
-                    avatar_style = theme.workspace.titlebar.avatar;
+                    avatar_style = &theme.workspace.titlebar.avatar;
                 } else {
-                    avatar_style = theme.workspace.titlebar.inactive_avatar;
+                    avatar_style = &theme.workspace.titlebar.inactive_avatar;
                 }
             } else {
-                avatar_style = theme.workspace.titlebar.inactive_avatar;
+                avatar_style = &theme.workspace.titlebar.inactive_avatar;
             }
         } else {
-            avatar_style = theme.workspace.titlebar.avatar;
+            avatar_style = &theme.workspace.titlebar.avatar;
         }
 
         let content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
                 let flex = Flex::row()
-                    .with_child(Self::render_face(avatar.clone(), avatar_style, theme))
+                    // .with_reversed_paint_order()
+                    .with_child(Self::render_face(avatar.clone(), avatar_style.clone()))
                     .with_children(
                         (|| {
                             let room = room?.read(cx);
@@ -652,14 +653,22 @@ impl CollabTitlebarItem {
                                         }
                                     })?;
 
-                                Some(Self::render_face(avatar.clone(), avatar_style, theme))
+                                Some(
+                                    Container::new(Self::render_face(
+                                        avatar.clone(),
+                                        theme.workspace.titlebar.follower_avatar.clone(),
+                                    ))
+                                    .with_margin_left(
+                                        -1.0 * theme.workspace.titlebar.follower_avatar_overlap,
+                                    )
+                                    .boxed(),
+                                )
                             }))
                         })()
                         .into_iter()
                         .flatten(),
                     );
 
-                let room = ActiveCall::global(cx).read(cx).room();
                 if let (Some(replica_id), Some(room)) = (replica_id, room) {
                     let followed_by_self = is_being_followed
                         && room
@@ -669,7 +678,6 @@ impl CollabTitlebarItem {
                             .any(|&follower| {
                                 Some(follower) == workspace.read(cx).client().peer_id()
                             });
-
                     if followed_by_self {
                         let color = theme.editor.replica_selection_style(replica_id).selection;
                         return flex.contained().with_background_color(color).boxed();
@@ -742,11 +750,14 @@ impl CollabTitlebarItem {
         }
     }
 
-    fn render_face(avatar: Arc<ImageData>, avatar_style: ImageStyle, theme: &Theme) -> ElementBox {
+    fn render_face(avatar: Arc<ImageData>, avatar_style: AvatarStyle) -> ElementBox {
         Image::new(avatar)
-            .with_style(avatar_style)
+            .with_style(avatar_style.image)
             .constrained()
-            .with_width(theme.workspace.titlebar.avatar_width)
+            .with_width(avatar_style.width)
+            .contained()
+            .with_background_color(Color::white())
+            .with_corner_radius(avatar_style.image.corner_radius)
             .aligned()
             .boxed()
     }

@@ -41,6 +41,7 @@ export default function workspace(colorScheme: ColorScheme) {
     },
   };
   const avatarWidth = 18;
+  const followerAvatarWidth = 14;
 
   return {
     background: background(layer),
@@ -80,7 +81,6 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     statusBar: statusBar(colorScheme),
     titlebar: {
-      avatarWidth,
       avatarMargin: 8,
       height: 33, // 32px + 1px for overlaid border
       background: background(layer),
@@ -95,6 +95,7 @@ export default function workspace(colorScheme: ColorScheme) {
 
       // Collaborators
       avatar: {
+        width: avatarWidth,
         cornerRadius: avatarWidth / 2,
         border: {
           color: "#00000088",
@@ -102,6 +103,7 @@ export default function workspace(colorScheme: ColorScheme) {
         },
       },
       inactiveAvatar: {
+        width: avatarWidth,
         cornerRadius: avatarWidth / 2,
         border: {
           color: "#00000088",
@@ -109,6 +111,15 @@ export default function workspace(colorScheme: ColorScheme) {
         },
         grayscale: true,
       },
+      followerAvatar: {
+        width: followerAvatarWidth,
+        cornerRadius: followerAvatarWidth / 2,
+        border: {
+          color: "#00000088",
+          width: 1,
+        },
+      },
+      followerAvatarOverlap: 4,
       avatarRibbon: {
         height: 3,
         width: 12,
@@ -118,7 +129,7 @@ export default function workspace(colorScheme: ColorScheme) {
       // Sign in buttom
       // FlatButton, Variant
       signInPrompt: {
-        ...titlebarButton
+        ...titlebarButton,
       },
 
       // Offline Indicator
@@ -184,8 +195,8 @@ export default function workspace(colorScheme: ColorScheme) {
         background: foreground(layer, "accent"),
       },
       shareButton: {
-        ...titlebarButton
-      }
+        ...titlebarButton,
+      },
     },
 
     toolbar: {
@@ -241,9 +252,6 @@ export default function workspace(colorScheme: ColorScheme) {
         shadow: colorScheme.modalShadow,
       },
     },
-    dropTargetOverlayColor: withOpacity(
-      foreground(layer, "variant"),
-      0.5
-    ),
+    dropTargetOverlayColor: withOpacity(foreground(layer, "variant"), 0.5),
   };
 }
