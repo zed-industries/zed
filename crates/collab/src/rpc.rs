@@ -1719,7 +1719,6 @@ async fn follow(
     response: Response<proto::Follow>,
     session: Session,
 ) -> Result<()> {
-    let room_id = RoomId::from_proto(request.project_id);
     let project_id = ProjectId::from_proto(request.project_id);
     let leader_id = request
         .leader_id
@@ -1751,7 +1750,7 @@ async fn follow(
     let room = session
         .db()
         .await
-        .follow(room_id, project_id, leader_id, follower_id)
+        .follow(project_id, leader_id, follower_id)
         .await?;
     room_updated(&room, &session.peer);
 
@@ -1759,7 +1758,6 @@ async fn follow(
 }
 
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
-    let room_id = RoomId::from_proto(request.project_id);
     let project_id = ProjectId::from_proto(request.project_id);
     let leader_id = request
         .leader_id
@@ -1784,7 +1782,7 @@ async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     let room = session
         .db()
         .await
-        .unfollow(room_id, project_id, leader_id, follower_id)
+        .unfollow(project_id, leader_id, follower_id)
         .await?;
     room_updated(&room, &session.peer);
 

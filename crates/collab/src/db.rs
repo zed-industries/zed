@@ -1720,12 +1720,12 @@ impl Database {
 
     pub async fn follow(
         &self,
-        room_id: RoomId,
         project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
     ) -> Result<RoomGuard<proto::Room>> {
         self.room_transaction(|tx| async move {
+            let room_id = self.room_id_for_project(project_id, &*tx).await?;
             follower::ActiveModel {
                 room_id: ActiveValue::set(room_id),
                 project_id: ActiveValue::set(project_id),
@@ -1749,16 +1749,15 @@ impl Database {
 
     pub async fn unfollow(
         &self,
-        room_id: RoomId,
         project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
     ) -> Result<RoomGuard<proto::Room>> {
         self.room_transaction(|tx| async move {
+            let room_id = self.room_id_for_project(project_id, &*tx).await?;
             follower::Entity::delete_many()
                 .filter(
                     Condition::all()
-                        .add(follower::Column::RoomId.eq(room_id))
                         .add(follower::Column::ProjectId.eq(project_id))
                         .add(
                             Condition::any()
@@ -1786,6 +1785,25 @@ impl Database {
             Ok((room_id, self.get_room(room_id, &*tx).await?))
         })
         .await
+    }
+
+    async fn room_id_for_project(
+        &self,
+        project_id: ProjectId,
+        tx: &DatabaseTransaction,
+    ) -> Result<RoomId> {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryAs {
+            RoomId,
+        }
+
+        Ok(project::Entity::find_by_id(project_id)
+            .select_only()
+            .column(project::Column::RoomId)
+            .into_values::<_, QueryAs>()
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!("no such project"))?)
     }
 
     pub async fn update_room_participant_location(
