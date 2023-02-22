@@ -103,7 +103,7 @@ impl View for CollabTitlebarItem {
 
         if ActiveCall::global(cx).read(cx).room().is_some() {
             right_container
-                .add_child(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
+                .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
         } else {
             right_container.add_child(self.render_outside_call_share_button(&theme, cx));
         }
@@ -396,8 +396,13 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let is_shared = workspace.read(cx).project().read(cx).is_shared();
+    ) -> Option<ElementBox> {
+        let project = workspace.read(cx).project();
+        if project.read(cx).is_remote() {
+            return None;
+        }
+
+        let is_shared = project.read(cx).is_shared();
         let label = if is_shared { "Unshare" } else { "Share" };
         let tooltip = if is_shared {
             "Unshare project from call participants"
@@ -408,47 +413,49 @@ impl CollabTitlebarItem {
         let titlebar = &theme.workspace.titlebar;
 
         enum ShareUnshare {}
-        Stack::new()
-            .with_child(
-                MouseEventHandler::<ShareUnshare>::new(0, cx, |state, _| {
-                    //TODO: Ensure this button has consistant width for both text variations
-                    let style = titlebar.share_button.style_for(
-                        state,
-                        self.contacts_popover.is_some()
-                            && self.contacts_popover_side == ContactsPopoverSide::Right,
-                    );
-                    Label::new(label, style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                        .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
-                    if is_shared {
-                        cx.dispatch_action(UnshareProject);
-                    } else {
-                        cx.dispatch_action(ShareProject);
-                    }
-                })
-                .with_tooltip::<ShareUnshare, _>(
-                    0,
-                    tooltip.to_owned(),
-                    None,
-                    theme.tooltip.clone(),
-                    cx,
+        Some(
+            Stack::new()
+                .with_child(
+                    MouseEventHandler::<ShareUnshare>::new(0, cx, |state, _| {
+                        //TODO: Ensure this button has consistant width for both text variations
+                        let style = titlebar.share_button.style_for(
+                            state,
+                            self.contacts_popover.is_some()
+                                && self.contacts_popover_side == ContactsPopoverSide::Right,
+                        );
+                        Label::new(label, style.text.clone())
+                            .contained()
+                            .with_style(style.container)
+                            .boxed()
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, cx| {
+                        if is_shared {
+                            cx.dispatch_action(UnshareProject);
+                        } else {
+                            cx.dispatch_action(ShareProject);
+                        }
+                    })
+                    .with_tooltip::<ShareUnshare, _>(
+                        0,
+                        tooltip.to_owned(),
+                        None,
+                        theme.tooltip.clone(),
+                        cx,
+                    )
+                    .boxed(),
                 )
+                .with_children(self.render_contacts_popover_host(
+                    ContactsPopoverSide::Right,
+                    titlebar,
+                    cx,
+                ))
+                .aligned()
+                .contained()
+                .with_margin_left(theme.workspace.titlebar.avatar_margin)
+                .with_margin_right(theme.workspace.titlebar.avatar_margin)
                 .boxed(),
-            )
-            .with_children(self.render_contacts_popover_host(
-                ContactsPopoverSide::Right,
-                titlebar,
-                cx,
-            ))
-            .aligned()
-            .contained()
-            .with_margin_left(theme.workspace.titlebar.avatar_margin)
-            .with_margin_right(theme.workspace.titlebar.avatar_margin)
-            .boxed()
+        )
     }
 
     fn render_outside_call_share_button(
