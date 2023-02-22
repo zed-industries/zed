@@ -5279,6 +5279,7 @@ impl Subscription {
 mod tests {
     use super::*;
     use crate::{actions, elements::*, impl_actions, MouseButton, MouseButtonEvent};
+    use postage::{sink::Sink, stream::Stream};
     use serde::Deserialize;
     use smol::future::poll_once;
     use std::{
@@ -6892,6 +6893,23 @@ mod tests {
             Some("render count: 3")
         );
         assert_eq!(presenter.borrow().rendered_views.len(), 1);
+    }
+
+    #[crate::test(self)]
+    async fn test_labeled_tasks(cx: &mut TestAppContext) {
+        assert_eq!(None, cx.update(|cx| cx.active_labeled_tasks().next()));
+        let (mut sender, mut reciever) = postage::oneshot::channel::<()>();
+        let task = cx
+            .update(|cx| cx.spawn_labeled("Test Label", |_| async move { reciever.recv().await }));
+
+        assert_eq!(
+            Some("Test Label"),
+            cx.update(|cx| cx.active_labeled_tasks().next())
+        );
+        sender.send(()).await;
+        task.await;
+
+        assert_eq!(None, cx.update(|cx| cx.active_labeled_tasks().next()));
     }
 
     #[crate::test(self)]
