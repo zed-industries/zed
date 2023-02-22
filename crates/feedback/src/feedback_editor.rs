@@ -13,7 +13,6 @@ use gpui::{
     elements::{ChildView, Flex, Label, ParentElement},
     serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -24,7 +23,6 @@ use serde::Serialize;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    smallvec::SmallVec,
     AppState, Workspace,
 };
 
@@ -259,15 +257,9 @@ impl Item for FeedbackEditor {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn to_item_events(_: &Self::Event) -> SmallVec<[workspace::item::ItemEvent; 2]> {
-        SmallVec::new()
-    }
-
     fn is_singleton(&self, _: &AppContext) -> bool {
         true
     }
-
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
 
     fn can_save(&self, _: &AppContext) -> bool {
         true
@@ -295,7 +287,7 @@ impl Item for FeedbackEditor {
         _: ModelHandle<Project>,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        unreachable!("reload should not have been called")
+        Task::Ready(Some(Ok(())))
     }
 
     fn clone_on_split(
@@ -320,20 +312,6 @@ impl Item for FeedbackEditor {
             buffer.clone(),
             cx,
         ))
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        None
-    }
-
-    fn deserialize(
-        _: ModelHandle<Project>,
-        _: WeakViewHandle<Workspace>,
-        _: workspace::WorkspaceId,
-        _: workspace::ItemId,
-        _: &mut ViewContext<workspace::Pane>,
-    ) -> Task<anyhow::Result<ViewHandle<Self>>> {
-        unreachable!()
     }
 
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
