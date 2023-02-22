@@ -43,7 +43,7 @@ use theme::ThemeRegistry;
 use util::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
+    self, item::ItemHandle, notifications::NotifyResultExt, AppState, OpenPaths, Welcome, Workspace,
 };
 use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
@@ -260,7 +260,7 @@ async fn restore_or_create_workspace(mut cx: AsyncAppContext) {
         });
     } else {
         cx.update(|cx| {
-            cx.dispatch_global_action(NewFile);
+            cx.dispatch_global_action(Welcome);
         });
     }
 }

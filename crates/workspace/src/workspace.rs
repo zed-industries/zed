@@ -118,7 +118,8 @@ actions!(
         NewTerminal,
         NewSearch,
         Feedback,
-        Restart
+        Restart,
+        Welcome
     ]
 );
 
@@ -198,7 +199,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &NewFile, cx: &mut MutableAppContext| {
+        move |_: &Welcome, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_new(&app_state, cx).detach();
             }
@@ -2865,7 +2866,7 @@ pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<(
 
         workspace.update(&mut cx, |_, cx| {
             if opened_paths.is_empty() {
-                cx.dispatch_action(NewFile);
+                cx.dispatch_action(Welcome);
             }
         })
     })

@@ -1,15 +1,13 @@
 use gpui::{
-    actions,
-    elements::{Flex, Label, ParentElement},
+    color::Color,
+    elements::{Flex, Label, ParentElement, Svg},
     Element, Entity, MutableAppContext, View,
 };
 use settings::Settings;
-use workspace::{item::Item, Workspace};
-
-actions!(welcome, [ShowWelcome]);
+use workspace::{item::Item, Welcome, Workspace};
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(|workspace: &mut Workspace, _: &ShowWelcome, cx| {
+    cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
         let welcome_page = cx.add_view(|_cx| WelcomePage);
         workspace.add_item(Box::new(welcome_page), cx)
     })
@@ -28,7 +26,29 @@ impl View for WelcomePage {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         let theme = &cx.global::<Settings>().theme;
-        Label::new("Welcome page", theme.editor.hover_popover.prose.clone()).boxed()
+
+        Flex::new(gpui::Axis::Vertical)
+            .with_children([
+                Flex::new(gpui::Axis::Horizontal)
+                    .with_children([
+                        Svg::new("icons/terminal_16.svg")
+                            .with_color(Color::red())
+                            .constrained()
+                            .with_width(100.)
+                            .with_height(100.)
+                            .aligned()
+                            .contained()
+                            .boxed(),
+                        Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
+                    ])
+                    .boxed(),
+                Label::new(
+                    "Code at the speed of thought",
+                    theme.editor.hover_popover.prose.clone(),
+                )
+                .boxed(),
+            ])
+            .boxed()
     }
 }
 
