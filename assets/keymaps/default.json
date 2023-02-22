@@ -418,7 +418,7 @@
     {
         "bindings": {
             "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
-            "cmd-shift-c": "collab::ToggleCollaborationMenu",
+            "cmd-shift-c": "collab::ToggleContactsMenu",
             "cmd-alt-i": "zed::DebugElements"
         }
     },
