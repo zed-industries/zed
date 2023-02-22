@@ -349,6 +349,13 @@ impl CollabTitlebarItem {
                 .on_click(MouseButton::Left, move |_, cx| {
                     cx.dispatch_action(ToggleContactsMenu);
                 })
+                .with_tooltip::<ToggleContactsMenu, _>(
+                    0,
+                    "Show contacts menu".into(),
+                    Some(Box::new(ToggleContactsMenu)),
+                    theme.tooltip.clone(),
+                    cx,
+                )
                 .aligned()
                 .boxed(),
             )
