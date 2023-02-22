@@ -308,7 +308,7 @@ impl Item for ThemeTestbench {
         style: &theme::Tab,
         _: &AppContext,
     ) -> gpui::ElementBox {
-        Label::new("Theme Testbench".into(), style.label.clone())
+        Label::new("Theme Testbench", style.label.clone())
             .aligned()
             .contained()
             .boxed()

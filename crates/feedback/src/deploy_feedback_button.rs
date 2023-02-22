@@ -25,11 +25,7 @@ impl View for DeployFeedbackButton {
                     let theme = &cx.global::<Settings>().theme;
                     let theme = &theme.workspace.status_bar.feedback;
 
-                    Text::new(
-                        "Give Feedback".to_string(),
-                        theme.style_for(state, true).clone(),
-                    )
-                    .boxed()
+                    Text::new("Give Feedback", theme.style_for(state, true).clone()).boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(GiveFeedback))

@@ -529,7 +529,7 @@ impl Item for Editor {
     ) -> ElementBox {
         Flex::row()
             .with_child(
-                Label::new(self.title(cx).into(), style.label.clone())
+                Label::new(self.title(cx).to_string(), style.label.clone())
                     .aligned()
                     .boxed(),
             )

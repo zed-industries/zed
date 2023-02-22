@@ -257,7 +257,7 @@ impl PickerDelegate for CommandPalette {
                         .filter_map(|(modifier, label)| {
                             if modifier {
                                 Some(
-                                    Label::new(label.into(), key_style.label.clone())
+                                    Label::new(label, key_style.label.clone())
                                         .contained()
                                         .with_style(key_style.container)
                                         .boxed(),

@@ -1958,7 +1958,7 @@ impl Workspace {
                 MouseEventHandler::<DisconnectedOverlay>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme;
                     Label::new(
-                        "Your connection to the remote project has been lost.".to_string(),
+                        "Your connection to the remote project has been lost.",
                         theme.workspace.disconnected_overlay.text.clone(),
                     )
                     .aligned()

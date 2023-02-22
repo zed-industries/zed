@@ -319,7 +319,7 @@ impl BufferSearchBar {
     fn render_search_option(
         &self,
         option_supported: bool,
-        icon: &str,
+        icon: &'static str,
         option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
@@ -337,7 +337,7 @@ impl BufferSearchBar {
                     .search
                     .option_button
                     .style_for(state, is_active);
-                Label::new(icon.to_string(), style.text.clone())
+                Label::new(icon, style.text.clone())
                     .contained()
                     .with_style(style.container)
                     .boxed()
@@ -359,7 +359,7 @@ impl BufferSearchBar {
 
     fn render_nav_button(
         &self,
-        icon: &str,
+        icon: &'static str,
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -385,7 +385,7 @@ impl BufferSearchBar {
                 .search
                 .option_button
                 .style_for(state, false);
-            Label::new(icon.to_string(), style.text.clone())
+            Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()

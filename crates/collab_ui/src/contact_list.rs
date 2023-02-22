@@ -749,7 +749,7 @@ impl ContactList {
             )
             .with_children(if is_pending {
                 Some(
-                    Label::new("Calling".to_string(), theme.calling_indicator.text.clone())
+                    Label::new("Calling", theme.calling_indicator.text.clone())
                         .contained()
                         .with_style(theme.calling_indicator.container)
                         .aligned()
@@ -950,7 +950,7 @@ impl ContactList {
                             .boxed(),
                     )
                     .with_child(
-                        Label::new("Screen".into(), row.name.text.clone())
+                        Label::new("Screen", row.name.text.clone())
                             .aligned()
                             .left()
                             .contained()
@@ -994,7 +994,7 @@ impl ContactList {
             Some(
                 MouseEventHandler::<LeaveCall>::new(0, cx, |state, _| {
                     let style = theme.leave_call.style_for(state, false);
-                    Label::new("Leave Session".into(), style.text.clone())
+                    Label::new("Leave Session", style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .boxed()
@@ -1026,7 +1026,7 @@ impl ContactList {
                     .boxed(),
                 )
                 .with_child(
-                    Label::new(text.to_string(), header_style.text.clone())
+                    Label::new(text, header_style.text.clone())
                         .aligned()
                         .left()
                         .contained()
@@ -1126,7 +1126,7 @@ impl ContactList {
                     )
                     .with_children(if calling {
                         Some(
-                            Label::new("Calling".to_string(), theme.calling_indicator.text.clone())
+                            Label::new("Calling", theme.calling_indicator.text.clone())
                                 .contained()
                                 .with_style(theme.calling_indicator.container)
                                 .aligned()
