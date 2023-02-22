@@ -12,6 +12,7 @@ use gpui::{
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
+    impl_internal_actions,
     json::{self, ToJson},
     CursorStyle, Entity, ImageData, ModelHandle, MouseButton, MutableAppContext, RenderContext,
     Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -32,6 +33,11 @@ actions!(
     ]
 );
 
+impl_internal_actions!(collab, [LeaveCall]);
+
+#[derive(Copy, Clone, PartialEq)]
+pub(crate) struct LeaveCall;
+
 #[derive(PartialEq, Eq)]
 enum ContactsPopoverSide {
     Left,
@@ -43,6 +49,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
     cx.add_action(CollabTitlebarItem::share_project);
     cx.add_action(CollabTitlebarItem::unshare_project);
+    cx.add_action(CollabTitlebarItem::leave_call);
 }
 
 pub struct CollabTitlebarItem {
@@ -104,9 +111,9 @@ impl View for CollabTitlebarItem {
 
         let mut right_container = Flex::row();
 
-        right_container.add_children(self.render_toggle_screen_sharing_button(&theme, cx));
-
-        if ActiveCall::global(cx).read(cx).room().is_some() {
+        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+            right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
+            right_container.add_child(self.render_leave_call_button(&theme, cx));
             right_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
         } else {
@@ -284,6 +291,12 @@ impl CollabTitlebarItem {
         cx.notify();
     }
 
+    fn leave_call(&mut self, _: &LeaveCall, cx: &mut ViewContext<Self>) {
+        ActiveCall::global(cx)
+            .update(cx, |call, cx| call.hang_up(cx))
+            .log_err();
+    }
+
     fn render_toggle_contacts_button(
         &self,
         theme: &Theme,
@@ -351,13 +364,11 @@ impl CollabTitlebarItem {
     fn render_toggle_screen_sharing_button(
         &self,
         theme: &Theme,
+        room: &ModelHandle<Room>,
         cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
-        let active_call = ActiveCall::global(cx);
-        let room = active_call.read(cx).room().cloned()?;
+    ) -> ElementBox {
         let icon;
         let tooltip;
-
         if room.read(cx).is_screen_sharing() {
             icon = "icons/disable_screen_sharing_12.svg";
             tooltip = "Stop Sharing Screen"
@@ -367,35 +378,67 @@ impl CollabTitlebarItem {
         }
 
         let titlebar = &theme.workspace.titlebar;
-        Some(
-            MouseEventHandler::<ToggleScreenSharing>::new(0, cx, |state, _| {
-                let style = titlebar.call_control.style_for(state, false);
-                Svg::new(icon)
-                    .with_color(style.color)
-                    .constrained()
-                    .with_width(style.icon_width)
-                    .aligned()
-                    .constrained()
-                    .with_width(style.button_width)
-                    .with_height(style.button_width)
-                    .contained()
-                    .with_style(style.container)
-                    .boxed()
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, move |_, cx| {
-                cx.dispatch_action(ToggleScreenSharing);
-            })
-            .with_tooltip::<ToggleScreenSharing, _>(
-                0,
-                tooltip.into(),
-                Some(Box::new(ToggleScreenSharing)),
-                theme.tooltip.clone(),
-                cx,
-            )
-            .aligned()
-            .boxed(),
+        MouseEventHandler::<ToggleScreenSharing>::new(0, cx, |state, _| {
+            let style = titlebar.call_control.style_for(state, false);
+            Svg::new(icon)
+                .with_color(style.color)
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .with_height(style.button_width)
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_action(ToggleScreenSharing);
+        })
+        .with_tooltip::<ToggleScreenSharing, _>(
+            0,
+            tooltip.into(),
+            Some(Box::new(ToggleScreenSharing)),
+            theme.tooltip.clone(),
+            cx,
         )
+        .aligned()
+        .boxed()
+    }
+
+    fn render_leave_call_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        let titlebar = &theme.workspace.titlebar;
+
+        MouseEventHandler::<LeaveCall>::new(0, cx, |state, _| {
+            let style = titlebar.call_control.style_for(state, false);
+            Svg::new("icons/leave_12.svg")
+                .with_color(style.color)
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .with_height(style.button_width)
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_action(LeaveCall);
+        })
+        .with_tooltip::<LeaveCall, _>(
+            0,
+            "Leave call".to_owned(),
+            Some(Box::new(LeaveCall)),
+            theme.tooltip.clone(),
+            cx,
+        )
+        .contained()
+        .with_margin_left(theme.workspace.titlebar.item_spacing)
+        .aligned()
+        .boxed()
     }
 
     fn render_in_call_share_unshare_button(

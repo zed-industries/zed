@@ -1,3 +1,4 @@
+use super::collab_titlebar_item::LeaveCall;
 use crate::contacts_popover;
 use call::ActiveCall;
 use client::{proto::PeerId, Contact, User, UserStore};
@@ -18,11 +19,10 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{mem, sync::Arc};
 use theme::IconButton;
-use util::ResultExt;
 use workspace::{JoinProject, OpenSharedScreen};
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
-impl_internal_actions!(contact_list, [ToggleExpanded, Call, LeaveCall]);
+impl_internal_actions!(contact_list, [ToggleExpanded, Call]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactList::remove_contact);
@@ -33,7 +33,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactList::confirm);
     cx.add_action(ContactList::toggle_expanded);
     cx.add_action(ContactList::call);
-    cx.add_action(ContactList::leave_call);
 }
 
 #[derive(Clone, PartialEq)]
@@ -44,9 +43,6 @@ struct Call {
     recipient_user_id: u64,
     initial_project: Option<ModelHandle<Project>>,
 }
-
-#[derive(Copy, Clone, PartialEq)]
-struct LeaveCall;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 enum Section {
@@ -981,6 +977,7 @@ impl ContactList {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         enum Header {}
+        enum LeaveCallContactList {}
 
         let header_style = theme
             .header_row
@@ -993,9 +990,9 @@ impl ContactList {
         };
         let leave_call = if section == Section::ActiveCall {
             Some(
-                MouseEventHandler::<LeaveCall>::new(0, cx, |state, _| {
+                MouseEventHandler::<LeaveCallContactList>::new(0, cx, |state, _| {
                     let style = theme.leave_call.style_for(state, false);
-                    Label::new("Leave Session", style.text.clone())
+                    Label::new("Leave Call", style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .boxed()
@@ -1283,12 +1280,6 @@ impl ContactList {
                 call.invite(recipient_user_id, initial_project, cx)
             })
             .detach_and_log_err(cx);
-    }
-
-    fn leave_call(&mut self, _: &LeaveCall, cx: &mut ViewContext<Self>) {
-        ActiveCall::global(cx)
-            .update(cx, |call, cx| call.hang_up(cx))
-            .log_err();
     }
 }
 
