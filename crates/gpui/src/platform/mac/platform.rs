@@ -98,6 +98,31 @@ unsafe fn build_classes() {
             sel!(handleGPUIMenuItem:),
             handle_menu_item as extern "C" fn(&mut Object, Sel, id),
         );
+        // Add menu item handlers so that OS save panels have the correct key commands
+        decl.add_method(
+            sel!(cut:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(copy:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(paste:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(selectAll:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(undo:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(redo:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
         decl.add_method(
             sel!(validateMenuItem:),
             validate_menu_item as extern "C" fn(&mut Object, Sel, id) -> bool,
@@ -193,11 +218,25 @@ impl MacForegroundPlatform {
     ) -> id {
         match item {
             MenuItem::Separator => NSMenuItem::separatorItem(nil),
-            MenuItem::Action { name, action } => {
+            MenuItem::Action {
+                name,
+                action,
+                os_action,
+            } => {
+                // TODO
                 let keystrokes = keystroke_matcher
                     .bindings_for_action_type(action.as_any().type_id())
                     .find(|binding| binding.action().eq(action.as_ref()))
                     .map(|binding| binding.keystrokes());
+                let selector = match os_action {
+                    Some(crate::OsAction::Cut) => selector("cut:"),
+                    Some(crate::OsAction::Copy) => selector("copy:"),
+                    Some(crate::OsAction::Paste) => selector("paste:"),
+                    Some(crate::OsAction::SelectAll) => selector("selectAll:"),
+                    Some(crate::OsAction::Undo) => selector("undo:"),
+                    Some(crate::OsAction::Redo) => selector("redo:"),
+                    None => selector("handleGPUIMenuItem:"),
+                };
 
                 let item;
                 if let Some(keystrokes) = keystrokes {
@@ -218,7 +257,7 @@ impl MacForegroundPlatform {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
                                 ns_string(name),
-                                selector("handleGPUIMenuItem:"),
+                                selector,
                                 ns_string(key_to_native(&keystroke.key).as_ref()),
                             )
                             .autorelease();
@@ -240,7 +279,7 @@ impl MacForegroundPlatform {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
                                 ns_string(&name),
-                                selector("handleGPUIMenuItem:"),
+                                selector,
                                 ns_string(""),
                             )
                             .autorelease();
@@ -249,7 +288,7 @@ impl MacForegroundPlatform {
                     item = NSMenuItem::alloc(nil)
                         .initWithTitle_action_keyEquivalent_(
                             ns_string(name),
-                            selector("handleGPUIMenuItem:"),
+                            selector,
                             ns_string(""),
                         )
                         .autorelease();

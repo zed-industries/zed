@@ -11,7 +11,44 @@ pub enum MenuItem<'a> {
     Action {
         name: &'a str,
         action: Box<dyn Action>,
+        os_action: Option<OsAction>,
     },
+}
+
+impl<'a> MenuItem<'a> {
+    pub fn separator() -> Self {
+        Self::Separator
+    }
+
+    pub fn submenu(menu: Menu<'a>) -> Self {
+        Self::Submenu(menu)
+    }
+
+    pub fn action(name: &'a str, action: impl Action) -> Self {
+        Self::Action {
+            name,
+            action: Box::new(action),
+            os_action: None,
+        }
+    }
+
+    pub fn os_action(name: &'a str, action: impl Action, os_action: OsAction) -> Self {
+        Self::Action {
+            name,
+            action: Box::new(action),
+            os_action: Some(os_action),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum OsAction {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Undo,
+    Redo,
 }
 
 impl MutableAppContext {
