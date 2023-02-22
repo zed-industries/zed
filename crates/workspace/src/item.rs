@@ -49,9 +49,11 @@ pub trait Item: View {
     }
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
         -> ElementBox;
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item));
-    fn is_singleton(&self, cx: &AppContext) -> bool;
-    fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
     fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -64,23 +66,31 @@ pub trait Item: View {
     fn has_conflict(&self, _: &AppContext) -> bool {
         false
     }
-    fn can_save(&self, cx: &AppContext) -> bool;
+    fn can_save(&self, _cx: &AppContext) -> bool {
+        false
+    }
     fn save(
         &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
+        _project: ModelHandle<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save() must be implemented if can_save() returns true")
+    }
     fn save_as(
         &mut self,
-        project: ModelHandle<Project>,
-        abs_path: PathBuf,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
+        _project: ModelHandle<Project>,
+        _abs_path: PathBuf,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save_as() must be implemented if can_save() returns true")
+    }
     fn reload(
         &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
+        _project: ModelHandle<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("reload() must be implemented if can_save() returns true")
+    }
     fn git_diff_recalc(
         &mut self,
         _project: ModelHandle<Project>,
@@ -88,7 +98,9 @@ pub trait Item: View {
     ) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
-    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]>;
+    fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        SmallVec::new()
+    }
     fn should_close_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -124,15 +136,21 @@ pub trait Item: View {
 
     fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
 
-    fn serialized_item_kind() -> Option<&'static str>;
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
 
     fn deserialize(
-        project: ModelHandle<Project>,
-        workspace: WeakViewHandle<Workspace>,
-        workspace_id: WorkspaceId,
-        item_id: ItemId,
-        cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<ViewHandle<Self>>>;
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: WorkspaceId,
+        _item_id: ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        unimplemented!(
+            "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
+        )
+    }
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {

@@ -21,7 +21,7 @@ use gpui::{
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
 use settings::{Settings, TerminalBlink, WorkingDirectory};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use smol::Timer;
 use terminal::{
     alacritty_terminal::{
@@ -616,43 +616,6 @@ impl Item for TerminalView {
         None
     }
 
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
-
-    fn is_singleton(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
-
-    fn can_save(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn save(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save should not have been called");
-    }
-
-    fn save_as(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _abs_path: std::path::PathBuf,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save_as should not have been called");
-    }
-
-    fn reload(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        gpui::Task::ready(Ok(()))
-    }
-
     fn is_dirty(&self, _cx: &gpui::AppContext) -> bool {
         self.has_bell()
     }
@@ -667,10 +630,10 @@ impl Item for TerminalView {
 
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
-            Event::BreadcrumbsChanged => smallvec::smallvec![ItemEvent::UpdateBreadcrumbs],
-            Event::TitleChanged | Event::Wakeup => smallvec::smallvec![ItemEvent::UpdateTab],
-            Event::CloseTerminal => smallvec::smallvec![ItemEvent::CloseItem],
-            _ => smallvec::smallvec![],
+            Event::BreadcrumbsChanged => smallvec![ItemEvent::UpdateBreadcrumbs],
+            Event::TitleChanged | Event::Wakeup => smallvec![ItemEvent::UpdateTab],
+            Event::CloseTerminal => smallvec![ItemEvent::CloseItem],
+            _ => smallvec![],
         }
     }
 
