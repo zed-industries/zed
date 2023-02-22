@@ -55,6 +55,7 @@ pub struct Room {
     leave_when_empty: bool,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
+    follows_by_leader_id: HashMap<PeerId, Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
@@ -148,6 +149,7 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
+            follows_by_leader_id: Default::default(),
             maintain_connection: Some(maintain_connection),
         }
     }
@@ -457,6 +459,12 @@ impl Room {
         self.participant_user_ids.contains(&user_id)
     }
 
+    pub fn followers_for(&self, leader_id: PeerId) -> &[PeerId] {
+        self.follows_by_leader_id
+            .get(&leader_id)
+            .map_or(&[], |v| v.as_slice())
+    }
+
     async fn handle_room_updated(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
@@ -487,11 +495,13 @@ impl Room {
             .iter()
             .map(|p| p.user_id)
             .collect::<Vec<_>>();
+
         let remote_participant_user_ids = room
             .participants
             .iter()
             .map(|p| p.user_id)
             .collect::<Vec<_>>();
+
         let (remote_participants, pending_participants) =
             self.user_store.update(cx, move |user_store, cx| {
                 (
@@ -499,6 +509,7 @@ impl Room {
                     user_store.get_users(pending_participant_user_ids, cx),
                 )
             });
+
         self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {
             let (remote_participants, pending_participants) =
                 futures::join!(remote_participants, pending_participants);
@@ -617,6 +628,26 @@ impl Room {
                     this.pending_participants = pending_participants;
                     for participant in &this.pending_participants {
                         this.participant_user_ids.insert(participant.id);
+                    }
+                }
+
+                this.follows_by_leader_id.clear();
+                for follower in room.followers {
+                    let (leader, follower) = match (follower.leader_id, follower.follower_id) {
+                        (Some(leader), Some(follower)) => (leader, follower),
+
+                        _ => {
+                            log::error!("Follower message {follower:?} missing some state");
+                            continue;
+                        }
+                    };
+
+                    let list = this
+                        .follows_by_leader_id
+                        .entry(leader)
+                        .or_insert(Vec::new());
+                    if !list.contains(&follower) {
+                        list.push(follower);
                     }
                 }
 
@@ -791,6 +822,20 @@ impl Room {
 
             Ok(response.project_id)
         })
+    }
+
+    pub(crate) fn unshare_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let project_id = match project.read(cx).remote_id() {
+            Some(project_id) => project_id,
+            None => return Ok(()),
+        };
+
+        self.client.send(proto::UnshareProject { project_id })?;
+        project.update(cx, |this, cx| this.unshare(cx))
     }
 
     pub(crate) fn set_location(

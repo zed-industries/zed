@@ -837,7 +837,7 @@ impl Workspace {
         &self.project
     }
 
-    pub fn client(&self) -> &Arc<Client> {
+    pub fn client(&self) -> &Client {
         &self.client
     }
 
@@ -1832,24 +1832,15 @@ impl Workspace {
         None
     }
 
-    pub fn is_following(&self, peer_id: PeerId) -> bool {
+    pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
         self.follower_states_by_leader.contains_key(&peer_id)
     }
 
-    pub fn is_followed(&self, peer_id: PeerId) -> bool {
+    pub fn is_followed_by(&self, peer_id: PeerId) -> bool {
         self.leader_state.followers.contains(&peer_id)
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
-        let project = &self.project.read(cx);
-        let mut worktree_root_names = String::new();
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
-            if i > 0 {
-                worktree_root_names.push_str(", ");
-            }
-            worktree_root_names.push_str(name);
-        }
-
         // TODO: There should be a better system in place for this
         // (https://github.com/zed-industries/zed/issues/1290)
         let is_fullscreen = cx.window_is_fullscreen(cx.window_id());
@@ -1866,16 +1857,10 @@ impl Workspace {
             MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
                 Container::new(
                     Stack::new()
-                        .with_child(
-                            Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
-                                .aligned()
-                                .left()
-                                .boxed(),
-                        )
                         .with_children(
                             self.titlebar_item
                                 .as_ref()
-                                .map(|item| ChildView::new(item, cx).aligned().right().boxed()),
+                                .map(|item| ChildView::new(item, cx).boxed()),
                         )
                         .boxed(),
                 )

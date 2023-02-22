@@ -1,5 +1,6 @@
 mod access_token;
 mod contact;
+mod follower;
 mod language_server;
 mod project;
 mod project_collaborator;
@@ -1717,6 +1718,88 @@ impl Database {
         .await
     }
 
+    pub async fn follow(
+        &self,
+        project_id: ProjectId,
+        leader_connection: ConnectionId,
+        follower_connection: ConnectionId,
+    ) -> Result<RoomGuard<proto::Room>> {
+        self.room_transaction(|tx| async move {
+            let room_id = self.room_id_for_project(project_id, &*tx).await?;
+            follower::ActiveModel {
+                room_id: ActiveValue::set(room_id),
+                project_id: ActiveValue::set(project_id),
+                leader_connection_server_id: ActiveValue::set(ServerId(
+                    leader_connection.owner_id as i32,
+                )),
+                leader_connection_id: ActiveValue::set(leader_connection.id as i32),
+                follower_connection_server_id: ActiveValue::set(ServerId(
+                    follower_connection.owner_id as i32,
+                )),
+                follower_connection_id: ActiveValue::set(follower_connection.id as i32),
+                ..Default::default()
+            }
+            .insert(&*tx)
+            .await?;
+
+            Ok((room_id, self.get_room(room_id, &*tx).await?))
+        })
+        .await
+    }
+
+    pub async fn unfollow(
+        &self,
+        project_id: ProjectId,
+        leader_connection: ConnectionId,
+        follower_connection: ConnectionId,
+    ) -> Result<RoomGuard<proto::Room>> {
+        self.room_transaction(|tx| async move {
+            let room_id = self.room_id_for_project(project_id, &*tx).await?;
+            follower::Entity::delete_many()
+                .filter(
+                    Condition::all()
+                        .add(follower::Column::ProjectId.eq(project_id))
+                        .add(
+                            follower::Column::LeaderConnectionServerId
+                                .eq(leader_connection.owner_id)
+                                .and(follower::Column::LeaderConnectionId.eq(leader_connection.id)),
+                        )
+                        .add(
+                            follower::Column::FollowerConnectionServerId
+                                .eq(follower_connection.owner_id)
+                                .and(
+                                    follower::Column::FollowerConnectionId
+                                        .eq(follower_connection.id),
+                                ),
+                        ),
+                )
+                .exec(&*tx)
+                .await?;
+
+            Ok((room_id, self.get_room(room_id, &*tx).await?))
+        })
+        .await
+    }
+
+    async fn room_id_for_project(
+        &self,
+        project_id: ProjectId,
+        tx: &DatabaseTransaction,
+    ) -> Result<RoomId> {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryAs {
+            RoomId,
+        }
+
+        Ok(project::Entity::find_by_id(project_id)
+            .select_only()
+            .column(project::Column::RoomId)
+            .into_values::<_, QueryAs>()
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!("no such project"))?)
+    }
+
     pub async fn update_room_participant_location(
         &self,
         room_id: RoomId,
@@ -1926,12 +2009,24 @@ impl Database {
                 }
             }
         }
+        drop(db_projects);
+
+        let mut db_followers = db_room.find_related(follower::Entity).stream(tx).await?;
+        let mut followers = Vec::new();
+        while let Some(db_follower) = db_followers.next().await {
+            let db_follower = db_follower?;
+            followers.push(proto::Follower {
+                leader_id: Some(db_follower.leader_connection().into()),
+                follower_id: Some(db_follower.follower_connection().into()),
+            });
+        }
 
         Ok(proto::Room {
             id: db_room.id.to_proto(),
             live_kit_room: db_room.live_kit_room,
             participants: participants.into_values().collect(),
             pending_participants,
+            followers,
         })
     }
 
@@ -3011,6 +3106,7 @@ macro_rules! id_type {
 
 id_type!(AccessTokenId);
 id_type!(ContactId);
+id_type!(FollowerId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);
 id_type!(ProjectId);

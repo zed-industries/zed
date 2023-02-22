@@ -12,7 +12,7 @@ import tabBar from "./tabBar";
 
 export default function workspace(colorScheme: ColorScheme) {
   const layer = colorScheme.lowest;
-  const titlebarPadding = 6;
+  const itemSpacing = 8;
   const titlebarButton = {
     cornerRadius: 6,
     padding: {
@@ -29,8 +29,21 @@ export default function workspace(colorScheme: ColorScheme) {
       background: background(layer, "variant", "hovered"),
       border: border(layer, "variant", "hovered"),
     },
+    clicked: {
+      ...text(layer, "sans", "variant", "pressed", { size: "xs" }),
+      background: background(layer, "variant", "pressed"),
+      border: border(layer, "variant", "pressed"),
+    },
+    active: {
+      ...text(layer, "sans", "variant", "active", { size: "xs" }),
+      background: background(layer, "variant", "active"),
+      border: border(layer, "variant", "active"),
+    },
   };
   const avatarWidth = 18;
+  const avatarOuterWidth = avatarWidth + 4;
+  const followerAvatarWidth = 14;
+  const followerAvatarOuterWidth = followerAvatarWidth + 4;
 
   return {
     background: background(layer),
@@ -70,14 +83,14 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     statusBar: statusBar(colorScheme),
     titlebar: {
-      avatarWidth,
-      avatarMargin: 8,
+      itemSpacing,
+      facePileSpacing: 2,
       height: 33, // 32px + 1px for overlaid border
       background: background(layer),
       border: border(layer, { bottom: true, overlay: true }),
       padding: {
         left: 80,
-        right: titlebarPadding,
+        right: itemSpacing,
       },
 
       // Project
@@ -85,19 +98,37 @@ export default function workspace(colorScheme: ColorScheme) {
 
       // Collaborators
       avatar: {
+        width: avatarWidth,
+        outerWidth: avatarOuterWidth,
         cornerRadius: avatarWidth / 2,
-        border: {
-          color: "#00000088",
-          width: 1,
-        },
+        outerCornerRadius: avatarOuterWidth / 2,
       },
       inactiveAvatar: {
+        width: avatarWidth,
+        outerWidth: avatarOuterWidth,
         cornerRadius: avatarWidth / 2,
-        border: {
-          color: "#00000088",
-          width: 1,
-        },
+        outerCornerRadius: avatarOuterWidth / 2,
         grayscale: true,
+      },
+      followerAvatar: {
+        width: followerAvatarWidth,
+        outerWidth: followerAvatarOuterWidth,
+        cornerRadius: followerAvatarWidth / 2,
+        outerCornerRadius: followerAvatarOuterWidth / 2,
+      },
+      followerAvatarOverlap: 8,
+      leaderSelection: {
+        margin: {
+          top: 4,
+          bottom: 4,
+        },
+        padding: {
+          left: 2,
+          right: 2,
+          top: 4,
+          bottom: 4,
+        },
+        cornerRadius: 6,
       },
       avatarRibbon: {
         height: 3,
@@ -108,7 +139,7 @@ export default function workspace(colorScheme: ColorScheme) {
       // Sign in buttom
       // FlatButton, Variant
       signInPrompt: {
-        ...titlebarButton
+        ...titlebarButton,
       },
 
       // Offline Indicator
@@ -116,7 +147,7 @@ export default function workspace(colorScheme: ColorScheme) {
         color: foreground(layer, "variant"),
         width: 16,
         margin: {
-          left: titlebarPadding,
+          left: itemSpacing,
         },
         padding: {
           right: 4,
@@ -129,7 +160,7 @@ export default function workspace(colorScheme: ColorScheme) {
         background: withOpacity(background(layer, "warning"), 0.3),
         border: border(layer, "warning"),
         margin: {
-          left: titlebarPadding,
+          left: itemSpacing,
         },
         padding: {
           left: 8,
@@ -148,7 +179,7 @@ export default function workspace(colorScheme: ColorScheme) {
         },
       },
       toggleContactsButton: {
-        margin: { left: 6 },
+        margin: { left: itemSpacing },
         cornerRadius: 6,
         color: foreground(layer, "variant"),
         iconWidth: 8,
@@ -156,6 +187,10 @@ export default function workspace(colorScheme: ColorScheme) {
         active: {
           background: background(layer, "variant", "active"),
           color: foreground(layer, "variant", "active"),
+        },
+        clicked: {
+          background: background(layer, "variant", "pressed"),
+          color: foreground(layer, "variant", "pressed"),
         },
         hover: {
           background: background(layer, "variant", "hovered"),
@@ -170,8 +205,8 @@ export default function workspace(colorScheme: ColorScheme) {
         background: foreground(layer, "accent"),
       },
       shareButton: {
-        ...titlebarButton
-      }
+        ...titlebarButton,
+      },
     },
 
     toolbar: {
@@ -227,9 +262,6 @@ export default function workspace(colorScheme: ColorScheme) {
         shadow: colorScheme.modalShadow,
       },
     },
-    dropTargetOverlayColor: withOpacity(
-      foreground(layer, "variant"),
-      0.5
-    ),
+    dropTargetOverlayColor: withOpacity(foreground(layer, "variant"), 0.5),
   };
 }

@@ -16,7 +16,7 @@ message Envelope {
         Error error = 6;
         Ping ping = 7;
         Test test = 8;
-        
+
         CreateRoom create_room = 9;
         CreateRoomResponse create_room_response = 10;
         JoinRoom join_room = 11;
@@ -206,7 +206,8 @@ message Room {
     uint64 id = 1;
     repeated Participant participants = 2;
     repeated PendingParticipant pending_participants = 3;
-    string live_kit_room = 4;
+    repeated Follower followers = 4;
+    string live_kit_room = 5;
 }
 
 message Participant {
@@ -225,6 +226,11 @@ message PendingParticipant {
 message ParticipantProject {
     uint64 id = 1;
     repeated string worktree_root_names = 2;
+}
+
+message Follower {
+    PeerId leader_id = 1;
+    PeerId follower_id = 2;
 }
 
 message ParticipantLocation {

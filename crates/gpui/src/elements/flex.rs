@@ -308,7 +308,9 @@ impl Element for Flex {
                     }
                 }
             }
+
             child.paint(child_origin, visible_bounds, cx);
+
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
                 Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),

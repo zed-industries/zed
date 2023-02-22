@@ -1,8 +1,10 @@
 mod collab_titlebar_item;
+mod collaborator_list_popover;
 mod contact_finder;
 mod contact_list;
 mod contact_notification;
 mod contacts_popover;
+mod face_pile;
 mod incoming_call_notification;
 mod notifications;
 mod project_shared_notification;
@@ -10,7 +12,7 @@ mod sharing_status_indicator;
 
 use anyhow::anyhow;
 use call::ActiveCall;
-pub use collab_titlebar_item::{CollabTitlebarItem, ToggleCollaborationMenu};
+pub use collab_titlebar_item::{CollabTitlebarItem, ToggleContactsMenu};
 use gpui::{actions, MutableAppContext, Task};
 use std::sync::Arc;
 use workspace::{AppState, JoinProject, ToggleFollow, Workspace};
@@ -116,7 +118,7 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut Mutable
                     });
 
                 if let Some(follow_peer_id) = follow_peer_id {
-                    if !workspace.is_following(follow_peer_id) {
+                    if !workspace.is_being_followed(follow_peer_id) {
                         workspace
                             .toggle_follow(&ToggleFollow(follow_peer_id), cx)
                             .map(|follow| follow.detach_and_log_err(cx));
