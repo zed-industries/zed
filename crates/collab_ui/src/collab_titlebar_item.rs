@@ -644,8 +644,8 @@ impl CollabTitlebarItem {
             .unwrap_or_default();
         if let Some(replica_id) = replica_id {
             if followed_by_self {
-                let selection = dbg!(theme.editor.replica_selection_style(replica_id).selection);
-                background_color = dbg!(Color::blend(selection, background_color));
+                let selection = theme.editor.replica_selection_style(replica_id).selection;
+                background_color = Color::blend(selection, background_color);
                 background_color.a = 255;
             }
         }
@@ -692,14 +692,18 @@ impl CollabTitlebarItem {
                         .flatten(),
                     );
 
+                let mut container = face_pile
+                    .contained()
+                    .with_style(theme.workspace.titlebar.leader_selection);
+
                 if let Some(replica_id) = replica_id {
                     if followed_by_self {
                         let color = theme.editor.replica_selection_style(replica_id).selection;
-                        return face_pile.contained().with_background_color(color).boxed();
+                        container = container.with_background_color(color);
                     }
                 }
 
-                face_pile.boxed()
+                container.boxed()
             }))
             .with_children((|| {
                 let replica_id = replica_id?;

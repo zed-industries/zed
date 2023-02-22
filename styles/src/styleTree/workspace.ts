@@ -116,6 +116,19 @@ export default function workspace(colorScheme: ColorScheme) {
         outerCornerRadius: followerAvatarOuterWidth / 2,
       },
       followerAvatarOverlap: 8,
+      leaderSelection: {
+        margin: {
+          top: 4,
+          bottom: 4,
+        },
+        padding: {
+          left: 2,
+          right: 2,
+          top: 4,
+          bottom: 4,
+        },
+        cornerRadius: 6,
+      },
       avatarRibbon: {
         height: 3,
         width: 12,

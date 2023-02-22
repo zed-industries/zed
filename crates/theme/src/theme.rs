@@ -77,6 +77,7 @@ pub struct Titlebar {
     pub avatar_margin: f32,
     pub avatar_ribbon: AvatarRibbon,
     pub follower_avatar_overlap: f32,
+    pub leader_selection: ContainerStyle,
     pub offline_icon: OfflineIcon,
     pub avatar: AvatarStyle,
     pub inactive_avatar: AvatarStyle,
