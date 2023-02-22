@@ -172,7 +172,7 @@ impl IncomingCallNotification {
             .with_child(
                 MouseEventHandler::<Accept>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.incoming_call_notification;
-                    Label::new("Accept".to_string(), theme.accept_button.text.clone())
+                    Label::new("Accept", theme.accept_button.text.clone())
                         .aligned()
                         .contained()
                         .with_style(theme.accept_button.container)
@@ -188,7 +188,7 @@ impl IncomingCallNotification {
             .with_child(
                 MouseEventHandler::<Decline>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.incoming_call_notification;
-                    Label::new("Decline".to_string(), theme.decline_button.text.clone())
+                    Label::new("Decline", theme.decline_button.text.clone())
                         .aligned()
                         .contained()
                         .with_style(theme.decline_button.container)

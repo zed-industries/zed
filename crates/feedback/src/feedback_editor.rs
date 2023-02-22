@@ -247,7 +247,7 @@ impl Item for FeedbackEditor {
     fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
         Flex::row()
             .with_child(
-                Label::new("Feedback".to_string(), style.label.clone())
+                Label::new("Feedback", style.label.clone())
                     .aligned()
                     .contained()
                     .boxed(),

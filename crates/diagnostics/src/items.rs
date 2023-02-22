@@ -178,14 +178,11 @@ impl View for DiagnosticIndicator {
 
         if in_progress {
             element.add_child(
-                Label::new(
-                    "Checking…".into(),
-                    style.diagnostic_message.default.text.clone(),
-                )
-                .aligned()
-                .contained()
-                .with_margin_left(item_spacing)
-                .boxed(),
+                Label::new("Checking…", style.diagnostic_message.default.text.clone())
+                    .aligned()
+                    .contained()
+                    .with_margin_left(item_spacing)
+                    .boxed(),
             );
         } else if let Some(diagnostic) = &self.current_diagnostic {
             let message_style = style.diagnostic_message.clone();

@@ -189,7 +189,7 @@ impl View for ProjectSearchView {
                 "No results"
             };
             MouseEventHandler::<Status>::new(0, cx, |_, _| {
-                Label::new(text.to_string(), theme.search.results_status.clone())
+                Label::new(text, theme.search.results_status.clone())
                     .aligned()
                     .contained()
                     .with_background_color(theme.editor.background)
@@ -744,7 +744,7 @@ impl ProjectSearchBar {
 
     fn render_nav_button(
         &self,
-        icon: &str,
+        icon: &'static str,
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -770,7 +770,7 @@ impl ProjectSearchBar {
                 .search
                 .option_button
                 .style_for(state, false);
-            Label::new(icon.to_string(), style.text.clone())
+            Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()
@@ -792,7 +792,7 @@ impl ProjectSearchBar {
 
     fn render_option_button(
         &self,
-        icon: &str,
+        icon: &'static str,
         option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -805,7 +805,7 @@ impl ProjectSearchBar {
                 .search
                 .option_button
                 .style_for(state, is_active);
-            Label::new(icon.to_string(), style.text.clone())
+            Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()

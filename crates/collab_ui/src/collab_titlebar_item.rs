@@ -293,7 +293,7 @@ impl CollabTitlebarItem {
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<Share>::new(0, cx, |state, _| {
             let style = titlebar.share_button.style_for(state, false);
-            Label::new("Share".into(), style.text.clone())
+            Label::new("Share", style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()
@@ -378,7 +378,7 @@ impl CollabTitlebarItem {
                         .titlebar
                         .sign_in_prompt
                         .style_for(state, false);
-                    Label::new("Sign in".to_string(), style.text.clone())
+                    Label::new("Sign in", style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .boxed()
@@ -531,7 +531,7 @@ impl CollabTitlebarItem {
             client::Status::UpgradeRequired => Some(
                 MouseEventHandler::<ConnectionStatusButton>::new(0, cx, |_, _| {
                     Label::new(
-                        "Please update Zed to collaborate".to_string(),
+                        "Please update Zed to collaborate",
                         theme.workspace.titlebar.outdated_warning.text.clone(),
                     )
                     .contained()

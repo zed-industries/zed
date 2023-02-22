@@ -90,14 +90,11 @@ impl View for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.path_states.is_empty() {
             let theme = &cx.global::<Settings>().theme.project_diagnostics;
-            Label::new(
-                "No problems in workspace".to_string(),
-                theme.empty_message.clone(),
-            )
-            .aligned()
-            .contained()
-            .with_style(theme.container)
-            .boxed()
+            Label::new("No problems in workspace", theme.empty_message.clone())
+                .aligned()
+                .contained()
+                .with_style(theme.container)
+                .boxed()
         } else {
             ChildView::new(&self.editor, cx).boxed()
         }
@@ -697,7 +694,7 @@ pub(crate) fn render_summary(
     theme: &theme::ProjectDiagnostics,
 ) -> ElementBox {
     if summary.error_count == 0 && summary.warning_count == 0 {
-        Label::new("No problems".to_string(), text_style.clone()).boxed()
+        Label::new("No problems", text_style.clone()).boxed()
     } else {
         let icon_width = theme.tab_icon_width;
         let icon_spacing = theme.tab_icon_spacing;

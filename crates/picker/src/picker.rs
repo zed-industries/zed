@@ -80,7 +80,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     None
                 } else {
                     Some(
-                        Label::new("No matches".into(), theme.no_matches.label.clone())
+                        Label::new("No matches", theme.no_matches.label.clone())
                             .contained()
                             .with_style(theme.no_matches.container)
                             .boxed(),

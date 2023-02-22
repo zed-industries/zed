@@ -47,7 +47,7 @@ impl View for Breadcrumbs {
         {
             Flex::row()
                 .with_children(Itertools::intersperse_with(breadcrumbs.into_iter(), || {
-                    Label::new(" 〉 ".to_string(), theme.breadcrumbs.text.clone()).boxed()
+                    Label::new(" 〉 ", theme.breadcrumbs.text.clone()).boxed()
                 }))
                 .contained()
                 .with_style(theme.breadcrumbs.container)

@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 use crate::{
     fonts::TextStyle,
@@ -16,7 +16,7 @@ use serde_json::json;
 use smallvec::{smallvec, SmallVec};
 
 pub struct Label {
-    text: String,
+    text: Cow<'static, str>,
     style: LabelStyle,
     highlight_indices: Vec<usize>,
 }
@@ -44,9 +44,9 @@ impl LabelStyle {
 }
 
 impl Label {
-    pub fn new(text: String, style: impl Into<LabelStyle>) -> Self {
+    pub fn new<I: Into<Cow<'static, str>>>(text: I, style: impl Into<LabelStyle>) -> Self {
         Self {
-            text,
+            text: text.into(),
             highlight_indices: Default::default(),
             style: style.into(),
         }
@@ -138,11 +138,9 @@ impl Element for Label {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let runs = self.compute_runs();
-        let line = cx.text_layout_cache.layout_str(
-            self.text.as_str(),
-            self.style.text.font_size,
-            runs.as_slice(),
-        );
+        let line =
+            cx.text_layout_cache
+                .layout_str(&self.text, self.style.text.font_size, runs.as_slice());
 
         let size = vec2f(
             line.width()
