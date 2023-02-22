@@ -1760,22 +1760,16 @@ impl Database {
                     Condition::all()
                         .add(follower::Column::ProjectId.eq(project_id))
                         .add(
-                            Condition::any()
-                                .add(
-                                    follower::Column::LeaderConnectionServerId
-                                        .eq(leader_connection.owner_id)
-                                        .and(
-                                            follower::Column::LeaderConnectionId
-                                                .eq(leader_connection.id),
-                                        ),
-                                )
-                                .add(
-                                    follower::Column::FollowerConnectionServerId
-                                        .eq(follower_connection.owner_id)
-                                        .and(
-                                            follower::Column::FollowerConnectionId
-                                                .eq(follower_connection.id),
-                                        ),
+                            follower::Column::LeaderConnectionServerId
+                                .eq(leader_connection.owner_id)
+                                .and(follower::Column::LeaderConnectionId.eq(leader_connection.id)),
+                        )
+                        .add(
+                            follower::Column::FollowerConnectionServerId
+                                .eq(follower_connection.owner_id)
+                                .and(
+                                    follower::Column::FollowerConnectionId
+                                        .eq(follower_connection.id),
                                 ),
                         ),
                 )
