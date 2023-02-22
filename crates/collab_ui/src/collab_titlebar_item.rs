@@ -71,12 +71,15 @@ impl View for CollabTitlebarItem {
         };
 
         let project = workspace.read(cx).project().read(cx);
-        let mut worktree_root_names = String::new();
+        let mut project_title = String::new();
         for (i, name) in project.worktree_root_names(cx).enumerate() {
             if i > 0 {
-                worktree_root_names.push_str(", ");
+                project_title.push_str(", ");
             }
-            worktree_root_names.push_str(name);
+            project_title.push_str(name);
+        }
+        if project_title.is_empty() {
+            project_title = "empty project".to_owned();
         }
 
         let theme = cx.global::<Settings>().theme.clone();
@@ -85,7 +88,9 @@ impl View for CollabTitlebarItem {
         let mut left_container = Flex::row();
 
         left_container.add_child(
-            Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
+            Label::new(project_title, theme.workspace.titlebar.title.clone())
+                .contained()
+                .with_margin_right(theme.workspace.titlebar.item_spacing)
                 .aligned()
                 .left()
                 .boxed(),
@@ -118,6 +123,8 @@ impl View for CollabTitlebarItem {
                     theme.workspace.titlebar.title.clone(),
                 )
                 .aligned()
+                .contained()
+                .with_margin_left(theme.workspace.titlebar.item_spacing)
                 .boxed(),
             );
         } else {
@@ -452,8 +459,7 @@ impl CollabTitlebarItem {
                 ))
                 .aligned()
                 .contained()
-                .with_margin_left(theme.workspace.titlebar.avatar_margin)
-                .with_margin_right(theme.workspace.titlebar.avatar_margin)
+                .with_margin_left(theme.workspace.titlebar.item_spacing)
                 .boxed(),
         )
     }
@@ -501,8 +507,7 @@ impl CollabTitlebarItem {
             ))
             .aligned()
             .contained()
-            .with_margin_left(theme.workspace.titlebar.avatar_margin)
-            .with_margin_right(theme.workspace.titlebar.avatar_margin)
+            .with_margin_left(theme.workspace.titlebar.item_spacing)
             .boxed()
     }
 
@@ -557,15 +562,19 @@ impl CollabTitlebarItem {
                     .get(&participant.peer_id)
                     .map(|collaborator| collaborator.replica_id);
                 let user = participant.user.clone();
-                Some(self.render_face_pile(
-                    &user,
-                    replica_id,
-                    participant.peer_id,
-                    Some(participant.location),
-                    workspace,
-                    theme,
-                    cx,
-                ))
+                Some(
+                    Container::new(self.render_face_pile(
+                        &user,
+                        replica_id,
+                        participant.peer_id,
+                        Some(participant.location),
+                        workspace,
+                        theme,
+                        cx,
+                    ))
+                    .with_margin_left(theme.workspace.titlebar.face_pile_spacing)
+                    .boxed(),
+                )
             })
             .collect()
     }
@@ -597,6 +606,7 @@ impl CollabTitlebarItem {
             Label::new("Sign in", style.text.clone())
                 .contained()
                 .with_style(style.container)
+                .with_margin_left(theme.workspace.titlebar.item_spacing)
                 .boxed()
         })
         .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(Authenticate))
@@ -725,8 +735,6 @@ impl CollabTitlebarItem {
                         .boxed(),
                 )
             })())
-            .contained()
-            .with_margin_left(theme.workspace.titlebar.avatar_margin)
             .boxed();
 
         if let Some(location) = location {

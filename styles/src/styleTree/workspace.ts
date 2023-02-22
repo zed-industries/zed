@@ -12,7 +12,7 @@ import tabBar from "./tabBar";
 
 export default function workspace(colorScheme: ColorScheme) {
   const layer = colorScheme.lowest;
-  const titlebarPadding = 6;
+  const itemSpacing = 8;
   const titlebarButton = {
     cornerRadius: 6,
     padding: {
@@ -83,13 +83,14 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     statusBar: statusBar(colorScheme),
     titlebar: {
-      avatarMargin: 8,
+      itemSpacing,
+      facePileSpacing: 2,
       height: 33, // 32px + 1px for overlaid border
       background: background(layer),
       border: border(layer, { bottom: true, overlay: true }),
       padding: {
         left: 80,
-        right: titlebarPadding,
+        right: itemSpacing,
       },
 
       // Project
@@ -146,7 +147,7 @@ export default function workspace(colorScheme: ColorScheme) {
         color: foreground(layer, "variant"),
         width: 16,
         margin: {
-          left: titlebarPadding,
+          left: itemSpacing,
         },
         padding: {
           right: 4,
@@ -159,7 +160,7 @@ export default function workspace(colorScheme: ColorScheme) {
         background: withOpacity(background(layer, "warning"), 0.3),
         border: border(layer, "warning"),
         margin: {
-          left: titlebarPadding,
+          left: itemSpacing,
         },
         padding: {
           left: 8,
@@ -178,7 +179,7 @@ export default function workspace(colorScheme: ColorScheme) {
         },
       },
       toggleContactsButton: {
-        margin: { left: 6 },
+        margin: { left: itemSpacing },
         cornerRadius: 6,
         color: foreground(layer, "variant"),
         iconWidth: 8,
