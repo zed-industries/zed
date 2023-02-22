@@ -189,6 +189,7 @@ fn main() {
         zed::init(&app_state, cx);
         collab_ui::init(app_state.clone(), cx);
         feedback::init(app_state.clone(), cx);
+        welcome::init(cx);
 
         cx.set_menus(menus::menus());
 

@@ -8014,6 +8014,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9193164d4de03a926d909d3bc7c30543cecb35400c02114792c2cae20d5e2dbb"
 
 [[package]]
+name = "welcome"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "project",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "wepoll-ffi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8459,6 +8473,7 @@ dependencies = [
  "util",
  "uuid 1.2.2",
  "vim",
+ "welcome",
  "workspace",
 ]
 

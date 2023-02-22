@@ -1,0 +1,21 @@
+[package]
+name = "welcome"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/welcome.rs"
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow = "1.0.38"
+log = "0.4"
+gpui = { path = "../gpui" }
+project = { path = "../project" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }

@@ -58,6 +58,7 @@ theme_testbench = { path = "../theme_testbench" }
 util = { path = "../util" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
+welcome = { path = "../welcome" }
 anyhow = "1.0.38"
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"

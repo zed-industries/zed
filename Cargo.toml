@@ -58,6 +58,7 @@ members = [
     "crates/util",
     "crates/vim",
     "crates/workspace",
+    "crates/welcome",
     "crates/zed",
 ]
 default-members = ["crates/zed"]
