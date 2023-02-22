@@ -1589,13 +1589,17 @@ impl Workspace {
         }
 
         let item = pane.read(cx).active_item()?;
-        let new_pane = self.add_pane(cx);
-        if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
-            Pane::add_item(self, &new_pane, clone, true, true, None, cx);
-        }
-        self.center.split(&pane, &new_pane, direction).unwrap();
+        let maybe_pane_handle =
+            if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
+                let new_pane = self.add_pane(cx);
+                Pane::add_item(self, &new_pane, clone, true, true, None, cx);
+                self.center.split(&pane, &new_pane, direction).unwrap();
+                Some(new_pane)
+            } else {
+                None
+            };
         cx.notify();
-        Some(new_pane)
+        maybe_pane_handle
     }
 
     pub fn split_pane_with_item(&mut self, action: &SplitWithItem, cx: &mut ViewContext<Self>) {
