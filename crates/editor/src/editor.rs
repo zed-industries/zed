@@ -84,7 +84,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
-use util::{post_inc, ResultExt, TryFutureExt, RangeExt};
+use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
@@ -4806,7 +4806,7 @@ impl Editor {
                     if !in_bracket_range && best_in_bracket_range {
                         continue;
                     }
-                    
+
                     // Prefer smaller lengths unless best is inside and current isn't
                     if length > best_length && (best_inside || !inside) {
                         continue;
@@ -5146,31 +5146,36 @@ impl Editor {
 
         let project = workspace.project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn_labeled("Finding All References...", |workspace, mut cx| async move {
-            let locations = references.await?;
-            if locations.is_empty() {
-                return Ok(());
-            }
+        Some(cx.spawn_labeled(
+            "Finding All References...",
+            |workspace, mut cx| async move {
+                let locations = references.await?;
+                if locations.is_empty() {
+                    return Ok(());
+                }
 
-            workspace.update(&mut cx, |workspace, cx| {
-                let title = locations
-                    .first()
-                    .as_ref()
-                    .map(|location| {
-                        let buffer = location.buffer.read(cx);
-                        format!(
-                            "References to `{}`",
-                            buffer
-                                .text_for_range(location.range.clone())
-                                .collect::<String>()
-                        )
-                    })
-                    .unwrap();
-                Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx);
-            });
+                workspace.update(&mut cx, |workspace, cx| {
+                    let title = locations
+                        .first()
+                        .as_ref()
+                        .map(|location| {
+                            let buffer = location.buffer.read(cx);
+                            format!(
+                                "References to `{}`",
+                                buffer
+                                    .text_for_range(location.range.clone())
+                                    .collect::<String>()
+                            )
+                        })
+                        .unwrap();
+                    Self::open_locations_in_multibuffer(
+                        workspace, locations, replica_id, title, cx,
+                    );
+                });
 
-            Ok(())
-        }))
+                Ok(())
+            },
+        ))
     }
 
     /// Opens a multibuffer with the given project locations in it
