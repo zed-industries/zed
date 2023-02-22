@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_push_keystroke() -> Result<()> {
-        actions!(test, [B, AB, C, D, DA]);
+        actions!(test, [B, AB, C, D, DA, E, EF]);
 
         let mut context1 = KeymapContext::default();
         context1.set.insert("1".into());
@@ -286,6 +286,7 @@ mod tests {
             matcher.push_keystroke(Keystroke::parse("d")?, dispatch_path.clone()),
             MatchResult::Matches(vec![(2, Box::new(D)), (1, Box::new(D))]),
         );
+
         // If none of the d action handlers consume the binding, a pending
         // binding may then be used
         assert_eq!(
