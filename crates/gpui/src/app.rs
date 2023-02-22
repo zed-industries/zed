@@ -6906,7 +6906,10 @@ mod tests {
             Some("Test Label"),
             cx.update(|cx| cx.active_labeled_tasks().next())
         );
-        sender.send(()).await;
+        sender
+            .send(())
+            .await
+            .expect("Could not send message to complete task");
         task.await;
 
         assert_eq!(None, cx.update(|cx| cx.active_labeled_tasks().next()));
