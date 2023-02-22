@@ -193,7 +193,8 @@ impl MacForegroundPlatform {
     ) -> id {
         match item {
             MenuItem::Separator => NSMenuItem::separatorItem(nil),
-            MenuItem::Action { name, action } => {
+            MenuItem::Action { name, action, .. } => {
+                // TODO
                 let keystrokes = keystroke_matcher
                     .bindings_for_action_type(action.as_any().type_id())
                     .find(|binding| binding.action().eq(action.as_ref()))
