@@ -1257,6 +1257,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "context_menu",
  "editor",
  "futures 0.3.25",
  "fuzzy",

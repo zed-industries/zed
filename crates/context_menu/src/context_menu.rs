@@ -5,7 +5,9 @@ use gpui::{
 };
 use menu::*;
 use settings::Settings;
-use std::{any::TypeId, time::Duration};
+use std::{any::TypeId, borrow::Cow, time::Duration};
+
+pub type StaticItem = Box<dyn Fn(&mut MutableAppContext) -> ElementBox>;
 
 #[derive(Copy, Clone, PartialEq)]
 struct Clicked;
@@ -24,16 +26,17 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub enum ContextMenuItem {
     Item {
-        label: String,
+        label: Cow<'static, str>,
         action: Box<dyn Action>,
     },
+    Static(StaticItem),
     Separator,
 }
 
 impl ContextMenuItem {
-    pub fn item(label: impl ToString, action: impl 'static + Action) -> Self {
+    pub fn item(label: impl Into<Cow<'static, str>>, action: impl 'static + Action) -> Self {
         Self::Item {
-            label: label.to_string(),
+            label: label.into(),
             action: Box::new(action),
         }
     }
@@ -42,14 +45,14 @@ impl ContextMenuItem {
         Self::Separator
     }
 
-    fn is_separator(&self) -> bool {
-        matches!(self, Self::Separator)
+    fn is_action(&self) -> bool {
+        matches!(self, Self::Item { .. })
     }
 
     fn action_id(&self) -> Option<TypeId> {
         match self {
             ContextMenuItem::Item { action, .. } => Some(action.id()),
-            ContextMenuItem::Separator => None,
+            ContextMenuItem::Static(..) | ContextMenuItem::Separator => None,
         }
     }
 }
@@ -58,6 +61,7 @@ pub struct ContextMenu {
     show_count: usize,
     anchor_position: Vector2F,
     anchor_corner: AnchorCorner,
+    position_mode: OverlayPositionMode,
     items: Vec<ContextMenuItem>,
     selected_index: Option<usize>,
     visible: bool,
@@ -105,6 +109,7 @@ impl View for ContextMenu {
             .with_fit_mode(OverlayFitMode::SnapToWindow)
             .with_anchor_position(self.anchor_position)
             .with_anchor_corner(self.anchor_corner)
+            .with_position_mode(self.position_mode)
             .boxed()
     }
 
@@ -121,6 +126,7 @@ impl ContextMenu {
             show_count: 0,
             anchor_position: Default::default(),
             anchor_corner: AnchorCorner::TopLeft,
+            position_mode: OverlayPositionMode::Window,
             items: Default::default(),
             selected_index: Default::default(),
             visible: Default::default(),
@@ -188,13 +194,13 @@ impl ContextMenu {
     }
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
-        self.selected_index = self.items.iter().position(|item| !item.is_separator());
+        self.selected_index = self.items.iter().position(|item| item.is_action());
         cx.notify();
     }
 
     fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
         for (ix, item) in self.items.iter().enumerate().rev() {
-            if !item.is_separator() {
+            if item.is_action() {
                 self.selected_index = Some(ix);
                 cx.notify();
                 break;
@@ -205,7 +211,7 @@ impl ContextMenu {
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
             for (ix, item) in self.items.iter().enumerate().skip(ix + 1) {
-                if !item.is_separator() {
+                if item.is_action() {
                     self.selected_index = Some(ix);
                     cx.notify();
                     break;
@@ -219,7 +225,7 @@ impl ContextMenu {
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
             for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
-                if !item.is_separator() {
+                if item.is_action() {
                     self.selected_index = Some(ix);
                     cx.notify();
                     break;
@@ -234,7 +240,7 @@ impl ContextMenu {
         &mut self,
         anchor_position: Vector2F,
         anchor_corner: AnchorCorner,
-        items: impl IntoIterator<Item = ContextMenuItem>,
+        items: Vec<ContextMenuItem>,
         cx: &mut ViewContext<Self>,
     ) {
         let mut items = items.into_iter().peekable();
@@ -252,6 +258,10 @@ impl ContextMenu {
             self.visible = false;
         }
         cx.notify();
+    }
+
+    pub fn set_position_mode(&mut self, mode: OverlayPositionMode) {
+        self.position_mode = mode;
     }
 
     fn render_menu_for_measurement(&self, cx: &mut RenderContext<Self>) -> impl Element {
@@ -273,6 +283,9 @@ impl ContextMenu {
                                     .with_style(style.container)
                                     .boxed()
                             }
+
+                            ContextMenuItem::Static(f) => f(cx),
+
                             ContextMenuItem::Separator => Empty::new()
                                 .collapsed()
                                 .contained()
@@ -302,6 +315,9 @@ impl ContextMenu {
                                 )
                                 .boxed()
                             }
+
+                            ContextMenuItem::Static(_) => Empty::new().boxed(),
+
                             ContextMenuItem::Separator => Empty::new()
                                 .collapsed()
                                 .constrained()
@@ -339,7 +355,7 @@ impl ContextMenu {
 
                                 Flex::row()
                                     .with_child(
-                                        Label::new(label.to_string(), style.label.clone())
+                                        Label::new(label.clone(), style.label.clone())
                                             .contained()
                                             .boxed(),
                                     )
@@ -366,6 +382,9 @@ impl ContextMenu {
                             .on_drag(MouseButton::Left, |_, _| {})
                             .boxed()
                         }
+
+                        ContextMenuItem::Static(f) => f(cx),
+
                         ContextMenuItem::Separator => Empty::new()
                             .constrained()
                             .with_height(1.)

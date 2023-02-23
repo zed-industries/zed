@@ -4,9 +4,10 @@ use crate::{
     ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Authenticate, ContactEventKind, User, UserStore};
+use client::{proto::PeerId, Authenticate, ContactEventKind, SignOut, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
+use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     actions,
     color::Color,
@@ -28,8 +29,9 @@ actions!(
     [
         ToggleCollaboratorList,
         ToggleContactsMenu,
+        ToggleUserMenu,
         ShareProject,
-        UnshareProject
+        UnshareProject,
     ]
 );
 
@@ -38,25 +40,20 @@ impl_internal_actions!(collab, [LeaveCall]);
 #[derive(Copy, Clone, PartialEq)]
 pub(crate) struct LeaveCall;
 
-#[derive(PartialEq, Eq)]
-enum ContactsPopoverSide {
-    Left,
-    Right,
-}
-
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_collaborator_list_popover);
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
     cx.add_action(CollabTitlebarItem::share_project);
     cx.add_action(CollabTitlebarItem::unshare_project);
     cx.add_action(CollabTitlebarItem::leave_call);
+    cx.add_action(CollabTitlebarItem::toggle_user_menu);
 }
 
 pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     user_store: ModelHandle<UserStore>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
-    contacts_popover_side: ContactsPopoverSide,
+    user_menu: ViewHandle<ContextMenu>,
     collaborator_list_popover: Option<ViewHandle<CollaboratorListPopover>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -90,9 +87,9 @@ impl View for CollabTitlebarItem {
         }
 
         let theme = cx.global::<Settings>().theme.clone();
-        let user = workspace.read(cx).user_store().read(cx).current_user();
 
         let mut left_container = Flex::row();
+        let mut right_container = Flex::row();
 
         left_container.add_child(
             Label::new(project_title, theme.workspace.titlebar.title.clone())
@@ -103,40 +100,30 @@ impl View for CollabTitlebarItem {
                 .boxed(),
         );
 
-        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-            left_container.add_child(self.render_current_user(&workspace, &theme, &user, cx));
-            left_container.add_children(self.render_collaborators(&workspace, &theme, room, cx));
-            left_container.add_child(self.render_toggle_contacts_button(&theme, cx));
-        }
-
-        let mut right_container = Flex::row();
-
-        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-            right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
-            right_container.add_child(self.render_leave_call_button(&theme, cx));
-            right_container
+        let user = workspace.read(cx).user_store().read(cx).current_user();
+        let peer_id = workspace.read(cx).client().peer_id();
+        if let Some(((user, peer_id), room)) = user
+            .zip(peer_id)
+            .zip(ActiveCall::global(cx).read(cx).room().cloned())
+        {
+            left_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
-        } else {
-            right_container.add_child(self.render_outside_call_share_button(&theme, cx));
+
+            right_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
+            right_container
+                .add_child(self.render_current_user(&workspace, &theme, &user, peer_id, cx));
+            right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
         }
 
-        right_container.add_children(self.render_connection_status(&workspace, cx));
-
-        if let Some(user) = user {
-            //TODO: Add style
-            right_container.add_child(
-                Label::new(
-                    user.github_login.clone(),
-                    theme.workspace.titlebar.title.clone(),
-                )
-                .aligned()
-                .contained()
-                .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .boxed(),
-            );
+        let status = workspace.read(cx).client().status();
+        let status = &*status.borrow();
+        if matches!(status, client::Status::Connected { .. }) {
+            right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
         } else {
-            right_container.add_child(Self::render_authenticate(&theme, cx));
+            right_container.add_children(self.render_connection_status(status, cx));
         }
+
+        right_container.add_child(self.render_user_menu_button(&theme, cx));
 
         Stack::new()
             .with_child(left_container.boxed())
@@ -186,7 +173,11 @@ impl CollabTitlebarItem {
             workspace: workspace.downgrade(),
             user_store: user_store.clone(),
             contacts_popover: None,
-            contacts_popover_side: ContactsPopoverSide::Right,
+            user_menu: cx.add_view(|cx| {
+                let mut menu = ContextMenu::new(cx);
+                menu.set_position_mode(OverlayPositionMode::Local);
+                menu
+            }),
             collaborator_list_popover: None,
             _subscriptions: subscriptions,
         }
@@ -278,17 +269,64 @@ impl CollabTitlebarItem {
                     cx.notify();
                 })
                 .detach();
-
-                self.contacts_popover_side = match ActiveCall::global(cx).read(cx).room() {
-                    Some(_) => ContactsPopoverSide::Left,
-                    None => ContactsPopoverSide::Right,
-                };
-
                 self.contacts_popover = Some(view);
             }
         }
 
         cx.notify();
+    }
+
+    pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
+        let theme = cx.global::<Settings>().theme.clone();
+        let avatar_style = theme.workspace.titlebar.avatar.clone();
+        let item_style = theme.context_menu.item.disabled_style().clone();
+        self.user_menu.update(cx, |user_menu, cx| {
+            let items = if let Some(user) = self.user_store.read(cx).current_user() {
+                vec![
+                    ContextMenuItem::Static(Box::new(move |_| {
+                        Flex::row()
+                            .with_children(user.avatar.clone().map(|avatar| {
+                                Self::render_face(
+                                    avatar,
+                                    avatar_style.clone(),
+                                    Color::transparent_black(),
+                                )
+                            }))
+                            .with_child(
+                                Label::new(user.github_login.clone(), item_style.label.clone())
+                                    .boxed(),
+                            )
+                            .contained()
+                            .with_style(item_style.container)
+                            .boxed()
+                    })),
+                    ContextMenuItem::Item {
+                        label: "Sign out".into(),
+                        action: Box::new(SignOut),
+                    },
+                ]
+            } else {
+                vec![ContextMenuItem::Item {
+                    label: "Sign in".into(),
+                    action: Box::new(Authenticate),
+                }]
+            };
+
+            user_menu.show(
+                vec2f(
+                    theme
+                        .workspace
+                        .titlebar
+                        .user_menu_button
+                        .default
+                        .button_width,
+                    theme.workspace.titlebar.height,
+                ),
+                AnchorCorner::TopRight,
+                items,
+                cx,
+            );
+        });
     }
 
     fn leave_call(&mut self, _: &LeaveCall, cx: &mut ViewContext<Self>) {
@@ -328,11 +366,9 @@ impl CollabTitlebarItem {
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleContactsMenu>::new(0, cx, |state, _| {
-                    let style = titlebar.toggle_contacts_button.style_for(
-                        state,
-                        self.contacts_popover.is_some()
-                            && self.contacts_popover_side == ContactsPopoverSide::Left,
-                    );
+                    let style = titlebar
+                        .toggle_contacts_button
+                        .style_for(state, self.contacts_popover.is_some());
                     Svg::new("icons/plus_8.svg")
                         .with_color(style.color)
                         .constrained()
@@ -360,11 +396,7 @@ impl CollabTitlebarItem {
                 .boxed(),
             )
             .with_children(badge)
-            .with_children(self.render_contacts_popover_host(
-                ContactsPopoverSide::Left,
-                titlebar,
-                cx,
-            ))
+            .with_children(self.render_contacts_popover_host(titlebar, cx))
             .boxed()
     }
 
@@ -414,40 +446,6 @@ impl CollabTitlebarItem {
         .boxed()
     }
 
-    fn render_leave_call_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
-        let titlebar = &theme.workspace.titlebar;
-
-        MouseEventHandler::<LeaveCall>::new(0, cx, |state, _| {
-            let style = titlebar.call_control.style_for(state, false);
-            Svg::new("icons/leave_12.svg")
-                .with_color(style.color)
-                .constrained()
-                .with_width(style.icon_width)
-                .aligned()
-                .constrained()
-                .with_width(style.button_width)
-                .with_height(style.button_width)
-                .contained()
-                .with_style(style.container)
-                .boxed()
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_action(LeaveCall);
-        })
-        .with_tooltip::<LeaveCall, _>(
-            0,
-            "Leave call".to_owned(),
-            Some(Box::new(LeaveCall)),
-            theme.tooltip.clone(),
-            cx,
-        )
-        .contained()
-        .with_margin_left(theme.workspace.titlebar.item_spacing)
-        .aligned()
-        .boxed()
-    }
-
     fn render_in_call_share_unshare_button(
         &self,
         workspace: &ViewHandle<Workspace>,
@@ -475,11 +473,9 @@ impl CollabTitlebarItem {
                 .with_child(
                     MouseEventHandler::<ShareUnshare>::new(0, cx, |state, _| {
                         //TODO: Ensure this button has consistant width for both text variations
-                        let style = titlebar.share_button.style_for(
-                            state,
-                            self.contacts_popover.is_some()
-                                && self.contacts_popover_side == ContactsPopoverSide::Right,
-                        );
+                        let style = titlebar
+                            .share_button
+                            .style_for(state, self.contacts_popover.is_some());
                         Label::new(label, style.text.clone())
                             .contained()
                             .with_style(style.container)
@@ -502,11 +498,6 @@ impl CollabTitlebarItem {
                     )
                     .boxed(),
                 )
-                .with_children(self.render_contacts_popover_host(
-                    ContactsPopoverSide::Right,
-                    titlebar,
-                    cx,
-                ))
                 .aligned()
                 .contained()
                 .with_margin_left(theme.workspace.titlebar.item_spacing)
@@ -514,83 +505,71 @@ impl CollabTitlebarItem {
         )
     }
 
-    fn render_outside_call_share_button(
-        &self,
-        theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let tooltip = "Share project with new call";
+    fn render_user_menu_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
         let titlebar = &theme.workspace.titlebar;
 
-        enum OutsideCallShare {}
         Stack::new()
             .with_child(
-                MouseEventHandler::<OutsideCallShare>::new(0, cx, |state, _| {
-                    //TODO: Ensure this button has consistant width for both text variations
-                    let style = titlebar.share_button.style_for(
-                        state,
-                        self.contacts_popover.is_some()
-                            && self.contacts_popover_side == ContactsPopoverSide::Right,
-                    );
-                    Label::new("Share".to_owned(), style.text.clone())
+                MouseEventHandler::<ToggleUserMenu>::new(0, cx, |state, _| {
+                    let style = titlebar.call_control.style_for(state, false);
+                    Svg::new("icons/ellipsis_14.svg")
+                        .with_color(style.color)
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
                         .contained()
                         .with_style(style.container)
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(ToggleContactsMenu);
+                    cx.dispatch_action(ToggleUserMenu);
                 })
-                .with_tooltip::<OutsideCallShare, _>(
+                .with_tooltip::<ToggleUserMenu, _>(
                     0,
-                    tooltip.to_owned(),
-                    None,
+                    "Toggle user menu".to_owned(),
+                    Some(Box::new(ToggleUserMenu)),
                     theme.tooltip.clone(),
                     cx,
                 )
+                .contained()
+                .with_margin_left(theme.workspace.titlebar.item_spacing)
+                .aligned()
                 .boxed(),
             )
-            .with_children(self.render_contacts_popover_host(
-                ContactsPopoverSide::Right,
-                titlebar,
-                cx,
-            ))
-            .aligned()
-            .contained()
-            .with_margin_left(theme.workspace.titlebar.item_spacing)
+            .with_child(ChildView::new(&self.user_menu, cx).boxed())
             .boxed()
     }
 
     fn render_contacts_popover_host<'a>(
         &'a self,
-        side: ContactsPopoverSide,
         theme: &'a theme::Titlebar,
         cx: &'a RenderContext<Self>,
-    ) -> impl Iterator<Item = ElementBox> + 'a {
-        self.contacts_popover
-            .iter()
-            .filter(move |_| self.contacts_popover_side == side)
-            .map(|popover| {
-                Overlay::new(
-                    ChildView::new(popover, cx)
-                        .contained()
-                        .with_margin_top(theme.height)
-                        .with_margin_left(theme.toggle_contacts_button.default.button_width)
-                        .with_margin_right(-theme.toggle_contacts_button.default.button_width)
-                        .boxed(),
-                )
-                .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                .with_anchor_corner(AnchorCorner::BottomLeft)
-                .with_z_index(999)
-                .boxed()
-            })
+    ) -> Option<ElementBox> {
+        self.contacts_popover.as_ref().map(|popover| {
+            Overlay::new(
+                ChildView::new(popover, cx)
+                    .contained()
+                    .with_margin_top(theme.height)
+                    .with_margin_left(theme.toggle_contacts_button.default.button_width)
+                    .with_margin_right(-theme.toggle_contacts_button.default.button_width)
+                    .boxed(),
+            )
+            .with_fit_mode(OverlayFitMode::SwitchAnchor)
+            .with_anchor_corner(AnchorCorner::BottomLeft)
+            .with_z_index(999)
+            .boxed()
+        })
     }
 
     fn render_collaborators(
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
-        room: ModelHandle<Room>,
+        room: &ModelHandle<Room>,
         cx: &mut RenderContext<Self>,
     ) -> Vec<ElementBox> {
         let project = workspace.read(cx).project().read(cx);
@@ -622,7 +601,7 @@ impl CollabTitlebarItem {
                         theme,
                         cx,
                     ))
-                    .with_margin_left(theme.workspace.titlebar.face_pile_spacing)
+                    .with_margin_right(theme.workspace.titlebar.face_pile_spacing)
                     .boxed(),
                 )
             })
@@ -633,35 +612,21 @@ impl CollabTitlebarItem {
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
-        user: &Option<Arc<User>>,
+        user: &Arc<User>,
+        peer_id: PeerId,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let user = user.as_ref().expect("Active call without user");
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
-        let peer_id = workspace
-            .read(cx)
-            .client()
-            .peer_id()
-            .expect("Active call without peer id");
-        self.render_face_pile(user, Some(replica_id), peer_id, None, workspace, theme, cx)
-    }
-
-    fn render_authenticate(theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
-        MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
-            let style = theme
-                .workspace
-                .titlebar
-                .sign_in_prompt
-                .style_for(state, false);
-            Label::new("Sign in", style.text.clone())
-                .contained()
-                .with_style(style.container)
-                .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .boxed()
-        })
-        .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(Authenticate))
-        .with_cursor_style(CursorStyle::PointingHand)
-        .aligned()
+        Container::new(self.render_face_pile(
+            user,
+            Some(replica_id),
+            peer_id,
+            None,
+            workspace,
+            theme,
+            cx,
+        ))
+        .with_margin_right(theme.workspace.titlebar.item_spacing)
         .boxed()
     }
 
@@ -717,7 +682,7 @@ impl CollabTitlebarItem {
             }
         }
 
-        let content = Stack::new()
+        let mut content = Stack::new()
             .with_children(user.avatar.as_ref().map(|avatar| {
                 let face_pile = FacePile::new(theme.workspace.titlebar.follower_avatar_overlap)
                     .with_child(Self::render_face(
@@ -789,7 +754,10 @@ impl CollabTitlebarItem {
 
         if let Some(location) = location {
             if let Some(replica_id) = replica_id {
-                MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
+                content =
+                    MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| {
+                        content
+                    })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(MouseButton::Left, move |_, cx| {
                         cx.dispatch_action(ToggleFollow(peer_id))
@@ -805,12 +773,14 @@ impl CollabTitlebarItem {
                         theme.tooltip.clone(),
                         cx,
                     )
-                    .boxed()
+                    .boxed();
             } else if let ParticipantLocation::SharedProject { project_id } = location {
                 let user_id = user.id;
-                MouseEventHandler::<JoinProject>::new(peer_id.as_u64() as usize, cx, move |_, _| {
-                    content
-                })
+                content = MouseEventHandler::<JoinProject>::new(
+                    peer_id.as_u64() as usize,
+                    cx,
+                    move |_, _| content,
+                )
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
                     cx.dispatch_action(JoinProject {
@@ -825,13 +795,10 @@ impl CollabTitlebarItem {
                     theme.tooltip.clone(),
                     cx,
                 )
-                .boxed()
-            } else {
-                content
+                .boxed();
             }
-        } else {
-            content
         }
+        content
     }
 
     fn render_face(
@@ -854,13 +821,13 @@ impl CollabTitlebarItem {
 
     fn render_connection_status(
         &self,
-        workspace: &ViewHandle<Workspace>,
+        status: &client::Status,
         cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
         enum ConnectionStatusButton {}
 
         let theme = &cx.global::<Settings>().theme.clone();
-        match &*workspace.read(cx).client().status().borrow() {
+        match status {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
             | client::Status::Reauthenticating { .. }

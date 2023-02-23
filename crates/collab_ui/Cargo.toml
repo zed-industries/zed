@@ -27,6 +27,7 @@ call = { path = "../call" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
+context_menu = { path = "../context_menu" }
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }

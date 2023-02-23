@@ -19,7 +19,9 @@ env:
 jobs:
   rustfmt:
     name: Check formatting
-    runs-on: self-hosted
+    runs-on:
+      - self-hosted
+      - test
     steps:
       - name: Install Rust
         run: |
