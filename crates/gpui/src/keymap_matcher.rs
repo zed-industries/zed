@@ -5,7 +5,7 @@ mod keystroke;
 
 use std::{any::TypeId, fmt::Debug};
 
-use collections::{BTreeMap, HashMap};
+use collections::HashMap;
 use smallvec::SmallVec;
 
 use crate::Action;
@@ -68,8 +68,8 @@ impl KeymapMatcher {
     ///         There exist bindings which are still waiting for more keys.
     ///     MatchResult::Complete(matches) =>
     ///         1 or more bindings have recieved the necessary key presses.
-    ///         The order of the matched actions is by order in the keymap file first and
-    ///         position of the matching view second.
+    ///         The order of the matched actions is by position of the matching first,
+    //          and order in the keymap second.
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,
@@ -80,8 +80,7 @@ impl KeymapMatcher {
         // and then the order the binding matched in the view tree second.
         // The key is the reverse position of the binding in the bindings list so that later bindings
         // match before earlier ones in the user's config
-        let mut matched_bindings: BTreeMap<usize, Vec<(usize, Box<dyn Action>)>> =
-            Default::default();
+        let mut matched_bindings: Vec<(usize, Box<dyn Action>)> = Default::default();
 
         let first_keystroke = self.pending_keystrokes.is_empty();
         self.pending_keystrokes.push(keystroke.clone());
@@ -105,14 +104,11 @@ impl KeymapMatcher {
                 }
             }
 
-            for (order, binding) in self.keymap.bindings().iter().rev().enumerate() {
+            for binding in self.keymap.bindings().iter().rev() {
                 match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
                 {
                     BindingMatchResult::Complete(action) => {
-                        matched_bindings
-                            .entry(order)
-                            .or_default()
-                            .push((*view_id, action));
+                        matched_bindings.push((*view_id, action));
                     }
                     BindingMatchResult::Partial => {
                         self.pending_views
@@ -131,7 +127,7 @@ impl KeymapMatcher {
         if !matched_bindings.is_empty() {
             // Collect the sorted matched bindings into the final vec for ease of use
             // Matched bindings are in order by precedence
-            MatchResult::Matches(matched_bindings.into_values().flatten().collect())
+            MatchResult::Matches(matched_bindings)
         } else if any_pending {
             MatchResult::Pending
         } else {
@@ -226,14 +222,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_keymap_and_view_ordering() -> Result<()> {
+        actions!(test, [EditorAction, ProjectPanelAction]);
+
+        let mut editor = KeymapContext::default();
+        editor.add_identifier("Editor");
+
+        let mut project_panel = KeymapContext::default();
+        project_panel.add_identifier("ProjectPanel");
+
+        // Editor 'deeper' in than project panel
+        let dispatch_path = vec![(2, editor), (1, project_panel)];
+
+        // But editor actions 'higher' up in keymap
+        let keymap = Keymap::new(vec![
+            Binding::new("left", EditorAction, Some("Editor")),
+            Binding::new("left", ProjectPanelAction, Some("ProjectPanel")),
+        ]);
+
+        let mut matcher = KeymapMatcher::new(keymap);
+
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("left")?, dispatch_path.clone()),
+            MatchResult::Matches(vec![
+                (2, Box::new(EditorAction)),
+                (1, Box::new(ProjectPanelAction)),
+            ]),
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_push_keystroke() -> Result<()> {
         actions!(test, [B, AB, C, D, DA, E, EF]);
 
         let mut context1 = KeymapContext::default();
-        context1.set.insert("1".into());
+        context1.add_identifier("1");
 
         let mut context2 = KeymapContext::default();
-        context2.set.insert("2".into());
+        context2.add_identifier("2");
 
         let dispatch_path = vec![(2, context2), (1, context1)];
 
@@ -367,22 +395,22 @@ mod tests {
         let predicate = KeymapContextPredicate::parse("a && b || c == d").unwrap();
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
+        context.add_identifier("a");
         assert!(!predicate.eval(&[context]));
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
-        context.set.insert("b".into());
+        context.add_identifier("a");
+        context.add_identifier("b");
         assert!(predicate.eval(&[context]));
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
-        context.map.insert("c".into(), "x".into());
+        context.add_identifier("a");
+        context.add_key("c", "x");
         assert!(!predicate.eval(&[context]));
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
-        context.map.insert("c".into(), "d".into());
+        context.add_identifier("a");
+        context.add_key("c", "d");
         assert!(predicate.eval(&[context]));
 
         let predicate = KeymapContextPredicate::parse("!a").unwrap();
@@ -422,10 +450,11 @@ mod tests {
         assert!(!predicate.eval(&contexts[6..]));
 
         fn context_set(names: &[&str]) -> KeymapContext {
-            KeymapContext {
-                set: names.iter().copied().map(str::to_string).collect(),
-                ..Default::default()
-            }
+            let mut keymap = KeymapContext::new();
+            names
+                .iter()
+                .for_each(|name| keymap.add_identifier(name.to_string()));
+            keymap
         }
     }
 
@@ -448,10 +477,10 @@ mod tests {
         ]);
 
         let mut context_a = KeymapContext::default();
-        context_a.set.insert("a".into());
+        context_a.add_identifier("a");
 
         let mut context_b = KeymapContext::default();
-        context_b.set.insert("b".into());
+        context_b.add_identifier("b");
 
         let mut matcher = KeymapMatcher::new(keymap);
 
@@ -496,7 +525,7 @@ mod tests {
         matcher.clear_pending();
 
         let mut context_c = KeymapContext::default();
-        context_c.set.insert("c".into());
+        context_c.add_identifier("c");
 
         // Pending keystrokes are maintained per-view
         assert_eq!(

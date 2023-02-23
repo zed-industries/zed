@@ -1,13 +1,22 @@
+use std::borrow::Cow;
+
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct KeymapContext {
-    pub set: HashSet<String>,
-    pub map: HashMap<String, String>,
+    set: HashSet<Cow<'static, str>>,
+    map: HashMap<Cow<'static, str>, Cow<'static, str>>,
 }
 
 impl KeymapContext {
+    pub fn new() -> Self {
+        KeymapContext {
+            set: HashSet::default(),
+            map: HashMap::default(),
+        }
+    }
+
     pub fn extend(&mut self, other: &Self) {
         for v in &other.set {
             self.set.insert(v.clone());
@@ -15,6 +24,18 @@ impl KeymapContext {
         for (k, v) in &other.map {
             self.map.insert(k.clone(), v.clone());
         }
+    }
+
+    pub fn add_identifier<I: Into<Cow<'static, str>>>(&mut self, identifier: I) {
+        self.set.insert(identifier.into());
+    }
+
+    pub fn add_key<S1: Into<Cow<'static, str>>, S2: Into<Cow<'static, str>>>(
+        &mut self,
+        key: S1,
+        value: S2,
+    ) {
+        self.map.insert(key.into(), value.into());
     }
 }
 
@@ -46,12 +67,12 @@ impl KeymapContextPredicate {
             Self::Identifier(name) => (&context.set).contains(name.as_str()),
             Self::Equal(left, right) => context
                 .map
-                .get(left)
+                .get(left.as_str())
                 .map(|value| value == right)
                 .unwrap_or(false),
             Self::NotEqual(left, right) => context
                 .map
-                .get(left)
+                .get(left.as_str())
                 .map(|value| value != right)
                 .unwrap_or(true),
             Self::Not(pred) => !pred.eval(contexts),
