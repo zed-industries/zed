@@ -2716,11 +2716,7 @@ impl View for Workspace {
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-        let mut keymap = Self::default_keymap_context();
-        if self.active_pane() == self.dock_pane() {
-            keymap.set.insert("Dock".into());
-        }
-        keymap
+        Self::default_keymap_context()
     }
 }
 

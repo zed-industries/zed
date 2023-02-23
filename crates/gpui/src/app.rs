@@ -86,7 +86,7 @@ pub trait View: Entity + Sized {
     }
     fn default_keymap_context() -> keymap_matcher::KeymapContext {
         let mut cx = keymap_matcher::KeymapContext::default();
-        cx.set.insert(Self::ui_name().into());
+        cx.add_identifier(Self::ui_name());
         cx
     }
     fn debug_json(&self, _: &AppContext) -> serde_json::Value {
@@ -6639,12 +6639,12 @@ mod tests {
         let mut view_1 = View::new(1);
         let mut view_2 = View::new(2);
         let mut view_3 = View::new(3);
-        view_1.keymap_context.set.insert("a".into());
-        view_2.keymap_context.set.insert("a".into());
-        view_2.keymap_context.set.insert("b".into());
-        view_3.keymap_context.set.insert("a".into());
-        view_3.keymap_context.set.insert("b".into());
-        view_3.keymap_context.set.insert("c".into());
+        view_1.keymap_context.add_identifier("a");
+        view_2.keymap_context.add_identifier("a");
+        view_2.keymap_context.add_identifier("b");
+        view_3.keymap_context.add_identifier("a");
+        view_3.keymap_context.add_identifier("b");
+        view_3.keymap_context.add_identifier("c");
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
         let view_2 = cx.add_view(&view_1, |_| view_2);

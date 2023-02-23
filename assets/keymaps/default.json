@@ -456,7 +456,7 @@
         }
     },
     {
-        "context": "Dock",
+        "context": "Pane && docked",
         "bindings": {
             "shift-escape": "dock::HideDock",
             "cmd-escape": "dock::RemoveTabFromDock"
