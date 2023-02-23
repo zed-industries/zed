@@ -737,6 +737,7 @@ impl platform::Window for Window {
             let title = ns_string(title);
             let _: () = msg_send![app, changeWindowsItem:window title:title filename:false];
             let _: () = msg_send![window, setTitle: title];
+            self.0.borrow().move_traffic_light();
         }
     }
 
