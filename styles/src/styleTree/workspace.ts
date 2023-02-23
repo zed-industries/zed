@@ -197,6 +197,11 @@ export default function workspace(colorScheme: ColorScheme) {
           color: foreground(layer, "variant", "hovered"),
         },
       },
+      userMenuButton: {
+        buttonWidth: 20,
+        iconWidth: 12,
+        ...titlebarButton,
+      },
       toggleContactsBadge: {
         cornerRadius: 3,
         padding: 2,

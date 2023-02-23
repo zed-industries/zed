@@ -66,7 +66,7 @@ pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-actions!(client, [Authenticate]);
+actions!(client, [Authenticate, SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_global_action({
@@ -76,6 +76,16 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
             cx.spawn(
                 |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
             )
+            .detach();
+        }
+    });
+    cx.add_global_action({
+        let client = client.clone();
+        move |_: &SignOut, cx| {
+            let client = client.clone();
+            cx.spawn(|cx| async move {
+                client.set_status(Status::SignedOut, &cx);
+            })
             .detach();
         }
     });
