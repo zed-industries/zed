@@ -1083,7 +1083,7 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
     // User B disconnects the client that is not on the call. Everything should be fine.
-    client_b1.disconnect(&cx_b1.to_async()).unwrap();
+    client_b1.disconnect(&cx_b1.to_async());
     deterministic.advance_clock(RECEIVE_TIMEOUT);
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
@@ -3227,7 +3227,7 @@ async fn test_leaving_project(
     buffer_b2.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
 
     // Drop client B's connection and ensure client A and client C observe client B leaving.
-    client_b.disconnect(&cx_b.to_async()).unwrap();
+    client_b.disconnect(&cx_b.to_async());
     deterministic.advance_clock(RECONNECT_TIMEOUT);
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
@@ -5772,7 +5772,7 @@ async fn test_contact_requests(
         .is_empty());
 
     async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
-        client.disconnect(&cx.to_async()).unwrap();
+        client.disconnect(&cx.to_async());
         client.clear_contacts(cx).await;
         client
             .authenticate_and_connect(false, &cx.to_async())
@@ -6186,7 +6186,7 @@ async fn test_following(
     );
 
     // Following interrupts when client B disconnects.
-    client_b.disconnect(&cx_b.to_async()).unwrap();
+    client_b.disconnect(&cx_b.to_async());
     deterministic.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),

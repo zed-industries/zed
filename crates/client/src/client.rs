@@ -84,7 +84,7 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
         move |_: &SignOut, cx| {
             let client = client.clone();
             cx.spawn(|cx| async move {
-                client.set_status(Status::SignedOut, &cx);
+                client.disconnect(&cx);
             })
             .detach();
         }
@@ -1162,11 +1162,9 @@ impl Client {
         })
     }
 
-    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
-        let conn_id = self.connection_id()?;
-        self.peer.disconnect(conn_id);
+    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
+        self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
-        Ok(())
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {
