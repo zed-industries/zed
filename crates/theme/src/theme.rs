@@ -80,9 +80,9 @@ pub struct Titlebar {
     pub follower_avatar_overlap: f32,
     pub leader_selection: ContainerStyle,
     pub offline_icon: OfflineIcon,
-    pub avatar: AvatarStyle,
-    pub inactive_avatar: AvatarStyle,
+    pub leader_avatar: AvatarStyle,
     pub follower_avatar: AvatarStyle,
+    pub inactive_avatar_grayscale: bool,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
     pub share_button: Interactive<ContainedText>,
@@ -92,7 +92,7 @@ pub struct Titlebar {
     pub toggle_contacts_badge: ContainerStyle,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Copy, Clone, Deserialize, Default)]
 pub struct AvatarStyle {
     #[serde(flatten)]
     pub image: ImageStyle,

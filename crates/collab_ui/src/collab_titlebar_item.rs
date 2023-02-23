@@ -278,7 +278,7 @@ impl CollabTitlebarItem {
 
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
         let theme = cx.global::<Settings>().theme.clone();
-        let avatar_style = theme.workspace.titlebar.avatar.clone();
+        let avatar_style = theme.workspace.titlebar.leader_avatar.clone();
         let item_style = theme.context_menu.item.disabled_style().clone();
         self.user_menu.update(cx, |user_menu, cx| {
             let items = if let Some(user) = self.user_store.read(cx).current_user() {
@@ -653,20 +653,8 @@ impl CollabTitlebarItem {
             })
             .unwrap_or(false);
 
-        let avatar_style;
-        if let Some(location) = location {
-            if let ParticipantLocation::SharedProject { project_id } = location {
-                if Some(project_id) == workspace.read(cx).project().read(cx).remote_id() {
-                    avatar_style = &theme.workspace.titlebar.avatar;
-                } else {
-                    avatar_style = &theme.workspace.titlebar.inactive_avatar;
-                }
-            } else {
-                avatar_style = &theme.workspace.titlebar.inactive_avatar;
-            }
-        } else {
-            avatar_style = &theme.workspace.titlebar.avatar;
-        }
+        let leader_style = theme.workspace.titlebar.leader_avatar;
+        let follower_style = theme.workspace.titlebar.follower_avatar;
 
         let mut background_color = theme
             .workspace
@@ -687,7 +675,7 @@ impl CollabTitlebarItem {
                 let face_pile = FacePile::new(theme.workspace.titlebar.follower_avatar_overlap)
                     .with_child(Self::render_face(
                         avatar.clone(),
-                        avatar_style.clone(),
+                        Self::location_style(workspace, location, leader_style, cx),
                         background_color,
                     ))
                     .with_children(
@@ -696,9 +684,11 @@ impl CollabTitlebarItem {
                             let followers = room.followers_for(peer_id);
 
                             Some(followers.into_iter().flat_map(|&follower| {
-                                let avatar = room
-                                    .remote_participant_for_peer_id(follower)
-                                    .and_then(|participant| participant.user.avatar.clone())
+                                let remote_participant =
+                                    room.remote_participant_for_peer_id(follower);
+
+                                let avatar = remote_participant
+                                    .and_then(|p| p.user.avatar.clone())
                                     .or_else(|| {
                                         if follower == workspace.read(cx).client().peer_id()? {
                                             workspace
@@ -713,9 +703,11 @@ impl CollabTitlebarItem {
                                         }
                                     })?;
 
+                                let location = remote_participant.map(|p| p.location);
+
                                 Some(Self::render_face(
                                     avatar.clone(),
-                                    theme.workspace.titlebar.follower_avatar.clone(),
+                                    Self::location_style(workspace, location, follower_style, cx),
                                     background_color,
                                 ))
                             }))
@@ -799,6 +791,25 @@ impl CollabTitlebarItem {
             }
         }
         content
+    }
+
+    fn location_style(
+        workspace: &ViewHandle<Workspace>,
+        location: Option<ParticipantLocation>,
+        mut style: AvatarStyle,
+        cx: &RenderContext<Self>,
+    ) -> AvatarStyle {
+        if let Some(location) = location {
+            if let ParticipantLocation::SharedProject { project_id } = location {
+                if Some(project_id) != workspace.read(cx).project().read(cx).remote_id() {
+                    style.image.grayscale = true;
+                }
+            } else {
+                style.image.grayscale = true;
+            }
+        }
+
+        style
     }
 
     fn render_face(
