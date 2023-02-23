@@ -278,12 +278,27 @@ impl CollabTitlebarItem {
 
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
         let theme = cx.global::<Settings>().theme.clone();
-        let label_style = theme.context_menu.item.disabled_style().label.clone();
+        let avatar_style = theme.workspace.titlebar.avatar.clone();
+        let item_style = theme.context_menu.item.disabled_style().clone();
         self.user_menu.update(cx, |user_menu, cx| {
             let items = if let Some(user) = self.user_store.read(cx).current_user() {
                 vec![
                     ContextMenuItem::Static(Box::new(move |_| {
-                        Label::new(user.github_login.clone(), label_style.clone()).boxed()
+                        Flex::row()
+                            .with_children(user.avatar.clone().map(|avatar| {
+                                Self::render_face(
+                                    avatar,
+                                    avatar_style.clone(),
+                                    Color::transparent_black(),
+                                )
+                            }))
+                            .with_child(
+                                Label::new(user.github_login.clone(), item_style.label.clone())
+                                    .boxed(),
+                            )
+                            .contained()
+                            .with_style(item_style.container)
+                            .boxed()
                     })),
                     ContextMenuItem::Item {
                         label: "Sign out".into(),
