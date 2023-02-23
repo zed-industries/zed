@@ -97,18 +97,11 @@ export default function workspace(colorScheme: ColorScheme) {
       title: text(layer, "sans", "variant"),
 
       // Collaborators
-      avatar: {
+      leaderAvatar: {
         width: avatarWidth,
         outerWidth: avatarOuterWidth,
         cornerRadius: avatarWidth / 2,
         outerCornerRadius: avatarOuterWidth / 2,
-      },
-      inactiveAvatar: {
-        width: avatarWidth,
-        outerWidth: avatarOuterWidth,
-        cornerRadius: avatarWidth / 2,
-        outerCornerRadius: avatarOuterWidth / 2,
-        grayscale: true,
       },
       followerAvatar: {
         width: followerAvatarWidth,
@@ -116,6 +109,7 @@ export default function workspace(colorScheme: ColorScheme) {
         cornerRadius: followerAvatarWidth / 2,
         outerCornerRadius: followerAvatarOuterWidth / 2,
       },
+      inactiveAvatarGrayscale: true,
       followerAvatarOverlap: 8,
       leaderSelection: {
         margin: {
