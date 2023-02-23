@@ -83,7 +83,7 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
-    // Control what info Zed sends to our servers
+    // Control what info is collected by Zed.
     "telemetry": {
         // Send debug info like crash reports.
         "diagnostics": true,

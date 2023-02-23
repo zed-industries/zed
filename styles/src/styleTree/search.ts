@@ -29,8 +29,6 @@ export default function search(colorScheme: ColorScheme) {
   return {
     // TODO: Add an activeMatchBackground on the rust side to differenciate between active and inactive
     matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
-    tabIconSpacing: 8,
-    tabIconWidth: 14,
     optionButton: {
       ...text(layer, "mono", "on"),
       background: background(layer, "on"),
