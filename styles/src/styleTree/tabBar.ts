@@ -24,7 +24,7 @@ export default function tabBar(colorScheme: ColorScheme) {
     spacing: 8,
 
     // Close icons
-    iconWidth: 8,
+    iconWidth: 14,
     iconClose: foreground(layer, "variant"),
     iconCloseActive: foreground(layer, "hovered"),
 

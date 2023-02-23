@@ -589,11 +589,16 @@ impl Item for TerminalView {
 
         Flex::row()
             .with_child(
-                Label::new(title, tab_theme.label.clone())
+                gpui::elements::Svg::new("icons/terminal_12.svg")
+                    .with_color(tab_theme.label.text.color)
+                    .constrained()
+                    .with_width(tab_theme.icon_width)
                     .aligned()
                     .contained()
+                    .with_margin_right(tab_theme.spacing)
                     .boxed(),
             )
+            .with_child(Label::new(title, tab_theme.label.clone()).aligned().boxed())
             .boxed()
     }
 

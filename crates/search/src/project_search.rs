@@ -248,15 +248,15 @@ impl Item for ProjectSearchView {
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> ElementBox {
-        let settings = cx.global::<Settings>();
-        let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
                 Svg::new("icons/magnifying_glass_12.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
-                    .with_width(search_theme.tab_icon_width)
+                    .with_width(tab_theme.icon_width)
                     .aligned()
+                    .contained()
+                    .with_margin_right(tab_theme.spacing)
                     .boxed(),
             )
             .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
@@ -264,8 +264,6 @@ impl Item for ProjectSearchView {
 
                 Label::new(query_text, tab_theme.label.clone())
                     .aligned()
-                    .contained()
-                    .with_margin_left(search_theme.tab_icon_spacing)
                     .boxed()
             }))
             .boxed()
