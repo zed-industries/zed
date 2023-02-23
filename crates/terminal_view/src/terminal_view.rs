@@ -483,9 +483,7 @@ impl View for TerminalView {
         }
         if mode.contains(TermMode::APP_KEYPAD) {
             context.add_identifier("DECPAM");
-        }
-        //Note the ! here
-        if !mode.contains(TermMode::APP_KEYPAD) {
+        } else {
             context.add_identifier("DECPNM");
         }
         if mode.contains(TermMode::SHOW_CURSOR) {

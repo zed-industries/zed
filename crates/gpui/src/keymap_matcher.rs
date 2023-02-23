@@ -89,7 +89,6 @@ impl KeymapMatcher {
         self.contexts
             .extend(dispatch_path.iter_mut().map(|e| std::mem::take(&mut e.1)));
 
-        dbg!(&self.contexts);
         // Find the bindings which map the pending keystrokes and current context
         for (i, (view_id, _)) in dispatch_path.iter().enumerate() {
             // Don't require pending view entry if there are no pending keystrokes
@@ -120,8 +119,6 @@ impl KeymapMatcher {
                 }
             }
         }
-
-        dbg!(&matched_bindings);
 
         if !any_pending {
             self.clear_pending();
