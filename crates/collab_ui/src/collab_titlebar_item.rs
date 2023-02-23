@@ -108,7 +108,6 @@ impl View for CollabTitlebarItem {
             right_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
             right_container.add_child(self.render_current_user(&workspace, &theme, &user, cx));
             right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
-            right_container.add_child(self.render_leave_call_button(&theme, cx));
         }
 
         let status = workspace.read(cx).client().status();
@@ -423,40 +422,6 @@ impl CollabTitlebarItem {
             theme.tooltip.clone(),
             cx,
         )
-        .aligned()
-        .boxed()
-    }
-
-    fn render_leave_call_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
-        let titlebar = &theme.workspace.titlebar;
-
-        MouseEventHandler::<LeaveCall>::new(0, cx, |state, _| {
-            let style = titlebar.call_control.style_for(state, false);
-            Svg::new("icons/leave_12.svg")
-                .with_color(style.color)
-                .constrained()
-                .with_width(style.icon_width)
-                .aligned()
-                .constrained()
-                .with_width(style.button_width)
-                .with_height(style.button_width)
-                .contained()
-                .with_style(style.container)
-                .boxed()
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_action(LeaveCall);
-        })
-        .with_tooltip::<LeaveCall, _>(
-            0,
-            "Leave call".to_owned(),
-            Some(Box::new(LeaveCall)),
-            theme.tooltip.clone(),
-            cx,
-        )
-        .contained()
-        .with_margin_left(theme.workspace.titlebar.item_spacing)
         .aligned()
         .boxed()
     }
