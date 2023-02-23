@@ -191,6 +191,10 @@ impl Database {
                     .filter(room_participant::Column::RoomId.eq(room_id))
                     .exec(&*tx)
                     .await?;
+                project::Entity::delete_many()
+                    .filter(project::Column::RoomId.eq(room_id))
+                    .exec(&*tx)
+                    .await?;
                 room::Entity::delete_by_id(room_id).exec(&*tx).await?;
             }
 
