@@ -1,10 +1,12 @@
 use gpui::{
-    elements::Label, Element, ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle,
+    elements::{Flex, Label, MouseEventHandler, ParentElement, Text},
+    CursorStyle, Element, ElementBox, Entity, MouseButton, RenderContext, View, ViewContext,
+    ViewHandle,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
-use crate::feedback_editor::FeedbackEditor;
+use crate::{feedback_editor::FeedbackEditor, OpenZedCommunityRepo};
 
 pub struct FeedbackInfoText {
     active_item: Option<ViewHandle<FeedbackEditor>>,
@@ -29,9 +31,44 @@ impl View for FeedbackInfoText {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
-        let text = "We read whatever you submit here. For issues and discussions, visit the community repo on GitHub.";
-        Label::new(text, theme.feedback.info_text.text.clone())
-            .contained()
+
+        Flex::row()
+            .with_child(
+                Text::new(
+                    "We read whatever you submit here. For issues and discussions, visit the ",
+                    theme.feedback.info_text.text.clone(),
+                )
+                .with_soft_wrap(false)
+                .aligned()
+                .boxed(),
+            )
+            .with_child(
+                MouseEventHandler::<OpenZedCommunityRepo>::new(0, cx, |state, _| {
+                    let text = if state.hovered() {
+                        theme.feedback.link_hover_text.clone()
+                    } else {
+                        theme.feedback.link_text.clone()
+                    };
+
+                    Label::new("community repo", text.text)
+                        .contained()
+                        .aligned()
+                        .left()
+                        .clipped()
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, |_, cx| {
+                    cx.dispatch_action(OpenZedCommunityRepo)
+                })
+                .boxed(),
+            )
+            .with_child(
+                Text::new(" on GitHub.", theme.feedback.info_text.text.clone())
+                    .with_soft_wrap(false)
+                    .aligned()
+                    .boxed(),
+            )
             .aligned()
             .left()
             .clipped()
