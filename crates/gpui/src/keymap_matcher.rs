@@ -89,6 +89,7 @@ impl KeymapMatcher {
         self.contexts
             .extend(dispatch_path.iter_mut().map(|e| std::mem::take(&mut e.1)));
 
+        dbg!(&self.contexts);
         // Find the bindings which map the pending keystrokes and current context
         for (i, (view_id, _)) in dispatch_path.iter().enumerate() {
             // Don't require pending view entry if there are no pending keystrokes
@@ -234,10 +235,10 @@ mod tests {
         actions!(test, [EditorAction, ProjectPanelAction]);
 
         let mut editor = KeymapContext::default();
-        editor.set.insert("Editor".into());
+        editor.add_identifier("Editor");
 
         let mut project_panel = KeymapContext::default();
-        project_panel.set.insert("ProjectPanel".into());
+        project_panel.add_identifier("ProjectPanel");
 
         // Editor 'deeper' in than project panel
         let dispatch_path = vec![(2, editor), (1, project_panel)];
@@ -266,10 +267,10 @@ mod tests {
         actions!(test, [B, AB, C, D, DA, E, EF]);
 
         let mut context1 = KeymapContext::default();
-        context1.set.insert("1".into());
+        context1.add_identifier("1");
 
         let mut context2 = KeymapContext::default();
-        context2.set.insert("2".into());
+        context2.add_identifier("2");
 
         let dispatch_path = vec![(2, context2), (1, context1)];
 
@@ -403,22 +404,22 @@ mod tests {
         let predicate = KeymapContextPredicate::parse("a && b || c == d").unwrap();
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
+        context.add_identifier("a");
         assert!(!predicate.eval(&[context]));
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
-        context.set.insert("b".into());
+        context.add_identifier("a");
+        context.add_identifier("b");
         assert!(predicate.eval(&[context]));
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
-        context.map.insert("c".into(), "x".into());
+        context.add_identifier("a");
+        context.add_key("c", "x");
         assert!(!predicate.eval(&[context]));
 
         let mut context = KeymapContext::default();
-        context.set.insert("a".into());
-        context.map.insert("c".into(), "d".into());
+        context.add_identifier("a");
+        context.add_key("c", "d");
         assert!(predicate.eval(&[context]));
 
         let predicate = KeymapContextPredicate::parse("!a").unwrap();
@@ -458,10 +459,11 @@ mod tests {
         assert!(!predicate.eval(&contexts[6..]));
 
         fn context_set(names: &[&str]) -> KeymapContext {
-            KeymapContext {
-                set: names.iter().copied().map(str::to_string).collect(),
-                ..Default::default()
-            }
+            let mut keymap = KeymapContext::new();
+            names
+                .iter()
+                .for_each(|name| keymap.add_identifier(name.to_string()));
+            keymap
         }
     }
 
@@ -484,10 +486,10 @@ mod tests {
         ]);
 
         let mut context_a = KeymapContext::default();
-        context_a.set.insert("a".into());
+        context_a.add_identifier("a");
 
         let mut context_b = KeymapContext::default();
-        context_b.set.insert("b".into());
+        context_b.add_identifier("b");
 
         let mut matcher = KeymapMatcher::new(keymap);
 
@@ -532,7 +534,7 @@ mod tests {
         matcher.clear_pending();
 
         let mut context_c = KeymapContext::default();
-        context_c.set.insert("c".into());
+        context_c.add_identifier("c");
 
         // Pending keystrokes are maintained per-view
         assert_eq!(

@@ -456,7 +456,7 @@
         }
     },
     {
-        "context": "Dock",
+        "context": "Dock > Pane",
         "bindings": {
             "shift-escape": "dock::HideDock",
             "cmd-escape": "dock::RemoveTabFromDock"
@@ -473,17 +473,6 @@
             "cmd-alt-c": "project_panel::CopyPath",
             "f2": "project_panel::Rename",
             "backspace": "project_panel::Delete"
-        }
-    },
-    {
-        "context": "ProjectPanel > Editor",
-        "bindings": {
-            "left": "editor::MoveLeft",
-            "right": "editor::MoveRight",
-            "backspace": "editor::Backspace",
-            "cmd-x": "editor::Cut",
-            "cmd-c": "editor::Copy",
-            "cmd-v": "editor::Paste"
         }
     },
     {

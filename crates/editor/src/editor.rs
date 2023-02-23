@@ -6433,17 +6433,13 @@ impl View for Editor {
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
-        context.map.insert("mode".into(), mode.into());
+        context.add_key("mode", mode);
         if self.pending_rename.is_some() {
-            context.set.insert("renaming".into());
+            context.add_identifier("renaming");
         }
         match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => {
-                context.set.insert("showing_completions".into());
-            }
-            Some(ContextMenu::CodeActions(_)) => {
-                context.set.insert("showing_code_actions".into());
-            }
+            Some(ContextMenu::Completions(_)) => context.add_identifier("showing_completions"),
+            Some(ContextMenu::CodeActions(_)) => context.add_identifier("showing_code_actions"),
             None => {}
         }
 
