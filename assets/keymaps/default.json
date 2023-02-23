@@ -228,6 +228,7 @@
                     "replace_newest": true
                 }
             ],
+            "cmd-k cmd-i": "editor::Hover",
             "cmd-/": [
                 "editor::ToggleComments",
                 {
