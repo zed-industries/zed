@@ -5,7 +5,7 @@ mod keystroke;
 
 use std::{any::TypeId, fmt::Debug};
 
-use collections::{BTreeMap, HashMap};
+use collections::HashMap;
 use smallvec::SmallVec;
 
 use crate::Action;
@@ -68,8 +68,8 @@ impl KeymapMatcher {
     ///         There exist bindings which are still waiting for more keys.
     ///     MatchResult::Complete(matches) =>
     ///         1 or more bindings have recieved the necessary key presses.
-    ///         The order of the matched actions is by order in the keymap file first and
-    ///         position of the matching view second.
+    ///         The order of the matched actions is by position of the matching first,
+    //          and order in the keymap second.
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,
@@ -80,8 +80,7 @@ impl KeymapMatcher {
         // and then the order the binding matched in the view tree second.
         // The key is the reverse position of the binding in the bindings list so that later bindings
         // match before earlier ones in the user's config
-        let mut matched_bindings: BTreeMap<usize, Vec<(usize, Box<dyn Action>)>> =
-            Default::default();
+        let mut matched_bindings: Vec<(usize, Box<dyn Action>)> = Default::default();
 
         let first_keystroke = self.pending_keystrokes.is_empty();
         self.pending_keystrokes.push(keystroke.clone());
@@ -105,14 +104,11 @@ impl KeymapMatcher {
                 }
             }
 
-            for (order, binding) in self.keymap.bindings().iter().rev().enumerate() {
+            for binding in self.keymap.bindings().iter().rev() {
                 match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
                 {
                     BindingMatchResult::Complete(action) => {
-                        matched_bindings
-                            .entry(order)
-                            .or_default()
-                            .push((*view_id, action));
+                        matched_bindings.push((*view_id, action));
                     }
                     BindingMatchResult::Partial => {
                         self.pending_views
@@ -124,6 +120,8 @@ impl KeymapMatcher {
             }
         }
 
+        dbg!(&matched_bindings);
+
         if !any_pending {
             self.clear_pending();
         }
@@ -131,7 +129,7 @@ impl KeymapMatcher {
         if !matched_bindings.is_empty() {
             // Collect the sorted matched bindings into the final vec for ease of use
             // Matched bindings are in order by precedence
-            MatchResult::Matches(matched_bindings.into_values().flatten().collect())
+            MatchResult::Matches(matched_bindings)
         } else if any_pending {
             MatchResult::Pending
         } else {
@@ -224,6 +222,44 @@ mod tests {
     use crate::{actions, impl_actions, keymap_matcher::KeymapContext};
 
     use super::*;
+
+    // Takeaways for now:
+    // Revert that keymap change back to using view precedence again
+    // Solve the dock keybinding problem by adding a state context match
+    //   'Pane && docked == true'
+    // Maybeeeeee try to find other examples?
+
+    #[test]
+    fn test_keymap_and_view_ordering() -> Result<()> {
+        actions!(test, [EditorAction, ProjectPanelAction]);
+
+        let mut editor = KeymapContext::default();
+        editor.set.insert("Editor".into());
+
+        let mut project_panel = KeymapContext::default();
+        project_panel.set.insert("ProjectPanel".into());
+
+        // Editor 'deeper' in than project panel
+        let dispatch_path = vec![(2, editor), (1, project_panel)];
+
+        // But editor actions 'higher' up in keymap
+        let keymap = Keymap::new(vec![
+            Binding::new("left", EditorAction, Some("Editor")),
+            Binding::new("left", ProjectPanelAction, Some("ProjectPanel")),
+        ]);
+
+        let mut matcher = KeymapMatcher::new(keymap);
+
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("left")?, dispatch_path.clone()),
+            MatchResult::Matches(vec![
+                (2, Box::new(EditorAction)),
+                (1, Box::new(ProjectPanelAction)),
+            ]),
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn test_push_keystroke() -> Result<()> {
