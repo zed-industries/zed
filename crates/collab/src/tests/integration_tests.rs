@@ -733,6 +733,14 @@ async fn test_server_restarts(
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
+    client_a
+        .fs
+        .insert_tree("/a", json!({ "a.txt": "a-contents" }))
+        .await;
+
+    // Invite client B to collaborate on a project
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     let client_d = server.create_client(cx_d, "user_d").await;
@@ -753,19 +761,19 @@ async fn test_server_restarts(
     // User A calls users B, C, and D.
     active_call_a
         .update(cx_a, |call, cx| {
-            call.invite(client_b.user_id().unwrap(), None, cx)
+            call.invite(client_b.user_id().unwrap(), Some(project_a.clone()), cx)
         })
         .await
         .unwrap();
     active_call_a
         .update(cx_a, |call, cx| {
-            call.invite(client_c.user_id().unwrap(), None, cx)
+            call.invite(client_c.user_id().unwrap(), Some(project_a.clone()), cx)
         })
         .await
         .unwrap();
     active_call_a
         .update(cx_a, |call, cx| {
-            call.invite(client_d.user_id().unwrap(), None, cx)
+            call.invite(client_d.user_id().unwrap(), Some(project_a.clone()), cx)
         })
         .await
         .unwrap();

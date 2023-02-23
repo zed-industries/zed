@@ -270,8 +270,11 @@ impl Server {
                         let mut live_kit_room = String::new();
                         let mut delete_live_kit_room = false;
 
-                        if let Ok(mut refreshed_room) =
-                            app_state.db.refresh_room(room_id, server_id).await
+                        if let Some(mut refreshed_room) = app_state
+                            .db
+                            .refresh_room(room_id, server_id)
+                            .await
+                            .trace_err()
                         {
                             tracing::info!(
                                 room_id = room_id.0,
