@@ -221,12 +221,6 @@ mod tests {
 
     use super::*;
 
-    // Takeaways for now:
-    // Revert that keymap change back to using view precedence again
-    // Solve the dock keybinding problem by adding a state context match
-    //   'Pane && docked == true'
-    // Maybeeeeee try to find other examples?
-
     #[test]
     fn test_keymap_and_view_ordering() -> Result<()> {
         actions!(test, [EditorAction, ProjectPanelAction]);
