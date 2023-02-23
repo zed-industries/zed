@@ -277,14 +277,12 @@ impl Room {
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {
-            let is_connected = client_status
-                .next()
-                .await
-                .map_or(false, |s| s.is_connected());
-
+            let _ = client_status.try_recv();
+            let is_connected = client_status.borrow().is_connected();
             // Even if we're initially connected, any future change of the status means we momentarily disconnected.
             if !is_connected || client_status.next().await.is_some() {
                 log::info!("detected client disconnection");
+
                 this.upgrade(&cx)
                     .ok_or_else(|| anyhow!("room was dropped"))?
                     .update(&mut cx, |this, cx| {
@@ -298,12 +296,7 @@ impl Room {
                     let client_reconnection = async {
                         let mut remaining_attempts = 3;
                         while remaining_attempts > 0 {
-                            log::info!(
-                                "waiting for client status change, remaining attempts {}",
-                                remaining_attempts
-                            );
-                            let Some(status) = client_status.next().await else { break };
-                            if status.is_connected() {
+                            if client_status.borrow().is_connected() {
                                 log::info!("client reconnected, attempting to rejoin room");
 
                                 let Some(this) = this.upgrade(&cx) else { break };
@@ -317,7 +310,15 @@ impl Room {
                                 } else {
                                     remaining_attempts -= 1;
                                 }
+                            } else if client_status.borrow().is_signed_out() {
+                                return false;
                             }
+
+                            log::info!(
+                                "waiting for client status change, remaining attempts {}",
+                                remaining_attempts
+                            );
+                            client_status.next().await;
                         }
                         false
                     }
@@ -339,18 +340,20 @@ impl Room {
                     }
                 }
 
-                // The client failed to re-establish a connection to the server
-                // or an error occurred while trying to re-join the room. Either way
-                // we leave the room and return an error.
-                if let Some(this) = this.upgrade(&cx) {
-                    log::info!("reconnection failed, leaving room");
-                    let _ = this.update(&mut cx, |this, cx| this.leave(cx));
-                }
-                return Err(anyhow!(
-                    "can't reconnect to room: client failed to re-establish connection"
-                ));
+                break;
             }
         }
+
+        // The client failed to re-establish a connection to the server
+        // or an error occurred while trying to re-join the room. Either way
+        // we leave the room and return an error.
+        if let Some(this) = this.upgrade(&cx) {
+            log::info!("reconnection failed, leaving room");
+            let _ = this.update(&mut cx, |this, cx| this.leave(cx));
+        }
+        Err(anyhow!(
+            "can't reconnect to room: client failed to re-establish connection"
+        ))
     }
 
     fn rejoin(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
