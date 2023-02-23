@@ -476,6 +476,17 @@
         }
     },
     {
+        "context": "ProjectPanel > Editor",
+        "bindings": {
+            "left": "editor::MoveLeft",
+            "right": "editor::MoveRight",
+            "backspace": "editor::Backspace",
+            "cmd-x": "editor::Cut",
+            "cmd-c": "editor::Copy",
+            "cmd-v": "editor::Paste"
+        }
+    },
+    {
         "context": "Terminal",
         "bindings": {
             "ctrl-cmd-space": "terminal::ShowCharacterPalette",
