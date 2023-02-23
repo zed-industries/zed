@@ -87,7 +87,6 @@ impl View for CollabTitlebarItem {
         }
 
         let theme = cx.global::<Settings>().theme.clone();
-        let user = workspace.read(cx).user_store().read(cx).current_user();
 
         let mut left_container = Flex::row();
         let mut right_container = Flex::row();
@@ -101,12 +100,18 @@ impl View for CollabTitlebarItem {
                 .boxed(),
         );
 
-        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+        let user = workspace.read(cx).user_store().read(cx).current_user();
+        let peer_id = workspace.read(cx).client().peer_id();
+        if let Some(((user, peer_id), room)) = user
+            .zip(peer_id)
+            .zip(ActiveCall::global(cx).read(cx).room().cloned())
+        {
             left_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
 
             right_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
-            right_container.add_child(self.render_current_user(&workspace, &theme, &user, cx));
+            right_container
+                .add_child(self.render_current_user(&workspace, &theme, &user, peer_id, cx));
             right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
         }
 
@@ -592,16 +597,11 @@ impl CollabTitlebarItem {
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
-        user: &Option<Arc<User>>,
+        user: &Arc<User>,
+        peer_id: PeerId,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let user = user.as_ref().expect("Active call without user");
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
-        let peer_id = workspace
-            .read(cx)
-            .client()
-            .peer_id()
-            .expect("Active call without peer id");
         Container::new(self.render_face_pile(
             user,
             Some(replica_id),
