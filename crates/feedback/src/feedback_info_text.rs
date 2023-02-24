@@ -36,7 +36,7 @@ impl View for FeedbackInfoText {
             .with_child(
                 Text::new(
                     "We read whatever you submit here. For issues and discussions, visit the ",
-                    theme.feedback.info_text.text.clone(),
+                    theme.feedback.info_text_default.text.clone(),
                 )
                 .with_soft_wrap(false)
                 .aligned()
@@ -45,9 +45,9 @@ impl View for FeedbackInfoText {
             .with_child(
                 MouseEventHandler::<OpenZedCommunityRepo>::new(0, cx, |state, _| {
                     let text = if state.hovered() {
-                        theme.feedback.link_hover_text.clone()
+                        theme.feedback.link_text_hover.clone()
                     } else {
-                        theme.feedback.link_text.clone()
+                        theme.feedback.link_text_default.clone()
                     };
 
                     Label::new("community repo", text.text)
@@ -64,7 +64,7 @@ impl View for FeedbackInfoText {
                 .boxed(),
             )
             .with_child(
-                Text::new(" on GitHub.", theme.feedback.info_text.text.clone())
+                Text::new(" on GitHub.", theme.feedback.info_text_default.text.clone())
                     .with_soft_wrap(false)
                     .aligned()
                     .boxed(),
