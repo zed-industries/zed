@@ -10,7 +10,7 @@ echo -e "# ###### THEME LICENSES ######\n" >> $OUTPUT_FILE
 
 echo "Generating theme licenses"
 cd styles
-npm ci
+npm --silent ci
 npm run --silent build-licenses >> $OUTPUT_FILE
 cd ..
 
