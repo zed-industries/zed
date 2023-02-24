@@ -152,10 +152,11 @@ pub struct MacForegroundPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     menu_actions: Vec<Box<dyn Action>>,
+    foreground: Rc<executor::Foreground>,
 }
 
 impl MacForegroundPlatform {
-    pub fn new() -> Self {
+    pub fn new(foreground: Rc<executor::Foreground>) -> Self {
         Self(RefCell::new(MacForegroundPlatformState {
             become_active: Default::default(),
             resign_active: Default::default(),
@@ -167,6 +168,7 @@ impl MacForegroundPlatform {
             open_urls: Default::default(),
             finish_launching: Default::default(),
             menu_actions: Default::default(),
+            foreground,
         }))
     }
 
@@ -454,14 +456,21 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
     fn reveal_path(&self, path: &Path) {
         unsafe {
-            let full_path = ns_string(path.to_str().unwrap_or(""));
-            let root_full_path = ns_string("");
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let _: BOOL = msg_send![
-                workspace,
-                selectFile: full_path
-                inFileViewerRootedAtPath: root_full_path
-            ];
+            let path = path.to_path_buf();
+            self.0
+                .borrow()
+                .foreground
+                .spawn(async move {
+                    let full_path = ns_string(path.to_str().unwrap_or(""));
+                    let root_full_path = ns_string("");
+                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+                    let _: BOOL = msg_send![
+                        workspace,
+                        selectFile: full_path
+                        inFileViewerRootedAtPath: root_full_path
+                    ];
+                })
+                .detach();
         }
     }
 }
