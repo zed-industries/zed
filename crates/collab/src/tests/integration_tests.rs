@@ -5926,7 +5926,7 @@ async fn test_following(
         active_call.read_with(*cx, |call, cx| {
             let room = call.room().unwrap().read(cx);
             assert_eq!(
-                room.followers_for(peer_id_a),
+                room.followers_for(peer_id_a, project_id),
                 &[peer_id_b, peer_id_c],
                 "checking followers for A as {name}"
             );
@@ -5948,7 +5948,7 @@ async fn test_following(
         active_call.read_with(*cx, |call, cx| {
             let room = call.room().unwrap().read(cx);
             assert_eq!(
-                room.followers_for(peer_id_a),
+                room.followers_for(peer_id_a, project_id),
                 &[peer_id_b],
                 "checking followers for A as {name}"
             );
