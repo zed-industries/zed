@@ -794,7 +794,7 @@ dependencies = [
 [[package]]
 name = "bromberg_sl2"
 version = "0.6.0"
-source = "git+https://github.com/zed-industries/bromberg_sl2?rev=dac565a90e8f9245f48ff46225c915dc50f76920#dac565a90e8f9245f48ff46225c915dc50f76920"
+source = "git+https://github.com/zed-industries/bromberg_sl2?rev=950bc5482c216c395049ae33ae4501e08975f17f#950bc5482c216c395049ae33ae4501e08975f17f"
 dependencies = [
  "digest 0.9.0",
  "lazy_static",
