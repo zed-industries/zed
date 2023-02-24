@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, MouseState, MutableAppContext,
-    RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
-use language::LanguageRegistry;
+use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
+use project::Project;
 use settings::Settings;
 use workspace::{AppState, Workspace};
 
@@ -27,32 +29,47 @@ pub enum Event {
 }
 
 pub struct LanguageSelector {
+    buffer: ModelHandle<Buffer>,
+    project: ModelHandle<Project>,
     language_registry: Arc<LanguageRegistry>,
+    candidates: Vec<StringMatchCandidate>,
     matches: Vec<StringMatch>,
     picker: ViewHandle<Picker<Self>>,
     selected_index: usize,
 }
 
 impl LanguageSelector {
-    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        buffer: ModelHandle<Buffer>,
+        project: ModelHandle<Project>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let handle = cx.weak_handle();
         let picker = cx.add_view(|cx| Picker::new("Select Language...", handle, cx));
 
-        let mut matches = language_registry
+        let candidates = language_registry
             .language_names()
             .into_iter()
             .enumerate()
-            .map(|(candidate_id, name)| StringMatch {
-                candidate_id,
-                score: 0.0,
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
+            .collect::<Vec<_>>();
+        let mut matches = candidates
+            .iter()
+            .map(|candidate| StringMatch {
+                candidate_id: candidate.id,
+                score: 0.,
                 positions: Default::default(),
-                string: name,
+                string: candidate.string.clone(),
             })
             .collect::<Vec<_>>();
         matches.sort_unstable_by(|mat1, mat2| mat1.string.cmp(&mat2.string));
 
         Self {
+            buffer,
+            project,
             language_registry,
+            candidates,
             matches,
             picker,
             selected_index: 0,
@@ -64,11 +81,18 @@ impl LanguageSelector {
         registry: Arc<LanguageRegistry>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        workspace.toggle_modal(cx, |_, cx| {
-            let this = cx.add_view(|cx| Self::new(registry, cx));
-            cx.subscribe(&this, Self::on_event).detach();
-            this
-        });
+        if let Some((_, buffer, _)) = workspace
+            .active_item(cx)
+            .and_then(|active_item| active_item.act_as::<Editor>(cx))
+            .and_then(|editor| editor.read(cx).active_excerpt(cx))
+        {
+            workspace.toggle_modal(cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                let this = cx.add_view(|cx| Self::new(buffer, project, registry, cx));
+                cx.subscribe(&this, Self::on_event).detach();
+                this
+            });
+        }
     }
 
     fn on_event(
@@ -111,7 +135,21 @@ impl PickerDelegate for LanguageSelector {
     }
 
     fn confirm(&mut self, cx: &mut ViewContext<Self>) {
-        todo!();
+        if let Some(mat) = self.matches.get(self.selected_index) {
+            let language_name = &self.candidates[mat.candidate_id].string;
+            let language = self.language_registry.language_for_name(language_name);
+            cx.spawn(|this, mut cx| async move {
+                let language = language.await?;
+                this.update(&mut cx, |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.set_language_for_buffer(&this.buffer, language, cx);
+                    });
+                });
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+
         cx.emit(Event::Dismissed);
     }
 
@@ -123,24 +161,13 @@ impl PickerDelegate for LanguageSelector {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Self>) {
         self.selected_index = ix;
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> gpui::Task<()> {
         let background = cx.background().clone();
-        let candidates = self
-            .language_registry
-            .language_names()
-            .into_iter()
-            .enumerate()
-            .map(|(id, name)| StringMatchCandidate {
-                id,
-                char_bag: name.as_str().into(),
-                string: name.clone(),
-            })
-            .collect::<Vec<_>>();
-
+        let candidates = self.candidates.clone();
         cx.spawn(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates

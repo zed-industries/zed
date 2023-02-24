@@ -1254,6 +1254,15 @@ impl Editor {
         self.buffer.read(cx).language_at(point, cx)
     }
 
+    pub fn active_excerpt(
+        &self,
+        cx: &AppContext,
+    ) -> Option<(ExcerptId, ModelHandle<Buffer>, Range<text::Anchor>)> {
+        self.buffer
+            .read(cx)
+            .excerpt_containing(self.selections.newest_anchor().head(), cx)
+    }
+
     fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
             cx.global::<Settings>(),

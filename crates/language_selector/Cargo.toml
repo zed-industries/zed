@@ -18,3 +18,4 @@ project = { path = "../project" }
 theme = { path = "../theme" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
+anyhow = "1.0"
