@@ -305,7 +305,7 @@ pub struct Chunk<'a> {
 }
 
 pub struct Diff {
-    base_version: clock::Global,
+    pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
     edits: Vec<(Range<usize>, Arc<str>)>,
 }
@@ -1154,20 +1154,77 @@ impl Buffer {
         })
     }
 
-    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<&Transaction> {
-        if self.version == diff.base_version {
-            self.finalize_last_transaction();
-            self.start_transaction();
-            self.text.set_line_ending(diff.line_ending);
-            self.edit(diff.edits, None, cx);
-            if self.end_transaction(cx).is_some() {
-                self.finalize_last_transaction()
-            } else {
-                None
+    pub fn normalize_whitespace(&self, cx: &AppContext) -> Task<Diff> {
+        let old_text = self.as_rope().clone();
+        let line_ending = self.line_ending();
+        let base_version = self.version();
+        cx.background().spawn(async move {
+            let ranges = trailing_whitespace_ranges(&old_text);
+            let empty = Arc::<str>::from("");
+            Diff {
+                base_version,
+                line_ending,
+                edits: ranges
+                    .into_iter()
+                    .map(|range| (range, empty.clone()))
+                    .collect(),
             }
-        } else {
-            None
+        })
+    }
+
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<&Transaction> {
+        if self.version != diff.base_version {
+            return None;
         }
+
+        self.finalize_last_transaction();
+        self.start_transaction();
+        self.text.set_line_ending(diff.line_ending);
+        self.edit(diff.edits, None, cx);
+        self.end_transaction(cx)?;
+        self.finalize_last_transaction()
+    }
+
+    pub fn apply_diff_force(
+        &mut self,
+        diff: Diff,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<&Transaction> {
+        // Check for any edits to the buffer that have occurred since this diff
+        // was computed.
+        let snapshot = self.snapshot();
+        let mut edits_since = snapshot.edits_since::<usize>(&diff.base_version).peekable();
+        let mut delta = 0;
+        let adjusted_edits = diff.edits.into_iter().filter_map(|(range, new_text)| {
+            while let Some(edit_since) = edits_since.peek() {
+                // If the edit occurs after a diff hunk, then it can does not
+                // affect that hunk.
+                if edit_since.old.start > range.end {
+                    break;
+                }
+                // If the edit precedes the diff hunk, then adjust the hunk
+                // to reflect the edit.
+                else if edit_since.old.end < range.start {
+                    delta += edit_since.new_len() as i64 - edit_since.old_len() as i64;
+                    edits_since.next();
+                }
+                // If the edit intersects a diff hunk, then discard that hunk.
+                else {
+                    return None;
+                }
+            }
+
+            let start = (range.start as i64 + delta) as usize;
+            let end = (range.end as i64 + delta) as usize;
+            Some((start..end, new_text))
+        });
+
+        self.finalize_last_transaction();
+        self.start_transaction();
+        self.text.set_line_ending(diff.line_ending);
+        self.edit(adjusted_edits, None, cx);
+        self.end_transaction(cx)?;
+        self.finalize_last_transaction()
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -2839,4 +2896,43 @@ pub fn char_kind(c: char) -> CharKind {
     } else {
         CharKind::Punctuation
     }
+}
+
+/// Find all of the ranges of whitespace that occur at the ends of lines
+/// in the given rope.
+///
+/// This could also be done with a regex search, but this implementation
+/// avoids copying text.
+pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+
+    let mut offset = 0;
+    let mut prev_chunk_trailing_whitespace_range = 0..0;
+    for chunk in rope.chunks() {
+        let mut prev_line_trailing_whitespace_range = 0..0;
+        for (i, line) in chunk.split('\n').enumerate() {
+            let line_end_offset = offset + line.len();
+            let trimmed_line_len = line.trim_end_matches(|c| matches!(c, ' ' | '\t')).len();
+            let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
+
+            if i == 0 && trimmed_line_len == 0 {
+                trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
+            }
+            if !prev_line_trailing_whitespace_range.is_empty() {
+                ranges.push(prev_line_trailing_whitespace_range);
+            }
+
+            offset = line_end_offset + 1;
+            prev_line_trailing_whitespace_range = trailing_whitespace_range;
+        }
+
+        offset -= 1;
+        prev_chunk_trailing_whitespace_range = prev_line_trailing_whitespace_range;
+    }
+
+    if !prev_chunk_trailing_whitespace_range.is_empty() {
+        ranges.push(prev_chunk_trailing_whitespace_range);
+    }
+
+    ranges
 }
