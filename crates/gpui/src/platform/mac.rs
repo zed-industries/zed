@@ -23,16 +23,12 @@ pub use renderer::Surface;
 use std::{ops::Range, rc::Rc, sync::Arc};
 use window::Window;
 
-use crate::executor;
-
 pub(crate) fn platform() -> Arc<dyn super::Platform> {
     Arc::new(MacPlatform::new())
 }
 
-pub(crate) fn foreground_platform(
-    foreground: Rc<executor::Foreground>,
-) -> Rc<dyn super::ForegroundPlatform> {
-    Rc::new(MacForegroundPlatform::new(foreground))
+pub(crate) fn foreground_platform() -> Rc<dyn super::ForegroundPlatform> {
+    Rc::new(MacForegroundPlatform::new())
 }
 
 trait BoolExt {

@@ -191,7 +191,7 @@ impl App {
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
         let platform = platform::current::platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
-        let foreground_platform = platform::current::foreground_platform(foreground.clone());
+        let foreground_platform = platform::current::foreground_platform();
         let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
