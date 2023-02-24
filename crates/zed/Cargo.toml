@@ -40,6 +40,7 @@ go_to_line = { path = "../go_to_line" }
 gpui = { path = "../gpui" }
 journal = { path = "../journal" }
 language = { path = "../language" }
+language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
 outline = { path = "../outline" }
 plugin_runtime = { path = "../plugin_runtime" }
