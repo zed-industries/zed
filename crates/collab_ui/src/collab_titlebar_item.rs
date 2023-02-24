@@ -640,16 +640,21 @@ impl CollabTitlebarItem {
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let project_id = workspace.read(cx).project().read(cx).remote_id();
         let room = ActiveCall::global(cx).read(cx).room();
         let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
         let followed_by_self = room
-            .map(|room| {
-                is_being_followed
-                    && room
-                        .read(cx)
-                        .followers_for(peer_id)
-                        .iter()
-                        .any(|&follower| Some(follower) == workspace.read(cx).client().peer_id())
+            .and_then(|room| {
+                Some(
+                    is_being_followed
+                        && room
+                            .read(cx)
+                            .followers_for(peer_id, project_id?)
+                            .iter()
+                            .any(|&follower| {
+                                Some(follower) == workspace.read(cx).client().peer_id()
+                            }),
+                )
             })
             .unwrap_or(false);
 
@@ -680,8 +685,9 @@ impl CollabTitlebarItem {
                     ))
                     .with_children(
                         (|| {
+                            let project_id = project_id?;
                             let room = room?.read(cx);
-                            let followers = room.followers_for(peer_id);
+                            let followers = room.followers_for(peer_id, project_id);
 
                             Some(followers.into_iter().flat_map(|&follower| {
                                 let remote_participant =

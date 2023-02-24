@@ -55,7 +55,7 @@ pub struct Room {
     leave_when_empty: bool,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
-    follows_by_leader_id: HashMap<PeerId, Vec<PeerId>>,
+    follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
@@ -149,7 +149,7 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
-            follows_by_leader_id: Default::default(),
+            follows_by_leader_id_project_id: Default::default(),
             maintain_connection: Some(maintain_connection),
         }
     }
@@ -462,9 +462,9 @@ impl Room {
         self.participant_user_ids.contains(&user_id)
     }
 
-    pub fn followers_for(&self, leader_id: PeerId) -> &[PeerId] {
-        self.follows_by_leader_id
-            .get(&leader_id)
+    pub fn followers_for(&self, leader_id: PeerId, project_id: u64) -> &[PeerId] {
+        self.follows_by_leader_id_project_id
+            .get(&(leader_id, project_id))
             .map_or(&[], |v| v.as_slice())
     }
 
@@ -634,8 +634,9 @@ impl Room {
                     }
                 }
 
-                this.follows_by_leader_id.clear();
+                this.follows_by_leader_id_project_id.clear();
                 for follower in room.followers {
+                    let project_id = follower.project_id;
                     let (leader, follower) = match (follower.leader_id, follower.follower_id) {
                         (Some(leader), Some(follower)) => (leader, follower),
 
@@ -646,8 +647,8 @@ impl Room {
                     };
 
                     let list = this
-                        .follows_by_leader_id
-                        .entry(leader)
+                        .follows_by_leader_id_project_id
+                        .entry((leader, project_id))
                         .or_insert(Vec::new());
                     if !list.contains(&follower) {
                         list.push(follower);
