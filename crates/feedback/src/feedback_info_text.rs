@@ -44,13 +44,13 @@ impl View for FeedbackInfoText {
             )
             .with_child(
                 MouseEventHandler::<OpenZedCommunityRepo>::new(0, cx, |state, _| {
-                    let text = if state.hovered() {
-                        theme.feedback.link_text_hover.clone()
+                    let contained_text = if state.hovered() {
+                        &theme.feedback.link_text_hover
                     } else {
-                        theme.feedback.link_text_default.clone()
+                        &theme.feedback.link_text_default
                     };
 
-                    Label::new("community repo", text.text)
+                    Label::new("community repo", contained_text.text.clone())
                         .contained()
                         .aligned()
                         .left()
