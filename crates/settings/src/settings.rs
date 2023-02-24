@@ -66,8 +66,17 @@ impl TelemetrySettings {
     pub fn metrics(&self) -> bool {
         self.metrics.unwrap()
     }
+
     pub fn diagnostics(&self) -> bool {
         self.diagnostics.unwrap()
+    }
+
+    pub fn set_metrics(&mut self, value: bool) {
+        self.metrics = Some(value);
+    }
+
+    pub fn set_diagnostics(&mut self, value: bool) {
+        self.diagnostics = Some(value);
     }
 }
 
@@ -679,7 +688,7 @@ pub fn settings_file_json_schema(
 
 /// Expects the key to be unquoted, and the value to be valid JSON
 /// (e.g. values should be unquoted for numbers and bools, quoted for strings)
-pub fn write_top_level_setting(
+pub fn write_settings_key(
     mut settings_content: String,
     top_level_key: &str,
     new_val: &str,
@@ -786,10 +795,159 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
     )?)
 }
 
+pub fn update_settings_file(
+    old_text: String,
+    old_file_content: SettingsFileContent,
+    update: impl FnOnce(&mut SettingsFileContent),
+) -> String {
+    let mut new_file_content = old_file_content.clone();
+    update(&mut new_file_content);
+
+    let old_json = to_json_object(old_file_content);
+    let new_json = to_json_object(new_file_content);
+
+    // Find changed fields
+    let mut diffs = vec![];
+    for (key, old_value) in old_json.iter() {
+        let new_value = new_json.get(key).unwrap();
+        if old_value != new_value {
+            if matches!(
+                new_value,
+                &Value::Null | &Value::Object(_) | &Value::Array(_)
+            ) {
+                unimplemented!("We only support updating basic values at the top level");
+            }
+
+            let new_json = serde_json::to_string_pretty(new_value)
+                .expect("Could not serialize new json field to string");
+
+            diffs.push((key, new_json));
+        }
+    }
+
+    let mut new_text = old_text;
+    for (key, new_value) in diffs {
+        new_text = write_settings_key(new_text, key, &new_value)
+    }
+    new_text
+}
+
+fn to_json_object(settings_file: SettingsFileContent) -> serde_json::Map<String, Value> {
+    let tmp = serde_json::to_value(settings_file).unwrap();
+    match tmp {
+        Value::Object(map) => map,
+        _ => unreachable!("SettingsFileContent represents a JSON map"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::write_top_level_setting;
+    use super::*;
     use unindent::Unindent;
+
+    fn assert_new_settings<S1: Into<String>, S2: Into<String>>(
+        old_json: S1,
+        update: fn(&mut SettingsFileContent),
+        expected_new_json: S2,
+    ) {
+        let old_json = old_json.into();
+        let old_content: SettingsFileContent = serde_json::from_str(&old_json).unwrap();
+        let new_json = update_settings_file(old_json, old_content, update);
+        assert_eq!(new_json, expected_new_json.into());
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_multiple_fields() {
+        assert_new_settings(
+            r#"{
+                "telemetry": {
+                    "metrics": false,
+                    "diagnostics": false
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.telemetry.set_diagnostics(true);
+                settings.telemetry.set_metrics(true);
+            },
+            r#"{
+                "telemetry": {
+                    "metrics": true,
+                    "diagnostics": true
+                }
+            }"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_weird_formatting() {
+        assert_new_settings(
+            r#"{
+                "telemetry":   { "metrics": false, "diagnostics": true }
+            }"#
+            .unindent(),
+            |settings| settings.telemetry.set_diagnostics(false),
+            r#"{
+                "telemetry":   { "metrics": false, "diagnostics": false }
+            }"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_other_fields() {
+        assert_new_settings(
+            r#"{
+                "telemetry": {
+                    "metrics": false,
+                    "diagnostics": true
+                }
+            }"#
+            .unindent(),
+            |settings| settings.telemetry.set_diagnostics(false),
+            r#"{
+                "telemetry": {
+                    "metrics": false,
+                    "diagnostics": false
+                }
+            }"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_pre_existing() {
+        assert_new_settings(
+            r#"{
+                "telemetry": {
+                    "diagnostics": true
+                }
+            }"#
+            .unindent(),
+            |settings| settings.telemetry.set_diagnostics(false),
+            r#"{
+                "telemetry": {
+                    "diagnostics": false
+                }
+            }"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting() {
+        assert_new_settings(
+            "{}",
+            |settings| settings.telemetry.set_diagnostics(true),
+            r#"{
+                "telemetry": {
+                    "diagnostics": true
+                }
+            }"#
+            .unindent(),
+        );
+    }
 
     #[test]
     fn test_write_theme_into_settings_with_theme() {
@@ -807,8 +965,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+        let settings_after_theme = write_settings_key(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -828,8 +985,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+        let settings_after_theme = write_settings_key(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -845,8 +1001,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+        let settings_after_theme = write_settings_key(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -856,8 +1011,7 @@ mod tests {
         let settings = r#"{ "a": "", "ok": true }"#.to_string();
         let new_settings = r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#;
 
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+        let settings_after_theme = write_settings_key(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -867,8 +1021,7 @@ mod tests {
         let settings = r#"          { "a": "", "ok": true }"#.to_string();
         let new_settings = r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#;
 
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+        let settings_after_theme = write_settings_key(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -890,8 +1043,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
+        let settings_after_theme = write_settings_key(settings, "theme", "\"summerfruit-light\"");
 
         assert_eq!(settings_after_theme, new_settings)
     }

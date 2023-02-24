@@ -13,6 +13,7 @@ test-support = []
 [dependencies]
 anyhow = "1.0.38"
 log = "0.4"
+editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
 settings = { path = "../settings" }

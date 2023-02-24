@@ -37,6 +37,7 @@ pub struct Theme {
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
     pub feedback: FeedbackStyle,
+    pub welcome: WelcomeStyle,
     pub color_scheme: ColorScheme,
 }
 
@@ -848,6 +849,20 @@ pub struct FeedbackStyle {
     pub info_text_default: ContainedText,
     pub link_text_default: ContainedText,
     pub link_text_hover: ContainedText,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct WelcomeStyle {
+    pub checkbox: CheckboxStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct CheckboxStyle {
+    pub width: f32,
+    pub height: f32,
+    pub unchecked: ContainerStyle,
+    pub checked: ContainerStyle,
+    pub hovered: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

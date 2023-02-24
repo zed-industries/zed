@@ -1,8 +1,7 @@
-use crate::{watched_json::WatchedJsonFile, write_top_level_setting, SettingsFileContent};
+use crate::{update_settings_file, watched_json::WatchedJsonFile, SettingsFileContent};
 use anyhow::Result;
 use fs::Fs;
 use gpui::MutableAppContext;
-use serde_json::Value;
 use std::{path::Path, sync::Arc};
 
 // TODO: Switch SettingsFile to open a worktree and buffer for synchronization
@@ -27,57 +26,24 @@ impl SettingsFile {
         }
     }
 
-    pub fn update(cx: &mut MutableAppContext, update: impl FnOnce(&mut SettingsFileContent)) {
+    pub fn update(
+        cx: &mut MutableAppContext,
+        update: impl 'static + Send + FnOnce(&mut SettingsFileContent),
+    ) {
         let this = cx.global::<SettingsFile>();
 
         let current_file_content = this.settings_file_content.current();
-        let mut new_file_content = current_file_content.clone();
-
-        update(&mut new_file_content);
 
         let fs = this.fs.clone();
         let path = this.path.clone();
 
         cx.background()
             .spawn(async move {
-                // Unwrap safety: These values are all guarnteed to be well formed, and we know
-                // that they will deserialize to our settings object. All of the following unwraps
-                // are therefore safe.
-                let tmp = serde_json::to_value(current_file_content).unwrap();
-                let old_json = tmp.as_object().unwrap();
+                let old_text = fs.load(path).await?;
 
-                let new_tmp = serde_json::to_value(new_file_content).unwrap();
-                let new_json = new_tmp.as_object().unwrap();
+                let new_text = update_settings_file(old_text, current_file_content, update);
 
-                // Find changed fields
-                let mut diffs = vec![];
-                for (key, old_value) in old_json.iter() {
-                    let new_value = new_json.get(key).unwrap();
-                    if old_value != new_value {
-                        if matches!(
-                            new_value,
-                            &Value::Null | &Value::Object(_) | &Value::Array(_)
-                        ) {
-                            unimplemented!(
-                                "We only support updating basic values at the top level"
-                            );
-                        }
-
-                        let new_json = serde_json::to_string_pretty(new_value)
-                            .expect("Could not serialize new json field to string");
-
-                        diffs.push((key, new_json));
-                    }
-                }
-
-                // Have diffs, rewrite the settings file now.
-                let mut content = fs.load(path).await?;
-
-                for (key, new_value) in diffs {
-                    content = write_top_level_setting(content, key, &new_value)
-                }
-
-                fs.atomic_write(path.to_path_buf(), content).await?;
+                fs.atomic_write(path.to_path_buf(), new_text).await?;
 
                 Ok(()) as Result<()>
             })
