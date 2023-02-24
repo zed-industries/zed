@@ -231,6 +231,7 @@ message ParticipantProject {
 message Follower {
     PeerId leader_id = 1;
     PeerId follower_id = 2;
+    uint64 project_id = 3;
 }
 
 message ParticipantLocation {
