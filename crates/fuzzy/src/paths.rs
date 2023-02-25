@@ -25,6 +25,9 @@ pub struct PathMatch {
     pub worktree_id: usize,
     pub path: Arc<Path>,
     pub path_prefix: Arc<str>,
+    /// Number of steps removed from a shared parent with the relative path
+    /// Used to order closer paths first in the search list
+    pub distance_to_relative_ancestor: usize,
 }
 
 pub trait PathMatchCandidateSet<'a>: Send + Sync {
@@ -78,6 +81,11 @@ impl Ord for PathMatch {
             .partial_cmp(&other.score)
             .unwrap_or(Ordering::Equal)
             .then_with(|| self.worktree_id.cmp(&other.worktree_id))
+            .then_with(|| {
+                other
+                    .distance_to_relative_ancestor
+                    .cmp(&self.distance_to_relative_ancestor)
+            })
             .then_with(|| self.path.cmp(&other.path))
     }
 }
@@ -85,6 +93,7 @@ impl Ord for PathMatch {
 pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
+    relative_to: Option<Arc<Path>>,
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
@@ -111,6 +120,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     background
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                let relative_to = relative_to.clone();
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
@@ -149,6 +159,10 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                     positions: Vec::new(),
                                     path: candidate.path.clone(),
                                     path_prefix: candidate_set.prefix(),
+                                    distance_to_relative_ancestor: distance_to_relative_ancestor(
+                                        candidate.path.as_ref(),
+                                        &relative_to,
+                                    ),
                                 },
                             );
                         }
@@ -171,4 +185,22 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         }
     }
     results
+}
+
+/// Compute the distance from a given path to some other path
+/// If there is no shared path, returns usize::MAX
+fn distance_to_relative_ancestor(path: &Path, relative_to: &Option<Arc<Path>>) -> usize {
+    let Some(relative_to) = relative_to else {
+        return usize::MAX;
+    };
+
+    for (path_ancestor_count, path_ancestor) in path.ancestors().enumerate() {
+        for (relative_ancestor_count, relative_ancestor) in relative_to.ancestors().enumerate() {
+            if path_ancestor == relative_ancestor {
+                return path_ancestor_count + relative_ancestor_count;
+            }
+        }
+    }
+
+    usize::MAX
 }

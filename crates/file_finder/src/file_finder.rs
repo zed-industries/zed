@@ -23,6 +23,7 @@ pub struct FileFinder {
     latest_search_id: usize,
     latest_search_did_cancel: bool,
     latest_search_query: String,
+    relative_to: Option<Arc<Path>>,
     matches: Vec<PathMatch>,
     selected: Option<(usize, Arc<Path>)>,
     cancel_flag: Arc<AtomicBool>,
@@ -90,7 +91,11 @@ impl FileFinder {
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |workspace, cx| {
             let project = workspace.project().clone();
-            let finder = cx.add_view(|cx| Self::new(project, cx));
+            let relative_to = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .map(|project_path| project_path.path.clone());
+            let finder = cx.add_view(|cx| Self::new(project, relative_to, cx));
             cx.subscribe(&finder, Self::on_event).detach();
             finder
         });
@@ -115,7 +120,11 @@ impl FileFinder {
         }
     }
 
-    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        project: ModelHandle<Project>,
+        relative_to: Option<Arc<Path>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let handle = cx.weak_handle();
         cx.observe(&project, Self::project_updated).detach();
         Self {
@@ -125,6 +134,7 @@ impl FileFinder {
             latest_search_id: 0,
             latest_search_did_cancel: false,
             latest_search_query: String::new(),
+            relative_to,
             matches: Vec::new(),
             selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -137,6 +147,7 @@ impl FileFinder {
     }
 
     fn spawn_search(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
+        let relative_to = self.relative_to.clone();
         let worktrees = self
             .project
             .read(cx)
@@ -165,6 +176,7 @@ impl FileFinder {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 &query,
+                relative_to,
                 false,
                 100,
                 &cancel_flag,
@@ -377,7 +389,7 @@ mod tests {
             Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), None, cx));
 
         let query = "hi".to_string();
         finder
@@ -453,7 +465,7 @@ mod tests {
             Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), None, cx));
         finder
             .update(cx, |f, cx| f.spawn_search("hi".into(), cx))
             .await;
@@ -479,7 +491,7 @@ mod tests {
             Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), None, cx));
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -533,7 +545,7 @@ mod tests {
             Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), None, cx));
 
         // Run a search that matches two files with the same relative path.
         finder
@@ -573,7 +585,7 @@ mod tests {
             Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
         let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), None, cx));
         finder
             .update(cx, |f, cx| f.spawn_search("dir".into(), cx))
             .await;
