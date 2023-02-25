@@ -860,9 +860,10 @@ pub struct WelcomeStyle {
 pub struct CheckboxStyle {
     pub width: f32,
     pub height: f32,
-    pub unchecked: ContainerStyle,
+    pub default: ContainerStyle,
     pub checked: ContainerStyle,
     pub hovered: ContainerStyle,
+    pub hovered_and_checked: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

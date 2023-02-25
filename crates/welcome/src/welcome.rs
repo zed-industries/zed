@@ -126,11 +126,17 @@ impl WelcomePage {
                 .with_height(style.height)
                 .contained()
                 .with_style(if checked {
-                    style.checked
-                } else if state.hovered() {
-                    style.hovered
+                    if state.hovered() {
+                        style.hovered_and_checked
+                    } else {
+                        style.checked
+                    }
                 } else {
-                    style.unchecked
+                    if state.hovered() {
+                        style.hovered
+                    } else {
+                        style.default
+                    }
                 })
                 .boxed()
         })

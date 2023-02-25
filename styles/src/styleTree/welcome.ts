@@ -6,9 +6,8 @@ export default function welcome(colorScheme: ColorScheme) {
     let layer = colorScheme.highest;
 
     // TODO
-    let checkbox_base = {
-        background: colorScheme.ramps.red(0.5).hex(),
-        cornerRadius: 8,
+    let checkboxBase = {
+        cornerRadius: 4,
         padding: {
             left: 8,
             right: 8,
@@ -26,9 +25,31 @@ export default function welcome(colorScheme: ColorScheme) {
         checkbox: {
             width: 9,
             height: 9,
-            unchecked: checkbox_base,
-            checked: checkbox_base,
-            hovered: checkbox_base
+            default: {
+                ...checkboxBase,
+                background: colorScheme.ramps.blue(0.5).hex(),
+            },
+            checked: {
+                ...checkboxBase,
+                background: colorScheme.ramps.red(0.5).hex(),
+            },
+            hovered: {
+                ...checkboxBase,
+                background: colorScheme.ramps.blue(0.5).hex(),
+
+                border: {
+                    color: colorScheme.ramps.green(0.5).hex(),
+                    width: 1,
+                }
+            },
+            hoveredAndChecked: {
+                ...checkboxBase,
+                background: colorScheme.ramps.red(0.5).hex(),
+                border: {
+                    color: colorScheme.ramps.green(0.5).hex(),
+                    width: 1,
+                }
+            }
         }
     }
 }
