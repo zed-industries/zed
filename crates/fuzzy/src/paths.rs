@@ -159,9 +159,14 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                     positions: Vec::new(),
                                     path: candidate.path.clone(),
                                     path_prefix: candidate_set.prefix(),
-                                    distance_to_relative_ancestor: distance_to_relative_ancestor(
-                                        candidate.path.as_ref(),
-                                        &relative_to,
+                                    distance_to_relative_ancestor: relative_to.as_ref().map_or(
+                                        usize::MAX,
+                                        |relative_to| {
+                                            distance_between_paths(
+                                                candidate.path.as_ref(),
+                                                relative_to.as_ref(),
+                                            )
+                                        },
                                     ),
                                 },
                             );
@@ -189,11 +194,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
 /// Compute the distance from a given path to some other path
 /// If there is no shared path, returns usize::MAX
-fn distance_to_relative_ancestor(path: &Path, relative_to: &Option<Arc<Path>>) -> usize {
-    let Some(relative_to) = relative_to else {
-        return usize::MAX;
-    };
-
+fn distance_between_paths(path: &Path, relative_to: &Path) -> usize {
     let mut path_components = path.components();
     let mut relative_components = relative_to.components();
 
