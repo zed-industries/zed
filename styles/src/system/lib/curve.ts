@@ -1,5 +1,5 @@
-import bezier from "bezier-easing";
-import { Curve } from "../ref/curves";
+import bezier from "bezier-easing"
+import { Curve } from "../ref/curves"
 
 /**
  * Formats our Curve data structure into a bezier easing function.
@@ -8,14 +8,19 @@ import { Curve } from "../ref/curves";
  * @returns {EasingFunction} The formatted easing function.
  */
 export function curve(curve: Curve, inverted?: Boolean) {
-  if (inverted) {
-    return bezier(
-      curve.value[3],
-      curve.value[2],
-      curve.value[1],
-      curve.value[0]
-    );
-  }
+    if (inverted) {
+        return bezier(
+            curve.value[3],
+            curve.value[2],
+            curve.value[1],
+            curve.value[0]
+        )
+    }
 
-  return bezier(curve.value[0], curve.value[1], curve.value[2], curve.value[3]);
+    return bezier(
+        curve.value[0],
+        curve.value[1],
+        curve.value[2],
+        curve.value[3]
+    )
 }

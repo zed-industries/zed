@@ -1,10 +1,9 @@
-import { Color as ChromaColor } from "chroma-js";
-import { Curve } from "./ref/curves";
+import { Curve } from "./ref/curves"
 
 export interface ColorAccessiblityValue {
-  value: number;
-  aaPass: boolean;
-  aaaPass: boolean;
+    value: number
+    aaPass: boolean
+    aaaPass: boolean
 }
 
 /**
@@ -14,54 +13,54 @@ export interface ColorAccessiblityValue {
  * @note The goal is to align with WCAG3 accessibility standards as they become stabilized. See the [WCAG 3 Introduction](https://www.w3.org/WAI/standards-guidelines/wcag/wcag3-intro/) for more information.
  */
 export interface ColorAccessiblity {
-  black: ColorAccessiblityValue;
-  white: ColorAccessiblityValue;
+    black: ColorAccessiblityValue
+    white: ColorAccessiblityValue
 }
 
 export type Color = {
-  step: number;
-  contrast: ColorAccessiblity;
-  hex: string;
-  lch: number[];
-  rgba: number[];
-  isLight: boolean;
-};
+    step: number
+    contrast: ColorAccessiblity
+    hex: string
+    lch: number[]
+    rgba: number[]
+    isLight: boolean
+}
 
 export interface ColorScale {
-  colors: Color[];
-  // An array of hex values for each color in the scale
-  values: string[];
+    colors: Color[]
+    // An array of hex values for each color in the scale
+    values: string[]
 }
 
 export type ColorFamily = {
-  name: string;
-  scale: ColorScale;
-  invertedScale: ColorScale;
-};
+    name: string
+    scale: ColorScale
+    invertedScale: ColorScale
+}
 
 export interface ColorFamilyHue {
-  start: number;
-  end: number;
-  curve: Curve;
+    start: number
+    end: number
+    curve: Curve
 }
 
 export interface ColorFamilySaturation {
-  start: number;
-  end: number;
-  curve: Curve;
+    start: number
+    end: number
+    curve: Curve
 }
 
 export interface ColorFamilyLightness {
-  start: number;
-  end: number;
-  curve: Curve;
+    start: number
+    end: number
+    curve: Curve
 }
 
 export interface ColorFamilyConfig {
-  name: string;
-  color: {
-    hue: ColorFamilyHue;
-    saturation: ColorFamilySaturation;
-    lightness: ColorFamilyLightness;
-  };
+    name: string
+    color: {
+        hue: ColorFamilyHue
+        saturation: ColorFamilySaturation
+        lightness: ColorFamilyLightness
+    }
 }
