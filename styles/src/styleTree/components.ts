@@ -1,210 +1,210 @@
-import { fontFamilies, fontSizes, FontWeight } from "../common";
-import { Layer, Styles, StyleSets, Style } from "../themes/common/colorScheme";
+import { fontFamilies, fontSizes, FontWeight } from "../common"
+import { Layer, Styles, StyleSets, Style } from "../themes/common/colorScheme"
 
 function isStyleSet(key: any): key is StyleSets {
-  return [
-    "base",
-    "variant",
-    "on",
-    "accent",
-    "positive",
-    "warning",
-    "negative",
-  ].includes(key);
+    return [
+        "base",
+        "variant",
+        "on",
+        "accent",
+        "positive",
+        "warning",
+        "negative",
+    ].includes(key)
 }
 
 function isStyle(key: any): key is Styles {
-  return [
-    "default",
-    "active",
-    "disabled",
-    "hovered",
-    "pressed",
-    "inverted",
-  ].includes(key);
+    return [
+        "default",
+        "active",
+        "disabled",
+        "hovered",
+        "pressed",
+        "inverted",
+    ].includes(key)
 }
 function getStyle(
-  layer: Layer,
-  possibleStyleSetOrStyle?: any,
-  possibleStyle?: any
+    layer: Layer,
+    possibleStyleSetOrStyle?: any,
+    possibleStyle?: any
 ): Style {
-  let styleSet: StyleSets = "base";
-  let style: Styles = "default";
-  if (isStyleSet(possibleStyleSetOrStyle)) {
-    styleSet = possibleStyleSetOrStyle;
-  } else if (isStyle(possibleStyleSetOrStyle)) {
-    style = possibleStyleSetOrStyle;
-  }
+    let styleSet: StyleSets = "base"
+    let style: Styles = "default"
+    if (isStyleSet(possibleStyleSetOrStyle)) {
+        styleSet = possibleStyleSetOrStyle
+    } else if (isStyle(possibleStyleSetOrStyle)) {
+        style = possibleStyleSetOrStyle
+    }
 
-  if (isStyle(possibleStyle)) {
-    style = possibleStyle;
-  }
+    if (isStyle(possibleStyle)) {
+        style = possibleStyle
+    }
 
-  return layer[styleSet][style];
+    return layer[styleSet][style]
 }
 
-export function background(layer: Layer, style?: Styles): string;
+export function background(layer: Layer, style?: Styles): string
 export function background(
-  layer: Layer,
-  styleSet?: StyleSets,
-  style?: Styles
-): string;
+    layer: Layer,
+    styleSet?: StyleSets,
+    style?: Styles
+): string
 export function background(
-  layer: Layer,
-  styleSetOrStyles?: StyleSets | Styles,
-  style?: Styles
+    layer: Layer,
+    styleSetOrStyles?: StyleSets | Styles,
+    style?: Styles
 ): string {
-  return getStyle(layer, styleSetOrStyles, style).background;
+    return getStyle(layer, styleSetOrStyles, style).background
 }
 
-export function borderColor(layer: Layer, style?: Styles): string;
+export function borderColor(layer: Layer, style?: Styles): string
 export function borderColor(
-  layer: Layer,
-  styleSet?: StyleSets,
-  style?: Styles
-): string;
+    layer: Layer,
+    styleSet?: StyleSets,
+    style?: Styles
+): string
 export function borderColor(
-  layer: Layer,
-  styleSetOrStyles?: StyleSets | Styles,
-  style?: Styles
+    layer: Layer,
+    styleSetOrStyles?: StyleSets | Styles,
+    style?: Styles
 ): string {
-  return getStyle(layer, styleSetOrStyles, style).border;
+    return getStyle(layer, styleSetOrStyles, style).border
 }
 
-export function foreground(layer: Layer, style?: Styles): string;
+export function foreground(layer: Layer, style?: Styles): string
 export function foreground(
-  layer: Layer,
-  styleSet?: StyleSets,
-  style?: Styles
-): string;
+    layer: Layer,
+    styleSet?: StyleSets,
+    style?: Styles
+): string
 export function foreground(
-  layer: Layer,
-  styleSetOrStyles?: StyleSets | Styles,
-  style?: Styles
+    layer: Layer,
+    styleSetOrStyles?: StyleSets | Styles,
+    style?: Styles
 ): string {
-  return getStyle(layer, styleSetOrStyles, style).foreground;
+    return getStyle(layer, styleSetOrStyles, style).foreground
 }
 
 interface Text {
-  family: keyof typeof fontFamilies;
-  color: string;
-  size: number;
-  weight?: FontWeight;
-  underline?: boolean;
+    family: keyof typeof fontFamilies
+    color: string
+    size: number
+    weight?: FontWeight
+    underline?: boolean
 }
 
 interface TextProperties {
-  size?: keyof typeof fontSizes;
-  weight?: FontWeight;
-  underline?: boolean;
-  color?: string;
+    size?: keyof typeof fontSizes
+    weight?: FontWeight
+    underline?: boolean
+    color?: string
 }
 
 export function text(
-  layer: Layer,
-  fontFamily: keyof typeof fontFamilies,
-  styleSet: StyleSets,
-  style: Styles,
-  properties?: TextProperties
-): Text;
+    layer: Layer,
+    fontFamily: keyof typeof fontFamilies,
+    styleSet: StyleSets,
+    style: Styles,
+    properties?: TextProperties
+): Text
 export function text(
-  layer: Layer,
-  fontFamily: keyof typeof fontFamilies,
-  styleSet: StyleSets,
-  properties?: TextProperties
-): Text;
+    layer: Layer,
+    fontFamily: keyof typeof fontFamilies,
+    styleSet: StyleSets,
+    properties?: TextProperties
+): Text
 export function text(
-  layer: Layer,
-  fontFamily: keyof typeof fontFamilies,
-  style: Styles,
-  properties?: TextProperties
-): Text;
+    layer: Layer,
+    fontFamily: keyof typeof fontFamilies,
+    style: Styles,
+    properties?: TextProperties
+): Text
 export function text(
-  layer: Layer,
-  fontFamily: keyof typeof fontFamilies,
-  properties?: TextProperties
-): Text;
+    layer: Layer,
+    fontFamily: keyof typeof fontFamilies,
+    properties?: TextProperties
+): Text
 export function text(
-  layer: Layer,
-  fontFamily: keyof typeof fontFamilies,
-  styleSetStyleOrProperties?: StyleSets | Styles | TextProperties,
-  styleOrProperties?: Styles | TextProperties,
-  properties?: TextProperties
+    layer: Layer,
+    fontFamily: keyof typeof fontFamilies,
+    styleSetStyleOrProperties?: StyleSets | Styles | TextProperties,
+    styleOrProperties?: Styles | TextProperties,
+    properties?: TextProperties
 ) {
-  let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties);
+    let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
 
-  if (typeof styleSetStyleOrProperties === "object") {
-    properties = styleSetStyleOrProperties;
-  }
-  if (typeof styleOrProperties === "object") {
-    properties = styleOrProperties;
-  }
+    if (typeof styleSetStyleOrProperties === "object") {
+        properties = styleSetStyleOrProperties
+    }
+    if (typeof styleOrProperties === "object") {
+        properties = styleOrProperties
+    }
 
-  let size = fontSizes[properties?.size || "sm"];
-  let color = properties?.color || style.foreground;
+    let size = fontSizes[properties?.size || "sm"]
+    let color = properties?.color || style.foreground
 
-  return {
-    family: fontFamilies[fontFamily],
-    ...properties,
-    color,
-    size,
-  };
+    return {
+        family: fontFamilies[fontFamily],
+        ...properties,
+        color,
+        size,
+    }
 }
 
 export interface Border {
-  color: string;
-  width: number;
-  top?: boolean;
-  bottom?: boolean;
-  left?: boolean;
-  right?: boolean;
-  overlay?: boolean;
+    color: string
+    width: number
+    top?: boolean
+    bottom?: boolean
+    left?: boolean
+    right?: boolean
+    overlay?: boolean
 }
 
 export interface BorderProperties {
-  width?: number;
-  top?: boolean;
-  bottom?: boolean;
-  left?: boolean;
-  right?: boolean;
-  overlay?: boolean;
+    width?: number
+    top?: boolean
+    bottom?: boolean
+    left?: boolean
+    right?: boolean
+    overlay?: boolean
 }
 
 export function border(
-  layer: Layer,
-  styleSet: StyleSets,
-  style: Styles,
-  properties?: BorderProperties
-): Border;
+    layer: Layer,
+    styleSet: StyleSets,
+    style: Styles,
+    properties?: BorderProperties
+): Border
 export function border(
-  layer: Layer,
-  styleSet: StyleSets,
-  properties?: BorderProperties
-): Border;
+    layer: Layer,
+    styleSet: StyleSets,
+    properties?: BorderProperties
+): Border
 export function border(
-  layer: Layer,
-  style: Styles,
-  properties?: BorderProperties
-): Border;
-export function border(layer: Layer, properties?: BorderProperties): Border;
+    layer: Layer,
+    style: Styles,
+    properties?: BorderProperties
+): Border
+export function border(layer: Layer, properties?: BorderProperties): Border
 export function border(
-  layer: Layer,
-  styleSetStyleOrProperties?: StyleSets | Styles | BorderProperties,
-  styleOrProperties?: Styles | BorderProperties,
-  properties?: BorderProperties
+    layer: Layer,
+    styleSetStyleOrProperties?: StyleSets | Styles | BorderProperties,
+    styleOrProperties?: Styles | BorderProperties,
+    properties?: BorderProperties
 ): Border {
-  let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties);
+    let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties)
 
-  if (typeof styleSetStyleOrProperties === "object") {
-    properties = styleSetStyleOrProperties;
-  }
-  if (typeof styleOrProperties === "object") {
-    properties = styleOrProperties;
-  }
+    if (typeof styleSetStyleOrProperties === "object") {
+        properties = styleSetStyleOrProperties
+    }
+    if (typeof styleOrProperties === "object") {
+        properties = styleOrProperties
+    }
 
-  return {
-    color: style.border,
-    width: 1,
-    ...properties,
-  };
+    return {
+        color: style.border,
+        width: 1,
+        ...properties,
+    }
 }
