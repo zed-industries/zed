@@ -544,6 +544,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| {
             Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
         });
+
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), None, cx));
 
@@ -560,6 +561,48 @@ mod tests {
             assert_eq!(f.selected_index(), 1);
             f.set_selected_index(0, cx);
             assert_eq!(f.selected_index(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_path_distance_ordering(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "dir1": { "a.txt": "" },
+                    "dir2": {
+                        "a.txt": "",
+                        "b.txt": ""
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| {
+            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
+        });
+
+        // When workspace has an active item, sort items which are closer to that item
+        // first when they have the same name. In this case, b.txt is closer to dir2's a.txt
+        // so that one should be sorted earlier
+        let b_path = Some(Arc::from(Path::new("/root/dir2/b.txt")));
+        let (_, finder) =
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), b_path, cx));
+
+        finder
+            .update(cx, |f, cx| f.spawn_search("a.txt".into(), cx))
+            .await;
+
+        finder.read_with(cx, |f, _| {
+            assert_eq!(f.matches[0].path.as_ref(), Path::new("dir2/a.txt"));
+            assert_eq!(f.matches[1].path.as_ref(), Path::new("dir1/a.txt"));
         });
     }
 

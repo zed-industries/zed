@@ -194,13 +194,9 @@ fn distance_to_relative_ancestor(path: &Path, relative_to: &Option<Arc<Path>>) -
         return usize::MAX;
     };
 
-    for (path_ancestor_count, path_ancestor) in path.ancestors().enumerate() {
-        for (relative_ancestor_count, relative_ancestor) in relative_to.ancestors().enumerate() {
-            if path_ancestor == relative_ancestor {
-                return path_ancestor_count + relative_ancestor_count;
-            }
-        }
-    }
+    let mut path_components = path.components();
+    let mut relative_components = relative_to.components();
 
-    usize::MAX
+    while path_components.next() == relative_components.next() {}
+    path_components.count() + relative_components.count() + 1
 }
