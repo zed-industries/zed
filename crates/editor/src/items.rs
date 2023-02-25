@@ -14,7 +14,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{Item as _, Project, ProjectPath};
+use project::{FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -608,7 +608,7 @@ impl Item for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_event("save editor", cx);
-        let format = self.perform_format(project.clone(), cx);
+        let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.as_mut().spawn(|mut cx| async move {
             format.await?;
