@@ -7,6 +7,7 @@ import {
     Style,
     Styles,
     StyleSet,
+    ThemeSyntax,
 } from "./colorScheme"
 
 export function colorRamp(color: Color): Scale {
@@ -18,7 +19,8 @@ export function colorRamp(color: Color): Scale {
 export function createColorScheme(
     name: string,
     isLight: boolean,
-    colorRamps: { [rampName: string]: Scale }
+    colorRamps: { [rampName: string]: Scale },
+    syntax?: ThemeSyntax
 ): ColorScheme {
     // Chromajs scales from 0 to 1 flipped if isLight is true
     let ramps: RampSet = {} as any
@@ -31,14 +33,14 @@ export function createColorScheme(
     // function to any in order to get the colors back out from the original ramps.
     if (isLight) {
         for (var rampName in colorRamps) {
-            ;(ramps as any)[rampName] = chroma.scale(
+            ; (ramps as any)[rampName] = chroma.scale(
                 colorRamps[rampName].colors(100).reverse()
             )
         }
         ramps.neutral = chroma.scale(colorRamps.neutral.colors(100).reverse())
     } else {
         for (var rampName in colorRamps) {
-            ;(ramps as any)[rampName] = chroma.scale(
+            ; (ramps as any)[rampName] = chroma.scale(
                 colorRamps[rampName].colors(100)
             )
         }
@@ -94,6 +96,7 @@ export function createColorScheme(
         modalShadow,
 
         players,
+        syntax
     }
 }
 

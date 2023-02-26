@@ -15,6 +15,7 @@
         "bezier-easing": "^2.1.0",
         "case-anything": "^2.1.10",
         "chroma-js": "^2.4.2",
+        "deepmerge": "^4.3.0",
         "toml": "^3.0.0",
         "ts-node": "^10.9.1"
     },
