@@ -145,6 +145,23 @@ where
     }
 }
 
+pub trait MapRangeEndsExt<R> {
+    fn map_endpoints<T, F>(self, f: F) -> Range<T>
+    where
+        Self: Sized,
+        F: Fn(R) -> T;
+}
+
+impl<R> MapRangeEndsExt<R> for Range<R> {
+    fn map_endpoints<T, F>(self, f: F) -> Range<T>
+    where
+        Self: Sized,
+        F: Fn(R) -> T,
+    {
+        f(self.start)..f(self.end)
+    }
+}
+
 pub struct LogErrorFuture<F>(F, log::Level);
 
 impl<F, T> Future for LogErrorFuture<F>

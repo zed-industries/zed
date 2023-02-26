@@ -12,6 +12,7 @@ use gpui::{
     Entity, ModelContext, ModelHandle,
 };
 use language::{OffsetUtf16, Point, Subscription as BufferSubscription};
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
@@ -659,6 +660,32 @@ impl DisplaySnapshot {
 
 #[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DisplayPoint(BlockPoint);
+
+#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Serialize)]
+#[repr(transparent)]
+pub struct DisplayRow(pub u32);
+
+impl DisplayRow {
+    pub fn new(display_row: u32) -> Self {
+        DisplayRow(display_row)
+    }
+
+    pub fn to_span(self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
+        let row_start = DisplayPoint::new(self.0, 0);
+        let row_end = DisplayPoint::new(
+            self.0,
+            display_map.buffer_snapshot.line_len(row_start.row()),
+        );
+
+        row_start..row_end
+    }
+}
+
+impl From<DisplayPoint> for DisplayRow {
+    fn from(value: DisplayPoint) -> Self {
+        DisplayRow(value.row())
+    }
+}
 
 impl Debug for DisplayPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

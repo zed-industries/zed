@@ -538,7 +538,7 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                editor.unfold_ranges([range_to_select.clone()], false, cx);
+                editor.unfold_ranges([range_to_select.clone()], false, true, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range_to_select])
                 });

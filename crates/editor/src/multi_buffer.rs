@@ -1916,10 +1916,6 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn row_span(&self, display_row: u32) -> Range<Point> {
-        Point::new(display_row, 0)..Point::new(display_row, self.line_len(display_row))
-    }
-
     pub fn buffer_rows(&self, start_row: u32) -> MultiBufferRows {
         let mut result = MultiBufferRows {
             buffer_row_range: 0..0,

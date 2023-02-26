@@ -85,7 +85,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
-use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{post_inc, MapRangeEndsExt, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
@@ -163,12 +163,12 @@ pub struct ToggleComments {
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct FoldAt {
-    pub display_row: u32,
+    pub display_row: DisplayRow,
 }
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct UnfoldAt {
-    pub display_row: u32,
+    pub display_row: DisplayRow,
 }
 
 actions!(
@@ -2716,10 +2716,10 @@ impl Editor {
                     move |_, cx| {
                         cx.dispatch_any_action(match fold_status {
                             FoldStatus::Folded => Box::new(UnfoldAt {
-                                display_row: fold_location,
+                                display_row: DisplayRow::new(fold_location),
                             }),
                             FoldStatus::Foldable => Box::new(FoldAt {
-                                display_row: fold_location,
+                                display_row: DisplayRow::new(fold_location),
                             }),
                         });
                     }
@@ -3381,13 +3381,13 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.unfold_ranges(unfold_ranges, true, cx);
+            this.unfold_ranges(unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_ranges(refold_ranges, cx);
+            this.fold_ranges(refold_ranges, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             })
@@ -3472,13 +3472,13 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.unfold_ranges(unfold_ranges, true, cx);
+            this.unfold_ranges(unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_ranges(refold_ranges, cx);
+            this.fold_ranges(refold_ranges, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
         });
     }
@@ -4306,7 +4306,7 @@ impl Editor {
                 to_unfold.push(selection.start..selection.end);
             }
         }
-        self.unfold_ranges(to_unfold, true, cx);
+        self.unfold_ranges(to_unfold, true, true, cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
@@ -4455,7 +4455,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges([next_selected_range.clone()], false, cx);
+                    self.unfold_ranges([next_selected_range.clone()], false, true, cx);
                     self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
@@ -4488,7 +4488,7 @@ impl Editor {
                     wordwise: true,
                     done: false,
                 };
-                self.unfold_ranges([selection.start..selection.end], false, cx);
+                self.unfold_ranges([selection.start..selection.end], false, true, cx);
                 self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select(selections);
                 });
@@ -5726,7 +5726,7 @@ impl Editor {
             }
         }
 
-        self.fold_ranges(fold_ranges, cx);
+        self.fold_ranges(fold_ranges, true, cx);
     }
 
     pub fn fold_at(&mut self, fold_at: &FoldAt, cx: &mut ViewContext<Self>) {
@@ -5734,8 +5734,8 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if let Some(fold_range) = display_map.foldable_range_for_line(display_row) {
-            self.fold_ranges(std::iter::once(fold_range), cx);
+        if let Some(fold_range) = display_map.foldable_range_for_line(display_row.0) {
+            self.fold_ranges(std::iter::once(fold_range), true, cx);
         }
     }
 
@@ -5754,31 +5754,38 @@ impl Editor {
                 start..end
             })
             .collect::<Vec<_>>();
-        self.unfold_ranges(ranges, true, cx);
+        self.unfold_ranges(ranges, true, true, cx);
     }
 
     pub fn unfold_at(&mut self, fold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let unfold_range = display_map.buffer_snapshot.row_span(fold_at.display_row);
 
-        self.unfold_ranges(std::iter::once(unfold_range), true, cx)
+        let display_range = fold_at
+            .display_row
+            .to_span(&display_map)
+            .map_endpoints(|endpoint| endpoint.to_point(&display_map));
+
+        self.unfold_ranges(std::iter::once(display_range), true, true, cx)
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all::<Point>(cx);
         let ranges = selections.into_iter().map(|s| s.start..s.end);
-        self.fold_ranges(ranges, cx);
+        self.fold_ranges(ranges, true, cx);
     }
 
     pub fn fold_ranges<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
-            self.request_autoscroll(Autoscroll::fit(), cx);
+            if auto_scroll {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+            }
             cx.notify();
         }
     }
@@ -5787,13 +5794,16 @@ impl Editor {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
+        auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
             self.display_map
                 .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
-            self.request_autoscroll(Autoscroll::fit(), cx);
+            if auto_scroll {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+            }
             cx.notify();
         }
     }
