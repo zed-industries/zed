@@ -109,23 +109,27 @@ export interface SyntaxHighlightStyle {
 }
 
 export interface Syntax {
-    // == Text Styles
+    // == Text Styles ====== /
+    comment: SyntaxHighlightStyle
+    // elixir: doc comment
+    "comment.doc": SyntaxHighlightStyle,
     primary: SyntaxHighlightStyle
     predictive: SyntaxHighlightStyle
+
+    // === Formatted Text ====== /
     emphasis: SyntaxHighlightStyle
     "emphasis.strong": SyntaxHighlightStyle
     title: SyntaxHighlightStyle
     linkUri: SyntaxHighlightStyle
     linkText: SyntaxHighlightStyle
+    // md: indented_code_block, fenced_code_block, code_span
+    "text.literal": SyntaxHighlightStyle
 
-    // == General
-    comment: SyntaxHighlightStyle
-
-    // == Punctuation
+    // == Punctuation ====== /
     punctuation: SyntaxHighlightStyle
-    /** (, [, {...*/
+    /** Example: `(`, `[`, `{`...*/
     "punctuation.bracket": SyntaxHighlightStyle,
-    // ., ;
+    /**., ;*/
     "punctuation.delimiter": SyntaxHighlightStyle,
     // js, ts: ${, } in a template literal
     // yaml: *, &, ---, ...
@@ -133,35 +137,9 @@ export interface Syntax {
     // md: list_marker_plus, list_marker_dot, etc
     "punctuation.list_marker": SyntaxHighlightStyle
 
-    // this, ...
-    // css: -- (var(--foo))
-    // lua: self
-    "variable.special": SyntaxHighlightStyle
-    // true, false, null, nullptr
-    constant: SyntaxHighlightStyle
-    // css: @media, @import, @supports...
-    // js: declare, implements, interface, keyof, public...
-    keyword: SyntaxHighlightStyle
-    function: SyntaxHighlightStyle
-    type: SyntaxHighlightStyle
-    constructor: SyntaxHighlightStyle
-    variant: SyntaxHighlightStyle
-    // css: class_name, property_name, namespace_name...
-    property: SyntaxHighlightStyle
-    // note: js enum is currently defined as a keyword
-    enum: SyntaxHighlightStyle
-    // -, --, ->, !=, &&, ||, <=...
-    operator: SyntaxHighlightStyle
-    string: SyntaxHighlightStyle
-    number: SyntaxHighlightStyle
-    boolean: SyntaxHighlightStyle
+    // == Strings ====== /
 
-    // c: statement_identifier, 
-    label: SyntaxHighlightStyle,
-    // css: tag_name, nesting_selector, universal_selector...
-    tag: SyntaxHighlightStyle,
-    // css: attribute, pseudo_element_selector (tag_name), 
-    attribute: SyntaxHighlightStyle,
+    string: SyntaxHighlightStyle
     // css: color_value
     // js: this, super
     // racket: regex
@@ -176,36 +154,68 @@ export interface Syntax {
     "string.escape": SyntaxHighlightStyle,
     // Regular expressions
     "string.regex": SyntaxHighlightStyle,
-    // elixir: doc comment
-    "comment.doc": SyntaxHighlightStyle,
+
+    // == Types ====== /
+    constructor: SyntaxHighlightStyle
+    variant: SyntaxHighlightStyle
+    type: SyntaxHighlightStyle
     // js: predefined_type
     "type.builtin": SyntaxHighlightStyle,
-    // elixir, python: interpolation (ex: foo in ${foo})
-    // js: template_substitution
-    embedded: SyntaxHighlightStyle,
+
+    // == Values
+
+    // racket: lang_name
+    "variable.builtin": SyntaxHighlightStyle
+    // this, ...
+    // css: -- (var(--foo))
+    // lua: self
+    "variable.special": SyntaxHighlightStyle
+    // c: statement_identifier, 
+    label: SyntaxHighlightStyle,
+    // css: tag_name, nesting_selector, universal_selector...
+    tag: SyntaxHighlightStyle,
+    // css: attribute, pseudo_element_selector (tag_name), 
+    attribute: SyntaxHighlightStyle,
+    // css: class_name, property_name, namespace_name...
+    property: SyntaxHighlightStyle
+    // true, false, null, nullptr
+    constant: SyntaxHighlightStyle
+    // css: @media, @import, @supports...
+    // js: declare, implements, interface, keyof, public...
+    keyword: SyntaxHighlightStyle
+    // note: js enum is currently defined as a keyword
+    enum: SyntaxHighlightStyle
+    // -, --, ->, !=, &&, ||, <=...
+    operator: SyntaxHighlightStyle
+    number: SyntaxHighlightStyle
+    boolean: SyntaxHighlightStyle
     // elixir: __MODULE__, __DIR__, __ENV__, etc
     // go: nil, iota
     "constant.builtin": SyntaxHighlightStyle,
-    // go: call_expression, method_declaration
-    // js: call_expression, method_definition, pair (key, arrow function)
-    "function.method": SyntaxHighlightStyle,
-    // ruby: identifier/"defined?" // Nate note: I don't fully understand this one.
-    "function.method.builtin": SyntaxHighlightStyle
-    // lua: function_call
-    "function.call": SyntaxHighlightStyle
+
+    // == Functions ====== /
+
+    function: SyntaxHighlightStyle
     // lua: assert, error, loadfile, tostring, unpack...
     "function.builtin": SyntaxHighlightStyle
-    // lua: hash_bang_line
-    preproc: SyntaxHighlightStyle
-
-    // md: indented_code_block, fenced_code_block, code_span
-    "text.literal": SyntaxHighlightStyle
-    // racket: lang_name
-    "variable.builtin": SyntaxHighlightStyle
+    // lua: function_call
+    "function.call": SyntaxHighlightStyle
+    // go: call_expression, method_declaration
+    // js: call_expression, method_definition, pair (key, arrow function)
     // rust: function_item name: (identifier)
     "function.definition": SyntaxHighlightStyle
     // rust: macro_definition name: (identifier) 
     "function.special.definition": SyntaxHighlightStyle
+    "function.method": SyntaxHighlightStyle,
+    // ruby: identifier/"defined?" // Nate note: I don't fully understand this one.
+    "function.method.builtin": SyntaxHighlightStyle
+
+    // == Unsorted ====== /
+    // lua: hash_bang_line
+    preproc: SyntaxHighlightStyle
+    // elixir, python: interpolation (ex: foo in ${foo})
+    // js: template_substitution
+    embedded: SyntaxHighlightStyle,
 }
 
 // HACK: "constructor" as a key in the syntax interface returns an error when a theme tries to use it.
