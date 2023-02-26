@@ -1,6 +1,7 @@
 mod blink_manager;
 pub mod display_map;
 mod element;
+
 mod git;
 mod highlight_matching_bracket;
 mod hover_popover;
@@ -160,6 +161,16 @@ pub struct ToggleComments {
     pub advance_downwards: bool,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct FoldAt {
+    pub display_row: u32,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct UnfoldAt {
+    pub display_row: u32,
+}
+
 actions!(
     editor,
     [
@@ -258,6 +269,8 @@ impl_actions!(
         ConfirmCompletion,
         ConfirmCodeAction,
         ToggleComments,
+        FoldAt,
+        UnfoldAt
     ]
 );
 
@@ -348,7 +361,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::go_to_type_definition);
     cx.add_action(Editor::fold);
+    cx.add_action(Editor::fold_at);
     cx.add_action(Editor::unfold_lines);
+    cx.add_action(Editor::unfold_at);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
@@ -2648,9 +2663,9 @@ impl Editor {
         cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
         if self.available_code_actions.is_some() {
-            enum Tag {}
+            enum CodeActions {}
             Some(
-                MouseEventHandler::<Tag>::new(0, cx, |_, _| {
+                MouseEventHandler::<CodeActions>::new(0, cx, |_, _| {
                     Svg::new("icons/bolt_8.svg")
                         .with_color(style.code_actions.indicator)
                         .boxed()
@@ -2666,6 +2681,51 @@ impl Editor {
             )
         } else {
             None
+        }
+    }
+
+    pub fn render_fold_indicators(
+        &self,
+        fold_data: Vec<(u32, FoldStatus)>,
+        fold_indicators: &mut Vec<(u32, ElementBox)>,
+        style: &EditorStyle,
+        cx: &mut RenderContext<Self>,
+    ) {
+        enum FoldIndicators {}
+
+        for (fold_location, fold_status) in fold_data.iter() {
+            fold_indicators.push((
+                *fold_location,
+                MouseEventHandler::<FoldIndicators>::new(
+                    *fold_location as usize,
+                    cx,
+                    |_, _| -> ElementBox {
+                        Svg::new(match *fold_status {
+                            FoldStatus::Folded => "icons/chevron_right_8.svg",
+                            FoldStatus::Foldable => "icons/chevron_down_8.svg",
+                        })
+                        .with_color(style.folds.indicator)
+                        .boxed()
+                    },
+                )
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_padding(Padding::uniform(3.))
+                .on_down(MouseButton::Left, {
+                    let fold_location = *fold_location;
+                    let fold_status = *fold_status;
+                    move |_, cx| {
+                        cx.dispatch_any_action(match fold_status {
+                            FoldStatus::Folded => Box::new(UnfoldAt {
+                                display_row: fold_location,
+                            }),
+                            FoldStatus::Foldable => Box::new(FoldAt {
+                                display_row: fold_location,
+                            }),
+                        });
+                    }
+                })
+                .boxed(),
+            ))
         }
     }
 
@@ -3251,26 +3311,12 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            contiguous_row_selections.push(selection.clone());
-            let start_row = selection.start.row;
-            let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).0.row + 1
-            } else {
-                selection.end.row
-            };
-
-            while let Some(next_selection) = selections.peek() {
-                if next_selection.start.row <= end_row {
-                    end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).0.row + 1
-                    } else {
-                        next_selection.end.row
-                    };
-                    contiguous_row_selections.push(selections.next().unwrap().clone());
-                } else {
-                    break;
-                }
-            }
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
 
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row > 0 {
@@ -3363,26 +3409,12 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            contiguous_row_selections.push(selection.clone());
-            let start_row = selection.start.row;
-            let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).0.row + 1
-            } else {
-                selection.end.row
-            };
-
-            while let Some(next_selection) = selections.peek() {
-                if next_selection.start.row <= end_row {
-                    end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).0.row + 1
-                    } else {
-                        next_selection.end.row
-                    };
-                    contiguous_row_selections.push(selections.next().unwrap().clone());
-                } else {
-                    break;
-                }
-            }
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
 
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row <= buffer.max_point().row {
@@ -5676,14 +5708,14 @@ impl Editor {
         let mut fold_ranges = Vec::new();
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
         let selections = self.selections.all::<Point>(cx);
         for selection in selections {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_point(&display_map).row;
 
             for row in (0..=range.end.row()).rev() {
-                if self.is_line_foldable(&display_map, row) && !display_map.is_line_folded(row) {
-                    let fold_range = self.foldable_range_for_line(&display_map, row);
+                if let Some(fold_range) = display_map.foldable_range_for_line(row) {
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
                         if row <= range.start.row() {
@@ -5695,6 +5727,16 @@ impl Editor {
         }
 
         self.fold_ranges(fold_ranges, cx);
+    }
+
+    pub fn fold_at(&mut self, fold_at: &FoldAt, cx: &mut ViewContext<Self>) {
+        let display_row = fold_at.display_row;
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        if let Some(fold_range) = display_map.foldable_range_for_line(display_row) {
+            self.fold_ranges(std::iter::once(fold_range), cx);
+        }
     }
 
     pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
@@ -5715,46 +5757,11 @@ impl Editor {
         self.unfold_ranges(ranges, true, cx);
     }
 
-    fn is_line_foldable(&self, display_map: &DisplaySnapshot, display_row: u32) -> bool {
-        let max_point = display_map.max_point();
-        if display_row >= max_point.row() {
-            false
-        } else {
-            let (start_indent, is_blank) = display_map.line_indent(display_row);
-            if is_blank {
-                false
-            } else {
-                for display_row in display_row + 1..=max_point.row() {
-                    let (indent, is_blank) = display_map.line_indent(display_row);
-                    if !is_blank {
-                        return indent > start_indent;
-                    }
-                }
-                false
-            }
-        }
-    }
+    pub fn unfold_at(&mut self, fold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let unfold_range = display_map.buffer_snapshot.row_span(fold_at.display_row);
 
-    fn foldable_range_for_line(
-        &self,
-        display_map: &DisplaySnapshot,
-        start_row: u32,
-    ) -> Range<Point> {
-        let max_point = display_map.max_point();
-
-        let (start_indent, _) = display_map.line_indent(start_row);
-        let start = DisplayPoint::new(start_row, display_map.line_len(start_row));
-        let mut end = None;
-        for row in start_row + 1..=max_point.row() {
-            let (indent, is_blank) = display_map.line_indent(row);
-            if !is_blank && indent <= start_indent {
-                end = Some(DisplayPoint::new(row - 1, display_map.line_len(row - 1)));
-                break;
-            }
-        }
-
-        let end = end.unwrap_or(max_point);
-        start.to_point(display_map)..end.to_point(display_map)
+        self.unfold_ranges(std::iter::once(unfold_range), true, cx)
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
@@ -6249,6 +6256,35 @@ impl Editor {
                 cx.global::<Settings>().telemetry(),
             );
         }
+    }
+}
+
+fn consume_contiguous_rows(
+    contiguous_row_selections: &mut Vec<Selection<Point>>,
+    selection: &Selection<Point>,
+    display_map: &DisplaySnapshot,
+    selections: &mut std::iter::Peekable<std::slice::Iter<Selection<Point>>>,
+) -> (u32, u32) {
+    contiguous_row_selections.push(selection.clone());
+    let start_row = selection.start.row;
+    let mut end_row = ending_row(selection, display_map);
+
+    while let Some(next_selection) = selections.peek() {
+        if next_selection.start.row <= end_row {
+            end_row = ending_row(next_selection, display_map);
+            contiguous_row_selections.push(selections.next().unwrap().clone());
+        } else {
+            break;
+        }
+    }
+    (start_row, end_row)
+}
+
+fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> u32 {
+    if next_selection.end.column > 0 || next_selection.is_empty() {
+        display_map.next_line_boundary(next_selection.end).0.row + 1
+    } else {
+        next_selection.end.row
     }
 }
 

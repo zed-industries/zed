@@ -23,6 +23,12 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+#[derive(Copy, Clone, Debug)]
+pub enum FoldStatus {
+    Folded,
+    Foldable,
+}
+
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
@@ -589,6 +595,57 @@ impl DisplaySnapshot {
 
     pub fn longest_row(&self) -> u32 {
         self.blocks_snapshot.longest_row()
+    }
+
+    pub fn fold_for_line(self: &Self, display_row: u32) -> Option<FoldStatus> {
+        if self.is_line_foldable(display_row) {
+            Some(FoldStatus::Foldable)
+        } else if self.is_line_folded(display_row) {
+            Some(FoldStatus::Folded)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_line_foldable(self: &Self, display_row: u32) -> bool {
+        let max_point = self.max_point();
+        if display_row >= max_point.row() {
+            false
+        } else {
+            let (start_indent, is_blank) = self.line_indent(display_row);
+            if is_blank {
+                false
+            } else {
+                for display_row in display_row + 1..=max_point.row() {
+                    let (indent, is_blank) = self.line_indent(display_row);
+                    if !is_blank {
+                        return indent > start_indent;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    pub fn foldable_range_for_line(self: &Self, start_row: u32) -> Option<Range<Point>> {
+        if self.is_line_foldable(start_row) && !self.is_line_folded(start_row) {
+            let max_point = self.max_point();
+            let (start_indent, _) = self.line_indent(start_row);
+            let start = DisplayPoint::new(start_row, self.line_len(start_row));
+            let mut end = None;
+            for row in start_row + 1..=max_point.row() {
+                let (indent, is_blank) = self.line_indent(row);
+                if !is_blank && indent <= start_indent {
+                    end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1)));
+                    break;
+                }
+            }
+
+            let end = end.unwrap_or(max_point);
+            Some(start.to_point(self)..end.to_point(self))
+        } else {
+            return None;
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

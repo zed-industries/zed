@@ -562,6 +562,7 @@ pub struct Editor {
     pub invalid_hint_diagnostic: DiagnosticStyle,
     pub autocomplete: AutocompleteStyle,
     pub code_actions: CodeActions,
+    pub folds: Folds,
     pub unnecessary_code_fade: f32,
     pub hover_popover: HoverPopover,
     pub link_definition: HighlightStyle,
@@ -636,6 +637,13 @@ pub struct CodeActions {
     #[serde(default)]
     pub indicator: Color,
     pub vertical_scale: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Folds {
+    #[serde(default)]
+    pub indicator: Color,
+    pub fold_background: Color,
 }
 
 #[derive(Clone, Deserialize, Default)]

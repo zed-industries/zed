@@ -4,7 +4,7 @@ use super::{
     ToPoint, MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         HideHover, HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -575,6 +575,16 @@ impl EditorElement {
             y += (line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
+
+        for (line, fold_indicator) in layout.fold_indicators.iter_mut() {
+            let mut x = bounds.width() - layout.gutter_padding;
+            let mut y = *line as f32 * line_height - scroll_top;
+
+            x += ((layout.gutter_padding + layout.gutter_margin) - fold_indicator.size().x()) / 2.;
+            y += (line_height - fold_indicator.size().y()) / 2.;
+
+            fold_indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
+        }
     }
 
     fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
@@ -1116,6 +1126,21 @@ impl EditorElement {
                 )],
             )
             .width()
+    }
+
+    fn get_fold_indicators(
+        &self,
+        display_rows: Range<u32>,
+        snapshot: &EditorSnapshot,
+    ) -> Vec<(u32, FoldStatus)> {
+        display_rows
+            .into_iter()
+            .filter_map(|display_row| {
+                snapshot
+                    .fold_for_line(display_row)
+                    .map(|fold_status| (display_row, fold_status))
+            })
+            .collect()
     }
 
     //Folds contained in a hunk are ignored apart from shrinking visual size
@@ -1689,6 +1714,8 @@ impl Element for EditorElement {
 
         let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
+        let folds = self.get_fold_indicators(start_row..end_row, &snapshot);
+
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
@@ -1751,6 +1778,7 @@ impl Element for EditorElement {
             }
         });
 
+        let mut fold_indicators = Vec::with_capacity(folds.len());
         let mut context_menu = None;
         let mut code_actions_indicator = None;
         let mut hover = None;
@@ -1774,6 +1802,8 @@ impl Element for EditorElement {
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
+            view.render_fold_indicators(folds, &mut fold_indicators, &style, cx);
+
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
             mode = view.mode;
@@ -1793,6 +1823,16 @@ impl Element for EditorElement {
         }
 
         if let Some((_, indicator)) = code_actions_indicator.as_mut() {
+            indicator.layout(
+                SizeConstraint::strict_along(
+                    Axis::Vertical,
+                    line_height * style.code_actions.vertical_scale,
+                ),
+                cx,
+            );
+        }
+
+        for (_, indicator) in fold_indicators.iter_mut() {
             indicator.layout(
                 SizeConstraint::strict_along(
                     Axis::Vertical,
@@ -1851,6 +1891,7 @@ impl Element for EditorElement {
                 selections,
                 context_menu,
                 code_actions_indicator,
+                fold_indicators,
                 hover_popovers: hover,
             },
         )
@@ -1979,6 +2020,7 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
+    fold_indicators: Vec<(u32, ElementBox)>,
 }
 
 pub struct PositionMap {

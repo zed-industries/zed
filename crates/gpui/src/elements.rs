@@ -296,7 +296,10 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     paint,
                 }
             }
-            _ => panic!("invalid element lifecycle state"),
+            Lifecycle::Empty => panic!("invalid element lifecycle state"),
+            Lifecycle::Init { .. } => {
+                panic!("invalid element lifecycle state, paint called before layout")
+            }
         }
     }
 

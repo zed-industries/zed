@@ -47,6 +47,10 @@ export default function editor(colorScheme: ColorScheme) {
             indicator: foreground(layer, "variant"),
             verticalScale: 0.55,
         },
+        folds: {
+            indicator: foreground(layer, "variant"),
+            fold_background: foreground(layer, "variant"),
+        },
         diff: {
             deleted: foreground(layer, "negative"),
             modified: foreground(layer, "warning"),
