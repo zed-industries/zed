@@ -33,14 +33,14 @@ export function createColorScheme(
     // function to any in order to get the colors back out from the original ramps.
     if (isLight) {
         for (var rampName in colorRamps) {
-            ; (ramps as any)[rampName] = chroma.scale(
+            ;(ramps as any)[rampName] = chroma.scale(
                 colorRamps[rampName].colors(100).reverse()
             )
         }
         ramps.neutral = chroma.scale(colorRamps.neutral.colors(100).reverse())
     } else {
         for (var rampName in colorRamps) {
-            ; (ramps as any)[rampName] = chroma.scale(
+            ;(ramps as any)[rampName] = chroma.scale(
                 colorRamps[rampName].colors(100)
             )
         }
@@ -96,7 +96,7 @@ export function createColorScheme(
         modalShadow,
 
         players,
-        syntax
+        syntax,
     }
 }
 

@@ -102,34 +102,34 @@ export interface Style {
 }
 
 export interface SyntaxHighlightStyle {
-    color: string,
+    color: string
     weight?: FontWeight
     underline?: boolean
     italic?: boolean
 }
 
 export interface Syntax {
-    primary: SyntaxHighlightStyle,
-    "variable.special": SyntaxHighlightStyle,
-    comment: SyntaxHighlightStyle,
-    punctuation: SyntaxHighlightStyle,
-    constant: SyntaxHighlightStyle,
-    keyword: SyntaxHighlightStyle,
-    function: SyntaxHighlightStyle,
-    type: SyntaxHighlightStyle,
-    constructor: SyntaxHighlightStyle,
-    variant: SyntaxHighlightStyle,
-    property: SyntaxHighlightStyle,
-    enum: SyntaxHighlightStyle,
-    operator: SyntaxHighlightStyle,
-    string: SyntaxHighlightStyle,
-    number: SyntaxHighlightStyle,
-    boolean: SyntaxHighlightStyle,
-    predictive: SyntaxHighlightStyle,
-    title: SyntaxHighlightStyle,
-    emphasis: SyntaxHighlightStyle,
-    "emphasis.strong": SyntaxHighlightStyle,
-    linkUri: SyntaxHighlightStyle,
+    primary: SyntaxHighlightStyle
+    "variable.special": SyntaxHighlightStyle
+    comment: SyntaxHighlightStyle
+    punctuation: SyntaxHighlightStyle
+    constant: SyntaxHighlightStyle
+    keyword: SyntaxHighlightStyle
+    function: SyntaxHighlightStyle
+    type: SyntaxHighlightStyle
+    constructor: SyntaxHighlightStyle
+    variant: SyntaxHighlightStyle
+    property: SyntaxHighlightStyle
+    enum: SyntaxHighlightStyle
+    operator: SyntaxHighlightStyle
+    string: SyntaxHighlightStyle
+    number: SyntaxHighlightStyle
+    boolean: SyntaxHighlightStyle
+    predictive: SyntaxHighlightStyle
+    title: SyntaxHighlightStyle
+    emphasis: SyntaxHighlightStyle
+    "emphasis.strong": SyntaxHighlightStyle
+    linkUri: SyntaxHighlightStyle
     linkText: SyntaxHighlightStyle
 }
 

@@ -1,5 +1,5 @@
 import chroma from "chroma-js"
-import { fontWeights } from "../common";
+import { fontWeights } from "../common"
 import { Meta, ThemeSyntax } from "./common/colorScheme"
 import { colorRamp, createColorScheme } from "./common/ramps"
 
@@ -15,8 +15,8 @@ const color = {
     teal: "#3982B7",
     blue: "#5B79E3",
     purple: "#A449AB",
-    magenta: "#994EA6"
-};
+    magenta: "#994EA6",
+}
 
 const ramps = {
     neutral: chroma
@@ -30,8 +30,7 @@ const ramps = {
             "#EAEAEB",
             "#FAFAFA",
         ])
-        .domain([0.05, 0.22, 0.25, 0.45, 0.62, 0.8, 0.9, 1])
-    ,
+        .domain([0.05, 0.22, 0.25, 0.45, 0.62, 0.8, 0.9, 1]),
     red: colorRamp(chroma(color.red)),
     orange: colorRamp(chroma(color.orange)),
     yellow: colorRamp(chroma(color.yellow)),
@@ -40,7 +39,7 @@ const ramps = {
     blue: colorRamp(chroma(color.blue)),
     violet: colorRamp(chroma(color.purple)),
     magenta: colorRamp(chroma(color.magenta)),
-};
+}
 
 const syntax: ThemeSyntax = {
     primary: { color: color.black },

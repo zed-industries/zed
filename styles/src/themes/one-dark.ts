@@ -14,7 +14,7 @@ const color = {
     teal: "#6FB4C0",
     blue: "#74ADE9",
     purple: "#B478CF",
-};
+}
 
 const ramps = {
     neutral: chroma
@@ -37,7 +37,7 @@ const ramps = {
     blue: colorRamp(chroma(color.blue)),
     violet: colorRamp(chroma(color.purple)),
     magenta: colorRamp(chroma("#be5046")),
-};
+}
 
 const syntax: ThemeSyntax = {
     primary: { color: color.white },
@@ -50,7 +50,7 @@ const syntax: ThemeSyntax = {
     keyword: { color: color.purple },
     boolean: { color: color.orange },
     punctuation: { color: color.white },
-    operator: { color: color.teal }
+    operator: { color: color.teal },
 }
 
 export const dark = createColorScheme(name, false, ramps, syntax)

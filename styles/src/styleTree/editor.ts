@@ -1,11 +1,16 @@
 import { fontWeights } from "../common"
 import { withOpacity } from "../utils/color"
-import { ColorScheme, Layer, StyleSets, Syntax, ThemeSyntax } from "../themes/common/colorScheme"
+import {
+    ColorScheme,
+    Layer,
+    StyleSets,
+    Syntax,
+    ThemeSyntax,
+} from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import deepmerge from 'deepmerge';
-
+import deepmerge from "deepmerge"
 
 export default function editor(colorScheme: ColorScheme) {
     let layer = colorScheme.highest
@@ -137,12 +142,16 @@ export default function editor(colorScheme: ColorScheme) {
             return defaultSyntax
         }
 
-        return deepmerge<Syntax, Partial<ThemeSyntax>>(defaultSyntax, colorScheme.syntax, {
-            arrayMerge: (destinationArray, sourceArray) => [
-                ...destinationArray,
-                ...sourceArray,
-            ],
-        });
+        return deepmerge<Syntax, Partial<ThemeSyntax>>(
+            defaultSyntax,
+            colorScheme.syntax,
+            {
+                arrayMerge: (destinationArray, sourceArray) => [
+                    ...destinationArray,
+                    ...sourceArray,
+                ],
+            }
+        )
     }
 
     const syntax = createSyntax(colorScheme)
