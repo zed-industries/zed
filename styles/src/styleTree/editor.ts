@@ -1,9 +1,5 @@
 import { withOpacity } from "../utils/color"
-import {
-    ColorScheme,
-    Layer,
-    StyleSets,
-} from "../themes/common/colorScheme"
+import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 

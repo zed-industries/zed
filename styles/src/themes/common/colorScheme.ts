@@ -112,7 +112,7 @@ export interface Syntax {
     // == Text Styles ====== /
     comment: SyntaxHighlightStyle
     // elixir: doc comment
-    "comment.doc": SyntaxHighlightStyle,
+    "comment.doc": SyntaxHighlightStyle
     primary: SyntaxHighlightStyle
     predictive: SyntaxHighlightStyle
 
@@ -128,12 +128,12 @@ export interface Syntax {
     // == Punctuation ====== /
     punctuation: SyntaxHighlightStyle
     /** Example: `(`, `[`, `{`...*/
-    "punctuation.bracket": SyntaxHighlightStyle,
+    "punctuation.bracket": SyntaxHighlightStyle
     /**., ;*/
-    "punctuation.delimiter": SyntaxHighlightStyle,
+    "punctuation.delimiter": SyntaxHighlightStyle
     // js, ts: ${, } in a template literal
     // yaml: *, &, ---, ...
-    "punctuation.special": SyntaxHighlightStyle,
+    "punctuation.special": SyntaxHighlightStyle
     // md: list_marker_plus, list_marker_dot, etc
     "punctuation.list_marker": SyntaxHighlightStyle
 
@@ -144,23 +144,23 @@ export interface Syntax {
     // js: this, super
     // racket: regex
     // toml: offset_date_time, local_date_time...
-    "string.special": SyntaxHighlightStyle,
+    "string.special": SyntaxHighlightStyle
     // elixir: atom, quoted_atom, keyword, quoted_keyword
     // ruby: simple_symbol, delimited_symbol...
     "string.special.symbol": SyntaxHighlightStyle
     // ruby: Regular expression
     "string.special.regex": SyntaxHighlightStyle
     // elixir, python, yaml...: escape_sequence
-    "string.escape": SyntaxHighlightStyle,
+    "string.escape": SyntaxHighlightStyle
     // Regular expressions
-    "string.regex": SyntaxHighlightStyle,
+    "string.regex": SyntaxHighlightStyle
 
     // == Types ====== /
     constructor: SyntaxHighlightStyle
     variant: SyntaxHighlightStyle
     type: SyntaxHighlightStyle
     // js: predefined_type
-    "type.builtin": SyntaxHighlightStyle,
+    "type.builtin": SyntaxHighlightStyle
 
     // == Values
 
@@ -170,12 +170,12 @@ export interface Syntax {
     // css: -- (var(--foo))
     // lua: self
     "variable.special": SyntaxHighlightStyle
-    // c: statement_identifier, 
-    label: SyntaxHighlightStyle,
+    // c: statement_identifier,
+    label: SyntaxHighlightStyle
     // css: tag_name, nesting_selector, universal_selector...
-    tag: SyntaxHighlightStyle,
-    // css: attribute, pseudo_element_selector (tag_name), 
-    attribute: SyntaxHighlightStyle,
+    tag: SyntaxHighlightStyle
+    // css: attribute, pseudo_element_selector (tag_name),
+    attribute: SyntaxHighlightStyle
     // css: class_name, property_name, namespace_name...
     property: SyntaxHighlightStyle
     // true, false, null, nullptr
@@ -191,7 +191,7 @@ export interface Syntax {
     boolean: SyntaxHighlightStyle
     // elixir: __MODULE__, __DIR__, __ENV__, etc
     // go: nil, iota
-    "constant.builtin": SyntaxHighlightStyle,
+    "constant.builtin": SyntaxHighlightStyle
 
     // == Functions ====== /
 
@@ -204,9 +204,9 @@ export interface Syntax {
     // js: call_expression, method_definition, pair (key, arrow function)
     // rust: function_item name: (identifier)
     "function.definition": SyntaxHighlightStyle
-    // rust: macro_definition name: (identifier) 
+    // rust: macro_definition name: (identifier)
     "function.special.definition": SyntaxHighlightStyle
-    "function.method": SyntaxHighlightStyle,
+    "function.method": SyntaxHighlightStyle
     // ruby: identifier/"defined?" // Nate note: I don't fully understand this one.
     "function.method.builtin": SyntaxHighlightStyle
 
@@ -215,7 +215,7 @@ export interface Syntax {
     preproc: SyntaxHighlightStyle
     // elixir, python: interpolation (ex: foo in ${foo})
     // js: template_substitution
-    embedded: SyntaxHighlightStyle,
+    embedded: SyntaxHighlightStyle
 }
 
 // HACK: "constructor" as a key in the syntax interface returns an error when a theme tries to use it.
