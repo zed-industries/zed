@@ -38,7 +38,7 @@ export default function editor(colorScheme: ColorScheme) {
         }
     }
 
-    const syntax: Syntax = {
+    const defaultSyntax: Syntax = {
         primary: {
             color: colorScheme.ramps.neutral(1).hex(),
             weight: fontWeights.normal,
@@ -134,10 +134,10 @@ export default function editor(colorScheme: ColorScheme) {
 
     function createSyntax(colorScheme: ColorScheme): Syntax {
         if (!colorScheme.syntax) {
-            return syntax
+            return defaultSyntax
         }
 
-        return deepmerge<Syntax, Partial<ThemeSyntax>>(syntax, colorScheme.syntax, {
+        return deepmerge<Syntax, Partial<ThemeSyntax>>(defaultSyntax, colorScheme.syntax, {
             arrayMerge: (destinationArray, sourceArray) => [
                 ...destinationArray,
                 ...sourceArray,
@@ -145,7 +145,7 @@ export default function editor(colorScheme: ColorScheme) {
         });
     }
 
-    const mergedSyntax = createSyntax(colorScheme)
+    const syntax = createSyntax(colorScheme)
 
     return {
         textColor: syntax.primary.color,
@@ -303,6 +303,6 @@ export default function editor(colorScheme: ColorScheme) {
                 color: borderColor(layer),
             },
         },
-        syntax: mergedSyntax,
+        syntax,
     }
 }
