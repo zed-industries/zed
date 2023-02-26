@@ -5715,7 +5715,7 @@ impl Editor {
             let buffer_start_row = range.start.to_point(&display_map).row;
 
             for row in (0..=range.end.row()).rev() {
-                if let Some(fold_range) = display_map.foldable_range_for_line(row) {
+                if let Some(fold_range) = display_map.foldable_range(DisplayRow::new(row)) {
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
                         if row <= range.start.row() {
@@ -5734,7 +5734,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if let Some(fold_range) = display_map.foldable_range_for_line(display_row.0) {
+        if let Some(fold_range) = display_map.foldable_range(display_row) {
             self.fold_ranges(std::iter::once(fold_range), true, cx);
         }
     }
@@ -5762,7 +5762,7 @@ impl Editor {
 
         let display_range = fold_at
             .display_row
-            .to_span(&display_map)
+            .to_line_span(&display_map)
             .map_endpoints(|endpoint| endpoint.to_point(&display_map));
 
         self.unfold_ranges(std::iter::once(display_range), true, true, cx)

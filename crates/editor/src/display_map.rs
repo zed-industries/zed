@@ -576,10 +576,10 @@ impl DisplaySnapshot {
         result
     }
 
-    pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
+    pub fn line_indent(&self, display_row: DisplayRow) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
-        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
+        for (c, _) in self.chars_at(display_row.start(self)) {
             if c == ' ' {
                 indent += 1;
             } else {
@@ -599,7 +599,8 @@ impl DisplaySnapshot {
     }
 
     pub fn fold_for_line(self: &Self, display_row: u32) -> Option<FoldStatus> {
-        if self.is_line_foldable(display_row) {
+        let display_row_typed = DisplayRow::new(display_row);
+        if self.is_foldable(display_row_typed) {
             Some(FoldStatus::Foldable)
         } else if self.is_line_folded(display_row) {
             Some(FoldStatus::Folded)
@@ -608,44 +609,43 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn is_line_foldable(self: &Self, display_row: u32) -> bool {
-        let max_point = self.max_point();
-        if display_row >= max_point.row() {
-            false
-        } else {
-            let (start_indent, is_blank) = self.line_indent(display_row);
+    pub fn is_foldable(self: &Self, row: DisplayRow) -> bool {
+        if let Some(next_lines) = row.next_rows(self) {
+            let (start_indent, is_blank) = self.line_indent(row);
             if is_blank {
-                false
-            } else {
-                for display_row in display_row + 1..=max_point.row() {
-                    let (indent, is_blank) = self.line_indent(display_row);
-                    if !is_blank {
-                        return indent > start_indent;
-                    }
+                return false;
+            }
+
+            for display_row in next_lines {
+                let (indent, is_blank) = self.line_indent(display_row);
+                if !is_blank {
+                    return indent > start_indent;
                 }
-                false
             }
         }
+        return false;
     }
 
-    pub fn foldable_range_for_line(self: &Self, start_row: u32) -> Option<Range<Point>> {
-        if self.is_line_foldable(start_row) && !self.is_line_folded(start_row) {
+    pub fn foldable_range(self: &Self, row: DisplayRow) -> Option<Range<Point>> {
+        let start = row.end(&self);
+
+        if self.is_foldable(row) && !self.is_line_folded(start.row()) {
+            let (start_indent, _) = self.line_indent(row);
             let max_point = self.max_point();
-            let (start_indent, _) = self.line_indent(start_row);
-            let start = DisplayPoint::new(start_row, self.line_len(start_row));
             let mut end = None;
-            for row in start_row + 1..=max_point.row() {
+
+            for row in row.next_rows(self).unwrap() {
                 let (indent, is_blank) = self.line_indent(row);
                 if !is_blank && indent <= start_indent {
-                    end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1)));
+                    end = row.previous_row(self);
                     break;
                 }
             }
 
-            let end = end.unwrap_or(max_point);
+            let end = end.map(|end_row| end_row.end(self)).unwrap_or(max_point);
             Some(start.to_point(self)..end.to_point(self))
         } else {
-            return None;
+            None
         }
     }
 
@@ -665,19 +665,74 @@ pub struct DisplayPoint(BlockPoint);
 #[repr(transparent)]
 pub struct DisplayRow(pub u32);
 
+// TODO: Move display_map check into new, and then remove it from everywhere else
 impl DisplayRow {
     pub fn new(display_row: u32) -> Self {
         DisplayRow(display_row)
     }
 
-    pub fn to_span(self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
-        let row_start = DisplayPoint::new(self.0, 0);
-        let row_end = DisplayPoint::new(
-            self.0,
-            display_map.buffer_snapshot.line_len(row_start.row()),
-        );
+    pub fn to_line_span(&self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
+        self.start(display_map)..self.end(&display_map)
+    }
 
-        row_start..row_end
+    pub fn previous_row(&self, _display_map: &DisplaySnapshot) -> Option<DisplayRow> {
+        self.0.checked_sub(1).map(|prev_row| DisplayRow(prev_row))
+    }
+
+    pub fn next_row(&self, display_map: &DisplaySnapshot) -> Option<DisplayRow> {
+        if self.0 + 1 > display_map.max_point().row() {
+            None
+        } else {
+            Some(DisplayRow(self.0 + 1))
+        }
+    }
+
+    // TODO: Remove and use next_row
+    fn next_unchecked(&self) -> Option<DisplayRow> {
+        Some(DisplayRow(self.0 + 1))
+    }
+
+    pub fn next_rows(
+        &self,
+        display_map: &DisplaySnapshot,
+    ) -> Option<impl Iterator<Item = DisplayRow>> {
+        self.next_row(display_map)
+            .and_then(|next_row| next_row.span_to(display_map.max_point()))
+    }
+
+    pub fn span_to<I: Into<DisplayRow>>(
+        &self,
+        end_row: I,
+    ) -> Option<impl Iterator<Item = DisplayRow>> {
+        let end_row = end_row.into();
+        if self.0 <= end_row.0 {
+            let start = *self;
+            let mut current = None;
+
+            Some(std::iter::from_fn(move || {
+                if current == None {
+                    current = Some(start);
+                } else {
+                    current = current.unwrap().next_unchecked();
+                }
+                if current.unwrap().0 > end_row.0 {
+                    None
+                } else {
+                    current
+                }
+            }))
+        } else {
+            None
+        }
+    }
+
+    // Force users to think about the display map when using this type
+    pub fn start(&self, _display_map: &DisplaySnapshot) -> DisplayPoint {
+        DisplayPoint::new(self.0, 0)
+    }
+
+    pub fn end(&self, display_map: &DisplaySnapshot) -> DisplayPoint {
+        DisplayPoint::new(self.0, display_map.line_len(self.0))
     }
 }
 

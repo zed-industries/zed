@@ -12,7 +12,7 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::ToDisplayPoint,
+    display_map::{DisplayRow, ToDisplayPoint},
     scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
     Anchor, Bias, ClipboardSelection, DisplayPoint, Editor,
 };
@@ -195,7 +195,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                     .map(|selection| selection.start.row())
                     .collect();
                 let edits = selection_start_rows.into_iter().map(|row| {
-                    let (indent, _) = map.line_indent(row);
+                    let (indent, _) = map.line_indent(DisplayRow::new(row));
                     let start_of_line = map
                         .clip_point(DisplayPoint::new(row, 0), Bias::Left)
                         .to_point(&map);
@@ -216,6 +216,8 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
     });
 }
 
+// TODO: FIGURE OUT WHY PANIC WHEN CLICKING ON FOLDS
+
 fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.switch_mode(Mode::Insert, false, cx);
@@ -227,7 +229,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                     .map(|selection| selection.end.row())
                     .collect();
                 let edits = selection_end_rows.into_iter().map(|row| {
-                    let (indent, _) = map.line_indent(row);
+                    let (indent, _) = map.line_indent(DisplayRow::new(row));
                     let end_of_line = map
                         .clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left)
                         .to_point(&map);
