@@ -8,10 +8,13 @@ const defaultSyntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
 }
 
 function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
+    // Make a temporary object that is allowed to be missing 
+    // the "color" property for each style
     const syntax: {
         [key: string]: Omit<SyntaxHighlightStyle, "color">
     } = {}
 
+    // then spread the default to each style
     for (const key of Object.keys({} as Syntax)) {
         syntax[key as keyof Syntax] = {
             ...defaultSyntaxHighlightStyle
@@ -22,6 +25,7 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         comment: colorScheme.ramps.neutral(0.71).hex()
     }
 
+    // Then assign colors and use Syntax to enforce each style getting it's own color
     const defaultSyntax: Syntax = {
         ...syntax,
         comment: {
