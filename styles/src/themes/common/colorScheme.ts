@@ -122,7 +122,7 @@ export interface Syntax {
     title: SyntaxHighlightStyle
     linkUri: SyntaxHighlightStyle
     linkText: SyntaxHighlightStyle
-    // md: indented_code_block, fenced_code_block, code_span
+    /** md: indented_code_block, fenced_code_block, code_span */
     "text.literal": SyntaxHighlightStyle
 
     // == Punctuation ====== /
