@@ -1,4 +1,5 @@
 import chroma from "chroma-js"
+import { fontWeights } from "../common"
 import { Meta, ThemeSyntax } from "./common/colorScheme"
 import { colorRamp, createColorScheme } from "./common/ramps"
 
@@ -8,6 +9,7 @@ const color = {
     white: "#ACB2BE",
     grey: "#5D636F",
     red: "#D07277",
+    darkRed: "#B1574B",
     orange: "#C0966B",
     yellow: "#DFC184",
     green: "#A1C181",
@@ -47,10 +49,22 @@ const syntax: ThemeSyntax = {
     property: { color: color.red },
     number: { color: color.orange },
     string: { color: color.green },
+    "text.literal": { color: color.green },
     keyword: { color: color.purple },
     boolean: { color: color.orange },
+    title: { color: color.red, weight: fontWeights.normal },
     punctuation: { color: color.white },
+    "punctuation.special": { color: color.darkRed },
+    "punctuation.list_marker": { color: color.red },
     operator: { color: color.teal },
+    "variable.special": { color: color.orange },
+    variant: { color: color.blue },
+    enum: { color: color.red },
+    "emphasis.strong": {
+        color: color.orange,
+    },
+    linkText: { color: color.blue, italic: false },
+    linkUri: { color: color.teal },
 }
 
 export const dark = createColorScheme(name, false, ramps, syntax)
