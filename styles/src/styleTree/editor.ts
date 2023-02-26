@@ -1,16 +1,12 @@
-import { fontWeights } from "../common"
 import { withOpacity } from "../utils/color"
 import {
     ColorScheme,
     Layer,
     StyleSets,
-    Syntax,
-    ThemeSyntax,
 } from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import deepmerge from "deepmerge"
 import { buildSyntax } from "../themes/common/syntax"
 
 export default function editor(colorScheme: ColorScheme) {
