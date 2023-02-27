@@ -51,6 +51,8 @@
     // 3. Position the dock full screen over the entire workspace"
     //     "default_dock_anchor": "expanded"
     "default_dock_anchor": "right",
+    // Whether or not to remove trailing whitespace from lines before saving.
+    "remove_trailing_whitespace_on_save": true,
     // Whether or not to perform a buffer format before saving
     "format_on_save": "on",
     // How to perform a buffer format. This setting can take two values:

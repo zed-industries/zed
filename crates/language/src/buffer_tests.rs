@@ -235,7 +235,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the foratting task starts running.
-    let format = buffer.read_with(cx, |buffer, cx| buffer.normalize_whitespace(cx));
+    let format = buffer.read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
     smol::future::yield_now().await;
 
     // Edit the buffer while the normalization task is running.

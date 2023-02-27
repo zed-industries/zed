@@ -1154,7 +1154,7 @@ impl Buffer {
         })
     }
 
-    pub fn normalize_whitespace(&self, cx: &AppContext) -> Task<Diff> {
+    pub fn remove_trailing_whitespace(&self, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
@@ -1189,7 +1189,7 @@ impl Buffer {
         &mut self,
         diff: Diff,
         cx: &mut ModelContext<Self>,
-    ) -> Option<&Transaction> {
+    ) -> Option<TransactionId> {
         // Check for any edits to the buffer that have occurred since this diff
         // was computed.
         let snapshot = self.snapshot();
@@ -1219,12 +1219,10 @@ impl Buffer {
             Some((start..end, new_text))
         });
 
-        self.finalize_last_transaction();
         self.start_transaction();
         self.text.set_line_ending(diff.line_ending);
         self.edit(adjusted_edits, None, cx);
-        self.end_transaction(cx)?;
-        self.finalize_last_transaction()
+        self.end_transaction(cx)
     }
 
     pub fn is_dirty(&self) -> bool {

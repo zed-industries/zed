@@ -26,7 +26,7 @@ use language::{
         serialize_anchor, serialize_version,
     },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
     Operation, Patch, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
@@ -2887,38 +2887,68 @@ impl Project {
 
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
-                    let (format_on_save, formatter, tab_size) =
-                        buffer.read_with(&cx, |buffer, cx| {
+                    let (format_on_save, remove_trailing_whitespace, formatter, tab_size) = buffer
+                        .read_with(&cx, |buffer, cx| {
                             let settings = cx.global::<Settings>();
                             let language_name = buffer.language().map(|language| language.name());
                             (
                                 settings.format_on_save(language_name.as_deref()),
+                                settings
+                                    .remove_trailing_whitespace_on_save(language_name.as_deref()),
                                 settings.formatter(language_name.as_deref()),
                                 settings.tab_size(language_name.as_deref()),
                             )
                         });
 
-                    let transaction = match (formatter, format_on_save) {
-                        (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => continue,
+                    let whitespace_transaction_id = if remove_trailing_whitespace {
+                        let diff = buffer
+                            .read_with(&cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
+                            .await;
+                        buffer.update(&mut cx, move |buffer, cx| {
+                            buffer.finalize_last_transaction();
+                            buffer.apply_diff_force(diff, cx)
+                        })
+                    } else {
+                        None
+                    };
+
+                    match (formatter, format_on_save) {
+                        (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
                         (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
-                        | (_, FormatOnSave::LanguageServer) => Self::format_via_lsp(
-                            &this,
-                            &buffer,
-                            &buffer_abs_path,
-                            &language_server,
-                            tab_size,
-                            &mut cx,
-                        )
-                        .await
-                        .context("failed to format via language server")?,
+                        | (_, FormatOnSave::LanguageServer) => {
+                            let edits = Self::format_via_lsp(
+                                &this,
+                                &buffer,
+                                &buffer_abs_path,
+                                &language_server,
+                                tab_size,
+                                &mut cx,
+                            )
+                            .await
+                            .context("failed to format via language server")?;
+
+                            buffer.update(&mut cx, |buffer, cx| {
+                                if let Some(tx_id) = whitespace_transaction_id {
+                                    if buffer
+                                        .peek_undo_stack()
+                                        .map_or(false, |e| e.transaction_id() == tx_id)
+                                    {
+                                        buffer.edit(edits, None, cx);
+                                    }
+                                    buffer.group_until_transaction(tx_id);
+                                } else {
+                                    buffer.edit(edits, None, cx);
+                                }
+                            });
+                        }
 
                         (
                             Formatter::External { command, arguments },
                             FormatOnSave::On | FormatOnSave::Off,
                         )
                         | (_, FormatOnSave::External { command, arguments }) => {
-                            Self::format_via_external_command(
+                            let diff = Self::format_via_external_command(
                                 &buffer,
                                 &buffer_abs_path,
                                 &command,
@@ -2929,9 +2959,29 @@ impl Project {
                             .context(format!(
                                 "failed to format via external command {:?}",
                                 command
-                            ))?
+                            ))?;
+
+                            if let Some(diff) = diff {
+                                buffer.update(&mut cx, |buffer, cx| {
+                                    if let Some(tx_id) = whitespace_transaction_id {
+                                        if buffer
+                                            .peek_undo_stack()
+                                            .map_or(false, |e| e.transaction_id() == tx_id)
+                                        {
+                                            buffer.apply_diff(diff, cx);
+                                        }
+                                        buffer.group_until_transaction(tx_id);
+                                    } else {
+                                        buffer.apply_diff(diff, cx);
+                                    }
+                                });
+                            }
                         }
                     };
+
+                    let transaction = buffer.update(&mut cx, |buffer, _| {
+                        buffer.finalize_last_transaction().cloned()
+                    });
 
                     if let Some(transaction) = transaction {
                         if !push_to_history {
@@ -2981,7 +3031,7 @@ impl Project {
         language_server: &Arc<LanguageServer>,
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
         let text_document =
             lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(abs_path).unwrap());
         let capabilities = &language_server.capabilities();
@@ -3028,26 +3078,12 @@ impl Project {
         };
 
         if let Some(lsp_edits) = lsp_edits {
-            let edits = this
-                .update(cx, |this, cx| {
-                    this.edits_from_lsp(buffer, lsp_edits, None, cx)
-                })
-                .await?;
-            buffer.update(cx, |buffer, cx| {
-                buffer.finalize_last_transaction();
-                buffer.start_transaction();
-                for (range, text) in edits {
-                    buffer.edit([(range, text)], None, cx);
-                }
-                if buffer.end_transaction(cx).is_some() {
-                    let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                    Ok(Some(transaction))
-                } else {
-                    Ok(None)
-                }
+            this.update(cx, |this, cx| {
+                this.edits_from_lsp(buffer, lsp_edits, None, cx)
             })
+            .await
         } else {
-            Ok(None)
+            Ok(Default::default())
         }
     }
 
@@ -3057,7 +3093,7 @@ impl Project {
         command: &str,
         arguments: &[String],
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<Diff>> {
         let working_dir_path = buffer.read_with(cx, |buffer, cx| {
             let file = File::from_dyn(buffer.file())?;
             let worktree = file.worktree.read(cx).as_local()?;
@@ -3100,10 +3136,11 @@ impl Project {
             }
 
             let stdout = String::from_utf8(output.stdout)?;
-            let diff = buffer
-                .read_with(cx, |buffer, cx| buffer.diff(stdout, cx))
-                .await;
-            Ok(buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx).cloned()))
+            Ok(Some(
+                buffer
+                    .read_with(cx, |buffer, cx| buffer.diff(stdout, cx))
+                    .await,
+            ))
         } else {
             Ok(None)
         }
