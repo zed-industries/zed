@@ -49,7 +49,8 @@ export default function editor(colorScheme: ColorScheme) {
         },
         folds: {
             indicator: foreground(layer, "variant"),
-            fold_background: foreground(layer, "variant"),
+            fadedIndicator: background(layer, "on"),
+            foldBackground: foreground(layer, "variant"),
         },
         diff: {
             deleted: foreground(layer, "negative"),

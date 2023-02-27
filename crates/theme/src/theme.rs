@@ -643,6 +643,7 @@ pub struct CodeActions {
 pub struct Folds {
     #[serde(default)]
     pub indicator: Color,
+    pub faded_indicator: Color,
     pub fold_background: Color,
 }
 

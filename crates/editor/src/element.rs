@@ -14,7 +14,7 @@ use crate::{
     },
     mouse_context_menu::DeployMouseContextMenu,
     scroll::actions::Scroll,
-    EditorStyle,
+    EditorStyle, GutterHover,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -213,6 +213,17 @@ impl EditorElement {
                     }
                 }),
         );
+
+        enum GutterHandlers {}
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<GutterHandlers>(view.id(), view.id() + 1, gutter_bounds).on_hover(
+                |hover, cx| {
+                    cx.dispatch_action(GutterHover {
+                        hovered: hover.started,
+                    })
+                },
+            ),
+        )
     }
 
     fn mouse_down(
@@ -419,6 +430,7 @@ impl EditorElement {
         });
 
         cx.dispatch_action(HoverAt { point });
+
         true
     }
 
@@ -1815,7 +1827,7 @@ impl Element for EditorElement {
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
             mode = view.mode;
 
-            view.render_fold_indicators(folds, &style, cx)
+            view.render_fold_indicators(folds, &style, view.gutter_hovered, cx)
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {

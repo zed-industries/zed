@@ -171,6 +171,11 @@ pub struct UnfoldAt {
     pub display_row: DisplayRow,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct GutterHover {
+    pub hovered: bool,
+}
+
 actions!(
     editor,
     [
@@ -270,7 +275,8 @@ impl_actions!(
         ConfirmCodeAction,
         ToggleComments,
         FoldAt,
-        UnfoldAt
+        UnfoldAt,
+        GutterHover
     ]
 );
 
@@ -364,6 +370,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::fold_at);
     cx.add_action(Editor::unfold_lines);
     cx.add_action(Editor::unfold_at);
+    cx.add_action(Editor::gutter_hover);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
@@ -495,6 +502,7 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
+    gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     _subscriptions: Vec<Subscription>,
 }
@@ -1166,6 +1174,7 @@ impl Editor {
             remote_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
+            gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -2688,6 +2697,7 @@ impl Editor {
         &self,
         fold_data: Option<Vec<(u32, FoldStatus)>>,
         style: &EditorStyle,
+        gutter_hovered: bool,
         cx: &mut RenderContext<Self>,
     ) -> Option<Vec<(u32, ElementBox)>> {
         enum FoldIndicators {}
@@ -2695,26 +2705,31 @@ impl Editor {
         fold_data.map(|fold_data| {
             fold_data
                 .iter()
+                .copied()
                 .map(|(fold_location, fold_status)| {
                     (
-                        *fold_location,
+                        fold_location,
                         MouseEventHandler::<FoldIndicators>::new(
-                            *fold_location as usize,
+                            fold_location as usize,
                             cx,
                             |_, _| -> ElementBox {
-                                Svg::new(match *fold_status {
+                                Svg::new(match fold_status {
                                     FoldStatus::Folded => "icons/chevron_right_8.svg",
                                     FoldStatus::Foldable => "icons/chevron_down_8.svg",
                                 })
-                                .with_color(style.folds.indicator)
+                                .with_color(
+                                    if gutter_hovered || fold_status == FoldStatus::Folded {
+                                        style.folds.indicator
+                                    } else {
+                                        style.folds.faded_indicator
+                                    },
+                                )
                                 .boxed()
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
                         .with_padding(Padding::uniform(3.))
                         .on_down(MouseButton::Left, {
-                            let fold_location = *fold_location;
-                            let fold_status = *fold_status;
                             move |_, cx| {
                                 cx.dispatch_any_action(match fold_status {
                                     FoldStatus::Folded => Box::new(UnfoldAt {
@@ -5836,6 +5851,15 @@ impl Editor {
             }
             cx.notify();
         }
+    }
+
+    pub fn gutter_hover(
+        &mut self,
+        GutterHover { hovered }: &GutterHover,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.gutter_hovered = *hovered;
+        cx.notify();
     }
 
     pub fn insert_blocks(
