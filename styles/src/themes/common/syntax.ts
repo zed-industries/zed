@@ -120,6 +120,9 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         "type.builtin": {
             color: color.type,
         },
+        variable: {
+            color: color.primary,
+        },
         "variable.builtin": {
             color: colorScheme.ramps.blue(0.5).hex(),
         },

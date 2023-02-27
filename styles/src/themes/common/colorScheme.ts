@@ -160,7 +160,7 @@ export interface Syntax {
     "type.builtin": SyntaxHighlightStyle
 
     // == Values
-
+    variable: SyntaxHighlightStyle,
     // racket: lang_name
     "variable.builtin": SyntaxHighlightStyle
     // this, ...
