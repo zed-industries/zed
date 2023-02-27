@@ -234,7 +234,8 @@
             "escape": [
                 "vim::SwitchMode",
                 "Normal"
-            ]
+            ],
+            "d": "editor::GoToDefinition"
         }
     },
     {
