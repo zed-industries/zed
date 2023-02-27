@@ -126,7 +126,7 @@ impl<D: PickerDelegate> View for Picker<D> {
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
-        cx.set.insert("menu".into());
+        cx.add_identifier("menu");
         cx
     }
 

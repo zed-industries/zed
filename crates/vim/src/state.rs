@@ -73,34 +73,30 @@ impl VimState {
 
     pub fn keymap_context_layer(&self) -> KeymapContext {
         let mut context = KeymapContext::default();
-        context.map.insert(
-            "vim_mode".to_string(),
+        context.add_key(
+            "vim_mode",
             match self.mode {
                 Mode::Normal => "normal",
                 Mode::Visual { .. } => "visual",
                 Mode::Insert => "insert",
-            }
-            .to_string(),
+            },
         );
 
         if self.vim_controlled() {
-            context.set.insert("VimControl".to_string());
+            context.add_identifier("VimControl");
         }
 
         let active_operator = self.operator_stack.last();
 
         if let Some(active_operator) = active_operator {
             for context_flag in active_operator.context_flags().into_iter() {
-                context.set.insert(context_flag.to_string());
+                context.add_identifier(*context_flag);
             }
         }
 
-        context.map.insert(
-            "vim_operator".to_string(),
-            active_operator
-                .map(|op| op.id())
-                .unwrap_or_else(|| "none")
-                .to_string(),
+        context.add_key(
+            "vim_operator",
+            active_operator.map(|op| op.id()).unwrap_or_else(|| "none"),
         );
 
         context

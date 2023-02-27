@@ -74,18 +74,30 @@ pub struct Titlebar {
     pub container: ContainerStyle,
     pub height: f32,
     pub title: TextStyle,
-    pub avatar_width: f32,
-    pub avatar_margin: f32,
+    pub item_spacing: f32,
+    pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,
+    pub follower_avatar_overlap: f32,
+    pub leader_selection: ContainerStyle,
     pub offline_icon: OfflineIcon,
-    pub avatar: ImageStyle,
-    pub inactive_avatar: ImageStyle,
+    pub leader_avatar: AvatarStyle,
+    pub follower_avatar: AvatarStyle,
+    pub inactive_avatar_grayscale: bool,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
     pub share_button: Interactive<ContainedText>,
     pub call_control: Interactive<IconButton>,
     pub toggle_contacts_button: Interactive<IconButton>,
+    pub user_menu_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
+}
+
+#[derive(Copy, Clone, Deserialize, Default)]
+pub struct AvatarStyle {
+    #[serde(flatten)]
+    pub image: ImageStyle,
+    pub outer_width: f32,
+    pub outer_corner_radius: f32,
 }
 
 #[derive(Deserialize, Default)]
@@ -246,8 +258,6 @@ pub struct Search {
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
-    pub tab_icon_width: f32,
-    pub tab_icon_spacing: f32,
     pub dismiss_button: Interactive<IconButton>,
 }
 
@@ -381,7 +391,7 @@ pub struct InviteLink {
     pub icon: Icon,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Clone, Copy, Default)]
 pub struct Icon {
     #[serde(flatten)]
     pub container: ContainerStyle,

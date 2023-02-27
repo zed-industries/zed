@@ -5071,7 +5071,7 @@ impl Editor {
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
         });
 
-        cx.spawn(|workspace, mut cx| async move {
+        cx.spawn_labeled("Fetching Definition...", |workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
@@ -5151,31 +5151,36 @@ impl Editor {
 
         let project = workspace.project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn(|workspace, mut cx| async move {
-            let locations = references.await?;
-            if locations.is_empty() {
-                return Ok(());
-            }
+        Some(cx.spawn_labeled(
+            "Finding All References...",
+            |workspace, mut cx| async move {
+                let locations = references.await?;
+                if locations.is_empty() {
+                    return Ok(());
+                }
 
-            workspace.update(&mut cx, |workspace, cx| {
-                let title = locations
-                    .first()
-                    .as_ref()
-                    .map(|location| {
-                        let buffer = location.buffer.read(cx);
-                        format!(
-                            "References to `{}`",
-                            buffer
-                                .text_for_range(location.range.clone())
-                                .collect::<String>()
-                        )
-                    })
-                    .unwrap();
-                Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx);
-            });
+                workspace.update(&mut cx, |workspace, cx| {
+                    let title = locations
+                        .first()
+                        .as_ref()
+                        .map(|location| {
+                            let buffer = location.buffer.read(cx);
+                            format!(
+                                "References to `{}`",
+                                buffer
+                                    .text_for_range(location.range.clone())
+                                    .collect::<String>()
+                            )
+                        })
+                        .unwrap();
+                    Self::open_locations_in_multibuffer(
+                        workspace, locations, replica_id, title, cx,
+                    );
+                });
 
-            Ok(())
-        }))
+                Ok(())
+            },
+        ))
     }
 
     /// Opens a multibuffer with the given project locations in it
@@ -5454,21 +5459,20 @@ impl Editor {
             None => return None,
         };
 
-        Some(self.perform_format(project, cx))
+        Some(self.perform_format(project, FormatTrigger::Manual, cx))
     }
 
     fn perform_format(
         &mut self,
         project: ModelHandle<Project>,
+        trigger: FormatTrigger,
         cx: &mut ViewContext<'_, Self>,
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
 
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| {
-            project.format(buffers, true, FormatTrigger::Manual, cx)
-        });
+        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
 
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
@@ -6428,17 +6432,13 @@ impl View for Editor {
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
-        context.map.insert("mode".into(), mode.into());
+        context.add_key("mode", mode);
         if self.pending_rename.is_some() {
-            context.set.insert("renaming".into());
+            context.add_identifier("renaming");
         }
         match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => {
-                context.set.insert("showing_completions".into());
-            }
-            Some(ContextMenu::CodeActions(_)) => {
-                context.set.insert("showing_code_actions".into());
-            }
+            Some(ContextMenu::Completions(_)) => context.add_identifier("showing_completions"),
+            Some(ContextMenu::CodeActions(_)) => context.add_identifier("showing_code_actions"),
             None => {}
         }
 

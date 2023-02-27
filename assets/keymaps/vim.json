@@ -27,6 +27,7 @@
             "h": "vim::Left",
             "backspace": "vim::Backspace",
             "j": "vim::Down",
+            "enter": "vim::NextLineStart",
             "k": "vim::Up",
             "l": "vim::Right",
             "$": "vim::EndOfLine",

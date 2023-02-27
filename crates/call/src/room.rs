@@ -55,6 +55,7 @@ pub struct Room {
     leave_when_empty: bool,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
+    follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
@@ -148,6 +149,7 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
+            follows_by_leader_id_project_id: Default::default(),
             maintain_connection: Some(maintain_connection),
         }
     }
@@ -275,14 +277,12 @@ impl Room {
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {
-            let is_connected = client_status
-                .next()
-                .await
-                .map_or(false, |s| s.is_connected());
-
+            let _ = client_status.try_recv();
+            let is_connected = client_status.borrow().is_connected();
             // Even if we're initially connected, any future change of the status means we momentarily disconnected.
             if !is_connected || client_status.next().await.is_some() {
                 log::info!("detected client disconnection");
+
                 this.upgrade(&cx)
                     .ok_or_else(|| anyhow!("room was dropped"))?
                     .update(&mut cx, |this, cx| {
@@ -296,12 +296,7 @@ impl Room {
                     let client_reconnection = async {
                         let mut remaining_attempts = 3;
                         while remaining_attempts > 0 {
-                            log::info!(
-                                "waiting for client status change, remaining attempts {}",
-                                remaining_attempts
-                            );
-                            let Some(status) = client_status.next().await else { break };
-                            if status.is_connected() {
+                            if client_status.borrow().is_connected() {
                                 log::info!("client reconnected, attempting to rejoin room");
 
                                 let Some(this) = this.upgrade(&cx) else { break };
@@ -315,7 +310,15 @@ impl Room {
                                 } else {
                                     remaining_attempts -= 1;
                                 }
+                            } else if client_status.borrow().is_signed_out() {
+                                return false;
                             }
+
+                            log::info!(
+                                "waiting for client status change, remaining attempts {}",
+                                remaining_attempts
+                            );
+                            client_status.next().await;
                         }
                         false
                     }
@@ -337,18 +340,20 @@ impl Room {
                     }
                 }
 
-                // The client failed to re-establish a connection to the server
-                // or an error occurred while trying to re-join the room. Either way
-                // we leave the room and return an error.
-                if let Some(this) = this.upgrade(&cx) {
-                    log::info!("reconnection failed, leaving room");
-                    let _ = this.update(&mut cx, |this, cx| this.leave(cx));
-                }
-                return Err(anyhow!(
-                    "can't reconnect to room: client failed to re-establish connection"
-                ));
+                break;
             }
         }
+
+        // The client failed to re-establish a connection to the server
+        // or an error occurred while trying to re-join the room. Either way
+        // we leave the room and return an error.
+        if let Some(this) = this.upgrade(&cx) {
+            log::info!("reconnection failed, leaving room");
+            let _ = this.update(&mut cx, |this, cx| this.leave(cx));
+        }
+        Err(anyhow!(
+            "can't reconnect to room: client failed to re-establish connection"
+        ))
     }
 
     fn rejoin(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -457,6 +462,12 @@ impl Room {
         self.participant_user_ids.contains(&user_id)
     }
 
+    pub fn followers_for(&self, leader_id: PeerId, project_id: u64) -> &[PeerId] {
+        self.follows_by_leader_id_project_id
+            .get(&(leader_id, project_id))
+            .map_or(&[], |v| v.as_slice())
+    }
+
     async fn handle_room_updated(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
@@ -487,11 +498,13 @@ impl Room {
             .iter()
             .map(|p| p.user_id)
             .collect::<Vec<_>>();
+
         let remote_participant_user_ids = room
             .participants
             .iter()
             .map(|p| p.user_id)
             .collect::<Vec<_>>();
+
         let (remote_participants, pending_participants) =
             self.user_store.update(cx, move |user_store, cx| {
                 (
@@ -499,6 +512,7 @@ impl Room {
                     user_store.get_users(pending_participant_user_ids, cx),
                 )
             });
+
         self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {
             let (remote_participants, pending_participants) =
                 futures::join!(remote_participants, pending_participants);
@@ -617,6 +631,27 @@ impl Room {
                     this.pending_participants = pending_participants;
                     for participant in &this.pending_participants {
                         this.participant_user_ids.insert(participant.id);
+                    }
+                }
+
+                this.follows_by_leader_id_project_id.clear();
+                for follower in room.followers {
+                    let project_id = follower.project_id;
+                    let (leader, follower) = match (follower.leader_id, follower.follower_id) {
+                        (Some(leader), Some(follower)) => (leader, follower),
+
+                        _ => {
+                            log::error!("Follower message {follower:?} missing some state");
+                            continue;
+                        }
+                    };
+
+                    let list = this
+                        .follows_by_leader_id_project_id
+                        .entry((leader, project_id))
+                        .or_insert(Vec::new());
+                    if !list.contains(&follower) {
+                        list.push(follower);
                     }
                 }
 
@@ -791,6 +826,20 @@ impl Room {
 
             Ok(response.project_id)
         })
+    }
+
+    pub(crate) fn unshare_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let project_id = match project.read(cx).remote_id() {
+            Some(project_id) => project_id,
+            None => return Ok(()),
+        };
+
+        self.client.send(proto::UnshareProject { project_id })?;
+        project.update(cx, |this, cx| this.unshare(cx))
     }
 
     pub(crate) fn set_location(

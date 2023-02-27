@@ -1,4 +1,4 @@
-use crate::{contact_finder::ContactFinder, contact_list::ContactList, ToggleCollaborationMenu};
+use crate::{contact_finder::ContactFinder, contact_list::ContactList, ToggleContactsMenu};
 use client::UserStore;
 use gpui::{
     actions, elements::*, ClipboardItem, CursorStyle, Entity, ModelHandle, MouseButton,
@@ -155,7 +155,7 @@ impl View for ContactsPopover {
                 .boxed()
         })
         .on_down_out(MouseButton::Left, move |_, cx| {
-            cx.dispatch_action(ToggleCollaborationMenu);
+            cx.dispatch_action(ToggleContactsMenu);
         })
         .boxed()
     }

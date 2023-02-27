@@ -39,7 +39,7 @@ impl<'a> EditorLspTestContext<'a> {
             pane::init(cx);
         });
 
-        let params = cx.update(AppState::test);
+        let app_state = cx.update(AppState::test);
 
         let file_name = format!(
             "file.{}",
@@ -56,10 +56,10 @@ impl<'a> EditorLspTestContext<'a> {
             }))
             .await;
 
-        let project = Project::test(params.fs.clone(), [], cx).await;
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
-        params
+        app_state
             .fs
             .as_fake()
             .insert_tree("/root", json!({ "dir": { file_name.clone(): "" }}))

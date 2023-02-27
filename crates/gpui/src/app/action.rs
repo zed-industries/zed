@@ -16,6 +16,14 @@ pub trait Action: 'static {
         Self: Sized;
 }
 
+impl std::fmt::Debug for dyn Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("dyn Action")
+            .field("namespace", &self.namespace())
+            .field("name", &self.name())
+            .finish()
+    }
+}
 /// Define a set of unit struct types that all implement the `Action` trait.
 ///
 /// The first argument is a namespace that will be associated with each of

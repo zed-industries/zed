@@ -66,7 +66,7 @@ pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-actions!(client, [Authenticate]);
+actions!(client, [Authenticate, SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_global_action({
@@ -76,6 +76,16 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
             cx.spawn(
                 |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
             )
+            .detach();
+        }
+    });
+    cx.add_global_action({
+        let client = client.clone();
+        move |_: &SignOut, cx| {
+            let client = client.clone();
+            cx.spawn(|cx| async move {
+                client.disconnect(&cx);
+            })
             .detach();
         }
     });
@@ -168,6 +178,10 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn is_signed_out(&self) -> bool {
+        matches!(self, Self::SignedOut | Self::UpgradeRequired)
     }
 }
 
@@ -1152,11 +1166,9 @@ impl Client {
         })
     }
 
-    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
-        let conn_id = self.connection_id()?;
-        self.peer.disconnect(conn_id);
+    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
+        self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
-        Ok(())
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {

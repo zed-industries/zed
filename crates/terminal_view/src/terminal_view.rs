@@ -21,7 +21,7 @@ use gpui::{
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
 use settings::{Settings, TerminalBlink, WorkingDirectory};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use smol::Timer;
 use terminal::{
     alacritty_terminal::{
@@ -469,53 +469,50 @@ impl View for TerminalView {
         let mut context = Self::default_keymap_context();
 
         let mode = self.terminal.read(cx).last_content.mode;
-        context.map.insert(
-            "screen".to_string(),
-            (if mode.contains(TermMode::ALT_SCREEN) {
+        context.add_key(
+            "screen",
+            if mode.contains(TermMode::ALT_SCREEN) {
                 "alt"
             } else {
                 "normal"
-            })
-            .to_string(),
+            },
         );
 
         if mode.contains(TermMode::APP_CURSOR) {
-            context.set.insert("DECCKM".to_string());
+            context.add_identifier("DECCKM");
         }
         if mode.contains(TermMode::APP_KEYPAD) {
-            context.set.insert("DECPAM".to_string());
-        }
-        //Note the ! here
-        if !mode.contains(TermMode::APP_KEYPAD) {
-            context.set.insert("DECPNM".to_string());
+            context.add_identifier("DECPAM");
+        } else {
+            context.add_identifier("DECPNM");
         }
         if mode.contains(TermMode::SHOW_CURSOR) {
-            context.set.insert("DECTCEM".to_string());
+            context.add_identifier("DECTCEM");
         }
         if mode.contains(TermMode::LINE_WRAP) {
-            context.set.insert("DECAWM".to_string());
+            context.add_identifier("DECAWM");
         }
         if mode.contains(TermMode::ORIGIN) {
-            context.set.insert("DECOM".to_string());
+            context.add_identifier("DECOM");
         }
         if mode.contains(TermMode::INSERT) {
-            context.set.insert("IRM".to_string());
+            context.add_identifier("IRM");
         }
         //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
         if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
-            context.set.insert("LNM".to_string());
+            context.add_identifier("LNM");
         }
         if mode.contains(TermMode::FOCUS_IN_OUT) {
-            context.set.insert("report_focus".to_string());
+            context.add_identifier("report_focus");
         }
         if mode.contains(TermMode::ALTERNATE_SCROLL) {
-            context.set.insert("alternate_scroll".to_string());
+            context.add_identifier("alternate_scroll");
         }
         if mode.contains(TermMode::BRACKETED_PASTE) {
-            context.set.insert("bracketed_paste".to_string());
+            context.add_identifier("bracketed_paste");
         }
         if mode.intersects(TermMode::MOUSE_MODE) {
-            context.set.insert("any_mouse_reporting".to_string());
+            context.add_identifier("any_mouse_reporting");
         }
         {
             let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
@@ -527,9 +524,7 @@ impl View for TerminalView {
             } else {
                 "off"
             };
-            context
-                .map
-                .insert("mouse_reporting".to_string(), mouse_reporting.to_string());
+            context.add_key("mouse_reporting", mouse_reporting);
         }
         {
             let format = if mode.contains(TermMode::SGR_MOUSE) {
@@ -539,9 +534,7 @@ impl View for TerminalView {
             } else {
                 "normal"
             };
-            context
-                .map
-                .insert("mouse_format".to_string(), format.to_string());
+            context.add_key("mouse_format", format);
         }
         context
     }
@@ -589,11 +582,16 @@ impl Item for TerminalView {
 
         Flex::row()
             .with_child(
-                Label::new(title, tab_theme.label.clone())
+                gpui::elements::Svg::new("icons/terminal_12.svg")
+                    .with_color(tab_theme.label.text.color)
+                    .constrained()
+                    .with_width(tab_theme.icon_width)
                     .aligned()
                     .contained()
+                    .with_margin_right(tab_theme.spacing)
                     .boxed(),
             )
+            .with_child(Label::new(title, tab_theme.label.clone()).aligned().boxed())
             .boxed()
     }
 
@@ -616,43 +614,6 @@ impl Item for TerminalView {
         None
     }
 
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
-
-    fn is_singleton(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
-
-    fn can_save(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn save(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save should not have been called");
-    }
-
-    fn save_as(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _abs_path: std::path::PathBuf,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save_as should not have been called");
-    }
-
-    fn reload(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        gpui::Task::ready(Ok(()))
-    }
-
     fn is_dirty(&self, _cx: &gpui::AppContext) -> bool {
         self.has_bell()
     }
@@ -667,10 +628,10 @@ impl Item for TerminalView {
 
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
-            Event::BreadcrumbsChanged => smallvec::smallvec![ItemEvent::UpdateBreadcrumbs],
-            Event::TitleChanged | Event::Wakeup => smallvec::smallvec![ItemEvent::UpdateTab],
-            Event::CloseTerminal => smallvec::smallvec![ItemEvent::CloseItem],
-            _ => smallvec::smallvec![],
+            Event::BreadcrumbsChanged => smallvec![ItemEvent::UpdateBreadcrumbs],
+            Event::TitleChanged | Event::Wakeup => smallvec![ItemEvent::UpdateTab],
+            Event::CloseTerminal => smallvec![ItemEvent::CloseItem],
+            _ => smallvec![],
         }
     }
 

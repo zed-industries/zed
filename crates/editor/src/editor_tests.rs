@@ -4193,7 +4193,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
-    let format = editor.update(cx, |editor, cx| editor.perform_format(project.clone(), cx));
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+    });
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
@@ -4225,7 +4227,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         futures::future::pending::<()>().await;
         unreachable!()
     });
-    let format = editor.update(cx, |editor, cx| editor.perform_format(project, cx));
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project, FormatTrigger::Manual, cx)
+    });
     cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
     cx.foreground().start_waiting();
     format.await.unwrap();

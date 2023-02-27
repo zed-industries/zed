@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
-use collab_ui::{CollabTitlebarItem, ToggleCollaborationMenu};
+use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
@@ -99,9 +99,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
     cx.add_action(
-        |workspace: &mut Workspace,
-         _: &ToggleCollaborationMenu,
-         cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, _: &ToggleContactsMenu, cx: &mut ViewContext<Workspace>| {
             if let Some(item) = workspace
                 .titlebar_item()
                 .and_then(|item| item.downcast::<CollabTitlebarItem>())

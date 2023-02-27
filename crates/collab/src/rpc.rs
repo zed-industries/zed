@@ -270,8 +270,11 @@ impl Server {
                         let mut live_kit_room = String::new();
                         let mut delete_live_kit_room = false;
 
-                        if let Ok(mut refreshed_room) =
-                            app_state.db.refresh_room(room_id, server_id).await
+                        if let Some(mut refreshed_room) = app_state
+                            .db
+                            .refresh_room(room_id, server_id)
+                            .await
+                            .trace_err()
                         {
                             tracing::info!(
                                 room_id = room_id.0,
@@ -1312,6 +1315,7 @@ async fn join_project(
         .filter(|collaborator| collaborator.connection_id != session.connection_id)
         .map(|collaborator| collaborator.to_proto())
         .collect::<Vec<_>>();
+
     let worktrees = project
         .worktrees
         .iter()
@@ -1724,6 +1728,7 @@ async fn follow(
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
     let follower_id = session.connection_id;
+
     {
         let project_connection_ids = session
             .db()
@@ -1744,6 +1749,14 @@ async fn follow(
         .views
         .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
+
+    let room = session
+        .db()
+        .await
+        .follow(project_id, leader_id, follower_id)
+        .await?;
+    room_updated(&room, &session.peer);
+
     Ok(())
 }
 
@@ -1753,17 +1766,29 @@ async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
         .leader_id
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
-    let project_connection_ids = session
+    let follower_id = session.connection_id;
+
+    if !session
         .db()
         .await
         .project_connection_ids(project_id, session.connection_id)
-        .await?;
-    if !project_connection_ids.contains(&leader_id) {
+        .await?
+        .contains(&leader_id)
+    {
         Err(anyhow!("no such peer"))?;
     }
+
     session
         .peer
         .forward_send(session.connection_id, leader_id, request)?;
+
+    let room = session
+        .db()
+        .await
+        .unfollow(project_id, leader_id, follower_id)
+        .await?;
+    room_updated(&room, &session.peer);
+
     Ok(())
 }
 

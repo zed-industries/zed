@@ -21,6 +21,7 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     impl_actions, impl_internal_actions,
+    keymap_matcher::KeymapContext,
     platform::{CursorStyle, NavigationDirection},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
     ModelHandle, MouseButton, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
@@ -1549,6 +1550,14 @@ impl View for Pane {
                     .insert(active_item.id(), focused.downgrade());
             }
         }
+    }
+
+    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
+        let mut keymap = Self::default_keymap_context();
+        if self.docked.is_some() {
+            keymap.add_identifier("docked");
+        }
+        keymap
     }
 }
 
