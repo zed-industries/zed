@@ -59,11 +59,14 @@
 (super) @variable.special
 
 [
-  (true)
-  (false)
   (null)
   (undefined)
 ] @constant.builtin
+
+[
+  (true)
+  (false)
+] @boolean
 
 (comment) @comment
 
