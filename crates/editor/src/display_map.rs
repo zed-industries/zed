@@ -746,7 +746,7 @@ impl DisplayRow {
         DisplayRow(display_row)
     }
 
-    pub fn to_line_span(&self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
+    pub fn to_points(&self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
         self.start()..self.end(&display_map)
     }
 
@@ -760,11 +760,6 @@ impl DisplayRow {
         } else {
             Some(DisplayRow(self.0 + 1))
         }
-    }
-
-    // TODO: Remove and use next_row
-    fn next_unchecked(&self) -> Option<DisplayRow> {
-        Some(DisplayRow(self.0 + 1))
     }
 
     pub fn next_rows(
@@ -788,7 +783,7 @@ impl DisplayRow {
                 if current == None {
                     current = Some(start);
                 } else {
-                    current = current.unwrap().next_unchecked();
+                    current = Some(DisplayRow(current.unwrap().0 + 1))
                 }
                 if current.unwrap().0 > end_row.0 {
                     None

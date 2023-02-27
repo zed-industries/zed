@@ -85,7 +85,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
-use util::{post_inc, MapRangeEndsExt, RangeExt, ResultExt, TryFutureExt};
+use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
 
 use crate::git::diff_hunk_to_display;
@@ -5738,7 +5738,7 @@ impl Editor {
                 let fold_range = display_map
                     .foldable_range(DisplayRow::new(row))
                     .map(|range| {
-                        range.map_range(|display_point| display_point.to_point(&display_map))
+                        range.start.to_point(&display_map)..range.end.to_point(&display_map)
                     });
 
                 if let Some(fold_range) = fold_range {
@@ -5761,27 +5761,21 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(fold_range) = display_map.foldable_range(display_row) {
-            let autoscroll = self.selections_intersect(&fold_range, &display_map, cx);
+            let autoscroll = {
+                let selections = self.selections.all::<Point>(cx);
 
-            let point_range =
-                fold_range.map_range(|display_point| display_point.to_point(&display_map));
+                selections.iter().any(|selection| {
+                    let display_range = selection.display_range(&display_map);
 
-            self.fold_ranges(std::iter::once(point_range), autoscroll, cx);
+                    fold_range.overlaps(&display_range)
+                })
+            };
+
+            let fold_range =
+                fold_range.start.to_point(&display_map)..fold_range.end.to_point(&display_map);
+
+            self.fold_ranges(std::iter::once(fold_range), autoscroll, cx);
         }
-    }
-
-    fn selections_intersect(
-        &mut self,
-        range: &Range<DisplayPoint>,
-        display_map: &DisplaySnapshot,
-        cx: &mut ViewContext<Editor>,
-    ) -> bool {
-        let selections = self.selections.all::<Point>(cx);
-
-        selections.iter().any(|selection| {
-            let display_range = selection.display_range(display_map);
-            range.contains(&display_range.start) || range.contains(&display_range.end)
-        })
     }
 
     pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
@@ -5805,12 +5799,19 @@ impl Editor {
     pub fn unfold_at(&mut self, fold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let unfold_range = fold_at.display_row.to_line_span(&display_map);
+        let unfold_range = fold_at.display_row.to_points(&display_map);
 
-        let autoscroll = self.selections_intersect(&unfold_range, &display_map, cx);
+        let autoscroll = {
+            let selections = self.selections.all::<Point>(cx);
+            selections.iter().any(|selection| {
+                let display_range = selection.display_range(&display_map);
 
-        let unfold_range = unfold_range.map_range(|endpoint| endpoint.to_point(&display_map));
+                unfold_range.overlaps(&display_range)
+            })
+        };
 
+        let unfold_range =
+            unfold_range.start.to_point(&display_map)..unfold_range.end.to_point(&display_map);
         self.unfold_ranges(std::iter::once(unfold_range), true, autoscroll, cx)
     }
 
