@@ -635,16 +635,19 @@ pub struct FieldEditor {
 #[derive(Clone, Deserialize, Default)]
 pub struct CodeActions {
     #[serde(default)]
-    pub indicator: Color,
+    pub indicator: Interactive<Indicator>,
     pub vertical_scale: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Folds {
-    #[serde(default)]
-    pub indicator: Color,
-    pub faded_indicator: Color,
+    pub indicator: Interactive<Indicator>,
     pub fold_background: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Indicator {
+    pub color: Color,
 }
 
 #[derive(Clone, Deserialize, Default)]

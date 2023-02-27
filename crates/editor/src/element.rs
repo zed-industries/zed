@@ -1818,8 +1818,10 @@ impl Element for EditorElement {
                         view.render_context_menu(newest_selection_head, style.clone(), cx);
                 }
 
+                let active = matches!(view.context_menu, Some(crate::ContextMenu::CodeActions(_)));
+
                 code_actions_indicator = view
-                    .render_code_actions_indicator(&style, cx)
+                    .render_code_actions_indicator(&style, active, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 

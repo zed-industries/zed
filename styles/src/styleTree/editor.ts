@@ -44,12 +44,35 @@ export default function editor(colorScheme: ColorScheme) {
         activeLineBackground: withOpacity(background(layer, "on"), 0.75),
         highlightedLineBackground: background(layer, "on"),
         codeActions: {
-            indicator: foreground(layer, "variant"),
+            indicator: {
+                color: foreground(layer, "variant"),
+
+                clicked: {
+                    color: foreground(layer, "base"),
+                },
+                hover: {
+                    color: foreground(layer, "on"),
+                },
+                active: {
+                    color: foreground(layer, "on"),
+                },
+            },
             verticalScale: 0.55,
         },
         folds: {
-            indicator: foreground(layer, "variant"),
-            fadedIndicator: background(layer, "on"),
+            indicator: {
+                color: foreground(layer, "variant"),
+
+                clicked: {
+                    color: foreground(layer, "base"),
+                },
+                hover: {
+                    color: foreground(layer, "on"),
+                },
+                active: {
+                    color: foreground(layer, "on"),
+                },
+            },
             foldBackground: foreground(layer, "variant"),
         },
         diff: {

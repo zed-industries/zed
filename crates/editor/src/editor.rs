@@ -2669,14 +2669,15 @@ impl Editor {
     pub fn render_code_actions_indicator(
         &self,
         style: &EditorStyle,
+        active: bool,
         cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
             Some(
-                MouseEventHandler::<CodeActions>::new(0, cx, |_, _| {
+                MouseEventHandler::<CodeActions>::new(0, cx, |state, _| {
                     Svg::new("icons/bolt_8.svg")
-                        .with_color(style.code_actions.indicator)
+                        .with_color(style.code_actions.indicator.style_for(state, active).color)
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -2697,7 +2698,7 @@ impl Editor {
         &self,
         fold_data: Option<Vec<(u32, FoldStatus)>>,
         style: &EditorStyle,
-        gutter_hovered: bool,
+        _gutter_hovered: bool,
         cx: &mut RenderContext<Self>,
     ) -> Option<Vec<(u32, ElementBox)>> {
         enum FoldIndicators {}
@@ -2712,24 +2713,24 @@ impl Editor {
                         MouseEventHandler::<FoldIndicators>::new(
                             fold_location as usize,
                             cx,
-                            |_, _| -> ElementBox {
+                            |mouse_state, _| -> ElementBox {
                                 Svg::new(match fold_status {
                                     FoldStatus::Folded => "icons/chevron_right_8.svg",
                                     FoldStatus::Foldable => "icons/chevron_down_8.svg",
                                 })
                                 .with_color(
-                                    if gutter_hovered || fold_status == FoldStatus::Folded {
-                                        style.folds.indicator
-                                    } else {
-                                        style.folds.faded_indicator
-                                    },
+                                    style
+                                        .folds
+                                        .indicator
+                                        .style_for(mouse_state, fold_status == FoldStatus::Folded)
+                                        .color,
                                 )
                                 .boxed()
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
                         .with_padding(Padding::uniform(3.))
-                        .on_down(MouseButton::Left, {
+                        .on_click(MouseButton::Left, {
                             move |_, cx| {
                                 cx.dispatch_any_action(match fold_status {
                                     FoldStatus::Folded => Box::new(UnfoldAt {
