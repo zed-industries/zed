@@ -2887,18 +2887,23 @@ impl Project {
 
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
-                    let (format_on_save, remove_trailing_whitespace, formatter, tab_size) = buffer
-                        .read_with(&cx, |buffer, cx| {
-                            let settings = cx.global::<Settings>();
-                            let language_name = buffer.language().map(|language| language.name());
-                            (
-                                settings.format_on_save(language_name.as_deref()),
-                                settings
-                                    .remove_trailing_whitespace_on_save(language_name.as_deref()),
-                                settings.formatter(language_name.as_deref()),
-                                settings.tab_size(language_name.as_deref()),
-                            )
-                        });
+                    let (
+                        format_on_save,
+                        remove_trailing_whitespace,
+                        ensure_final_newline,
+                        formatter,
+                        tab_size,
+                    ) = buffer.read_with(&cx, |buffer, cx| {
+                        let settings = cx.global::<Settings>();
+                        let language_name = buffer.language().map(|language| language.name());
+                        (
+                            settings.format_on_save(language_name.as_deref()),
+                            settings.remove_trailing_whitespace_on_save(language_name.as_deref()),
+                            settings.ensure_final_newline_on_save(language_name.as_deref()),
+                            settings.formatter(language_name.as_deref()),
+                            settings.tab_size(language_name.as_deref()),
+                        )
+                    });
 
                     let whitespace_transaction_id = if remove_trailing_whitespace {
                         let diff = buffer
@@ -2906,7 +2911,19 @@ impl Project {
                             .await;
                         buffer.update(&mut cx, move |buffer, cx| {
                             buffer.finalize_last_transaction();
-                            buffer.apply_non_conflicting_portion_of_diff(diff, cx)
+                            buffer.start_transaction();
+                            buffer.apply_non_conflicting_portion_of_diff(diff, cx);
+                            if ensure_final_newline {
+                                buffer.ensure_final_newline(cx);
+                            }
+                            buffer.end_transaction(cx)
+                        })
+                    } else if ensure_final_newline {
+                        buffer.update(&mut cx, move |buffer, cx| {
+                            buffer.finalize_last_transaction();
+                            buffer.start_transaction();
+                            buffer.ensure_final_newline(cx);
+                            buffer.end_transaction(cx)
                         })
                     } else {
                         None

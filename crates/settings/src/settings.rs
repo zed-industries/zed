@@ -95,6 +95,7 @@ pub struct EditorSettings {
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<FormatOnSave>,
     pub remove_trailing_whitespace_on_save: Option<bool>,
+    pub ensure_final_newline_on_save: Option<bool>,
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
 }
@@ -365,6 +366,9 @@ impl Settings {
                 remove_trailing_whitespace_on_save: required(
                     defaults.editor.remove_trailing_whitespace_on_save,
                 ),
+                ensure_final_newline_on_save: required(
+                    defaults.editor.ensure_final_newline_on_save,
+                ),
                 format_on_save: required(defaults.editor.format_on_save),
                 formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
@@ -470,6 +474,12 @@ impl Settings {
         })
     }
 
+    pub fn ensure_final_newline_on_save(&self, language: Option<&str>) -> bool {
+        self.language_setting(language, |settings| {
+            settings.ensure_final_newline_on_save.clone()
+        })
+    }
+
     pub fn format_on_save(&self, language: Option<&str>) -> FormatOnSave {
         self.language_setting(language, |settings| settings.format_on_save.clone())
     }
@@ -569,6 +579,7 @@ impl Settings {
                 soft_wrap: Some(SoftWrap::None),
                 preferred_line_length: Some(80),
                 remove_trailing_whitespace_on_save: Some(true),
+                ensure_final_newline_on_save: Some(true),
                 format_on_save: Some(FormatOnSave::On),
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),

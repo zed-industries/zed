@@ -4314,12 +4314,13 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
     )
     .await;
 
-    // Set up a buffer white some trailing whitespace.
+    // Set up a buffer white some trailing whitespace and no trailing newline.
     cx.set_state(
         &[
             "one ",   //
             "twoˇ",  //
             "three ", //
+            "four",   //
         ]
         .join("\n"),
     );
@@ -4348,7 +4349,8 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
     cx.lsp.handle_request::<lsp::request::Formatting, _, _>({
         let buffer_changes = buffer_changes.clone();
         move |_, _| {
-            // When formatting is requested, trailing whitespace has already been stripped.
+            // When formatting is requested, trailing whitespace has already been stripped,
+            // and the trailing newline has already been added.
             assert_eq!(
                 &buffer_changes.lock()[1..],
                 &[
@@ -4359,6 +4361,10 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
                     (
                         lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
                         "".into()
+                    ),
+                    (
+                        lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                        "\n".into()
                     ),
                 ]
             );
@@ -4379,8 +4385,9 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
         }
     });
 
-    // After formatting the buffer, the trailing whitespace is stripped and the
-    // edits provided by the language server have been applied.
+    // After formatting the buffer, the trailing whitespace is stripped,
+    // a newline is appended, and the edits provided by the language server
+    // have been applied.
     format.await.unwrap();
     cx.assert_editor_state(
         &[
@@ -4389,18 +4396,21 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
             "twoˇ", //
             "",      //
             "three", //
+            "four",  //
+            "",      //
         ]
         .join("\n"),
     );
 
-    // Undoing the formatting undoes both the trailing whitespace removal and the
-    // LSP edits.
+    // Undoing the formatting undoes the trailing whitespace removal, the
+    // trailing newline, and the LSP edits.
     cx.update_buffer(|buffer, cx| buffer.undo(cx));
     cx.assert_editor_state(
         &[
             "one ",   //
             "twoˇ",  //
             "three ", //
+            "four",   //
         ]
         .join("\n"),
     );

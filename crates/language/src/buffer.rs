@@ -1156,6 +1156,8 @@ impl Buffer {
         })
     }
 
+    /// Spawn a background task that searches the buffer for any whitespace
+    /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
     pub fn remove_trailing_whitespace(&self, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
@@ -1174,6 +1176,27 @@ impl Buffer {
         })
     }
 
+    /// Ensure that the buffer ends with a single newline character, and
+    /// no other whitespace.
+    pub fn ensure_final_newline(&mut self, cx: &mut ModelContext<Self>) {
+        let len = self.len();
+        let mut offset = len;
+        for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
+            let non_whitespace_len = chunk
+                .trim_end_matches(|c: char| c.is_ascii_whitespace())
+                .len();
+            offset -= chunk.len();
+            offset += non_whitespace_len;
+            if non_whitespace_len != 0 {
+                if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
+                    return;
+                }
+                break;
+            }
+        }
+        self.edit([(offset..len, "\n")], None, cx);
+    }
+
     pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         if self.version == diff.base_version {
             self.apply_non_conflicting_portion_of_diff(diff, cx)
@@ -1182,6 +1205,9 @@ impl Buffer {
         }
     }
 
+    /// Apply a diff to the buffer. If the buffer has changed since the given diff was
+    /// calculated, then adjust the diff to account for those changes, and discard any
+    /// parts of the diff that conflict with those changes.
     pub fn apply_non_conflicting_portion_of_diff(
         &mut self,
         diff: Diff,
