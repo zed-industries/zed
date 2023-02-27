@@ -2906,7 +2906,7 @@ impl Project {
                             .await;
                         buffer.update(&mut cx, move |buffer, cx| {
                             buffer.finalize_last_transaction();
-                            buffer.apply_diff_force(diff, cx)
+                            buffer.apply_non_conflicting_portion_of_diff(diff, cx)
                         })
                     } else {
                         None

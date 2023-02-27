@@ -569,7 +569,9 @@ impl Buffer {
                     .read_with(&cx, |this, cx| this.diff(new_text, cx))
                     .await;
                 this.update(&mut cx, |this, cx| {
-                    if let Some(transaction) = this.apply_diff(diff, cx).cloned() {
+                    this.finalize_last_transaction();
+                    this.apply_diff(diff, cx);
+                    if let Some(transaction) = this.finalize_last_transaction().cloned() {
                         this.did_reload(
                             this.version(),
                             this.as_rope().fingerprint(),
@@ -1172,20 +1174,15 @@ impl Buffer {
         })
     }
 
-    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<&Transaction> {
-        if self.version != diff.base_version {
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+        if self.version == diff.base_version {
+            self.apply_non_conflicting_portion_of_diff(diff, cx)
+        } else {
             return None;
         }
-
-        self.finalize_last_transaction();
-        self.start_transaction();
-        self.text.set_line_ending(diff.line_ending);
-        self.edit(diff.edits, None, cx);
-        self.end_transaction(cx)?;
-        self.finalize_last_transaction()
     }
 
-    pub fn apply_diff_force(
+    pub fn apply_non_conflicting_portion_of_diff(
         &mut self,
         diff: Diff,
         cx: &mut ModelContext<Self>,
