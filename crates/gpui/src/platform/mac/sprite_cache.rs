@@ -1,7 +1,7 @@
 use super::atlas::AtlasAllocator;
 use crate::{
     fonts::{FontId, GlyphId},
-    geometry::vector::{vec2f, Vector2F, Vector2I},
+    geometry::vector::Vector2I,
     platform::{self, RasterizationOptions},
 };
 use collections::hash_map::Entry;
@@ -14,7 +14,6 @@ struct GlyphDescriptor {
     font_id: FontId,
     font_size: OrderedFloat<f32>,
     glyph_id: GlyphId,
-    subpixel_variant: (u8, u8),
 }
 
 #[derive(Clone)]
@@ -81,37 +80,22 @@ impl SpriteCache {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
-        target_position: Vector2F,
     ) -> Option<GlyphSprite> {
-        const SUBPIXEL_VARIANTS: u8 = 4;
-
         let scale_factor = self.scale_factor;
-        let target_position = target_position * scale_factor;
         let fonts = &self.fonts;
         let atlases = &mut self.atlases;
-        let subpixel_variant = (
-            (target_position.x().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
-                % SUBPIXEL_VARIANTS,
-            (target_position.y().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
-                % SUBPIXEL_VARIANTS,
-        );
+
         self.glyphs
             .entry(GlyphDescriptor {
                 font_id,
                 font_size: OrderedFloat(font_size),
                 glyph_id,
-                subpixel_variant,
             })
             .or_insert_with(|| {
-                let subpixel_shift = vec2f(
-                    subpixel_variant.0 as f32 / SUBPIXEL_VARIANTS as f32,
-                    subpixel_variant.1 as f32 / SUBPIXEL_VARIANTS as f32,
-                );
                 let (glyph_bounds, mask) = fonts.rasterize_glyph(
                     font_id,
                     font_size,
                     glyph_id,
-                    subpixel_shift,
                     scale_factor,
                     RasterizationOptions::Alpha,
                 )?;

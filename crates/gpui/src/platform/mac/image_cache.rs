@@ -84,7 +84,6 @@ impl ImageCache {
                     image_glyph.font_id,
                     image_glyph.font_size,
                     image_glyph.id,
-                    Default::default(),
                     self.scale_factor,
                     RasterizationOptions::Bgra,
                 )?;

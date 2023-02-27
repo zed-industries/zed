@@ -93,18 +93,12 @@ impl platform::FontSystem for FontSystem {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
-        subpixel_shift: Vector2F,
         scale_factor: f32,
         options: RasterizationOptions,
     ) -> Option<(RectI, Vec<u8>)> {
-        self.0.read().rasterize_glyph(
-            font_id,
-            font_size,
-            glyph_id,
-            subpixel_shift,
-            scale_factor,
-            options,
-        )
+        self.0
+            .read()
+            .rasterize_glyph(font_id, font_size, glyph_id, scale_factor, options)
     }
 
     fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout {
@@ -203,7 +197,6 @@ impl FontSystemState {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
-        subpixel_shift: Vector2F,
         scale_factor: f32,
         options: RasterizationOptions,
     ) -> Option<(RectI, Vec<u8>)> {
@@ -219,39 +212,35 @@ impl FontSystemState {
             )
             .ok()?;
 
-        if glyph_bounds.width() == 0 || glyph_bounds.height() == 0 {
+        let width = glyph_bounds.width();
+        let height = glyph_bounds.height();
+
+        if width == 0 || height == 0 {
             None
         } else {
-            // Make room for subpixel variants.
-            let subpixel_padding = subpixel_shift.ceil().to_i32();
-            let cx_bounds = RectI::new(
-                glyph_bounds.origin(),
-                glyph_bounds.size() + subpixel_padding,
-            );
-
             let mut bytes;
             let cx;
             match options {
                 RasterizationOptions::Alpha => {
-                    bytes = vec![0; cx_bounds.width() as usize * cx_bounds.height() as usize];
+                    bytes = vec![0; width as usize * height as usize];
                     cx = CGContext::create_bitmap_context(
                         Some(bytes.as_mut_ptr() as *mut _),
-                        cx_bounds.width() as usize,
-                        cx_bounds.height() as usize,
+                        width as usize,
+                        height as usize,
                         8,
-                        cx_bounds.width() as usize,
+                        width as usize,
                         &CGColorSpace::create_device_gray(),
                         kCGImageAlphaOnly,
                     );
                 }
                 RasterizationOptions::Bgra => {
-                    bytes = vec![0; cx_bounds.width() as usize * 4 * cx_bounds.height() as usize];
+                    bytes = vec![0; width as usize * 4 * height as usize];
                     cx = CGContext::create_bitmap_context(
                         Some(bytes.as_mut_ptr() as *mut _),
-                        cx_bounds.width() as usize,
-                        cx_bounds.height() as usize,
+                        width as usize,
+                        height as usize,
                         8,
-                        cx_bounds.width() as usize * 4,
+                        width as usize * 4,
                         &CGColorSpace::create_device_rgb(),
                         kCGImageAlphaPremultipliedLast,
                     );
@@ -262,7 +251,7 @@ impl FontSystemState {
             // makes drawing text consistent with the font-kit's raster_bounds.
             cx.translate(
                 -glyph_bounds.origin_x() as CGFloat,
-                (glyph_bounds.origin_y() + glyph_bounds.height()) as CGFloat,
+                (glyph_bounds.origin_y() + height) as CGFloat,
             );
             cx.scale(scale_factor as CGFloat, scale_factor as CGFloat);
 
@@ -274,10 +263,7 @@ impl FontSystemState {
                 .clone_with_font_size(font_size as CGFloat)
                 .draw_glyphs(
                     &[glyph_id as CGGlyph],
-                    &[CGPoint::new(
-                        (subpixel_shift.x() / scale_factor) as CGFloat,
-                        (subpixel_shift.y() / scale_factor) as CGFloat,
-                    )],
+                    &[CGPoint::new(0 as CGFloat, 0 as CGFloat)],
                     cx,
                 );
 
@@ -292,7 +278,7 @@ impl FontSystemState {
                 }
             }
 
-            Some((cx_bounds, bytes))
+            Some((glyph_bounds, bytes))
         }
     }
 
@@ -576,43 +562,6 @@ mod tests {
             vec![0, 2, 4, 5, 7, 8, 9, 10, 14, 15, 16, 17, 21, 22, 23, 24, 26, 27, 28, 29, 36, 37],
         );
         Ok(())
-    }
-
-    #[test]
-    #[ignore]
-    fn test_rasterize_glyph() {
-        use std::{fs::File, io::BufWriter, path::Path};
-
-        let fonts = FontSystem::new();
-        let font_ids = fonts.load_family("Fira Code").unwrap();
-        let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
-        let glyph_id = fonts.glyph_for_char(font_id, 'G').unwrap();
-
-        const VARIANTS: usize = 1;
-        for i in 0..VARIANTS {
-            let variant = i as f32 / VARIANTS as f32;
-            let (bounds, bytes) = fonts
-                .rasterize_glyph(
-                    font_id,
-                    16.0,
-                    glyph_id,
-                    vec2f(variant, variant),
-                    2.,
-                    RasterizationOptions::Alpha,
-                )
-                .unwrap();
-
-            let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
-            let path = Path::new(&name);
-            let file = File::create(path).unwrap();
-            let w = &mut BufWriter::new(file);
-
-            let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
-            encoder.set_color(png::ColorType::Grayscale);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_image_data(&bytes).unwrap();
-        }
     }
 
     #[test]

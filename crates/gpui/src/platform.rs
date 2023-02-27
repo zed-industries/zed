@@ -350,7 +350,6 @@ pub trait FontSystem: Send + Sync {
         font_id: FontId,
         font_size: f32,
         glyph_id: GlyphId,
-        subpixel_shift: Vector2F,
         scale_factor: f32,
         options: RasterizationOptions,
     ) -> Option<(RectI, Vec<u8>)>;

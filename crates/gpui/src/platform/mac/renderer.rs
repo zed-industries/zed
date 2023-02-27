@@ -618,12 +618,10 @@ impl Renderer {
         let mut sprites_by_atlas = HashMap::new();
 
         for glyph in glyphs {
-            if let Some(sprite) = self.sprite_cache.render_glyph(
-                glyph.font_id,
-                glyph.font_size,
-                glyph.id,
-                glyph.origin,
-            ) {
+            if let Some(sprite) =
+                self.sprite_cache
+                    .render_glyph(glyph.font_id, glyph.font_size, glyph.id)
+            {
                 // Snap sprite to pixel grid.
                 let origin = (glyph.origin * scale_factor).floor() + sprite.offset.to_f32();
                 sprites_by_atlas
