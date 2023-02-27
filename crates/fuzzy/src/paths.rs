@@ -198,8 +198,6 @@ fn distance_between_paths(path: &Path, relative_to: &Path) -> usize {
     let mut path_components = path.components();
     let mut relative_components = relative_to.components();
 
-    // while path_components.next() == relative_components.next() {}
-
     while path_components
         .next()
         .zip(relative_components.next())
