@@ -643,6 +643,9 @@ pub struct CodeActions {
 pub struct Folds {
     pub indicator: Interactive<Indicator>,
     pub fold_background: Color,
+    pub icon_width: f32,
+    pub folded_icon: String,
+    pub foldable_icon: String,
 }
 
 #[derive(Clone, Deserialize, Default)]

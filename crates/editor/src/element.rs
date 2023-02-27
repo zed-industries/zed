@@ -1829,7 +1829,14 @@ impl Element for EditorElement {
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
             mode = view.mode;
 
-            view.render_fold_indicators(folds, &style, view.gutter_hovered, cx)
+            view.render_fold_indicators(
+                folds,
+                &style,
+                view.gutter_hovered,
+                line_height,
+                gutter_margin,
+                cx,
+            )
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {

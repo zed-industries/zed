@@ -2698,52 +2698,67 @@ impl Editor {
         &self,
         fold_data: Option<Vec<(u32, FoldStatus)>>,
         style: &EditorStyle,
-        _gutter_hovered: bool,
+        gutter_hovered: bool,
+        line_height: f32,
+        gutter_margin: f32,
         cx: &mut RenderContext<Self>,
     ) -> Option<Vec<(u32, ElementBox)>> {
         enum FoldIndicators {}
+
+        let style = style.folds.clone();
 
         fold_data.map(|fold_data| {
             fold_data
                 .iter()
                 .copied()
-                .map(|(fold_location, fold_status)| {
-                    (
-                        fold_location,
-                        MouseEventHandler::<FoldIndicators>::new(
-                            fold_location as usize,
-                            cx,
-                            |mouse_state, _| -> ElementBox {
-                                Svg::new(match fold_status {
-                                    FoldStatus::Folded => "icons/chevron_right_8.svg",
-                                    FoldStatus::Foldable => "icons/chevron_down_8.svg",
-                                })
-                                .with_color(
-                                    style
-                                        .folds
-                                        .indicator
-                                        .style_for(mouse_state, fold_status == FoldStatus::Folded)
-                                        .color,
-                                )
-                                .boxed()
-                            },
+                .filter_map(|(fold_location, fold_status)| {
+                    (gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
+                        (
+                            fold_location,
+                            MouseEventHandler::<FoldIndicators>::new(
+                                fold_location as usize,
+                                cx,
+                                |mouse_state, _| -> ElementBox {
+                                    Svg::new(match fold_status {
+                                        FoldStatus::Folded => style.folded_icon.clone(),
+                                        FoldStatus::Foldable => style.foldable_icon.clone(),
+                                    })
+                                    .with_color(
+                                        style
+                                            .indicator
+                                            .style_for(
+                                                mouse_state,
+                                                fold_status == FoldStatus::Folded,
+                                            )
+                                            .color,
+                                    )
+                                    .constrained()
+                                    .with_width(style.icon_width)
+                                    .aligned()
+                                    .constrained()
+                                    .with_height(line_height)
+                                    .with_width(gutter_margin)
+                                    .aligned()
+                                    .boxed()
+                                },
+                            )
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .with_padding(Padding::uniform(3.))
+                            .on_click(MouseButton::Left, {
+                                move |_, cx| {
+                                    cx.dispatch_any_action(match fold_status {
+                                        FoldStatus::Folded => Box::new(UnfoldAt {
+                                            display_row: DisplayRow::new(fold_location),
+                                        }),
+                                        FoldStatus::Foldable => Box::new(FoldAt {
+                                            display_row: DisplayRow::new(fold_location),
+                                        }),
+                                    });
+                                }
+                            })
+                            .boxed(),
                         )
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .with_padding(Padding::uniform(3.))
-                        .on_click(MouseButton::Left, {
-                            move |_, cx| {
-                                cx.dispatch_any_action(match fold_status {
-                                    FoldStatus::Folded => Box::new(UnfoldAt {
-                                        display_row: DisplayRow::new(fold_location),
-                                    }),
-                                    FoldStatus::Foldable => Box::new(FoldAt {
-                                        display_row: DisplayRow::new(fold_location),
-                                    }),
-                                });
-                            }
-                        })
-                        .boxed(),
-                    )
+                    })
                 })
                 .collect()
         })
