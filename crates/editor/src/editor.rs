@@ -2686,47 +2686,51 @@ impl Editor {
 
     pub fn render_fold_indicators(
         &self,
-        fold_data: Vec<(u32, FoldStatus)>,
-        fold_indicators: &mut Vec<(u32, ElementBox)>,
+        fold_data: Option<Vec<(u32, FoldStatus)>>,
         style: &EditorStyle,
         cx: &mut RenderContext<Self>,
-    ) {
+    ) -> Option<Vec<(u32, ElementBox)>> {
         enum FoldIndicators {}
 
-        for (fold_location, fold_status) in fold_data.iter() {
-            fold_indicators.push((
-                *fold_location,
-                MouseEventHandler::<FoldIndicators>::new(
-                    *fold_location as usize,
-                    cx,
-                    |_, _| -> ElementBox {
-                        Svg::new(match *fold_status {
-                            FoldStatus::Folded => "icons/chevron_right_8.svg",
-                            FoldStatus::Foldable => "icons/chevron_down_8.svg",
+        fold_data.map(|fold_data| {
+            fold_data
+                .iter()
+                .map(|(fold_location, fold_status)| {
+                    (
+                        *fold_location,
+                        MouseEventHandler::<FoldIndicators>::new(
+                            *fold_location as usize,
+                            cx,
+                            |_, _| -> ElementBox {
+                                Svg::new(match *fold_status {
+                                    FoldStatus::Folded => "icons/chevron_right_8.svg",
+                                    FoldStatus::Foldable => "icons/chevron_down_8.svg",
+                                })
+                                .with_color(style.folds.indicator)
+                                .boxed()
+                            },
+                        )
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .with_padding(Padding::uniform(3.))
+                        .on_down(MouseButton::Left, {
+                            let fold_location = *fold_location;
+                            let fold_status = *fold_status;
+                            move |_, cx| {
+                                cx.dispatch_any_action(match fold_status {
+                                    FoldStatus::Folded => Box::new(UnfoldAt {
+                                        display_row: DisplayRow::new(fold_location),
+                                    }),
+                                    FoldStatus::Foldable => Box::new(FoldAt {
+                                        display_row: DisplayRow::new(fold_location),
+                                    }),
+                                });
+                            }
                         })
-                        .with_color(style.folds.indicator)
-                        .boxed()
-                    },
-                )
-                .with_cursor_style(CursorStyle::PointingHand)
-                .with_padding(Padding::uniform(3.))
-                .on_down(MouseButton::Left, {
-                    let fold_location = *fold_location;
-                    let fold_status = *fold_status;
-                    move |_, cx| {
-                        cx.dispatch_any_action(match fold_status {
-                            FoldStatus::Folded => Box::new(UnfoldAt {
-                                display_row: DisplayRow::new(fold_location),
-                            }),
-                            FoldStatus::Foldable => Box::new(FoldAt {
-                                display_row: DisplayRow::new(fold_location),
-                            }),
-                        });
-                    }
+                        .boxed(),
+                    )
                 })
-                .boxed(),
-            ))
-        }
+                .collect()
+        })
     }
 
     pub fn context_menu_visible(&self) -> bool {
@@ -5715,7 +5719,13 @@ impl Editor {
             let buffer_start_row = range.start.to_point(&display_map).row;
 
             for row in (0..=range.end.row()).rev() {
-                if let Some(fold_range) = display_map.foldable_range(DisplayRow::new(row)) {
+                let fold_range = display_map
+                    .foldable_range(DisplayRow::new(row))
+                    .map(|range| {
+                        range.map_range(|display_point| display_point.to_point(&display_map))
+                    });
+
+                if let Some(fold_range) = fold_range {
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
                         if row <= range.start.row() {
@@ -5735,8 +5745,27 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(fold_range) = display_map.foldable_range(display_row) {
-            self.fold_ranges(std::iter::once(fold_range), true, cx);
+            let autoscroll = self.selections_intersect(&fold_range, &display_map, cx);
+
+            let point_range =
+                fold_range.map_range(|display_point| display_point.to_point(&display_map));
+
+            self.fold_ranges(std::iter::once(point_range), autoscroll, cx);
         }
+    }
+
+    fn selections_intersect(
+        &mut self,
+        range: &Range<DisplayPoint>,
+        display_map: &DisplaySnapshot,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let selections = self.selections.all::<Point>(cx);
+
+        selections.iter().any(|selection| {
+            let display_range = selection.display_range(display_map);
+            range.contains(&display_range.start) || range.contains(&display_range.end)
+        })
     }
 
     pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
@@ -5760,12 +5789,13 @@ impl Editor {
     pub fn unfold_at(&mut self, fold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let display_range = fold_at
-            .display_row
-            .to_line_span(&display_map)
-            .map_endpoints(|endpoint| endpoint.to_point(&display_map));
+        let unfold_range = fold_at.display_row.to_line_span(&display_map);
 
-        self.unfold_ranges(std::iter::once(display_range), true, true, cx)
+        let autoscroll = self.selections_intersect(&unfold_range, &display_map, cx);
+
+        let unfold_range = unfold_range.map_range(|endpoint| endpoint.to_point(&display_map));
+
+        self.unfold_ranges(std::iter::once(unfold_range), true, autoscroll, cx)
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {

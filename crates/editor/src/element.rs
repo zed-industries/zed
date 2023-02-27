@@ -48,6 +48,7 @@ use std::{
     ops::{DerefMut, Range},
     sync::Arc,
 };
+use workspace::item::Item;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -576,15 +577,18 @@ impl EditorElement {
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
 
-        for (line, fold_indicator) in layout.fold_indicators.iter_mut() {
-            let mut x = bounds.width() - layout.gutter_padding;
-            let mut y = *line as f32 * line_height - scroll_top;
+        layout.fold_indicators.as_mut().map(|fold_indicators| {
+            for (line, fold_indicator) in fold_indicators.iter_mut() {
+                let mut x = bounds.width() - layout.gutter_padding;
+                let mut y = *line as f32 * line_height - scroll_top;
 
-            x += ((layout.gutter_padding + layout.gutter_margin) - fold_indicator.size().x()) / 2.;
-            y += (line_height - fold_indicator.size().y()) / 2.;
+                x += ((layout.gutter_padding + layout.gutter_margin) - fold_indicator.size().x())
+                    / 2.;
+                y += (line_height - fold_indicator.size().y()) / 2.;
 
-            fold_indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
-        }
+                fold_indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
+            }
+        });
     }
 
     fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
@@ -1130,17 +1134,20 @@ impl EditorElement {
 
     fn get_fold_indicators(
         &self,
+        is_singleton: bool,
         display_rows: Range<u32>,
         snapshot: &EditorSnapshot,
-    ) -> Vec<(u32, FoldStatus)> {
-        display_rows
-            .into_iter()
-            .filter_map(|display_row| {
-                snapshot
-                    .fold_for_line(display_row)
-                    .map(|fold_status| (display_row, fold_status))
-            })
-            .collect()
+    ) -> Option<Vec<(u32, FoldStatus)>> {
+        is_singleton.then(|| {
+            display_rows
+                .into_iter()
+                .filter_map(|display_row| {
+                    snapshot
+                        .fold_for_line(display_row)
+                        .map(|fold_status| (display_row, fold_status))
+                })
+                .collect()
+        })
     }
 
     //Folds contained in a hunk are ignored apart from shrinking visual size
@@ -1633,7 +1640,10 @@ impl Element for EditorElement {
         let mut highlighted_ranges = Vec::new();
         let mut show_scrollbars = false;
         let mut include_root = false;
+        let mut is_singleton = false;
         self.update_view(cx.app, |view, cx| {
+            is_singleton = view.is_singleton(cx);
+
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             highlighted_rows = view.highlighted_rows();
@@ -1714,7 +1724,7 @@ impl Element for EditorElement {
 
         let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-        let folds = self.get_fold_indicators(start_row..end_row, &snapshot);
+        let folds = self.get_fold_indicators(is_singleton, start_row..end_row, &snapshot);
 
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
@@ -1778,12 +1788,11 @@ impl Element for EditorElement {
             }
         });
 
-        let mut fold_indicators = Vec::with_capacity(folds.len());
         let mut context_menu = None;
         let mut code_actions_indicator = None;
         let mut hover = None;
         let mut mode = EditorMode::Full;
-        cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
+        let mut fold_indicators = cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
                 .newest::<usize>(cx)
@@ -1802,11 +1811,11 @@ impl Element for EditorElement {
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
-            view.render_fold_indicators(folds, &mut fold_indicators, &style, cx);
-
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
             mode = view.mode;
+
+            view.render_fold_indicators(folds, &style, cx)
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1832,15 +1841,17 @@ impl Element for EditorElement {
             );
         }
 
-        for (_, indicator) in fold_indicators.iter_mut() {
-            indicator.layout(
-                SizeConstraint::strict_along(
-                    Axis::Vertical,
-                    line_height * style.code_actions.vertical_scale,
-                ),
-                cx,
-            );
-        }
+        fold_indicators.as_mut().map(|fold_indicators| {
+            for (_, indicator) in fold_indicators.iter_mut() {
+                indicator.layout(
+                    SizeConstraint::strict_along(
+                        Axis::Vertical,
+                        line_height * style.code_actions.vertical_scale,
+                    ),
+                    cx,
+                );
+            }
+        });
 
         if let Some((_, hover_popovers)) = hover.as_mut() {
             for hover_popover in hover_popovers.iter_mut() {
@@ -2020,7 +2031,7 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
-    fold_indicators: Vec<(u32, ElementBox)>,
+    fold_indicators: Option<Vec<(u32, ElementBox)>>,
 }
 
 pub struct PositionMap {

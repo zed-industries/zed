@@ -579,7 +579,7 @@ impl DisplaySnapshot {
     pub fn line_indent(&self, display_row: DisplayRow) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
-        for (c, _) in self.chars_at(display_row.start(self)) {
+        for (c, _) in self.chars_at(display_row.start()) {
             if c == ' ' {
                 indent += 1;
             } else {
@@ -626,7 +626,7 @@ impl DisplaySnapshot {
         return false;
     }
 
-    pub fn foldable_range(self: &Self, row: DisplayRow) -> Option<Range<Point>> {
+    pub fn foldable_range(self: &Self, row: DisplayRow) -> Option<Range<DisplayPoint>> {
         let start = row.end(&self);
 
         if self.is_foldable(row) && !self.is_line_folded(start.row()) {
@@ -637,13 +637,13 @@ impl DisplaySnapshot {
             for row in row.next_rows(self).unwrap() {
                 let (indent, is_blank) = self.line_indent(row);
                 if !is_blank && indent <= start_indent {
-                    end = row.previous_row(self);
+                    end = row.previous_row();
                     break;
                 }
             }
 
             let end = end.map(|end_row| end_row.end(self)).unwrap_or(max_point);
-            Some(start.to_point(self)..end.to_point(self))
+            Some(start..end)
         } else {
             None
         }
@@ -660,87 +660,6 @@ impl DisplaySnapshot {
 
 #[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DisplayPoint(BlockPoint);
-
-#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Serialize)]
-#[repr(transparent)]
-pub struct DisplayRow(pub u32);
-
-// TODO: Move display_map check into new, and then remove it from everywhere else
-impl DisplayRow {
-    pub fn new(display_row: u32) -> Self {
-        DisplayRow(display_row)
-    }
-
-    pub fn to_line_span(&self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
-        self.start(display_map)..self.end(&display_map)
-    }
-
-    pub fn previous_row(&self, _display_map: &DisplaySnapshot) -> Option<DisplayRow> {
-        self.0.checked_sub(1).map(|prev_row| DisplayRow(prev_row))
-    }
-
-    pub fn next_row(&self, display_map: &DisplaySnapshot) -> Option<DisplayRow> {
-        if self.0 + 1 > display_map.max_point().row() {
-            None
-        } else {
-            Some(DisplayRow(self.0 + 1))
-        }
-    }
-
-    // TODO: Remove and use next_row
-    fn next_unchecked(&self) -> Option<DisplayRow> {
-        Some(DisplayRow(self.0 + 1))
-    }
-
-    pub fn next_rows(
-        &self,
-        display_map: &DisplaySnapshot,
-    ) -> Option<impl Iterator<Item = DisplayRow>> {
-        self.next_row(display_map)
-            .and_then(|next_row| next_row.span_to(display_map.max_point()))
-    }
-
-    pub fn span_to<I: Into<DisplayRow>>(
-        &self,
-        end_row: I,
-    ) -> Option<impl Iterator<Item = DisplayRow>> {
-        let end_row = end_row.into();
-        if self.0 <= end_row.0 {
-            let start = *self;
-            let mut current = None;
-
-            Some(std::iter::from_fn(move || {
-                if current == None {
-                    current = Some(start);
-                } else {
-                    current = current.unwrap().next_unchecked();
-                }
-                if current.unwrap().0 > end_row.0 {
-                    None
-                } else {
-                    current
-                }
-            }))
-        } else {
-            None
-        }
-    }
-
-    // Force users to think about the display map when using this type
-    pub fn start(&self, _display_map: &DisplaySnapshot) -> DisplayPoint {
-        DisplayPoint::new(self.0, 0)
-    }
-
-    pub fn end(&self, display_map: &DisplaySnapshot) -> DisplayPoint {
-        DisplayPoint::new(self.0, display_map.line_len(self.0))
-    }
-}
-
-impl From<DisplayPoint> for DisplayRow {
-    fn from(value: DisplayPoint) -> Self {
-        DisplayRow(value.row())
-    }
-}
 
 impl Debug for DisplayPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -814,6 +733,87 @@ impl ToDisplayPoint for Point {
 impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
+    }
+}
+
+#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Serialize)]
+#[repr(transparent)]
+pub struct DisplayRow(pub u32);
+
+// TODO: Move display_map check into new, and then remove it from everywhere else
+impl DisplayRow {
+    pub fn new(display_row: u32) -> Self {
+        DisplayRow(display_row)
+    }
+
+    pub fn to_line_span(&self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
+        self.start()..self.end(&display_map)
+    }
+
+    pub fn previous_row(&self) -> Option<DisplayRow> {
+        self.0.checked_sub(1).map(|prev_row| DisplayRow(prev_row))
+    }
+
+    pub fn next_row(&self, display_map: &DisplaySnapshot) -> Option<DisplayRow> {
+        if self.0 + 1 > display_map.max_point().row() {
+            None
+        } else {
+            Some(DisplayRow(self.0 + 1))
+        }
+    }
+
+    // TODO: Remove and use next_row
+    fn next_unchecked(&self) -> Option<DisplayRow> {
+        Some(DisplayRow(self.0 + 1))
+    }
+
+    pub fn next_rows(
+        &self,
+        display_map: &DisplaySnapshot,
+    ) -> Option<impl Iterator<Item = DisplayRow>> {
+        self.next_row(display_map)
+            .and_then(|next_row| next_row.span_to(display_map.max_point()))
+    }
+
+    pub fn span_to<I: Into<DisplayRow>>(
+        &self,
+        end_row: I,
+    ) -> Option<impl Iterator<Item = DisplayRow>> {
+        let end_row = end_row.into();
+        if self.0 <= end_row.0 {
+            let start = *self;
+            let mut current = None;
+
+            Some(std::iter::from_fn(move || {
+                if current == None {
+                    current = Some(start);
+                } else {
+                    current = current.unwrap().next_unchecked();
+                }
+                if current.unwrap().0 > end_row.0 {
+                    None
+                } else {
+                    current
+                }
+            }))
+        } else {
+            None
+        }
+    }
+
+    // Force users to think about the display map when using this type
+    pub fn start(&self) -> DisplayPoint {
+        DisplayPoint::new(self.0, 0)
+    }
+
+    pub fn end(&self, display_map: &DisplaySnapshot) -> DisplayPoint {
+        DisplayPoint::new(self.0, display_map.line_len(self.0))
+    }
+}
+
+impl From<DisplayPoint> for DisplayRow {
+    fn from(value: DisplayPoint) -> Self {
+        DisplayRow(value.row())
     }
 }
 

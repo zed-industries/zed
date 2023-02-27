@@ -146,14 +146,14 @@ where
 }
 
 pub trait MapRangeEndsExt<R> {
-    fn map_endpoints<T, F>(self, f: F) -> Range<T>
+    fn map_range<T, F>(self, f: F) -> Range<T>
     where
         Self: Sized,
         F: Fn(R) -> T;
 }
 
 impl<R> MapRangeEndsExt<R> for Range<R> {
-    fn map_endpoints<T, F>(self, f: F) -> Range<T>
+    fn map_range<T, F>(self, f: F) -> Range<T>
     where
         Self: Sized,
         F: Fn(R) -> T,
