@@ -102,9 +102,6 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         "string.special.symbol": {
             color: color.string,
         },
-        "string.special.regex": {
-            color: color.string,
-        },
         "string.escape": {
             color: color.comment,
         },

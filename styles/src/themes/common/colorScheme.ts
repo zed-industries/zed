@@ -142,14 +142,11 @@ export interface Syntax {
     string: SyntaxHighlightStyle
     // css: color_value
     // js: this, super
-    // racket: regex
     // toml: offset_date_time, local_date_time...
     "string.special": SyntaxHighlightStyle
     // elixir: atom, quoted_atom, keyword, quoted_keyword
     // ruby: simple_symbol, delimited_symbol...
     "string.special.symbol": SyntaxHighlightStyle
-    // ruby: Regular expression
-    "string.special.regex": SyntaxHighlightStyle
     // elixir, python, yaml...: escape_sequence
     "string.escape": SyntaxHighlightStyle
     // Regular expressions
