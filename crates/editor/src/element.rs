@@ -570,7 +570,7 @@ impl EditorElement {
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
-            let mut x = bounds.width() - layout.gutter_padding;
+            let mut x = 0.;
             let mut y = *row as f32 * line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
             y += (line_height - indicator.size().y()) / 2.;

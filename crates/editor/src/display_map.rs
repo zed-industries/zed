@@ -801,7 +801,6 @@ impl DisplayRow {
         }
     }
 
-    // Force users to think about the display map when using this type
     pub fn start(&self) -> DisplayPoint {
         DisplayPoint::new(self.0, 0)
     }
