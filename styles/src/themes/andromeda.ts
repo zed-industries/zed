@@ -41,25 +41,27 @@ const ramps = {
 }
 
 const syntax: ThemeSyntax = {
-    variable: { color: color.cyan },
+    "punctuation.list_marker": { color: color.yellow },
+    "text.literal": { color: color.green },
     "variable.special": { color: color.cyan },
-    "punctuation.special": { color: color.red },
     attribute: { color: color.text },
     boolean: { color: color.red },
     comment: { color: color.gray },
     function: { color: color.yellow },
     keyword: { color: color.purple },
+    linkText: { color: color.red },
+    linkUri: { color: color.purple },
     number: { color: color.orange },
     operator: { color: color.red },
     primary: { color: color.text },
     property: { color: color.text },
     string: { color: color.green },
-    type: { color: color.yellow },
     title: { color: color.hotPink },
-    linkText: { color: color.red },
-    linkUri: { color: color.purple },
-    "text.literal": { color: color.green },
-    "punctuation.list_marker": { color: color.yellow },
+    type: { color: color.yellow },
+    variable: { color: color.cyan },
+
+    // TODO: uncomment this once the bug with styling curly braces in template literals is fixed
+    // "punctuation.special": { color: color.red },
 }
 
 export const dark = createColorScheme(`${name}`, false, ramps, syntax)
