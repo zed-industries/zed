@@ -1199,7 +1199,10 @@ impl Buffer {
 
     pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         if self.version == diff.base_version {
-            self.apply_non_conflicting_portion_of_diff(diff, cx)
+            self.start_transaction();
+            self.text.set_line_ending(diff.line_ending);
+            self.edit(diff.edits, None, cx);
+            self.end_transaction(cx)
         } else {
             return None;
         }
