@@ -80,10 +80,6 @@
 
 ; Tokens
 
-(template_substitution
-  "${" @punctuation.special
-  "}" @punctuation.special) @embedded
-
 [
   ";"
   "?."
@@ -191,6 +187,10 @@
   "with"
   "yield"
 ] @keyword
+
+(template_substitution
+  "${" @punctuation.special
+  "}" @punctuation.special) @embedded
 
 ; Types
 
