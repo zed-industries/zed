@@ -1,27 +1,14 @@
 import chroma from "chroma-js"
-import { Meta, ThemeSyntax } from "./common/colorScheme"
+import { Meta } from "./common/colorScheme"
 import { colorRamp, createColorScheme } from "./common/ramps"
 
 const name = "Andromeda"
 
-const color = {
-    text: "#D5CED9",
-    gray: "#5f6167",
-    cyan: "#00e8c6",
-    orange: "#f39c12",
-    yellow: "#FFE66D",
-    pink: "#ff00aa",
-    hotPink: "#f92672",
-    purple: "#c74ded",
-    blue: "#7cb7ff",
-    red: "#ee5d43",
-    green: "#96E072",
-}
-
 const ramps = {
     neutral: chroma
         .scale([
-            "#24262D",
+            "#1E2025",
+            "#23262E",
             "#292E38",
             "#2E323C",
             "#ACA8AE",
@@ -30,41 +17,17 @@ const ramps = {
             "#F7F7F8",
         ])
         .domain([0, 0.15, 0.25, 0.35, 0.7, 0.8, 0.9, 1]),
-    red: colorRamp(chroma(color.red)),
-    orange: colorRamp(chroma(color.orange)),
-    yellow: colorRamp(chroma(color.yellow)),
-    green: colorRamp(chroma(color.green)),
-    cyan: colorRamp(chroma(color.cyan)),
-    blue: colorRamp(chroma(color.blue)),
-    violet: colorRamp(chroma(color.purple)),
-    magenta: colorRamp(chroma(color.hotPink)),
+    red: colorRamp(chroma("#F92672")),
+    orange: colorRamp(chroma("#F39C12")),
+    yellow: colorRamp(chroma("#FFE66D")),
+    green: colorRamp(chroma("#96E072")),
+    cyan: colorRamp(chroma("#00E8C6")),
+    blue: colorRamp(chroma("#0CA793")),
+    violet: colorRamp(chroma("#8A3FA6")),
+    magenta: colorRamp(chroma("#C74DED")),
 }
 
-const syntax: ThemeSyntax = {
-    "punctuation.list_marker": { color: color.yellow },
-    "text.literal": { color: color.green },
-    "variable.special": { color: color.cyan },
-    attribute: { color: color.text },
-    boolean: { color: color.red },
-    comment: { color: color.gray },
-    function: { color: color.yellow },
-    keyword: { color: color.purple },
-    linkText: { color: color.red },
-    linkUri: { color: color.purple },
-    number: { color: color.orange },
-    operator: { color: color.red },
-    primary: { color: color.text },
-    property: { color: color.text },
-    string: { color: color.green },
-    title: { color: color.hotPink },
-    type: { color: color.yellow },
-    variable: { color: color.cyan },
-
-    // TODO: uncomment this once the bug with styling curly braces in template literals is fixed
-    // "punctuation.special": { color: color.red },
-}
-
-export const dark = createColorScheme(`${name}`, false, ramps, syntax)
+export const dark = createColorScheme(`${name}`, false, ramps)
 
 export const meta: Meta = {
     name,
