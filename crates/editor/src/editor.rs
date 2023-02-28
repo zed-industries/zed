@@ -39,10 +39,11 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
+    scene::MouseClick,
     serde_json::json,
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    EventContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -457,6 +458,8 @@ type CompletionId = usize;
 
 type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
+type TextClickedCallback =
+    fn(&MouseClick, &Range<DisplayPoint>, &EditorSnapshot, &mut EventContext);
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -485,6 +488,7 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
+    clickable_text: BTreeMap<TypeId, (TextClickedCallback, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
@@ -1155,6 +1159,7 @@ impl Editor {
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
+            clickable_text: Default::default(),
             nav_history: None,
             context_menu: None,
             mouse_context_menu: cx.add_view(context_menu::ContextMenu::new),
@@ -5776,15 +5781,11 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(fold_range) = display_map.foldable_range(display_row) {
-            let autoscroll = {
-                let selections = self.selections.all::<Point>(cx);
-
-                selections.iter().any(|selection| {
-                    let display_range = selection.display_range(&display_map);
-
-                    fold_range.overlaps(&display_range)
-                })
-            };
+            let autoscroll = self
+                .selections
+                .all::<Point>(cx)
+                .iter()
+                .any(|selection| fold_range.overlaps(&selection.display_range(&display_map)));
 
             let fold_range =
                 fold_range.start.to_point(&display_map)..fold_range.end.to_point(&display_map);
@@ -5816,14 +5817,11 @@ impl Editor {
 
         let unfold_range = fold_at.display_row.to_points(&display_map);
 
-        let autoscroll = {
-            let selections = self.selections.all::<Point>(cx);
-            selections.iter().any(|selection| {
-                let display_range = selection.display_range(&display_map);
-
-                unfold_range.overlaps(&display_range)
-            })
-        };
+        let autoscroll = self
+            .selections
+            .all::<Point>(cx)
+            .iter()
+            .any(|selection| unfold_range.overlaps(&selection.display_range(&display_map)));
 
         let unfold_range =
             unfold_range.start.to_point(&display_map)..unfold_range.end.to_point(&display_map);
@@ -5836,7 +5834,7 @@ impl Editor {
         self.fold_ranges(ranges, true, cx);
     }
 
-    pub fn fold_ranges<T: ToOffset>(
+    pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         auto_scroll: bool,
@@ -5844,15 +5842,33 @@ impl Editor {
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
-            self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
+            let ranges = ranges.collect_vec();
+
+            self.display_map
+                .update(cx, |map, cx| map.fold(ranges.iter().cloned(), cx));
+
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
             }
+
+            let snapshot = self.snapshot(cx);
+            let anchor_ranges = offset_to_anchors(ranges, &snapshot);
+
+            self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
+                for range in anchor_ranges {
+                    if let Err(idx) = click_ranges.binary_search_by(|click_range| {
+                        click_range.cmp(&range, &snapshot.buffer_snapshot)
+                    }) {
+                        click_ranges.insert(idx, range)
+                    }
+                }
+            });
+
             cx.notify();
         }
     }
 
-    pub fn unfold_ranges<T: ToOffset>(
+    pub fn unfold_ranges<T: ToOffset + Clone>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
@@ -5861,11 +5877,35 @@ impl Editor {
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
-            self.display_map
-                .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
+            let ranges = ranges.collect_vec();
+
+            self.display_map.update(cx, |map, cx| {
+                map.unfold(ranges.iter().cloned(), inclusive, cx)
+            });
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
             }
+
+            let snapshot = self.snapshot(cx);
+            let anchor_ranges = offset_to_anchors(ranges, &snapshot);
+
+            self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
+                for range in anchor_ranges {
+                    let range_point = range.start.to_point(&snapshot.buffer_snapshot);
+                    // Fold and unfold ranges start at different points in the row.
+                    // But their rows do match, so we can use that to detect sameness.
+                    if let Ok(idx) = click_ranges.binary_search_by(|click_range| {
+                        click_range
+                            .start
+                            .to_point(&snapshot.buffer_snapshot)
+                            .row
+                            .cmp(&range_point.row)
+                    }) {
+                        click_ranges.remove(idx);
+                    }
+                }
+            });
+
             cx.notify();
         }
     }
@@ -5989,6 +6029,61 @@ impl Editor {
                 cx.reveal_path(&file.abs_path(cx));
             }
         }
+    }
+
+    pub fn change_click_ranges<T: ClickRange>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        change: impl FnOnce(&mut Vec<Range<Anchor>>),
+    ) {
+        let mut ranges = self
+            .clickable_text
+            .remove(&TypeId::of::<T>())
+            .map(|click_range| click_range.1)
+            .unwrap_or_default();
+
+        change(&mut ranges);
+
+        self.clickable_text
+            .insert(TypeId::of::<T>(), (T::click_handler, ranges));
+
+        cx.notify();
+    }
+
+    pub fn click_ranges_in_range(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+    ) -> Vec<(Range<DisplayPoint>, TextClickedCallback)> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        for (callback, ranges) in self.clickable_text.values() {
+            let start_ix = match ranges.binary_search_by(|probe| {
+                let cmp = probe.end.cmp(&search_range.start, buffer);
+                if cmp.is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }) {
+                Ok(i) | Err(i) => i,
+            };
+            for range in &ranges[start_ix..] {
+                if range.start.cmp(&search_range.end, buffer).is_ge() {
+                    break;
+                }
+                let start = range
+                    .start
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                let end = range
+                    .end
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                results.push((start..end, *callback))
+            }
+        }
+        results
     }
 
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
@@ -6367,6 +6462,25 @@ fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) 
     } else {
         next_selection.end.row
     }
+}
+
+fn offset_to_anchors<
+    'snapshot,
+    'iter: 'snapshot,
+    T: ToOffset,
+    I: IntoIterator<Item = Range<T>> + 'iter,
+>(
+    ranges: I,
+    snapshot: &'snapshot EditorSnapshot,
+) -> impl Iterator<Item = Range<Anchor>> + 'snapshot {
+    ranges.into_iter().map(|range| {
+        snapshot
+            .buffer_snapshot
+            .anchor_at(range.start.to_offset(&snapshot.buffer_snapshot), Bias::Left)
+            ..snapshot
+                .buffer_snapshot
+                .anchor_at(range.end.to_offset(&snapshot.buffer_snapshot), Bias::Right)
+    })
 }
 
 impl EditorSnapshot {

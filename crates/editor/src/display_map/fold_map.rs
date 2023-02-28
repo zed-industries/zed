@@ -370,7 +370,7 @@ impl FoldMap {
                     }
 
                     if fold.end > fold.start {
-                        let output_text = "…";
+                        let output_text = "⋯";
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
