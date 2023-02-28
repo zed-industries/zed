@@ -31,6 +31,8 @@ export default function feedback(colorScheme: ColorScheme) {
             },
         },
         button_margin: 8,
-        info_text: text(layer, "sans", "default", { size: "xs" }),
+        info_text_default: text(layer, "sans", "default", { size: "xs" }),
+        link_text_default: text(layer, "sans", "default", { size: "xs", underline: true }),
+        link_text_hover: text(layer, "sans", "hovered", { size: "xs", underline: true })
     }
 }
