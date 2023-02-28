@@ -10,7 +10,7 @@ const license = {
 }
 
 // `name-[light|dark]`, isLight, color ramps
-export const dark = createColorScheme(`${name}`, false, {
+export const dark = createColorScheme(name, false, {
     neutral: chroma.scale([
         "#151718",
         "#262B30",

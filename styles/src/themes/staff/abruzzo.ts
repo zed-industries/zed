@@ -9,7 +9,7 @@ const license = {
     url: "",
 }
 
-export const dark = createColorScheme(`${name}`, false, {
+export const dark = createColorScheme(name, false, {
     neutral: chroma.scale([
         "#1b0d05",
         "#2c1e18",

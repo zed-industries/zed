@@ -9,7 +9,7 @@ const license = {
     url: "https://github.com/dracula/dracula-theme/blob/master/LICENSE",
 }
 
-export const dark = createColorScheme(`${name}`, false, {
+export const dark = createColorScheme(name, false, {
     neutral: chroma.scale([
         "#282A36",
         "#3a3c4e",

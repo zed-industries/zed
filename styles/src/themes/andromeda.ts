@@ -27,7 +27,7 @@ const ramps = {
     magenta: colorRamp(chroma("#C74DED")),
 }
 
-export const dark = createColorScheme(`${name}`, false, ramps)
+export const dark = createColorScheme(name, false, ramps)
 
 export const meta: Meta = {
     name,
