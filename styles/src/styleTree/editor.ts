@@ -1,16 +1,9 @@
-import { fontWeights } from "../common"
 import { withOpacity } from "../utils/color"
-import {
-    ColorScheme,
-    Layer,
-    StyleSets,
-    Syntax,
-    ThemeSyntax,
-} from "../themes/common/colorScheme"
+import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import deepmerge from "deepmerge"
+import { buildSyntax } from "../themes/common/syntax"
 
 export default function editor(colorScheme: ColorScheme) {
     let layer = colorScheme.highest
@@ -43,118 +36,7 @@ export default function editor(colorScheme: ColorScheme) {
         }
     }
 
-    const defaultSyntax: Syntax = {
-        primary: {
-            color: colorScheme.ramps.neutral(1).hex(),
-            weight: fontWeights.normal,
-        },
-        "variable.special": {
-            // Highlights for self, this, etc
-            color: colorScheme.ramps.blue(0.7).hex(),
-            weight: fontWeights.normal,
-        },
-        comment: {
-            color: colorScheme.ramps.neutral(0.71).hex(),
-            weight: fontWeights.normal,
-        },
-        punctuation: {
-            color: colorScheme.ramps.neutral(0.86).hex(),
-            weight: fontWeights.normal,
-        },
-        constant: {
-            color: colorScheme.ramps.green(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        keyword: {
-            color: colorScheme.ramps.blue(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        function: {
-            color: colorScheme.ramps.yellow(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        type: {
-            color: colorScheme.ramps.cyan(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        constructor: {
-            color: colorScheme.ramps.blue(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        variant: {
-            color: colorScheme.ramps.blue(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        property: {
-            color: colorScheme.ramps.blue(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        enum: {
-            color: colorScheme.ramps.orange(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        operator: {
-            color: colorScheme.ramps.orange(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        string: {
-            color: colorScheme.ramps.orange(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        number: {
-            color: colorScheme.ramps.green(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        boolean: {
-            color: colorScheme.ramps.green(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        predictive: {
-            color: colorScheme.ramps.neutral(0.57).hex(),
-            weight: fontWeights.normal,
-        },
-        title: {
-            color: colorScheme.ramps.yellow(0.5).hex(),
-            weight: fontWeights.bold,
-        },
-        emphasis: {
-            color: colorScheme.ramps.blue(0.5).hex(),
-            weight: fontWeights.normal,
-        },
-        "emphasis.strong": {
-            color: colorScheme.ramps.blue(0.5).hex(),
-            weight: fontWeights.bold,
-        },
-        linkUri: {
-            color: colorScheme.ramps.green(0.5).hex(),
-            weight: fontWeights.normal,
-            underline: true,
-        },
-        linkText: {
-            color: colorScheme.ramps.orange(0.5).hex(),
-            weight: fontWeights.normal,
-            italic: true,
-        },
-    }
-
-    function createSyntax(colorScheme: ColorScheme): Syntax {
-        if (!colorScheme.syntax) {
-            return defaultSyntax
-        }
-
-        return deepmerge<Syntax, Partial<ThemeSyntax>>(
-            defaultSyntax,
-            colorScheme.syntax,
-            {
-                arrayMerge: (destinationArray, sourceArray) => [
-                    ...destinationArray,
-                    ...sourceArray,
-                ],
-            }
-        )
-    }
-
-    const syntax = createSyntax(colorScheme)
+    const syntax = buildSyntax(colorScheme)
 
     return {
         textColor: syntax.primary.color,

@@ -59,11 +59,14 @@
 (super) @variable.special
 
 [
-  (true)
-  (false)
   (null)
   (undefined)
 ] @constant.builtin
+
+[
+  (true)
+  (false)
+] @boolean
 
 (comment) @comment
 
@@ -72,14 +75,10 @@
   (template_string)
 ] @string
 
-(regex) @string.special
+(regex) @string.regex
 (number) @number
 
 ; Tokens
-
-(template_substitution
-  "${" @punctuation.special
-  "}" @punctuation.special) @embedded
 
 [
   ";"
@@ -189,6 +188,10 @@
   "with"
   "yield"
 ] @keyword
+
+(template_substitution
+  "${" @punctuation.special
+  "}" @punctuation.special) @embedded
 
 ; Types
 

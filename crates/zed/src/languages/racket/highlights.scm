@@ -3,7 +3,7 @@
 [(string)
  (here_string)
  (byte_string)] @string
-(regex) @string.special
+(regex) @string.regex
 (escape_sequence) @escape
 
 [(comment)

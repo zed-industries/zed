@@ -1,4 +1,5 @@
 import chroma from "chroma-js"
+import { fontWeights } from "../common"
 import { Meta, ThemeSyntax } from "./common/colorScheme"
 import { colorRamp, createColorScheme } from "./common/ramps"
 
@@ -8,6 +9,7 @@ const color = {
     white: "#ACB2BE",
     grey: "#5D636F",
     red: "#D07277",
+    darkRed: "#B1574B",
     orange: "#C0966B",
     yellow: "#DFC184",
     green: "#A1C181",
@@ -40,17 +42,27 @@ const ramps = {
 }
 
 const syntax: ThemeSyntax = {
-    primary: { color: color.white },
-    comment: { color: color.grey },
-    function: { color: color.blue },
-    type: { color: color.teal },
-    property: { color: color.red },
-    number: { color: color.orange },
-    string: { color: color.green },
-    keyword: { color: color.purple },
     boolean: { color: color.orange },
-    punctuation: { color: color.white },
+    comment: { color: color.grey },
+    enum: { color: color.red },
+    "emphasis.strong": { color: color.orange },
+    function: { color: color.blue },
+    keyword: { color: color.purple },
+    linkText: { color: color.blue, italic: false },
+    linkUri: { color: color.teal },
+    number: { color: color.orange },
     operator: { color: color.teal },
+    primary: { color: color.white },
+    property: { color: color.red },
+    punctuation: { color: color.white },
+    "punctuation.list_marker": { color: color.red },
+    "punctuation.special": { color: color.darkRed },
+    string: { color: color.green },
+    title: { color: color.red, weight: fontWeights.normal },
+    "text.literal": { color: color.green },
+    type: { color: color.teal },
+    "variable.special": { color: color.orange },
+    variant: { color: color.blue },
 }
 
 export const dark = createColorScheme(name, false, ramps, syntax)

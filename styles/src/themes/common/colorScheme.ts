@@ -1,5 +1,6 @@
 import { Scale } from "chroma-js"
-import { FontWeight } from "../../common"
+import { Syntax, ThemeSyntax, SyntaxHighlightStyle } from "./syntax"
+export { Syntax, ThemeSyntax, SyntaxHighlightStyle }
 
 export interface ColorScheme {
     name: string
@@ -100,39 +101,3 @@ export interface Style {
     border: string
     foreground: string
 }
-
-export interface SyntaxHighlightStyle {
-    color: string
-    weight?: FontWeight
-    underline?: boolean
-    italic?: boolean
-}
-
-export interface Syntax {
-    primary: SyntaxHighlightStyle
-    "variable.special": SyntaxHighlightStyle
-    comment: SyntaxHighlightStyle
-    punctuation: SyntaxHighlightStyle
-    constant: SyntaxHighlightStyle
-    keyword: SyntaxHighlightStyle
-    function: SyntaxHighlightStyle
-    type: SyntaxHighlightStyle
-    constructor: SyntaxHighlightStyle
-    variant: SyntaxHighlightStyle
-    property: SyntaxHighlightStyle
-    enum: SyntaxHighlightStyle
-    operator: SyntaxHighlightStyle
-    string: SyntaxHighlightStyle
-    number: SyntaxHighlightStyle
-    boolean: SyntaxHighlightStyle
-    predictive: SyntaxHighlightStyle
-    title: SyntaxHighlightStyle
-    emphasis: SyntaxHighlightStyle
-    "emphasis.strong": SyntaxHighlightStyle
-    linkUri: SyntaxHighlightStyle
-    linkText: SyntaxHighlightStyle
-}
-
-// HACK: "constructor" as a key in the syntax interface returns an error when a theme tries to use it.
-// For now hack around it by omiting constructor as a valid key for overrides.
-export type ThemeSyntax = Partial<Omit<Syntax, "constructor">>
