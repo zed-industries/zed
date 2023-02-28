@@ -20,7 +20,12 @@ impl_actions!(zed, [OpenBrowser]);
 
 actions!(
     zed,
-    [CopySystemSpecsIntoClipboard, FileBugReport, RequestFeature]
+    [
+        CopySystemSpecsIntoClipboard,
+        FileBugReport,
+        RequestFeature,
+        OpenZedCommunityRepo
+    ]
 );
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
@@ -64,6 +69,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             cx.dispatch_action(OpenBrowser {
                 url: url.clone().into(),
             });
+        },
+    );
+
+    cx.add_action(
+        |_: &mut Workspace, _: &OpenZedCommunityRepo, cx: &mut ViewContext<Workspace>| {
+            let url = "https://github.com/zed-industries/community";
+            cx.dispatch_action(OpenBrowser { url: url.into() });
         },
     );
 }
