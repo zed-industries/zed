@@ -2858,9 +2858,11 @@ impl Project {
                 .filter_map(|buffer_handle| {
                     let buffer = buffer_handle.read(cx);
                     let file = File::from_dyn(buffer.file())?;
-                    let buffer_abs_path = file.as_local()?.abs_path(cx);
-                    let (_, server) = self.language_server_for_buffer(buffer, cx)?;
-                    Some((buffer_handle, buffer_abs_path, server.clone()))
+                    let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
+                    let server = self
+                        .language_server_for_buffer(buffer, cx)
+                        .map(|s| s.1.clone());
+                    Some((buffer_handle, buffer_abs_path, server))
                 })
                 .collect::<Vec<_>>();
 
@@ -2875,10 +2877,10 @@ impl Project {
                 let _cleanup = defer({
                     let this = this.clone();
                     let mut cx = cx.clone();
-                    let local_buffers = &buffers_with_paths_and_servers;
+                    let buffers = &buffers_with_paths_and_servers;
                     move || {
                         this.update(&mut cx, |this, _| {
-                            for (buffer, _, _) in local_buffers {
+                            for (buffer, _, _) in buffers {
                                 this.buffers_being_formatted.remove(&buffer.id());
                             }
                         });
@@ -2905,59 +2907,59 @@ impl Project {
                         )
                     });
 
-                    let whitespace_transaction_id = if remove_trailing_whitespace {
-                        let diff = buffer
-                            .read_with(&cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
-                            .await;
-                        buffer.update(&mut cx, move |buffer, cx| {
-                            buffer.finalize_last_transaction();
-                            buffer.start_transaction();
-                            buffer.apply_non_conflicting_portion_of_diff(diff, cx);
-                            if ensure_final_newline {
-                                buffer.ensure_final_newline(cx);
-                            }
-                            buffer.end_transaction(cx)
-                        })
-                    } else if ensure_final_newline {
-                        buffer.update(&mut cx, move |buffer, cx| {
-                            buffer.finalize_last_transaction();
-                            buffer.start_transaction();
-                            buffer.ensure_final_newline(cx);
-                            buffer.end_transaction(cx)
-                        })
+                    // First, format buffer's whitespace according to the settings.
+                    let trailing_whitespace_diff = if remove_trailing_whitespace {
+                        Some(
+                            buffer
+                                .read_with(&cx, |b, cx| b.remove_trailing_whitespace(cx))
+                                .await,
+                        )
                     } else {
                         None
                     };
+                    let whitespace_transaction_id = buffer.update(&mut cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.start_transaction();
+                        if let Some(diff) = trailing_whitespace_diff {
+                            buffer.apply_non_conflicting_portion_of_diff(diff, cx);
+                        }
+                        if ensure_final_newline {
+                            buffer.ensure_final_newline(cx);
+                        }
+                        buffer.end_transaction(cx)
+                    });
 
+                    // Currently, formatting operations are represented differently depending on
+                    // whether they come from a language server or an external command.
+                    enum FormatOperation {
+                        Lsp(Vec<(Range<Anchor>, String)>),
+                        External(Diff),
+                    }
+
+                    // Apply language-specific formatting using either a language server
+                    // or external command.
+                    let mut format_operation = None;
                     match (formatter, format_on_save) {
                         (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
                         (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
                         | (_, FormatOnSave::LanguageServer) => {
-                            let edits = Self::format_via_lsp(
-                                &this,
-                                &buffer,
-                                &buffer_abs_path,
-                                &language_server,
-                                tab_size,
-                                &mut cx,
-                            )
-                            .await
-                            .context("failed to format via language server")?;
-
-                            buffer.update(&mut cx, |buffer, cx| {
-                                if let Some(tx_id) = whitespace_transaction_id {
-                                    if buffer
-                                        .peek_undo_stack()
-                                        .map_or(false, |e| e.transaction_id() == tx_id)
-                                    {
-                                        buffer.edit(edits, None, cx);
-                                    }
-                                    buffer.group_until_transaction(tx_id);
-                                } else {
-                                    buffer.edit(edits, None, cx);
-                                }
-                            });
+                            if let Some((language_server, buffer_abs_path)) =
+                                language_server.as_ref().zip(buffer_abs_path.as_ref())
+                            {
+                                format_operation = Some(FormatOperation::Lsp(
+                                    Self::format_via_lsp(
+                                        &this,
+                                        &buffer,
+                                        buffer_abs_path,
+                                        &language_server,
+                                        tab_size,
+                                        &mut cx,
+                                    )
+                                    .await
+                                    .context("failed to format via language server")?,
+                                ));
+                            }
                         }
 
                         (
@@ -2965,49 +2967,60 @@ impl Project {
                             FormatOnSave::On | FormatOnSave::Off,
                         )
                         | (_, FormatOnSave::External { command, arguments }) => {
-                            let diff = Self::format_via_external_command(
-                                &buffer,
-                                &buffer_abs_path,
-                                &command,
-                                &arguments,
-                                &mut cx,
-                            )
-                            .await
-                            .context(format!(
-                                "failed to format via external command {:?}",
-                                command
-                            ))?;
-
-                            if let Some(diff) = diff {
-                                buffer.update(&mut cx, |buffer, cx| {
-                                    if let Some(tx_id) = whitespace_transaction_id {
-                                        if buffer
-                                            .peek_undo_stack()
-                                            .map_or(false, |e| e.transaction_id() == tx_id)
-                                        {
-                                            buffer.apply_diff(diff, cx);
-                                        }
-                                        buffer.group_until_transaction(tx_id);
-                                    } else {
-                                        buffer.apply_diff(diff, cx);
-                                    }
-                                });
+                            if let Some(buffer_abs_path) = buffer_abs_path {
+                                format_operation = Self::format_via_external_command(
+                                    &buffer,
+                                    &buffer_abs_path,
+                                    &command,
+                                    &arguments,
+                                    &mut cx,
+                                )
+                                .await
+                                .context(format!(
+                                    "failed to format via external command {:?}",
+                                    command
+                                ))?
+                                .map(FormatOperation::External);
                             }
                         }
                     };
 
-                    let transaction = buffer.update(&mut cx, |buffer, _| {
-                        buffer.finalize_last_transaction().cloned()
-                    });
-
-                    if let Some(transaction) = transaction {
-                        if !push_to_history {
-                            buffer.update(&mut cx, |buffer, _| {
-                                buffer.forget_transaction(transaction.id)
-                            });
+                    buffer.update(&mut cx, |b, cx| {
+                        // If the buffer had its whitespace formatted and was edited while the language-specific
+                        // formatting was being computed, avoid applying the language-specific formatting, because
+                        // it can't be grouped with the whitespace formatting in the undo history.
+                        if let Some(transaction_id) = whitespace_transaction_id {
+                            if b.peek_undo_stack()
+                                .map_or(true, |e| e.transaction_id() != transaction_id)
+                            {
+                                format_operation.take();
+                            }
                         }
-                        project_transaction.0.insert(buffer.clone(), transaction);
-                    }
+
+                        // Apply any language-specific formatting, and group the two formatting operations
+                        // in the buffer's undo history.
+                        if let Some(operation) = format_operation {
+                            match operation {
+                                FormatOperation::Lsp(edits) => {
+                                    b.edit(edits, None, cx);
+                                }
+                                FormatOperation::External(diff) => {
+                                    b.apply_diff(diff, cx);
+                                }
+                            }
+
+                            if let Some(transaction_id) = whitespace_transaction_id {
+                                b.group_until_transaction(transaction_id);
+                            }
+                        }
+
+                        if let Some(transaction) = b.finalize_last_transaction().cloned() {
+                            if !push_to_history {
+                                b.forget_transaction(transaction.id);
+                            }
+                            project_transaction.0.insert(buffer.clone(), transaction);
+                        }
+                    });
                 }
 
                 Ok(project_transaction)
