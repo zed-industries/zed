@@ -164,12 +164,12 @@ pub struct ToggleComments {
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct FoldAt {
-    pub display_row: DisplayRow,
+    pub display_row: u32,
 }
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct UnfoldAt {
-    pub display_row: DisplayRow,
+    pub display_row: u32,
 }
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
@@ -2753,10 +2753,10 @@ impl Editor {
                                 move |_, cx| {
                                     cx.dispatch_any_action(match fold_status {
                                         FoldStatus::Folded => Box::new(UnfoldAt {
-                                            display_row: DisplayRow::new(fold_location),
+                                            display_row: fold_location,
                                         }),
                                         FoldStatus::Foldable => Box::new(FoldAt {
-                                            display_row: DisplayRow::new(fold_location),
+                                            display_row: fold_location,
                                         }),
                                     });
                                 }
@@ -5755,11 +5755,9 @@ impl Editor {
             let buffer_start_row = range.start.to_point(&display_map).row;
 
             for row in (0..=range.end.row()).rev() {
-                let fold_range = display_map
-                    .foldable_range(DisplayRow::new(row))
-                    .map(|range| {
-                        range.start.to_point(&display_map)..range.end.to_point(&display_map)
-                    });
+                let fold_range = display_map.foldable_range(row).map(|range| {
+                    range.start.to_point(&display_map)..range.end.to_point(&display_map)
+                });
 
                 if let Some(fold_range) = fold_range {
                     if fold_range.end.row >= buffer_start_row {
@@ -5809,23 +5807,32 @@ impl Editor {
                 start..end
             })
             .collect::<Vec<_>>();
+
         self.unfold_ranges(ranges, true, true, cx);
     }
 
-    pub fn unfold_at(&mut self, fold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
+    pub fn unfold_at(&mut self, unfold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let unfold_range = fold_at.display_row.to_points(&display_map);
+        let intersection_range = DisplayPoint::new(unfold_at.display_row, 0)
+            ..DisplayPoint::new(
+                unfold_at.display_row,
+                display_map.line_len(unfold_at.display_row),
+            );
 
-        let autoscroll = self
-            .selections
-            .all::<Point>(cx)
-            .iter()
-            .any(|selection| unfold_range.overlaps(&selection.display_range(&display_map)));
+        let autoscroll =
+            self.selections.all::<Point>(cx).iter().any(|selection| {
+                intersection_range.overlaps(&selection.display_range(&display_map))
+            });
 
-        let unfold_range =
-            unfold_range.start.to_point(&display_map)..unfold_range.end.to_point(&display_map);
-        self.unfold_ranges(std::iter::once(unfold_range), true, autoscroll, cx)
+        let display_point = DisplayPoint::new(unfold_at.display_row, 0).to_point(&display_map);
+
+        let mut point_range = display_point..display_point;
+
+        point_range.start.column = 0;
+        point_range.end.column = display_map.buffer_snapshot.line_len(point_range.end.row);
+
+        self.unfold_ranges(std::iter::once(point_range), true, autoscroll, cx)
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {

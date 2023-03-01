@@ -4,7 +4,7 @@ use super::{
     ToPoint, MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplayRow, DisplaySnapshot, FoldStatus, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         HideHover, HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -2399,7 +2399,7 @@ impl ClickRange for FoldMarker {
         cx: &mut EventContext,
     ) {
         cx.dispatch_action(UnfoldAt {
-            display_row: DisplayRow(range.start.row()),
+            display_row: range.start.row(),
         })
     }
 }

@@ -12,7 +12,6 @@ use gpui::{
     Entity, ModelContext, ModelHandle,
 };
 use language::{OffsetUtf16, Point, Subscription as BufferSubscription};
-use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
@@ -576,10 +575,10 @@ impl DisplaySnapshot {
         result
     }
 
-    pub fn line_indent(&self, display_row: DisplayRow) -> (u32, bool) {
+    pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
         let mut indent = 0;
         let mut is_blank = true;
-        for (c, _) in self.chars_at(display_row.start()) {
+        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
             if c == ' ' {
                 indent += 1;
             } else {
@@ -599,8 +598,7 @@ impl DisplaySnapshot {
     }
 
     pub fn fold_for_line(self: &Self, display_row: u32) -> Option<FoldStatus> {
-        let display_row_typed = DisplayRow::new(display_row);
-        if self.is_foldable(display_row_typed) {
+        if self.is_foldable(display_row) {
             Some(FoldStatus::Foldable)
         } else if self.is_line_folded(display_row) {
             Some(FoldStatus::Folded)
@@ -609,40 +607,44 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn is_foldable(self: &Self, row: DisplayRow) -> bool {
-        if let Some(next_lines) = row.next_rows(self) {
-            let (start_indent, is_blank) = self.line_indent(row);
-            if is_blank {
-                return false;
-            }
+    pub fn is_foldable(self: &Self, row: u32) -> bool {
+        let max_point = self.max_point();
+        if row >= max_point.row() {
+            return false;
+        }
 
-            for display_row in next_lines {
-                let (indent, is_blank) = self.line_indent(display_row);
-                if !is_blank {
-                    return indent > start_indent;
-                }
+        let (start_indent, is_blank) = self.line_indent(row);
+        if is_blank {
+            return false;
+        }
+
+        for display_row in next_rows(row, self) {
+            let (indent, is_blank) = self.line_indent(display_row);
+            if !is_blank {
+                return indent > start_indent;
             }
         }
+
         return false;
     }
 
-    pub fn foldable_range(self: &Self, row: DisplayRow) -> Option<Range<DisplayPoint>> {
-        let start = row.end(&self);
+    pub fn foldable_range(self: &Self, row: u32) -> Option<Range<DisplayPoint>> {
+        let start = DisplayPoint::new(row, self.line_len(row));
 
         if self.is_foldable(row) && !self.is_line_folded(start.row()) {
             let (start_indent, _) = self.line_indent(row);
             let max_point = self.max_point();
             let mut end = None;
 
-            for row in row.next_rows(self).unwrap() {
+            for row in next_rows(row, self) {
                 let (indent, is_blank) = self.line_indent(row);
                 if !is_blank && indent <= start_indent {
-                    end = row.previous_row();
+                    end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1)));
                     break;
                 }
             }
 
-            let end = end.map(|end_row| end_row.end(self)).unwrap_or(max_point);
+            let end = end.unwrap_or(max_point);
             Some(start..end)
         } else {
             None
@@ -736,79 +738,22 @@ impl ToDisplayPoint for Anchor {
     }
 }
 
-#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Serialize)]
-#[repr(transparent)]
-pub struct DisplayRow(pub u32);
-
-// TODO: Move display_map check into new, and then remove it from everywhere else
-impl DisplayRow {
-    pub fn new(display_row: u32) -> Self {
-        DisplayRow(display_row)
-    }
-
-    pub fn to_points(&self, display_map: &DisplaySnapshot) -> Range<DisplayPoint> {
-        self.start()..self.end(&display_map)
-    }
-
-    pub fn previous_row(&self) -> Option<DisplayRow> {
-        self.0.checked_sub(1).map(|prev_row| DisplayRow(prev_row))
-    }
-
-    pub fn next_row(&self, display_map: &DisplaySnapshot) -> Option<DisplayRow> {
-        if self.0 + 1 > display_map.max_point().row() {
+pub fn next_rows(display_row: u32, display_map: &DisplaySnapshot) -> impl Iterator<Item = u32> {
+    let max_row = display_map.max_point().row();
+    let start_row = display_row + 1;
+    let mut current = None;
+    std::iter::from_fn(move || {
+        if current == None {
+            current = Some(start_row);
+        } else {
+            current = Some(current.unwrap() + 1)
+        }
+        if current.unwrap() > max_row {
             None
         } else {
-            Some(DisplayRow(self.0 + 1))
+            current
         }
-    }
-
-    pub fn next_rows(
-        &self,
-        display_map: &DisplaySnapshot,
-    ) -> Option<impl Iterator<Item = DisplayRow>> {
-        self.next_row(display_map)
-            .and_then(|next_row| next_row.span_to(display_map.max_point()))
-    }
-
-    pub fn span_to<I: Into<DisplayRow>>(
-        &self,
-        end_row: I,
-    ) -> Option<impl Iterator<Item = DisplayRow>> {
-        let end_row = end_row.into();
-        if self.0 <= end_row.0 {
-            let start = *self;
-            let mut current = None;
-
-            Some(std::iter::from_fn(move || {
-                if current == None {
-                    current = Some(start);
-                } else {
-                    current = Some(DisplayRow(current.unwrap().0 + 1))
-                }
-                if current.unwrap().0 > end_row.0 {
-                    None
-                } else {
-                    current
-                }
-            }))
-        } else {
-            None
-        }
-    }
-
-    pub fn start(&self) -> DisplayPoint {
-        DisplayPoint::new(self.0, 0)
-    }
-
-    pub fn end(&self, display_map: &DisplaySnapshot) -> DisplayPoint {
-        DisplayPoint::new(self.0, display_map.line_len(self.0))
-    }
-}
-
-impl From<DisplayPoint> for DisplayRow {
-    fn from(value: DisplayPoint) -> Self {
-        DisplayRow(value.row())
-    }
+    })
 }
 
 #[cfg(test)]
