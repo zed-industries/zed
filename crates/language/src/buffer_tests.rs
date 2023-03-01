@@ -254,7 +254,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     let format_diff = format.await;
     buffer.update(cx, |buffer, cx| {
         let version_before_format = format_diff.base_version.clone();
-        buffer.apply_non_conflicting_portion_of_diff(format_diff, cx);
+        buffer.apply_diff(format_diff, cx);
 
         // The outcome depends on the order of concurrent taks.
         //

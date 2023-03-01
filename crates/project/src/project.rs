@@ -2921,7 +2921,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         if let Some(diff) = trailing_whitespace_diff {
-                            buffer.apply_non_conflicting_portion_of_diff(diff, cx);
+                            buffer.apply_diff(diff, cx);
                         }
                         if ensure_final_newline {
                             buffer.ensure_final_newline(cx);

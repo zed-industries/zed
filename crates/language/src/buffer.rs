@@ -569,20 +569,21 @@ impl Buffer {
                     .read_with(&cx, |this, cx| this.diff(new_text, cx))
                     .await;
                 this.update(&mut cx, |this, cx| {
-                    this.finalize_last_transaction();
-                    this.apply_diff(diff, cx);
-                    if let Some(transaction) = this.finalize_last_transaction().cloned() {
-                        this.did_reload(
-                            this.version(),
-                            this.as_rope().fingerprint(),
-                            this.line_ending(),
-                            new_mtime,
-                            cx,
-                        );
-                        Ok(Some(transaction))
-                    } else {
-                        Ok(None)
+                    if this.version() == diff.base_version {
+                        this.finalize_last_transaction();
+                        this.apply_diff(diff, cx);
+                        if let Some(transaction) = this.finalize_last_transaction().cloned() {
+                            this.did_reload(
+                                this.version(),
+                                this.as_rope().fingerprint(),
+                                this.line_ending(),
+                                new_mtime,
+                                cx,
+                            );
+                            return Ok(Some(transaction));
+                        }
                     }
+                    Ok(None)
                 })
             } else {
                 Ok(None)
@@ -1197,25 +1198,10 @@ impl Buffer {
         self.edit([(offset..len, "\n")], None, cx);
     }
 
-    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
-        if self.version == diff.base_version {
-            self.start_transaction();
-            self.text.set_line_ending(diff.line_ending);
-            self.edit(diff.edits, None, cx);
-            self.end_transaction(cx)
-        } else {
-            return None;
-        }
-    }
-
     /// Apply a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
-    pub fn apply_non_conflicting_portion_of_diff(
-        &mut self,
-        diff: Diff,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<TransactionId> {
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         // Check for any edits to the buffer that have occurred since this diff
         // was computed.
         let snapshot = self.snapshot();
@@ -1223,7 +1209,7 @@ impl Buffer {
         let mut delta = 0;
         let adjusted_edits = diff.edits.into_iter().filter_map(|(range, new_text)| {
             while let Some(edit_since) = edits_since.peek() {
-                // If the edit occurs after a diff hunk, then it can does not
+                // If the edit occurs after a diff hunk, then it does not
                 // affect that hunk.
                 if edit_since.old.start > range.end {
                     break;
