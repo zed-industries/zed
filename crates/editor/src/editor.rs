@@ -6050,6 +6050,7 @@ impl Editor {
         }
     }
 
+    // FIXME: Consolidate the range styling APIs so that this clone isn't nescessary
     pub fn clone_click_ranges<T: ClickRange>(&self) -> Vec<Range<Anchor>> {
         self.clickable_text
             .get(&TypeId::of::<T>())

@@ -216,8 +216,6 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
     });
 }
 
-// TODO: FIGURE OUT WHY PANIC WHEN CLICKING ON FOLDS
-
 fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.switch_mode(Mode::Insert, false, cx);
