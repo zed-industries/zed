@@ -1245,7 +1245,7 @@ pub mod tests {
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some(Color::blue())),
-                ("…".to_string(), None),
+                ("⋯".to_string(), None),
                 ("  fn ".to_string(), Some(Color::red())),
                 ("inner".to_string(), Some(Color::blue())),
                 ("() {}\n}".to_string(), Some(Color::red())),
@@ -1326,7 +1326,7 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(1..4, &map, &theme, cx)),
             [
                 ("out".to_string(), Some(Color::blue())),
-                ("…\n".to_string(), None),
+                ("⋯\n".to_string(), None),
                 ("  \nfn ".to_string(), Some(Color::red())),
                 ("i\n".to_string(), Some(Color::blue()))
             ]

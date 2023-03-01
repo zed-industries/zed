@@ -1214,7 +1214,7 @@ mod tests {
             Point::new(0, 2)..Point::new(2, 2),
             Point::new(2, 4)..Point::new(4, 1),
         ]);
-        assert_eq!(snapshot2.text(), "aa…cc…eeeee");
+        assert_eq!(snapshot2.text(), "aa⋯cc⋯eeeee");
         assert_eq!(
             edits,
             &[
@@ -1241,7 +1241,7 @@ mod tests {
             buffer.snapshot(cx)
         });
         let (snapshot3, edits) = map.read(buffer_snapshot, subscription.consume().into_inner());
-        assert_eq!(snapshot3.text(), "123a…c123c…eeeee");
+        assert_eq!(snapshot3.text(), "123a⋯c123c⋯eeeee");
         assert_eq!(
             edits,
             &[
@@ -1261,12 +1261,12 @@ mod tests {
             buffer.snapshot(cx)
         });
         let (snapshot4, _) = map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
-        assert_eq!(snapshot4.text(), "123a…c123456eee");
+        assert_eq!(snapshot4.text(), "123a⋯c123456eee");
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
         writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), false);
         let (snapshot5, _) = map.read(buffer_snapshot.clone(), vec![]);
-        assert_eq!(snapshot5.text(), "123a…c123456eee");
+        assert_eq!(snapshot5.text(), "123a⋯c123456eee");
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
         writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), true);
@@ -1287,19 +1287,19 @@ mod tests {
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![5..8]);
             let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
-            assert_eq!(snapshot.text(), "abcde…ijkl");
+            assert_eq!(snapshot.text(), "abcde⋯ijkl");
 
             // Create an fold adjacent to the start of the first fold.
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![0..1, 2..5]);
             let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
-            assert_eq!(snapshot.text(), "…b…ijkl");
+            assert_eq!(snapshot.text(), "⋯b⋯ijkl");
 
             // Create an fold adjacent to the end of the first fold.
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![11..11, 8..10]);
             let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
-            assert_eq!(snapshot.text(), "…b…kl");
+            assert_eq!(snapshot.text(), "⋯b⋯kl");
         }
 
         {
@@ -1309,7 +1309,7 @@ mod tests {
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![0..2, 2..5]);
             let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-            assert_eq!(snapshot.text(), "…fghijkl");
+            assert_eq!(snapshot.text(), "⋯fghijkl");
 
             // Edit within one of the folds.
             let buffer_snapshot = buffer.update(cx, |buffer, cx| {
@@ -1317,7 +1317,7 @@ mod tests {
                 buffer.snapshot(cx)
             });
             let (snapshot, _) = map.read(buffer_snapshot, subscription.consume().into_inner());
-            assert_eq!(snapshot.text(), "12345…fghijkl");
+            assert_eq!(snapshot.text(), "12345⋯fghijkl");
         }
     }
 
@@ -1334,7 +1334,7 @@ mod tests {
             Point::new(3, 1)..Point::new(4, 1),
         ]);
         let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-        assert_eq!(snapshot.text(), "aa…eeeee");
+        assert_eq!(snapshot.text(), "aa⋯eeeee");
     }
 
     #[gpui::test]
@@ -1351,14 +1351,14 @@ mod tests {
             Point::new(3, 1)..Point::new(4, 1),
         ]);
         let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-        assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
+        assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, cx);
             buffer.snapshot(cx)
         });
         let (snapshot, _) = map.read(buffer_snapshot, subscription.consume().into_inner());
-        assert_eq!(snapshot.text(), "aa…eeeee");
+        assert_eq!(snapshot.text(), "aa⋯eeeee");
     }
 
     #[gpui::test]
@@ -1450,7 +1450,7 @@ mod tests {
 
             let mut expected_text: String = buffer_snapshot.text().to_string();
             for fold_range in map.merged_fold_ranges().into_iter().rev() {
-                expected_text.replace_range(fold_range.start..fold_range.end, "…");
+                expected_text.replace_range(fold_range.start..fold_range.end, "⋯");
             }
 
             assert_eq!(snapshot.text(), expected_text);
@@ -1655,7 +1655,7 @@ mod tests {
         ]);
 
         let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-        assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee\nffffff\n");
+        assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee\nffffff\n");
         assert_eq!(
             snapshot.buffer_rows(0).collect::<Vec<_>>(),
             [Some(0), Some(3), Some(5), Some(6)]

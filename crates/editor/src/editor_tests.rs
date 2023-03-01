@@ -670,10 +670,10 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
                         1
                     }
 
-                    fn b() {…
+                    fn b() {⋯
                     }
 
-                    fn c() {…
+                    fn c() {⋯
                     }
                 }
             "
@@ -684,7 +684,7 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             view.display_text(cx),
             "
-                impl Foo {…
+                impl Foo {⋯
                 }
             "
             .unindent(),
@@ -701,10 +701,10 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
                         1
                     }
 
-                    fn b() {…
+                    fn b() {⋯
                     }
 
-                    fn c() {…
+                    fn c() {⋯
                     }
                 }
             "
@@ -811,7 +811,7 @@ fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
             true,
             cx,
         );
-        assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
+        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε\n");
 
         view.move_right(&MoveRight, cx);
         assert_eq!(
@@ -826,13 +826,13 @@ fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
         view.move_right(&MoveRight, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ…".len())]
+            &[empty_range(0, "ⓐⓑ⋯".len())]
         );
 
         view.move_down(&MoveDown, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(1, "ab…".len())]
+            &[empty_range(1, "ab⋯".len())]
         );
         view.move_left(&MoveLeft, cx);
         assert_eq!(
@@ -858,28 +858,28 @@ fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
         view.move_right(&MoveRight, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(2, "αβ…".len())]
+            &[empty_range(2, "αβ⋯".len())]
         );
         view.move_right(&MoveRight, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(2, "αβ…ε".len())]
+            &[empty_range(2, "αβ⋯ε".len())]
         );
 
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(1, "ab…e".len())]
+            &[empty_range(1, "ab⋯e".len())]
         );
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ…ⓔ".len())]
+            &[empty_range(0, "ⓐⓑ⋯ⓔ".len())]
         );
         view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ…".len())]
+            &[empty_range(0, "ⓐⓑ⋯".len())]
         );
         view.move_left(&MoveLeft, cx);
         assert_eq!(
@@ -2134,13 +2134,13 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         });
         assert_eq!(
             view.display_text(cx),
-            "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
+            "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i\njjjjj"
         );
 
         view.move_line_up(&MoveLineUp, cx);
         assert_eq!(
             view.display_text(cx),
-            "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
+            "aa⋯bbb\nccc⋯eeee\nggggg\n⋯i\njjjjj\nfffff"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2157,7 +2157,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         view.move_line_down(&MoveLineDown, cx);
         assert_eq!(
             view.display_text(cx),
-            "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
+            "ccc⋯eeee\naa⋯bbb\nfffff\nggggg\n⋯i\njjjjj"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2174,7 +2174,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         view.move_line_down(&MoveLineDown, cx);
         assert_eq!(
             view.display_text(cx),
-            "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
+            "ccc⋯eeee\nfffff\naa⋯bbb\nggggg\n⋯i\njjjjj"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2191,7 +2191,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         view.move_line_up(&MoveLineUp, cx);
         assert_eq!(
             view.display_text(cx),
-            "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
+            "ccc⋯eeee\naa⋯bbb\nggggg\n⋯i\njjjjj\nfffff"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2600,14 +2600,14 @@ fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
                 DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
             ])
         });
-        assert_eq!(view.display_text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
+        assert_eq!(view.display_text(cx), "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i");
     });
 
     view.update(cx, |view, cx| {
         view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
         assert_eq!(
             view.display_text(cx),
-            "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
+            "aaaaa\nbbbbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
         );
         assert_eq!(
             view.selections.display_ranges(cx),

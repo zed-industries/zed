@@ -1507,7 +1507,7 @@ impl EditorElement {
                     } else {
                         let text_style = self.style.text.clone();
                         Flex::row()
-                            .with_child(Label::new("…", text_style).boxed())
+                            .with_child(Label::new("⋯", text_style).boxed())
                             .with_children(jump_icon)
                             .contained()
                             .with_padding_left(gutter_padding)
