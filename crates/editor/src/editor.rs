@@ -5863,6 +5863,12 @@ impl Editor {
                     }
                 }
             });
+            let click_ranges = self.clone_click_ranges::<FoldMarker>();
+            self.highlight_background::<FoldMarker>(
+                click_ranges,
+                |theme| theme.editor.document_highlight_write_background,
+                cx,
+            );
 
             cx.notify();
         }
@@ -5905,6 +5911,12 @@ impl Editor {
                     }
                 }
             });
+            let click_ranges = self.clone_click_ranges::<FoldMarker>();
+            self.highlight_background::<FoldMarker>(
+                click_ranges,
+                |theme| theme.editor.document_highlight_write_background,
+                cx,
+            );
 
             cx.notify();
         }
@@ -6029,6 +6041,13 @@ impl Editor {
                 cx.reveal_path(&file.abs_path(cx));
             }
         }
+    }
+
+    pub fn clone_click_ranges<T: ClickRange>(&self) -> Vec<Range<Anchor>> {
+        self.clickable_text
+            .get(&TypeId::of::<T>())
+            .map(|click_range| click_range.1.clone())
+            .unwrap_or_default()
     }
 
     pub fn change_click_ranges<T: ClickRange>(
