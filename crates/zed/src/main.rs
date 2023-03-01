@@ -13,6 +13,7 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
 };
+use db::kvp::KEY_VALUE_STORE;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -43,9 +44,12 @@ use theme::ThemeRegistry;
 use util::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    self, item::ItemHandle, notifications::NotifyResultExt, AppState, OpenPaths, Welcome, Workspace,
+    self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
-use zed::{self, build_window_options, initialize_workspace, languages, menus};
+use zed::{
+    self, build_window_options, initialize_workspace, languages, menus, WelcomeExperience,
+    FIRST_OPEN,
+};
 
 fn main() {
     let http = http::client();
@@ -258,9 +262,13 @@ async fn restore_or_create_workspace(mut cx: AsyncAppContext) {
                 paths: location.paths().as_ref().clone(),
             })
         });
+    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        cx.update(|cx| {
+            cx.dispatch_global_action(WelcomeExperience);
+        });
     } else {
         cx.update(|cx| {
-            cx.dispatch_global_action(Welcome);
+            cx.dispatch_global_action(NewFile);
         });
     }
 }

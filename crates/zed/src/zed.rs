@@ -8,6 +8,7 @@ use breadcrumbs::Breadcrumbs;
 pub use client;
 use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
 use collections::VecDeque;
+use db::kvp::KEY_VALUE_STORE;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
@@ -34,7 +35,9 @@ use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{sidebar::SidebarSide, AppState, Restart, Workspace};
+use workspace::{sidebar::SidebarSide, AppState, Restart, Welcome, Workspace};
+
+pub const FIRST_OPEN: &str = "first_open";
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -67,6 +70,7 @@ actions!(
         ResetBufferFontSize,
         InstallCommandLineInterface,
         ResetDatabase,
+        WelcomeExperience
     ]
 );
 
@@ -251,6 +255,25 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
         },
     );
+
+    cx.add_global_action(|_: &WelcomeExperience, cx| {
+        if !matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            return; //noop, in case someone fires this from the command palette
+        }
+
+        // Make a workspace, set it up with an open bottom dock and the welcome page
+
+        cx.dispatch_global_action(Welcome);
+
+        cx.background()
+            .spawn(async move {
+                KEY_VALUE_STORE
+                    .write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+                    .await
+                    .log_err();
+            })
+            .detach();
+    });
 
     activity_indicator::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);

@@ -8395,6 +8395,7 @@ dependencies = [
  "command_palette",
  "context_menu",
  "ctor",
+ "db",
  "diagnostics",
  "easy-parallel",
  "editor",
