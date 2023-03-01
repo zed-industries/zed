@@ -221,7 +221,8 @@ impl EditorElement {
                             position_to_display_point(e.position, text_bounds, &position_map);
                         if let Some(point) = point {
                             for (range, callback) in click_ranges.iter() {
-                                if range.contains(&point) {
+                                // Range -> RangeInclusive
+                                if range.contains(&point) || range.end == point {
                                     callback(&e, range, &position_map.snapshot, cx)
                                 }
                             }
