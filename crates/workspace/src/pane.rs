@@ -1485,11 +1485,12 @@ impl View for Pane {
                                     cx,
                                     {
                                         let toolbar = self.toolbar.clone();
+                                        let toolbar_hidden = toolbar.read(cx).hidden();
                                         move |_, cx| {
                                             Flex::column()
-                                                .with_child(
-                                                    ChildView::new(&toolbar, cx).expanded().boxed(),
-                                                )
+                                                .with_children((!toolbar_hidden).then(|| {
+                                                    ChildView::new(&toolbar, cx).expanded().boxed()
+                                                }))
                                                 .with_child(
                                                     ChildView::new(active_item, cx)
                                                         .flex(1., true)

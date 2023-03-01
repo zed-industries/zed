@@ -35,7 +35,7 @@ use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{sidebar::SidebarSide, AppState, Restart, Welcome, Workspace};
+use workspace::{dock::Dock, open_new, sidebar::SidebarSide, AppState, Restart, Workspace};
 
 pub const FIRST_OPEN: &str = "first_open";
 
@@ -256,23 +256,27 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
 
-    cx.add_global_action(|_: &WelcomeExperience, cx| {
-        if !matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            return; //noop, in case someone fires this from the command palette
-        }
+    cx.add_global_action({
+        let app_state = app_state.clone();
+        move |_: &WelcomeExperience, cx| {
+            if !matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+                return; //noop, in case someone fires this from the command palette
+            }
 
-        // Make a workspace, set it up with an open bottom dock and the welcome page
-
-        cx.dispatch_global_action(Welcome);
-
-        cx.background()
-            .spawn(async move {
-                KEY_VALUE_STORE
-                    .write_kvp(FIRST_OPEN.to_string(), "false".to_string())
-                    .await
-                    .log_err();
+            open_new(&app_state, cx, |workspace, cx| {
+                workspace.toggle_sidebar(SidebarSide::Left, cx);
+                let welcome_page = cx.add_view(|cx| welcome::WelcomePage::new(cx));
+                workspace.add_item(Box::new(welcome_page.clone()), cx);
+                Dock::move_dock(workspace, settings::DockAnchor::Bottom, false, cx);
+                cx.focus(welcome_page);
+                cx.notify();
             })
             .detach();
+
+            db::write_and_log(cx, || {
+                KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+            });
+        }
     });
 
     activity_indicator::init(cx);
@@ -881,7 +885,8 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.update(|cx| open_new(&app_state, cx)).await;
+        cx.update(|cx| open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)))
+            .await;
 
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();

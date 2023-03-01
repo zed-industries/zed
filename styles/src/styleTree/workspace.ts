@@ -248,7 +248,7 @@ export default function workspace(colorScheme: ColorScheme) {
         },
         dock: {
             initialSizeRight: 640,
-            initialSizeBottom: 480,
+            initialSizeBottom: 300,
             wash_color: withOpacity(background(colorScheme.highest), 0.5),
             panel: {
                 border: border(colorScheme.middle),

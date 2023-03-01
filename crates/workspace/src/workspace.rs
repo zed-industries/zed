@@ -197,20 +197,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             }
         }
     });
-    cx.add_global_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_: &Welcome, cx: &mut MutableAppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx).detach();
-            }
-        }
-    });
 
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx).detach();
+                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
             }
         }
     });
@@ -1514,7 +1506,7 @@ impl Workspace {
             self.active_item_path_changed(cx);
 
             if &pane == self.dock_pane() {
-                Dock::show(self, cx);
+                Dock::show(self, true, cx);
             } else {
                 self.last_active_center_pane = Some(pane.downgrade());
                 if self.dock.is_anchored_at(DockAnchor::Expanded) {
@@ -2527,7 +2519,12 @@ impl Workspace {
                     // the focus the dock generates start generating alternating
                     // focus due to the deferred execution each triggering each other
                     cx.after_window_update(move |workspace, cx| {
-                        Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+                        Dock::set_dock_position(
+                            workspace,
+                            serialized_workspace.dock_position,
+                            true,
+                            cx,
+                        );
                     });
 
                     cx.notify();
@@ -2859,14 +2856,18 @@ pub fn open_paths(
     })
 }
 
-pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
+pub fn open_new(
+    app_state: &Arc<AppState>,
+    cx: &mut MutableAppContext,
+    init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static,
+) -> Task<()> {
     let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await;
 
-        workspace.update(&mut cx, |_, cx| {
+        workspace.update(&mut cx, |workspace, cx| {
             if opened_paths.is_empty() {
-                cx.dispatch_action(Welcome);
+                init(workspace, cx)
             }
         })
     })

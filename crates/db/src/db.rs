@@ -4,6 +4,7 @@ pub mod query;
 // Re-export
 pub use anyhow;
 use anyhow::Context;
+use gpui::MutableAppContext;
 pub use indoc::indoc;
 pub use lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -17,6 +18,7 @@ use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::fs::create_dir_all;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -235,6 +237,15 @@ macro_rules! define_connection {
             pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db(&$crate::DB_DIR, &$crate::RELEASE_CHANNEL)));
         }
     };
+}
+
+pub fn write_and_log<F>(cx: &mut MutableAppContext, db_write: impl FnOnce() -> F + Send + 'static)
+where
+    F: Future<Output = anyhow::Result<()>> + Send,
+{
+    cx.background()
+        .spawn(async move { db_write().await.log_err() })
+        .detach()
 }
 
 #[cfg(test)]

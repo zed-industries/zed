@@ -14,7 +14,7 @@ pub fn init(cx: &mut MutableAppContext) {
     })
 }
 
-struct WelcomePage {
+pub struct WelcomePage {
     _settings_subscription: Subscription,
 }
 
@@ -98,7 +98,7 @@ impl View for WelcomePage {
 }
 
 impl WelcomePage {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
 
         let settings_subscription = cx.observe_global::<Settings, _>(move |cx| {
@@ -162,5 +162,9 @@ impl Item for WelcomePage {
                     .boxed(),
             )
             .boxed()
+    }
+
+    fn show_toolbar(&self) -> bool {
+        false
     }
 }
