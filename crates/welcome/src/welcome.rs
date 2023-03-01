@@ -1,6 +1,7 @@
 use gpui::{
     color::Color,
-    elements::{Empty, Flex, Label, MouseEventHandler, ParentElement, Svg},
+    elements::{Canvas, Empty, Flex, Label, MouseEventHandler, ParentElement, Stack, Svg},
+    geometry::rect::RectF,
     Element, ElementBox, Entity, MutableAppContext, RenderContext, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
@@ -39,60 +40,80 @@ impl View for WelcomePage {
         enum Metrics {}
         enum Diagnostics {}
 
-        Flex::column()
-            .with_children([
-                Flex::row()
-                    .with_children([
-                        Svg::new("icons/terminal_16.svg")
-                            .with_color(Color::red())
-                            .constrained()
-                            .with_width(100.)
-                            .with_height(100.)
-                            .aligned()
-                            .contained()
-                            .boxed(),
-                        Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
-                    ])
-                    .boxed(),
-                Label::new(
-                    "Code at the speed of thought",
-                    theme.editor.hover_popover.prose.clone(),
-                )
+        let background = theme.editor.background;
+
+        Stack::new()
+            .with_child(
+                Canvas::new(move |bounds, visible_bounds, cx| {
+                    let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+
+                    cx.paint_layer(Some(visible_bounds), |cx| {
+                        cx.scene.push_quad(gpui::Quad {
+                            bounds: RectF::new(bounds.origin(), bounds.size()),
+                            background: Some(background),
+                            ..Default::default()
+                        })
+                    })
+                })
                 .boxed(),
-                Flex::row()
+            )
+            .with_child(
+                Flex::column()
                     .with_children([
-                        self.render_settings_checkbox::<Metrics>(
-                            &theme.welcome.checkbox,
-                            metrics,
-                            cx,
-                            |content, checked| {
-                                content.telemetry.set_metrics(checked);
-                            },
-                        ),
+                        Flex::row()
+                            .with_children([
+                                Svg::new("icons/terminal_16.svg")
+                                    .with_color(Color::red())
+                                    .constrained()
+                                    .with_width(100.)
+                                    .with_height(100.)
+                                    .aligned()
+                                    .contained()
+                                    .boxed(),
+                                Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
+                            ])
+                            .boxed(),
                         Label::new(
-                            "Do you want to send telemetry?",
+                            "Code at the speed of thought",
                             theme.editor.hover_popover.prose.clone(),
                         )
                         .boxed(),
+                        Flex::row()
+                            .with_children([
+                                self.render_settings_checkbox::<Metrics>(
+                                    &theme.welcome.checkbox,
+                                    metrics,
+                                    cx,
+                                    |content, checked| {
+                                        content.telemetry.set_metrics(checked);
+                                    },
+                                ),
+                                Label::new(
+                                    "Do you want to send telemetry?",
+                                    theme.editor.hover_popover.prose.clone(),
+                                )
+                                .boxed(),
+                            ])
+                            .boxed(),
+                        Flex::row()
+                            .with_children([
+                                self.render_settings_checkbox::<Diagnostics>(
+                                    &theme.welcome.checkbox,
+                                    diagnostics,
+                                    cx,
+                                    |content, checked| content.telemetry.set_diagnostics(checked),
+                                ),
+                                Label::new(
+                                    "Send crash reports",
+                                    theme.editor.hover_popover.prose.clone(),
+                                )
+                                .boxed(),
+                            ])
+                            .boxed(),
                     ])
+                    .aligned()
                     .boxed(),
-                Flex::row()
-                    .with_children([
-                        self.render_settings_checkbox::<Diagnostics>(
-                            &theme.welcome.checkbox,
-                            diagnostics,
-                            cx,
-                            |content, checked| content.telemetry.set_diagnostics(checked),
-                        ),
-                        Label::new(
-                            "Send crash reports",
-                            theme.editor.hover_popover.prose.clone(),
-                        )
-                        .boxed(),
-                    ])
-                    .boxed(),
-            ])
-            .aligned()
+            )
             .boxed()
     }
 }
