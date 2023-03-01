@@ -1858,6 +1858,7 @@ impl Element for EditorElement {
 
             view.render_fold_indicators(
                 folds,
+                &active_rows,
                 &style,
                 view.gutter_hovered,
                 line_height,
