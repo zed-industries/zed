@@ -2702,6 +2702,7 @@ impl Editor {
     pub fn render_fold_indicators(
         &self,
         fold_data: Option<Vec<(u32, FoldStatus)>>,
+        active_rows: &BTreeMap<u32, bool>,
         style: &EditorStyle,
         gutter_hovered: bool,
         line_height: f32,
@@ -2717,7 +2718,10 @@ impl Editor {
                 .iter()
                 .copied()
                 .filter_map(|(fold_location, fold_status)| {
-                    (gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
+                    (gutter_hovered
+                        || fold_status == FoldStatus::Folded
+                        || !*active_rows.get(&fold_location).unwrap_or(&true))
+                    .then(|| {
                         (
                             fold_location,
                             MouseEventHandler::<FoldIndicators>::new(
