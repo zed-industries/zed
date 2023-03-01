@@ -1,6 +1,7 @@
 mod blink_manager;
 pub mod display_map;
 mod element;
+
 mod git;
 mod highlight_matching_bracket;
 mod hover_popover;
@@ -38,10 +39,11 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
+    scene::MouseClick,
     serde_json::json,
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    EventContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -160,6 +162,21 @@ pub struct ToggleComments {
     pub advance_downwards: bool,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct FoldAt {
+    pub display_row: u32,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct UnfoldAt {
+    pub display_row: u32,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct GutterHover {
+    pub hovered: bool,
+}
+
 actions!(
     editor,
     [
@@ -258,6 +275,9 @@ impl_actions!(
         ConfirmCompletion,
         ConfirmCodeAction,
         ToggleComments,
+        FoldAt,
+        UnfoldAt,
+        GutterHover
     ]
 );
 
@@ -348,7 +368,10 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::go_to_type_definition);
     cx.add_action(Editor::fold);
+    cx.add_action(Editor::fold_at);
     cx.add_action(Editor::unfold_lines);
+    cx.add_action(Editor::unfold_at);
+    cx.add_action(Editor::gutter_hover);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
@@ -435,6 +458,8 @@ type CompletionId = usize;
 
 type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
+type TextClickedCallback =
+    fn(&MouseClick, &Range<DisplayPoint>, &EditorSnapshot, &mut EventContext);
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -463,6 +488,7 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
+    clickable_text: BTreeMap<TypeId, (TextClickedCallback, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
@@ -480,6 +506,7 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
+    gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     _subscriptions: Vec<Subscription>,
 }
@@ -1132,6 +1159,7 @@ impl Editor {
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
+            clickable_text: Default::default(),
             nav_history: None,
             context_menu: None,
             mouse_context_menu: cx.add_view(context_menu::ContextMenu::new),
@@ -1151,6 +1179,7 @@ impl Editor {
             remote_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
+            gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -2645,14 +2674,15 @@ impl Editor {
     pub fn render_code_actions_indicator(
         &self,
         style: &EditorStyle,
+        active: bool,
         cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
         if self.available_code_actions.is_some() {
-            enum Tag {}
+            enum CodeActions {}
             Some(
-                MouseEventHandler::<Tag>::new(0, cx, |_, _| {
+                MouseEventHandler::<CodeActions>::new(0, cx, |state, _| {
                     Svg::new("icons/bolt_8.svg")
-                        .with_color(style.code_actions.indicator)
+                        .with_color(style.code_actions.indicator.style_for(state, active).color)
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -2667,6 +2697,76 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    pub fn render_fold_indicators(
+        &self,
+        fold_data: Option<Vec<(u32, FoldStatus)>>,
+        style: &EditorStyle,
+        gutter_hovered: bool,
+        line_height: f32,
+        gutter_margin: f32,
+        cx: &mut RenderContext<Self>,
+    ) -> Option<Vec<(u32, ElementBox)>> {
+        enum FoldIndicators {}
+
+        let style = style.folds.clone();
+
+        fold_data.map(|fold_data| {
+            fold_data
+                .iter()
+                .copied()
+                .filter_map(|(fold_location, fold_status)| {
+                    (gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
+                        (
+                            fold_location,
+                            MouseEventHandler::<FoldIndicators>::new(
+                                fold_location as usize,
+                                cx,
+                                |mouse_state, _| -> ElementBox {
+                                    Svg::new(match fold_status {
+                                        FoldStatus::Folded => style.folded_icon.clone(),
+                                        FoldStatus::Foldable => style.foldable_icon.clone(),
+                                    })
+                                    .with_color(
+                                        style
+                                            .indicator
+                                            .style_for(
+                                                mouse_state,
+                                                fold_status == FoldStatus::Folded,
+                                            )
+                                            .color,
+                                    )
+                                    .constrained()
+                                    .with_width(style.icon_width)
+                                    .aligned()
+                                    .constrained()
+                                    .with_height(line_height)
+                                    .with_width(gutter_margin)
+                                    .aligned()
+                                    .boxed()
+                                },
+                            )
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .with_padding(Padding::uniform(3.))
+                            .on_click(MouseButton::Left, {
+                                move |_, cx| {
+                                    cx.dispatch_any_action(match fold_status {
+                                        FoldStatus::Folded => Box::new(UnfoldAt {
+                                            display_row: fold_location,
+                                        }),
+                                        FoldStatus::Foldable => Box::new(FoldAt {
+                                            display_row: fold_location,
+                                        }),
+                                    });
+                                }
+                            })
+                            .boxed(),
+                        )
+                    })
+                })
+                .collect()
+        })
     }
 
     pub fn context_menu_visible(&self) -> bool {
@@ -3251,26 +3351,12 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            contiguous_row_selections.push(selection.clone());
-            let start_row = selection.start.row;
-            let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).0.row + 1
-            } else {
-                selection.end.row
-            };
-
-            while let Some(next_selection) = selections.peek() {
-                if next_selection.start.row <= end_row {
-                    end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).0.row + 1
-                    } else {
-                        next_selection.end.row
-                    };
-                    contiguous_row_selections.push(selections.next().unwrap().clone());
-                } else {
-                    break;
-                }
-            }
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
 
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row > 0 {
@@ -3335,13 +3421,13 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.unfold_ranges(unfold_ranges, true, cx);
+            this.unfold_ranges(unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_ranges(refold_ranges, cx);
+            this.fold_ranges(refold_ranges, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             })
@@ -3363,26 +3449,12 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            contiguous_row_selections.push(selection.clone());
-            let start_row = selection.start.row;
-            let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).0.row + 1
-            } else {
-                selection.end.row
-            };
-
-            while let Some(next_selection) = selections.peek() {
-                if next_selection.start.row <= end_row {
-                    end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).0.row + 1
-                    } else {
-                        next_selection.end.row
-                    };
-                    contiguous_row_selections.push(selections.next().unwrap().clone());
-                } else {
-                    break;
-                }
-            }
+            let (start_row, end_row) = consume_contiguous_rows(
+                &mut contiguous_row_selections,
+                selection,
+                &display_map,
+                &mut selections,
+            );
 
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row <= buffer.max_point().row {
@@ -3440,13 +3512,13 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.unfold_ranges(unfold_ranges, true, cx);
+            this.unfold_ranges(unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_ranges(refold_ranges, cx);
+            this.fold_ranges(refold_ranges, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
         });
     }
@@ -4274,7 +4346,7 @@ impl Editor {
                 to_unfold.push(selection.start..selection.end);
             }
         }
-        self.unfold_ranges(to_unfold, true, cx);
+        self.unfold_ranges(to_unfold, true, true, cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
@@ -4423,7 +4495,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges([next_selected_range.clone()], false, cx);
+                    self.unfold_ranges([next_selected_range.clone()], false, true, cx);
                     self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
@@ -4456,7 +4528,7 @@ impl Editor {
                     wordwise: true,
                     done: false,
                 };
-                self.unfold_ranges([selection.start..selection.end], false, cx);
+                self.unfold_ranges([selection.start..selection.end], false, true, cx);
                 self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select(selections);
                 });
@@ -5676,14 +5748,18 @@ impl Editor {
         let mut fold_ranges = Vec::new();
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
         let selections = self.selections.all::<Point>(cx);
         for selection in selections {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_point(&display_map).row;
 
             for row in (0..=range.end.row()).rev() {
-                if self.is_line_foldable(&display_map, row) && !display_map.is_line_folded(row) {
-                    let fold_range = self.foldable_range_for_line(&display_map, row);
+                let fold_range = display_map.foldable_range(row).map(|range| {
+                    range.start.to_point(&display_map)..range.end.to_point(&display_map)
+                });
+
+                if let Some(fold_range) = fold_range {
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
                         if row <= range.start.row() {
@@ -5694,7 +5770,26 @@ impl Editor {
             }
         }
 
-        self.fold_ranges(fold_ranges, cx);
+        self.fold_ranges(fold_ranges, true, cx);
+    }
+
+    pub fn fold_at(&mut self, fold_at: &FoldAt, cx: &mut ViewContext<Self>) {
+        let display_row = fold_at.display_row;
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        if let Some(fold_range) = display_map.foldable_range(display_row) {
+            let autoscroll = self
+                .selections
+                .all::<Point>(cx)
+                .iter()
+                .any(|selection| fold_range.overlaps(&selection.display_range(&display_map)));
+
+            let fold_range =
+                fold_range.start.to_point(&display_map)..fold_range.end.to_point(&display_map);
+
+            self.fold_ranges(std::iter::once(fold_range), autoscroll, cx);
+        }
     }
 
     pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
@@ -5712,83 +5807,135 @@ impl Editor {
                 start..end
             })
             .collect::<Vec<_>>();
-        self.unfold_ranges(ranges, true, cx);
+
+        self.unfold_ranges(ranges, true, true, cx);
     }
 
-    fn is_line_foldable(&self, display_map: &DisplaySnapshot, display_row: u32) -> bool {
-        let max_point = display_map.max_point();
-        if display_row >= max_point.row() {
-            false
-        } else {
-            let (start_indent, is_blank) = display_map.line_indent(display_row);
-            if is_blank {
-                false
-            } else {
-                for display_row in display_row + 1..=max_point.row() {
-                    let (indent, is_blank) = display_map.line_indent(display_row);
-                    if !is_blank {
-                        return indent > start_indent;
-                    }
-                }
-                false
-            }
-        }
-    }
+    pub fn unfold_at(&mut self, unfold_at: &UnfoldAt, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-    fn foldable_range_for_line(
-        &self,
-        display_map: &DisplaySnapshot,
-        start_row: u32,
-    ) -> Range<Point> {
-        let max_point = display_map.max_point();
+        let intersection_range = DisplayPoint::new(unfold_at.display_row, 0)
+            ..DisplayPoint::new(
+                unfold_at.display_row,
+                display_map.line_len(unfold_at.display_row),
+            );
 
-        let (start_indent, _) = display_map.line_indent(start_row);
-        let start = DisplayPoint::new(start_row, display_map.line_len(start_row));
-        let mut end = None;
-        for row in start_row + 1..=max_point.row() {
-            let (indent, is_blank) = display_map.line_indent(row);
-            if !is_blank && indent <= start_indent {
-                end = Some(DisplayPoint::new(row - 1, display_map.line_len(row - 1)));
-                break;
-            }
-        }
+        let autoscroll =
+            self.selections.all::<Point>(cx).iter().any(|selection| {
+                intersection_range.overlaps(&selection.display_range(&display_map))
+            });
 
-        let end = end.unwrap_or(max_point);
-        start.to_point(display_map)..end.to_point(display_map)
+        let display_point = DisplayPoint::new(unfold_at.display_row, 0).to_point(&display_map);
+
+        let mut point_range = display_point..display_point;
+
+        point_range.start.column = 0;
+        point_range.end.column = display_map.buffer_snapshot.line_len(point_range.end.row);
+
+        self.unfold_ranges(std::iter::once(point_range), true, autoscroll, cx)
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all::<Point>(cx);
         let ranges = selections.into_iter().map(|s| s.start..s.end);
-        self.fold_ranges(ranges, cx);
+        self.fold_ranges(ranges, true, cx);
     }
 
-    pub fn fold_ranges<T: ToOffset>(
+    pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
-            self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
-            self.request_autoscroll(Autoscroll::fit(), cx);
+            let ranges = ranges.collect_vec();
+
+            self.display_map
+                .update(cx, |map, cx| map.fold(ranges.iter().cloned(), cx));
+
+            if auto_scroll {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+            }
+
+            let snapshot = self.snapshot(cx);
+            let anchor_ranges = offset_to_anchors(ranges, &snapshot);
+
+            self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
+                for range in anchor_ranges {
+                    if let Err(idx) = click_ranges.binary_search_by(|click_range| {
+                        click_range.cmp(&range, &snapshot.buffer_snapshot)
+                    }) {
+                        click_ranges.insert(idx, range)
+                    }
+                }
+            });
+            let click_ranges = self.clone_click_ranges::<FoldMarker>();
+            self.highlight_background::<FoldMarker>(
+                click_ranges,
+                |theme| theme.editor.document_highlight_write_background,
+                cx,
+            );
+
             cx.notify();
         }
     }
 
-    pub fn unfold_ranges<T: ToOffset>(
+    pub fn unfold_ranges<T: ToOffset + Clone>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
+        auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
-            self.display_map
-                .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
-            self.request_autoscroll(Autoscroll::fit(), cx);
+            let ranges = ranges.collect_vec();
+
+            self.display_map.update(cx, |map, cx| {
+                map.unfold(ranges.iter().cloned(), inclusive, cx)
+            });
+            if auto_scroll {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+            }
+
+            let snapshot = self.snapshot(cx);
+            let anchor_ranges = offset_to_anchors(ranges, &snapshot);
+
+            self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
+                for range in anchor_ranges {
+                    let range_point = range.start.to_point(&snapshot.buffer_snapshot);
+                    // Fold and unfold ranges start at different points in the row.
+                    // But their rows do match, so we can use that to detect sameness.
+                    if let Ok(idx) = click_ranges.binary_search_by(|click_range| {
+                        click_range
+                            .start
+                            .to_point(&snapshot.buffer_snapshot)
+                            .row
+                            .cmp(&range_point.row)
+                    }) {
+                        click_ranges.remove(idx);
+                    }
+                }
+            });
+            let click_ranges = self.clone_click_ranges::<FoldMarker>();
+            self.highlight_background::<FoldMarker>(
+                click_ranges,
+                |theme| theme.editor.document_highlight_write_background,
+                cx,
+            );
+
             cx.notify();
         }
+    }
+
+    pub fn gutter_hover(
+        &mut self,
+        GutterHover { hovered }: &GutterHover,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.gutter_hovered = *hovered;
+        cx.notify();
     }
 
     pub fn insert_blocks(
@@ -5901,6 +6048,69 @@ impl Editor {
                 cx.reveal_path(&file.abs_path(cx));
             }
         }
+    }
+
+    // FIXME: Consolidate the range styling APIs so that this clone isn't nescessary
+    pub fn clone_click_ranges<T: ClickRange>(&self) -> Vec<Range<Anchor>> {
+        self.clickable_text
+            .get(&TypeId::of::<T>())
+            .map(|click_range| click_range.1.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn change_click_ranges<T: ClickRange>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        change: impl FnOnce(&mut Vec<Range<Anchor>>),
+    ) {
+        let mut ranges = self
+            .clickable_text
+            .remove(&TypeId::of::<T>())
+            .map(|click_range| click_range.1)
+            .unwrap_or_default();
+
+        change(&mut ranges);
+
+        self.clickable_text
+            .insert(TypeId::of::<T>(), (T::click_handler, ranges));
+
+        cx.notify();
+    }
+
+    pub fn click_ranges_in_range(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+    ) -> Vec<(Range<DisplayPoint>, TextClickedCallback)> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        for (callback, ranges) in self.clickable_text.values() {
+            let start_ix = match ranges.binary_search_by(|probe| {
+                let cmp = probe.end.cmp(&search_range.start, buffer);
+                if cmp.is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }) {
+                Ok(i) | Err(i) => i,
+            };
+            for range in &ranges[start_ix..] {
+                if range.start.cmp(&search_range.end, buffer).is_ge() {
+                    break;
+                }
+                let start = range
+                    .start
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                let end = range
+                    .end
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                results.push((start..end, *callback))
+            }
+        }
+        results
     }
 
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
@@ -6250,6 +6460,54 @@ impl Editor {
             );
         }
     }
+}
+
+fn consume_contiguous_rows(
+    contiguous_row_selections: &mut Vec<Selection<Point>>,
+    selection: &Selection<Point>,
+    display_map: &DisplaySnapshot,
+    selections: &mut std::iter::Peekable<std::slice::Iter<Selection<Point>>>,
+) -> (u32, u32) {
+    contiguous_row_selections.push(selection.clone());
+    let start_row = selection.start.row;
+    let mut end_row = ending_row(selection, display_map);
+
+    while let Some(next_selection) = selections.peek() {
+        if next_selection.start.row <= end_row {
+            end_row = ending_row(next_selection, display_map);
+            contiguous_row_selections.push(selections.next().unwrap().clone());
+        } else {
+            break;
+        }
+    }
+    (start_row, end_row)
+}
+
+fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> u32 {
+    if next_selection.end.column > 0 || next_selection.is_empty() {
+        display_map.next_line_boundary(next_selection.end).0.row + 1
+    } else {
+        next_selection.end.row
+    }
+}
+
+fn offset_to_anchors<
+    'snapshot,
+    'iter: 'snapshot,
+    T: ToOffset,
+    I: IntoIterator<Item = Range<T>> + 'iter,
+>(
+    ranges: I,
+    snapshot: &'snapshot EditorSnapshot,
+) -> impl Iterator<Item = Range<Anchor>> + 'snapshot {
+    ranges.into_iter().map(|range| {
+        snapshot
+            .buffer_snapshot
+            .anchor_at(range.start.to_offset(&snapshot.buffer_snapshot), Bias::Left)
+            ..snapshot
+                .buffer_snapshot
+                .anchor_at(range.end.to_offset(&snapshot.buffer_snapshot), Bias::Right)
+    })
 }
 
 impl EditorSnapshot {

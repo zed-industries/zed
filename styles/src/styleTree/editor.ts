@@ -44,8 +44,39 @@ export default function editor(colorScheme: ColorScheme) {
         activeLineBackground: withOpacity(background(layer, "on"), 0.75),
         highlightedLineBackground: background(layer, "on"),
         codeActions: {
-            indicator: foreground(layer, "variant"),
+            indicator: {
+                color: foreground(layer, "variant"),
+
+                clicked: {
+                    color: foreground(layer, "base"),
+                },
+                hover: {
+                    color: foreground(layer, "on"),
+                },
+                active: {
+                    color: foreground(layer, "on"),
+                },
+            },
             verticalScale: 0.55,
+        },
+        folds: {
+            iconWidth: 8,
+            foldedIcon: "icons/chevron_right_8.svg",
+            foldableIcon: "icons/chevron_down_8.svg",
+            indicator: {
+                color: foreground(layer, "variant"),
+
+                clicked: {
+                    color: foreground(layer, "base"),
+                },
+                hover: {
+                    color: foreground(layer, "on"),
+                },
+                active: {
+                    color: foreground(layer, "on"),
+                },
+            },
+            foldBackground: foreground(layer, "variant"),
         },
         diff: {
             deleted: foreground(layer, "negative"),

@@ -562,6 +562,7 @@ pub struct Editor {
     pub invalid_hint_diagnostic: DiagnosticStyle,
     pub autocomplete: AutocompleteStyle,
     pub code_actions: CodeActions,
+    pub folds: Folds,
     pub unnecessary_code_fade: f32,
     pub hover_popover: HoverPopover,
     pub link_definition: HighlightStyle,
@@ -634,8 +635,22 @@ pub struct FieldEditor {
 #[derive(Clone, Deserialize, Default)]
 pub struct CodeActions {
     #[serde(default)]
-    pub indicator: Color,
+    pub indicator: Interactive<Indicator>,
     pub vertical_scale: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Folds {
+    pub indicator: Interactive<Indicator>,
+    pub fold_background: Color,
+    pub icon_width: f32,
+    pub folded_icon: String,
+    pub foldable_icon: String,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Indicator {
+    pub color: Color,
 }
 
 #[derive(Clone, Deserialize, Default)]

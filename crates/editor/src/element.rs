@@ -4,7 +4,7 @@ use super::{
     ToPoint, MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         HideHover, HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -14,7 +14,7 @@ use crate::{
     },
     mouse_context_menu::DeployMouseContextMenu,
     scroll::actions::Scroll,
-    EditorStyle,
+    EditorStyle, GutterHover, TextClickedCallback, UnfoldAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -30,6 +30,7 @@ use gpui::{
     },
     json::{self, ToJson},
     platform::CursorStyle,
+    scene::MouseClick,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
     Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
@@ -48,6 +49,7 @@ use std::{
     ops::{DerefMut, Range},
     sync::Arc,
 };
+use workspace::item::Item;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -114,6 +116,7 @@ impl EditorElement {
     fn attach_mouse_handlers(
         view: &WeakViewHandle<Editor>,
         position_map: &Arc<PositionMap>,
+        click_ranges: Arc<Vec<(Range<DisplayPoint>, TextClickedCallback)>>,
         has_popovers: bool,
         visible_bounds: RectF,
         text_bounds: RectF,
@@ -210,8 +213,33 @@ impl EditorElement {
                             cx.propagate_event()
                         }
                     }
+                })
+                .on_click(MouseButton::Left, {
+                    let position_map = position_map.clone();
+                    move |e, cx| {
+                        let point =
+                            position_to_display_point(e.position, text_bounds, &position_map);
+                        if let Some(point) = point {
+                            for (range, callback) in click_ranges.iter() {
+                                if range.contains(&point) {
+                                    callback(&e, range, &position_map.snapshot, cx)
+                                }
+                            }
+                        }
+                    }
                 }),
         );
+
+        enum GutterHandlers {}
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<GutterHandlers>(view.id(), view.id() + 1, gutter_bounds).on_hover(
+                |hover, cx| {
+                    cx.dispatch_action(GutterHover {
+                        hovered: hover.started,
+                    })
+                },
+            ),
+        )
     }
 
     fn mouse_down(
@@ -400,16 +428,7 @@ impl EditorElement {
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let point = if text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-            if point == target_point {
-                Some(point)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let point = position_to_display_point(position, text_bounds, position_map);
 
         cx.dispatch_action(UpdateGoToDefinitionLink {
             point,
@@ -418,6 +437,7 @@ impl EditorElement {
         });
 
         cx.dispatch_action(HoverAt { point });
+
         true
     }
 
@@ -569,12 +589,25 @@ impl EditorElement {
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
-            let mut x = bounds.width() - layout.gutter_padding;
+            let mut x = 0.;
             let mut y = *row as f32 * line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
             y += (line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
+
+        layout.fold_indicators.as_mut().map(|fold_indicators| {
+            for (line, fold_indicator) in fold_indicators.iter_mut() {
+                let mut x = bounds.width() - layout.gutter_padding;
+                let mut y = *line as f32 * line_height - scroll_top;
+
+                x += ((layout.gutter_padding + layout.gutter_margin) - fold_indicator.size().x())
+                    / 2.;
+                y += (line_height - fold_indicator.size().y()) / 2.;
+
+                fold_indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
+            }
+        });
     }
 
     fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
@@ -676,6 +709,7 @@ impl EditorElement {
         let max_glyph_width = layout.position_map.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
+        let line_end_overshoot = 0.15 * layout.position_map.line_height;
 
         cx.scene.push_layer(Some(bounds));
 
@@ -688,12 +722,29 @@ impl EditorElement {
             },
         });
 
+        for (range, _) in layout.click_ranges.iter() {
+            for bound in range_to_bounds(
+                range,
+                content_origin,
+                scroll_left,
+                scroll_top,
+                &layout.visible_display_row_range,
+                line_end_overshoot,
+                &layout.position_map,
+            ) {
+                cx.scene.push_cursor_region(CursorRegion {
+                    bounds: bound,
+                    style: CursorStyle::PointingHand,
+                });
+            }
+        }
+
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
                 range.clone(),
                 *color,
                 0.,
-                0.15 * layout.position_map.line_height,
+                line_end_overshoot,
                 layout,
                 content_origin,
                 scroll_top,
@@ -1118,6 +1169,24 @@ impl EditorElement {
             .width()
     }
 
+    fn get_fold_indicators(
+        &self,
+        is_singleton: bool,
+        display_rows: Range<u32>,
+        snapshot: &EditorSnapshot,
+    ) -> Option<Vec<(u32, FoldStatus)>> {
+        is_singleton.then(|| {
+            display_rows
+                .into_iter()
+                .filter_map(|display_row| {
+                    snapshot
+                        .fold_for_line(display_row)
+                        .map(|fold_status| (display_row, fold_status))
+                })
+                .collect()
+        })
+    }
+
     //Folds contained in a hunk are ignored apart from shrinking visual size
     //If a fold contains any hunks then that fold line is marked as modified
     fn layout_git_gutters(
@@ -1438,7 +1507,7 @@ impl EditorElement {
                     } else {
                         let text_style = self.style.text.clone();
                         Flex::row()
-                            .with_child(Label::new("…", text_style).boxed())
+                            .with_child(Label::new("⋯", text_style).boxed())
                             .with_children(jump_icon)
                             .contained()
                             .with_padding_left(gutter_padding)
@@ -1606,15 +1675,20 @@ impl Element for EditorElement {
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
+        let mut click_ranges = Vec::new();
         let mut show_scrollbars = false;
         let mut include_root = false;
+        let mut is_singleton = false;
         self.update_view(cx.app, |view, cx| {
+            is_singleton = view.is_singleton(cx);
+
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             highlighted_rows = view.highlighted_rows();
             let theme = cx.global::<Settings>().theme.as_ref();
             highlighted_ranges =
                 view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
+            click_ranges = view.click_ranges_in_range(start_anchor..end_anchor, &display_map);
 
             let mut remote_selections = HashMap::default();
             for (replica_id, line_mode, cursor_shape, selection) in display_map
@@ -1689,6 +1763,8 @@ impl Element for EditorElement {
 
         let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
+        let folds = self.get_fold_indicators(is_singleton, start_row..end_row, &snapshot);
+
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
@@ -1755,7 +1831,7 @@ impl Element for EditorElement {
         let mut code_actions_indicator = None;
         let mut hover = None;
         let mut mode = EditorMode::Full;
-        cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
+        let mut fold_indicators = cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
                 .newest::<usize>(cx)
@@ -1769,14 +1845,25 @@ impl Element for EditorElement {
                         view.render_context_menu(newest_selection_head, style.clone(), cx);
                 }
 
+                let active = matches!(view.context_menu, Some(crate::ContextMenu::CodeActions(_)));
+
                 code_actions_indicator = view
-                    .render_code_actions_indicator(&style, cx)
+                    .render_code_actions_indicator(&style, active, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
             mode = view.mode;
+
+            view.render_fold_indicators(
+                folds,
+                &style,
+                view.gutter_hovered,
+                line_height,
+                gutter_margin,
+                cx,
+            )
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1801,6 +1888,18 @@ impl Element for EditorElement {
                 cx,
             );
         }
+
+        fold_indicators.as_mut().map(|fold_indicators| {
+            for (_, indicator) in fold_indicators.iter_mut() {
+                indicator.layout(
+                    SizeConstraint::strict_along(
+                        Axis::Vertical,
+                        line_height * style.code_actions.vertical_scale,
+                    ),
+                    cx,
+                );
+            }
+        });
 
         if let Some((_, hover_popovers)) = hover.as_mut() {
             for hover_popover in hover_popovers.iter_mut() {
@@ -1845,12 +1944,14 @@ impl Element for EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
+                click_ranges: Arc::new(click_ranges),
                 line_number_layouts,
                 display_hunks,
                 blocks,
                 selections,
                 context_menu,
                 code_actions_indicator,
+                fold_indicators,
                 hover_popovers: hover,
             },
         )
@@ -1875,6 +1976,7 @@ impl Element for EditorElement {
         Self::attach_mouse_handlers(
             &self.view,
             &layout.position_map,
+            layout.click_ranges.clone(), // No need to clone the vec
             layout.hover_popovers.is_some(),
             visible_bounds,
             text_bounds,
@@ -1972,6 +2074,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
+    click_ranges: Arc<Vec<(Range<DisplayPoint>, TextClickedCallback)>>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -1979,6 +2082,7 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
+    fold_indicators: Option<Vec<(u32, ElementBox)>>,
 }
 
 pub struct PositionMap {
@@ -2275,6 +2379,98 @@ impl HighlightedRange {
 
         scene.push_path(path.build(self.color, Some(bounds)));
     }
+}
+
+pub trait ClickRange: 'static {
+    fn click_handler(
+        click: &MouseClick,
+        range: &Range<DisplayPoint>,
+        snapshot: &EditorSnapshot,
+        cx: &mut EventContext,
+    );
+}
+
+pub enum FoldMarker {}
+impl ClickRange for FoldMarker {
+    fn click_handler(
+        _click: &MouseClick,
+        range: &Range<DisplayPoint>,
+        _snapshot: &EditorSnapshot,
+        cx: &mut EventContext,
+    ) {
+        cx.dispatch_action(UnfoldAt {
+            display_row: range.start.row(),
+        })
+    }
+}
+
+pub fn position_to_display_point(
+    position: Vector2F,
+    text_bounds: RectF,
+    position_map: &PositionMap,
+) -> Option<DisplayPoint> {
+    if text_bounds.contains_point(position) {
+        let (point, target_point) = position_map.point_for_position(text_bounds, position);
+        if point == target_point {
+            Some(point)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+pub fn range_to_bounds(
+    range: &Range<DisplayPoint>,
+    content_origin: Vector2F,
+    scroll_left: f32,
+    scroll_top: f32,
+    visible_row_range: &Range<u32>,
+    line_end_overshoot: f32,
+    position_map: &PositionMap,
+) -> impl Iterator<Item = RectF> {
+    let mut bounds: SmallVec<[RectF; 1]> = SmallVec::new();
+
+    if range.start == range.end {
+        return bounds.into_iter();
+    }
+
+    let start_row = visible_row_range.start;
+    let end_row = visible_row_range.end;
+
+    let row_range = if range.end.column() == 0 {
+        cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
+    } else {
+        cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
+    };
+
+    let first_y =
+        content_origin.y() + row_range.start as f32 * position_map.line_height - scroll_top;
+
+    for (idx, row) in row_range.enumerate() {
+        let line_layout = &position_map.line_layouts[(row - start_row) as usize];
+
+        let start_x = if row == range.start.row() {
+            content_origin.x() + line_layout.x_for_index(range.start.column() as usize)
+                - scroll_left
+        } else {
+            content_origin.x() - scroll_left
+        };
+
+        let end_x = if row == range.end.row() {
+            content_origin.x() + line_layout.x_for_index(range.end.column() as usize) - scroll_left
+        } else {
+            content_origin.x() + line_layout.width() + line_end_overshoot - scroll_left
+        };
+
+        bounds.push(RectF::from_points(
+            vec2f(start_x, first_y + position_map.line_height * idx as f32),
+            vec2f(end_x, first_y + position_map.line_height * (idx + 1) as f32),
+        ))
+    }
+
+    bounds.into_iter()
 }
 
 pub fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {

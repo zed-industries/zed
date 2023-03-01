@@ -237,7 +237,7 @@ macro_rules! iife {
     };
 }
 
-/// Async lImmediately invoked function expression. Good for using the ? operator
+/// Async Immediately invoked function expression. Good for using the ? operator
 /// in functions which do not return an Option or Result. Async version of above
 #[macro_export]
 macro_rules! async_iife {
@@ -262,10 +262,7 @@ impl<T: Ord + Clone> RangeExt<T> for Range<T> {
     }
 
     fn overlaps(&self, other: &Range<T>) -> bool {
-        self.contains(&other.start)
-            || self.contains(&other.end)
-            || other.contains(&self.start)
-            || other.contains(&self.end)
+        self.start < other.end && other.start < self.end
     }
 }
 
@@ -279,10 +276,7 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
     }
 
     fn overlaps(&self, other: &Range<T>) -> bool {
-        self.contains(&other.start)
-            || self.contains(&other.end)
-            || other.contains(&self.start())
-            || other.contains(&self.end())
+        self.start() < &other.end && &other.start <= self.end()
     }
 }
 

@@ -23,6 +23,12 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FoldStatus {
+    Folded,
+    Foldable,
+}
+
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
@@ -591,6 +597,60 @@ impl DisplaySnapshot {
         self.blocks_snapshot.longest_row()
     }
 
+    pub fn fold_for_line(self: &Self, display_row: u32) -> Option<FoldStatus> {
+        if self.is_foldable(display_row) {
+            Some(FoldStatus::Foldable)
+        } else if self.is_line_folded(display_row) {
+            Some(FoldStatus::Folded)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_foldable(self: &Self, row: u32) -> bool {
+        let max_point = self.max_point();
+        if row >= max_point.row() {
+            return false;
+        }
+
+        let (start_indent, is_blank) = self.line_indent(row);
+        if is_blank {
+            return false;
+        }
+
+        for display_row in next_rows(row, self) {
+            let (indent, is_blank) = self.line_indent(display_row);
+            if !is_blank {
+                return indent > start_indent;
+            }
+        }
+
+        return false;
+    }
+
+    pub fn foldable_range(self: &Self, row: u32) -> Option<Range<DisplayPoint>> {
+        let start = DisplayPoint::new(row, self.line_len(row));
+
+        if self.is_foldable(row) && !self.is_line_folded(start.row()) {
+            let (start_indent, _) = self.line_indent(row);
+            let max_point = self.max_point();
+            let mut end = None;
+
+            for row in next_rows(row, self) {
+                let (indent, is_blank) = self.line_indent(row);
+                if !is_blank && indent <= start_indent {
+                    end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1)));
+                    break;
+                }
+            }
+
+            let end = end.unwrap_or(max_point);
+            Some(start..end)
+        } else {
+            None
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn highlight_ranges<Tag: ?Sized + 'static>(
         &self,
@@ -676,6 +736,24 @@ impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
+}
+
+pub fn next_rows(display_row: u32, display_map: &DisplaySnapshot) -> impl Iterator<Item = u32> {
+    let max_row = display_map.max_point().row();
+    let start_row = display_row + 1;
+    let mut current = None;
+    std::iter::from_fn(move || {
+        if current == None {
+            current = Some(start_row);
+        } else {
+            current = Some(current.unwrap() + 1)
+        }
+        if current.unwrap() > max_row {
+            None
+        } else {
+            current
+        }
+    })
 }
 
 #[cfg(test)]
@@ -1167,7 +1245,7 @@ pub mod tests {
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some(Color::blue())),
-                ("…".to_string(), None),
+                ("⋯".to_string(), None),
                 ("  fn ".to_string(), Some(Color::red())),
                 ("inner".to_string(), Some(Color::blue())),
                 ("() {}\n}".to_string(), Some(Color::red())),
@@ -1248,7 +1326,7 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(1..4, &map, &theme, cx)),
             [
                 ("out".to_string(), Some(Color::blue())),
-                ("…\n".to_string(), None),
+                ("⋯\n".to_string(), None),
                 ("  \nfn ".to_string(), Some(Color::red())),
                 ("i\n".to_string(), Some(Color::blue()))
             ]
