@@ -23,8 +23,11 @@ export default function tabBar(colorScheme: ColorScheme) {
         },
         spacing: 8,
 
+        // Tab type icons (e.g. Project Search)
+        typeIconWidth: 14,
+
         // Close icons
-        iconWidth: 8,
+        closeIconWidth: 14,
         iconClose: foreground(layer, "variant"),
         iconCloseActive: foreground(layer, "hovered"),
 

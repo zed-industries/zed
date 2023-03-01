@@ -253,7 +253,7 @@ impl Item for ProjectSearchView {
                 Svg::new("icons/magnifying_glass_12.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
-                    .with_width(tab_theme.icon_width)
+                    .with_width(tab_theme.type_icon_width)
                     .aligned()
                     .contained()
                     .with_margin_right(tab_theme.spacing)

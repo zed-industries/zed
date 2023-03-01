@@ -1355,7 +1355,7 @@ impl Pane {
                     } else {
                         Empty::new().boxed()
                     })
-                    .with_width(tab_style.icon_width)
+                    .with_width(tab_style.close_icon_width)
                     .boxed(),
                 )
                 .boxed(),
