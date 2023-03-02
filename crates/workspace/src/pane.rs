@@ -1438,7 +1438,7 @@ impl View for Pane {
                                             .with_style(theme.workspace.tab_bar.container)
                                             .boxed()
                                     })
-                                    .on_click(MouseButton::Left, move |_, cx| {
+                                    .on_down(MouseButton::Left, move |_, cx| {
                                         cx.dispatch_action(ActivateItem(active_item_index));
                                     })
                                     .boxed(),
