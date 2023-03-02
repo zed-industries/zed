@@ -27,7 +27,7 @@ export default function tabBar(colorScheme: ColorScheme) {
         typeIconWidth: 14,
 
         // Close icons
-        closeIconWidth: 14,
+        closeIconWidth: 8,
         iconClose: foreground(layer, "variant"),
         iconCloseActive: foreground(layer, "hovered"),
 
