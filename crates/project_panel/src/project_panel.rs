@@ -5,9 +5,11 @@ use futures::stream::StreamExt;
 use gpui::{
     actions,
     anyhow::{anyhow, Result},
+    color::Color,
     elements::{
-        AnchorCorner, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex, Label,
-        MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
+        AnchorCorner, Canvas, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex,
+        KeystrokeLabel, Label, MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg,
+        UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions,
@@ -1262,54 +1264,134 @@ impl View for ProjectPanel {
         let padding = std::mem::take(&mut container_style.padding);
         let last_worktree_root_id = self.last_worktree_root_id;
 
-        Stack::new()
-            .with_child(
-                MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
-                    UniformList::new(
-                        self.list.clone(),
-                        self.visible_entries
-                            .iter()
-                            .map(|(_, worktree_entries)| worktree_entries.len())
-                            .sum(),
-                        cx,
-                        move |this, range, items, cx| {
-                            let theme = cx.global::<Settings>().theme.clone();
-                            let mut dragged_entry_destination =
-                                this.dragged_entry_destination.clone();
-                            this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                items.push(Self::render_entry(
-                                    id,
-                                    details,
-                                    &this.filename_editor,
-                                    &mut dragged_entry_destination,
-                                    &theme.project_panel,
-                                    cx,
-                                ));
-                            });
-                            this.dragged_entry_destination = dragged_entry_destination;
-                        },
-                    )
-                    .with_padding_top(padding.top)
-                    .with_padding_bottom(padding.bottom)
-                    .contained()
-                    .with_style(container_style)
-                    .expanded()
-                    .boxed()
-                })
-                .on_down(MouseButton::Right, move |e, cx| {
-                    // When deploying the context menu anywhere below the last project entry,
-                    // act as if the user clicked the root of the last worktree.
-                    if let Some(entry_id) = last_worktree_root_id {
-                        cx.dispatch_action(DeployContextMenu {
-                            entry_id,
-                            position: e.position,
-                        })
-                    }
-                })
-                .boxed(),
-            )
-            .with_child(ChildView::new(&self.context_menu, cx).boxed())
-            .boxed()
+        let has_worktree = self.visible_entries.len() != 0;
+
+        if has_worktree {
+            Stack::new()
+                .with_child(
+                    MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
+                        UniformList::new(
+                            self.list.clone(),
+                            self.visible_entries
+                                .iter()
+                                .map(|(_, worktree_entries)| worktree_entries.len())
+                                .sum(),
+                            cx,
+                            move |this, range, items, cx| {
+                                let theme = cx.global::<Settings>().theme.clone();
+                                let mut dragged_entry_destination =
+                                    this.dragged_entry_destination.clone();
+                                this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                    items.push(Self::render_entry(
+                                        id,
+                                        details,
+                                        &this.filename_editor,
+                                        &mut dragged_entry_destination,
+                                        &theme.project_panel,
+                                        cx,
+                                    ));
+                                });
+                                this.dragged_entry_destination = dragged_entry_destination;
+                            },
+                        )
+                        .with_padding_top(padding.top)
+                        .with_padding_bottom(padding.bottom)
+                        .contained()
+                        .with_style(container_style)
+                        .expanded()
+                        .boxed()
+                    })
+                    .on_down(MouseButton::Right, move |e, cx| {
+                        // When deploying the context menu anywhere below the last project entry,
+                        // act as if the user clicked the root of the last worktree.
+                        if let Some(entry_id) = last_worktree_root_id {
+                            cx.dispatch_action(DeployContextMenu {
+                                entry_id,
+                                position: e.position,
+                            })
+                        }
+                    })
+                    .boxed(),
+                )
+                .with_child(ChildView::new(&self.context_menu, cx).boxed())
+                .boxed()
+        } else {
+            let parent_view_id = cx.handle().id();
+            Stack::new()
+                .with_child(
+                    MouseEventHandler::<ProjectPanel>::new(1, cx, |_, cx| {
+                        Stack::new()
+                            .with_child(
+                                Canvas::new(|bounds, _visible_bounds, cx| {
+                                    cx.scene.push_quad(gpui::Quad {
+                                        bounds,
+                                        background: Some(Color::red()),
+                                        ..Default::default()
+                                    })
+                                })
+                                .boxed(),
+                            )
+                            .with_child(
+                                MouseEventHandler::<Self>::new(2, cx, |state, cx| {
+                                    let style = &cx
+                                        .global::<Settings>()
+                                        .theme
+                                        .search
+                                        .option_button
+                                        .style_for(state, false);
+
+                                    let context_menu_item = cx
+                                        .global::<Settings>()
+                                        .theme
+                                        .context_menu
+                                        .clone()
+                                        .item
+                                        .style_for(state, true)
+                                        .clone();
+
+                                    Flex::row()
+                                        .with_child(
+                                            Label::new(
+                                                "Open a new project!".to_string(),
+                                                context_menu_item.label.clone(),
+                                            )
+                                            .contained()
+                                            .boxed(),
+                                        )
+                                        .with_child({
+                                            KeystrokeLabel::new(
+                                                cx.window_id(),
+                                                parent_view_id,
+                                                Box::new(workspace::Open),
+                                                context_menu_item.keystroke.container,
+                                                context_menu_item.keystroke.text.clone(),
+                                            )
+                                            .flex_float()
+                                            .boxed()
+                                        })
+                                        .contained()
+                                        .with_style(style.container)
+                                        .aligned()
+                                        .top()
+                                        .constrained()
+                                        .with_width(100.)
+                                        .with_height(20.)
+                                        .boxed()
+                                })
+                                .on_click(MouseButton::Left, move |_, cx| {
+                                    cx.dispatch_action(workspace::Open)
+                                })
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .boxed(),
+                            )
+                            .boxed()
+                    })
+                    // TODO is this nescessary?
+                    .on_click(MouseButton::Left, |_, cx| cx.focus_parent_view())
+                    .boxed(),
+                )
+                .boxed()
+        }
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {

@@ -2,7 +2,8 @@ use gpui::{
     color::Color,
     elements::{Canvas, Empty, Flex, Label, MouseEventHandler, ParentElement, Stack, Svg},
     geometry::rect::RectF,
-    Element, ElementBox, Entity, MutableAppContext, RenderContext, Subscription, View, ViewContext,
+    Element, ElementBox, Entity, MouseRegion, MutableAppContext, RenderContext, Subscription, View,
+    ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
 use theme::CheckboxStyle;
@@ -29,6 +30,7 @@ impl View for WelcomePage {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
+        let self_handle = cx.handle();
         let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();
 
@@ -44,6 +46,7 @@ impl View for WelcomePage {
 
         Stack::new()
             .with_child(
+                // TODO: Can this be moved into the pane?
                 Canvas::new(move |bounds, visible_bounds, cx| {
                     let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -53,7 +56,12 @@ impl View for WelcomePage {
                             background: Some(background),
                             ..Default::default()
                         })
-                    })
+                    });
+
+                    cx.scene.push_mouse_region(
+                        MouseRegion::new::<Self>(self_handle.id(), 0, visible_bounds)
+                            .on_down(gpui::MouseButton::Left, |_, cx| cx.focus_parent_view()),
+                    );
                 })
                 .boxed(),
             )

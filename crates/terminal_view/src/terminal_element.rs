@@ -720,7 +720,7 @@ impl Element for TerminalElement {
         cx.paint_layer(clip_bounds, |cx| {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
-            //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
+            // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
             self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.mode, cx);
 
             cx.scene.push_cursor_region(gpui::CursorRegion {
