@@ -643,7 +643,6 @@ impl DisplaySnapshot {
                     break;
                 }
             }
-
             let end = end.unwrap_or(max_point);
             Some(start..end)
         } else {

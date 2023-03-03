@@ -1196,6 +1196,19 @@ impl Editor {
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.platform().should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
+
+            // TODO: this does not work at all
+            let display_snapshot = this.snapshot(cx).display_snapshot;
+            let editor_snapshot = this.snapshot(cx);
+            if buffer.read(cx).is_singleton() {
+                this.insert_fold_styles(
+                    display_snapshot
+                        .folds_in_range(Anchor::min()..Anchor::max())
+                        .cloned(),
+                    &editor_snapshot,
+                    cx,
+                )
+            }
         }
 
         this.report_event("open editor", cx);
@@ -5865,24 +5878,33 @@ impl Editor {
             let snapshot = self.snapshot(cx);
             let anchor_ranges = offset_to_anchors(ranges, &snapshot);
 
-            self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
-                for range in anchor_ranges {
-                    if let Err(idx) = click_ranges.binary_search_by(|click_range| {
-                        click_range.cmp(&range, &snapshot.buffer_snapshot)
-                    }) {
-                        click_ranges.insert(idx, range)
-                    }
-                }
-            });
-            let click_ranges = self.clone_click_ranges::<FoldMarker>();
-            self.highlight_background::<FoldMarker>(
-                click_ranges,
-                |theme| theme.editor.document_highlight_write_background,
-                cx,
-            );
+            self.insert_fold_styles(anchor_ranges, &snapshot, cx);
 
             cx.notify();
         }
+    }
+
+    fn insert_fold_styles(
+        &mut self,
+        anchor_ranges: impl Iterator<Item = Range<Anchor>>,
+        snapshot: &EditorSnapshot,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
+            for range in anchor_ranges {
+                if let Err(idx) = click_ranges.binary_search_by(|click_range| {
+                    click_range.cmp(&range, &snapshot.buffer_snapshot)
+                }) {
+                    click_ranges.insert(idx, range)
+                }
+            }
+        });
+        let click_ranges = self.clone_click_ranges::<FoldMarker>();
+        self.highlight_background::<FoldMarker>(
+            click_ranges,
+            |theme| theme.editor.document_highlight_write_background,
+            cx,
+        );
     }
 
     pub fn unfold_ranges<T: ToOffset + Clone>(
