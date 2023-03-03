@@ -1150,40 +1150,53 @@ impl Pane {
             let tab_active = ix == self.active_item_index;
 
             row.add_child({
-                enum Tab {}
-                let mut receiver = dragged_item_receiver::<Tab, _>(ix, ix, true, None, cx, {
-                    let item = item.clone();
-                    let pane = pane.clone();
-                    let detail = detail.clone();
+                enum TabDragReceiver {}
+                let mut receiver =
+                    dragged_item_receiver::<TabDragReceiver, _>(ix, ix, true, None, cx, {
+                        let item = item.clone();
+                        let pane = pane.clone();
+                        let detail = detail.clone();
 
-                    let theme = cx.global::<Settings>().theme.clone();
+                        let theme = cx.global::<Settings>().theme.clone();
 
-                    move |mouse_state, cx| {
-                        let tab_style = theme.workspace.tab_bar.tab_style(pane_active, tab_active);
-                        let hovered = mouse_state.hovered();
-                        Self::render_tab(&item, pane, ix == 0, detail, hovered, tab_style, cx)
-                    }
-                });
+                        move |mouse_state, cx| {
+                            let tab_style =
+                                theme.workspace.tab_bar.tab_style(pane_active, tab_active);
+                            let hovered = mouse_state.hovered();
+
+                            enum Tab {}
+                            MouseEventHandler::<Tab>::new(ix, cx, |_, cx| {
+                                Self::render_tab(
+                                    &item,
+                                    pane.clone(),
+                                    ix == 0,
+                                    detail,
+                                    hovered,
+                                    tab_style,
+                                    cx,
+                                )
+                            })
+                            .on_down(MouseButton::Left, move |_, cx| {
+                                cx.dispatch_action(ActivateItem(ix));
+                            })
+                            .on_click(MouseButton::Middle, {
+                                let item = item.clone();
+                                move |_, cx: &mut EventContext| {
+                                    cx.dispatch_action(CloseItem {
+                                        item_id: item.id(),
+                                        pane: pane.clone(),
+                                    })
+                                }
+                            })
+                            .boxed()
+                        }
+                    });
 
                 if !pane_active || !tab_active {
                     receiver = receiver.with_cursor_style(CursorStyle::PointingHand);
                 }
 
                 receiver
-                    .on_down(MouseButton::Left, move |_, cx| {
-                        cx.dispatch_action(ActivateItem(ix));
-                        cx.propagate_event();
-                    })
-                    .on_click(MouseButton::Middle, {
-                        let item = item.clone();
-                        let pane = pane.clone();
-                        move |_, cx: &mut EventContext| {
-                            cx.dispatch_action(CloseItem {
-                                item_id: item.id(),
-                                pane: pane.clone(),
-                            })
-                        }
-                    })
                     .as_draggable(
                         DraggedItem {
                             item,
@@ -1438,7 +1451,7 @@ impl View for Pane {
                                             .with_style(theme.workspace.tab_bar.container)
                                             .boxed()
                                     })
-                                    .on_click(MouseButton::Left, move |_, cx| {
+                                    .on_down(MouseButton::Left, move |_, cx| {
                                         cx.dispatch_action(ActivateItem(active_item_index));
                                     })
                                     .boxed(),
