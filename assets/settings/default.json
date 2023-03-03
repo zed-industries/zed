@@ -22,11 +22,6 @@
     "show_completions_on_input": true,
     // Whether the screen sharing icon is showed in the os status bar.
     "show_call_status_icon": true,
-    // Whether new projects should start out 'online'. Online projects
-    // appear in the contacts panel under your name, so that your contacts
-    // can see which projects you are working on. Regardless of this
-    // setting, projects keep their last online status when you reopen them.
-    "projects_online_by_default": true,
     // Whether to use language servers to provide code intelligence.
     "enable_language_server": true,
     // When to automatically save edited buffers. This setting can
@@ -202,12 +197,6 @@
         "Plain Text": {
             "soft_wrap": "preferred_line_length"
         },
-        "C": {
-            "tab_size": 2
-        },
-        "C++": {
-            "tab_size": 2
-        },
         "Elixir": {
             "tab_size": 2
         },
@@ -217,9 +206,6 @@
         },
         "Markdown": {
             "soft_wrap": "preferred_line_length"
-        },
-        "Rust": {
-            "tab_size": 4
         },
         "JavaScript": {
             "tab_size": 2
