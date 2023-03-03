@@ -166,8 +166,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
     cx.add_action(Pane::deploy_split_menu);
-    cx.add_action(Pane::deploy_new_menu);
     cx.add_action(Pane::deploy_dock_menu);
+    cx.add_action(Pane::deploy_new_menu);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
