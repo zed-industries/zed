@@ -185,6 +185,7 @@ impl<'a> EditorTestContext<'a> {
     /// of its selections using a string containing embedded range markers.
     ///
     /// See the `util::test::marked_text_ranges` function for more information.
+    #[track_caller]
     pub fn assert_editor_state(&mut self, marked_text: &str) {
         let (unmarked_text, expected_selections) = marked_text_ranges(marked_text, true);
         let buffer_text = self.buffer_text();

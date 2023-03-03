@@ -26,7 +26,7 @@ use language::{
         serialize_anchor, serialize_version,
     },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
     Operation, Patch, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
@@ -2858,9 +2858,11 @@ impl Project {
                 .filter_map(|buffer_handle| {
                     let buffer = buffer_handle.read(cx);
                     let file = File::from_dyn(buffer.file())?;
-                    let buffer_abs_path = file.as_local()?.abs_path(cx);
-                    let (_, server) = self.language_server_for_buffer(buffer, cx)?;
-                    Some((buffer_handle, buffer_abs_path, server.clone()))
+                    let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
+                    let server = self
+                        .language_server_for_buffer(buffer, cx)
+                        .map(|s| s.1.clone());
+                    Some((buffer_handle, buffer_abs_path, server))
                 })
                 .collect::<Vec<_>>();
 
@@ -2875,10 +2877,10 @@ impl Project {
                 let _cleanup = defer({
                     let this = this.clone();
                     let mut cx = cx.clone();
-                    let local_buffers = &buffers_with_paths_and_servers;
+                    let buffers = &buffers_with_paths_and_servers;
                     move || {
                         this.update(&mut cx, |this, _| {
-                            for (buffer, _, _) in local_buffers {
+                            for (buffer, _, _) in buffers {
                                 this.buffers_being_formatted.remove(&buffer.id());
                             }
                         });
@@ -2887,60 +2889,138 @@ impl Project {
 
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
-                    let (format_on_save, formatter, tab_size) =
-                        buffer.read_with(&cx, |buffer, cx| {
-                            let settings = cx.global::<Settings>();
-                            let language_name = buffer.language().map(|language| language.name());
-                            (
-                                settings.format_on_save(language_name.as_deref()),
-                                settings.formatter(language_name.as_deref()),
-                                settings.tab_size(language_name.as_deref()),
-                            )
-                        });
+                    let (
+                        format_on_save,
+                        remove_trailing_whitespace,
+                        ensure_final_newline,
+                        formatter,
+                        tab_size,
+                    ) = buffer.read_with(&cx, |buffer, cx| {
+                        let settings = cx.global::<Settings>();
+                        let language_name = buffer.language().map(|language| language.name());
+                        (
+                            settings.format_on_save(language_name.as_deref()),
+                            settings.remove_trailing_whitespace_on_save(language_name.as_deref()),
+                            settings.ensure_final_newline_on_save(language_name.as_deref()),
+                            settings.formatter(language_name.as_deref()),
+                            settings.tab_size(language_name.as_deref()),
+                        )
+                    });
 
-                    let transaction = match (formatter, format_on_save) {
-                        (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => continue,
+                    // First, format buffer's whitespace according to the settings.
+                    let trailing_whitespace_diff = if remove_trailing_whitespace {
+                        Some(
+                            buffer
+                                .read_with(&cx, |b, cx| b.remove_trailing_whitespace(cx))
+                                .await,
+                        )
+                    } else {
+                        None
+                    };
+                    let whitespace_transaction_id = buffer.update(&mut cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.start_transaction();
+                        if let Some(diff) = trailing_whitespace_diff {
+                            buffer.apply_diff(diff, cx);
+                        }
+                        if ensure_final_newline {
+                            buffer.ensure_final_newline(cx);
+                        }
+                        buffer.end_transaction(cx)
+                    });
+
+                    // Currently, formatting operations are represented differently depending on
+                    // whether they come from a language server or an external command.
+                    enum FormatOperation {
+                        Lsp(Vec<(Range<Anchor>, String)>),
+                        External(Diff),
+                    }
+
+                    // Apply language-specific formatting using either a language server
+                    // or external command.
+                    let mut format_operation = None;
+                    match (formatter, format_on_save) {
+                        (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
                         (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
-                        | (_, FormatOnSave::LanguageServer) => Self::format_via_lsp(
-                            &this,
-                            &buffer,
-                            &buffer_abs_path,
-                            &language_server,
-                            tab_size,
-                            &mut cx,
-                        )
-                        .await
-                        .context("failed to format via language server")?,
+                        | (_, FormatOnSave::LanguageServer) => {
+                            if let Some((language_server, buffer_abs_path)) =
+                                language_server.as_ref().zip(buffer_abs_path.as_ref())
+                            {
+                                format_operation = Some(FormatOperation::Lsp(
+                                    Self::format_via_lsp(
+                                        &this,
+                                        &buffer,
+                                        buffer_abs_path,
+                                        &language_server,
+                                        tab_size,
+                                        &mut cx,
+                                    )
+                                    .await
+                                    .context("failed to format via language server")?,
+                                ));
+                            }
+                        }
 
                         (
                             Formatter::External { command, arguments },
                             FormatOnSave::On | FormatOnSave::Off,
                         )
                         | (_, FormatOnSave::External { command, arguments }) => {
-                            Self::format_via_external_command(
-                                &buffer,
-                                &buffer_abs_path,
-                                &command,
-                                &arguments,
-                                &mut cx,
-                            )
-                            .await
-                            .context(format!(
-                                "failed to format via external command {:?}",
-                                command
-                            ))?
+                            if let Some(buffer_abs_path) = buffer_abs_path {
+                                format_operation = Self::format_via_external_command(
+                                    &buffer,
+                                    &buffer_abs_path,
+                                    &command,
+                                    &arguments,
+                                    &mut cx,
+                                )
+                                .await
+                                .context(format!(
+                                    "failed to format via external command {:?}",
+                                    command
+                                ))?
+                                .map(FormatOperation::External);
+                            }
                         }
                     };
 
-                    if let Some(transaction) = transaction {
-                        if !push_to_history {
-                            buffer.update(&mut cx, |buffer, _| {
-                                buffer.forget_transaction(transaction.id)
-                            });
+                    buffer.update(&mut cx, |b, cx| {
+                        // If the buffer had its whitespace formatted and was edited while the language-specific
+                        // formatting was being computed, avoid applying the language-specific formatting, because
+                        // it can't be grouped with the whitespace formatting in the undo history.
+                        if let Some(transaction_id) = whitespace_transaction_id {
+                            if b.peek_undo_stack()
+                                .map_or(true, |e| e.transaction_id() != transaction_id)
+                            {
+                                format_operation.take();
+                            }
                         }
-                        project_transaction.0.insert(buffer.clone(), transaction);
-                    }
+
+                        // Apply any language-specific formatting, and group the two formatting operations
+                        // in the buffer's undo history.
+                        if let Some(operation) = format_operation {
+                            match operation {
+                                FormatOperation::Lsp(edits) => {
+                                    b.edit(edits, None, cx);
+                                }
+                                FormatOperation::External(diff) => {
+                                    b.apply_diff(diff, cx);
+                                }
+                            }
+
+                            if let Some(transaction_id) = whitespace_transaction_id {
+                                b.group_until_transaction(transaction_id);
+                            }
+                        }
+
+                        if let Some(transaction) = b.finalize_last_transaction().cloned() {
+                            if !push_to_history {
+                                b.forget_transaction(transaction.id);
+                            }
+                            project_transaction.0.insert(buffer.clone(), transaction);
+                        }
+                    });
                 }
 
                 Ok(project_transaction)
@@ -2981,7 +3061,7 @@ impl Project {
         language_server: &Arc<LanguageServer>,
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
         let text_document =
             lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(abs_path).unwrap());
         let capabilities = &language_server.capabilities();
@@ -3028,26 +3108,12 @@ impl Project {
         };
 
         if let Some(lsp_edits) = lsp_edits {
-            let edits = this
-                .update(cx, |this, cx| {
-                    this.edits_from_lsp(buffer, lsp_edits, None, cx)
-                })
-                .await?;
-            buffer.update(cx, |buffer, cx| {
-                buffer.finalize_last_transaction();
-                buffer.start_transaction();
-                for (range, text) in edits {
-                    buffer.edit([(range, text)], None, cx);
-                }
-                if buffer.end_transaction(cx).is_some() {
-                    let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                    Ok(Some(transaction))
-                } else {
-                    Ok(None)
-                }
+            this.update(cx, |this, cx| {
+                this.edits_from_lsp(buffer, lsp_edits, None, cx)
             })
+            .await
         } else {
-            Ok(None)
+            Ok(Default::default())
         }
     }
 
@@ -3057,7 +3123,7 @@ impl Project {
         command: &str,
         arguments: &[String],
         cx: &mut AsyncAppContext,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<Diff>> {
         let working_dir_path = buffer.read_with(cx, |buffer, cx| {
             let file = File::from_dyn(buffer.file())?;
             let worktree = file.worktree.read(cx).as_local()?;
@@ -3100,10 +3166,11 @@ impl Project {
             }
 
             let stdout = String::from_utf8(output.stdout)?;
-            let diff = buffer
-                .read_with(cx, |buffer, cx| buffer.diff(stdout, cx))
-                .await;
-            Ok(buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx).cloned()))
+            Ok(Some(
+                buffer
+                    .read_with(cx, |buffer, cx| buffer.diff(stdout, cx))
+                    .await,
+            ))
         } else {
             Ok(None)
         }

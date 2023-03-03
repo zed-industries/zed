@@ -422,6 +422,10 @@ impl LanguageServer {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
+    pub fn remove_notification_handler<T: notification::Notification>(&self) {
+        self.notification_handlers.lock().remove(T::METHOD);
+    }
+
     #[must_use]
     pub fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
@@ -778,6 +782,26 @@ impl FakeLanguageServer {
             })
             .detach();
         responded_rx
+    }
+
+    pub fn handle_notification<T, F>(
+        &self,
+        mut handler: F,
+    ) -> futures::channel::mpsc::UnboundedReceiver<()>
+    where
+        T: 'static + notification::Notification,
+        T::Params: 'static + Send,
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext),
+    {
+        let (handled_tx, handled_rx) = futures::channel::mpsc::unbounded();
+        self.server.remove_notification_handler::<T>();
+        self.server
+            .on_notification::<T, _>(move |params, cx| {
+                handler(params, cx.clone());
+                handled_tx.unbounded_send(()).ok();
+            })
+            .detach();
+        handled_rx
     }
 
     pub fn remove_request_handler<T>(&mut self)
