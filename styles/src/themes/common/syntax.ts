@@ -120,7 +120,7 @@ export interface Syntax {
 
 // HACK: "constructor" as a key in the syntax interface returns an error when a theme tries to use it.
 // For now hack around it by omiting constructor as a valid key for overrides.
-export type ThemeSyntax = Partial<Omit<Syntax, "constructor">>
+export type ThemeSyntax = Partial<Syntax>
 
 const defaultSyntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
     weight: fontWeights.normal,
@@ -311,8 +311,6 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
             color: color.primary,
         },
     }
-
-    console.log(JSON.stringify(defaultSyntax, null, 2))
 
     return defaultSyntax
 }
