@@ -4,7 +4,7 @@ use crate::{
     ToOffset,
 };
 use collections::BTreeMap;
-use gpui::fonts::HighlightStyle;
+use gpui::{color::Color, fonts::HighlightStyle};
 use language::{Chunk, Edit, Point, TextSummary};
 use parking_lot::Mutex;
 use std::{
@@ -133,6 +133,7 @@ impl<'a> FoldMapWriter<'a> {
             folds: self.0.folds.clone(),
             buffer_snapshot: buffer,
             version: self.0.version.load(SeqCst),
+            ellipses_color: self.0.ellipses_color,
         };
         (snapshot, edits)
     }
@@ -182,6 +183,7 @@ impl<'a> FoldMapWriter<'a> {
             folds: self.0.folds.clone(),
             buffer_snapshot: buffer,
             version: self.0.version.load(SeqCst),
+            ellipses_color: self.0.ellipses_color,
         };
         (snapshot, edits)
     }
@@ -192,6 +194,7 @@ pub struct FoldMap {
     transforms: Mutex<SumTree<Transform>>,
     folds: SumTree<Fold>,
     version: AtomicUsize,
+    ellipses_color: Option<Color>,
 }
 
 impl FoldMap {
@@ -209,6 +212,7 @@ impl FoldMap {
                 },
                 &(),
             )),
+            ellipses_color: None,
             version: Default::default(),
         };
 
@@ -217,6 +221,7 @@ impl FoldMap {
             folds: this.folds.clone(),
             buffer_snapshot: this.buffer.lock().clone(),
             version: this.version.load(SeqCst),
+            ellipses_color: None,
         };
         (this, snapshot)
     }
@@ -233,6 +238,7 @@ impl FoldMap {
             folds: self.folds.clone(),
             buffer_snapshot: self.buffer.lock().clone(),
             version: self.version.load(SeqCst),
+            ellipses_color: self.ellipses_color,
         };
         (snapshot, edits)
     }
@@ -244,6 +250,15 @@ impl FoldMap {
     ) -> (FoldMapWriter, FoldSnapshot, Vec<FoldEdit>) {
         let (snapshot, edits) = self.read(buffer, edits);
         (FoldMapWriter(self), snapshot, edits)
+    }
+
+    pub fn set_ellipses_color(&mut self, color: Color) -> bool {
+        if self.ellipses_color != Some(color) {
+            self.ellipses_color = Some(color);
+            true
+        } else {
+            false
+        }
     }
 
     fn check_invariants(&self) {
@@ -477,6 +492,7 @@ pub struct FoldSnapshot {
     folds: SumTree<Fold>,
     buffer_snapshot: MultiBufferSnapshot,
     pub version: usize,
+    pub ellipses_color: Option<Color>,
 }
 
 impl FoldSnapshot {
@@ -739,6 +755,7 @@ impl FoldSnapshot {
             max_output_offset: range.end.0,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
+            ellipses_color: self.ellipses_color,
         }
     }
 
@@ -1029,6 +1046,7 @@ pub struct FoldChunks<'a> {
     max_output_offset: usize,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
+    ellipses_color: Option<Color>,
 }
 
 impl<'a> Iterator for FoldChunks<'a> {
@@ -1058,7 +1076,10 @@ impl<'a> Iterator for FoldChunks<'a> {
             return Some(Chunk {
                 text: output_text,
                 syntax_highlight_id: None,
-                highlight_style: None,
+                highlight_style: self.ellipses_color.map(|color| HighlightStyle {
+                    color: Some(color),
+                    ..Default::default()
+                }),
                 diagnostic_severity: None,
                 is_unnecessary: false,
             });

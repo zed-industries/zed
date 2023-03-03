@@ -50,6 +50,8 @@ use std::{
 };
 use workspace::item::Item;
 
+enum FoldMarkers {}
+
 struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
@@ -115,7 +117,6 @@ impl EditorElement {
     fn attach_mouse_handlers(
         view: &WeakViewHandle<Editor>,
         position_map: &Arc<PositionMap>,
-        fold_ranges: Arc<[Range<DisplayPoint>]>,
         has_popovers: bool,
         visible_bounds: RectF,
         text_bounds: RectF,
@@ -210,23 +211,6 @@ impl EditorElement {
                             cx,
                         ) {
                             cx.propagate_event()
-                        }
-                    }
-                })
-                .on_click(MouseButton::Left, {
-                    let position_map = position_map.clone();
-                    move |e, cx| {
-                        let point =
-                            position_to_display_point(e.position, text_bounds, &position_map);
-                        if let Some(point) = point {
-                            for range in fold_ranges.iter() {
-                                // Range -> RangeInclusive
-                                if range.contains(&point) || range.end == point {
-                                    cx.dispatch_action(UnfoldAt {
-                                        display_row: point.row(),
-                                    })
-                                }
-                            }
                         }
                     }
                 }),
@@ -724,9 +708,24 @@ impl EditorElement {
             },
         });
 
-        for range in layout.fold_ranges.iter() {
+        let fold_corner_radius =
+            self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
+        for (id, range, color) in layout.fold_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                *color,
+                fold_corner_radius,
+                fold_corner_radius * 2.,
+                layout,
+                content_origin,
+                scroll_top,
+                scroll_left,
+                bounds,
+                cx,
+            );
+
             for bound in range_to_bounds(
-                range,
+                &range,
                 content_origin,
                 scroll_left,
                 scroll_top,
@@ -738,6 +737,16 @@ impl EditorElement {
                     bounds: bound,
                     style: CursorStyle::PointingHand,
                 });
+
+                let display_row = range.start.row();
+                cx.scene.push_mouse_region(
+                    MouseRegion::new::<FoldMarkers>(self.view.id(), *id as usize, bound)
+                        .on_click(MouseButton::Left, move |_, cx| {
+                            cx.dispatch_action(UnfoldAt { display_row })
+                        })
+                        .with_notify_on_hover(true)
+                        .with_notify_on_click(true),
+                )
             }
         }
 
@@ -757,9 +766,10 @@ impl EditorElement {
         }
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
+        let corner_radius = 0.15 * layout.position_map.line_height;
+
         for (replica_id, selections) in &layout.selections {
             let selection_style = style.replica_selection_style(*replica_id);
-            let corner_radius = 0.15 * layout.position_map.line_height;
 
             for selection in selections {
                 self.paint_highlighted_range(
@@ -1695,8 +1705,12 @@ impl Element for EditorElement {
                 snapshot
                     .folds_in_range(start_anchor..end_anchor)
                     .map(|anchor| {
-                        anchor.start.to_display_point(&snapshot.display_snapshot)
-                            ..anchor.end.to_display_point(&snapshot.display_snapshot)
+                        let start = anchor.start.to_point(&snapshot.buffer_snapshot);
+                        (
+                            start.row,
+                            start.to_display_point(&snapshot.display_snapshot)
+                                ..anchor.end.to_display_point(&snapshot),
+                        )
                     }),
             );
 
@@ -1767,6 +1781,21 @@ impl Element for EditorElement {
                 .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                 .unwrap_or_default()
         });
+
+        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)> = fold_ranges
+            .into_iter()
+            .map(|(id, fold)| {
+                let color = self
+                    .style
+                    .folds
+                    .ellipses
+                    .background
+                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize), false)
+                    .color;
+
+                (id, fold, color)
+            })
+            .collect();
 
         let line_number_layouts =
             self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
@@ -1955,7 +1984,7 @@ impl Element for EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
-                fold_ranges: fold_ranges.into(),
+                fold_ranges,
                 line_number_layouts,
                 display_hunks,
                 blocks,
@@ -1987,7 +2016,6 @@ impl Element for EditorElement {
         Self::attach_mouse_handlers(
             &self.view,
             &layout.position_map,
-            layout.fold_ranges.clone(), // No need to clone the vec
             layout.hover_popovers.is_some(),
             visible_bounds,
             text_bounds,
@@ -2071,6 +2099,8 @@ impl Element for EditorElement {
     }
 }
 
+type BufferRow = u32;
+
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
     gutter_size: Vector2F,
@@ -2085,7 +2115,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    fold_ranges: Arc<[Range<DisplayPoint>]>,
+    fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,

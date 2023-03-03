@@ -12,9 +12,9 @@ use crate::{
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, Appearance,
     AssetCache, ElementBox, Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent,
-    MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView, RenderContext, RenderParams,
-    SceneBuilder, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    MouseRegion, MouseRegionId, MouseState, ParentId, ReadModel, ReadView, RenderContext,
+    RenderParams, SceneBuilder, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use anyhow::bail;
 use collections::{HashMap, HashSet};
@@ -603,6 +603,24 @@ pub struct LayoutContext<'a> {
 }
 
 impl<'a> LayoutContext<'a> {
+    pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
+        let view_id = self.view_stack.last().unwrap();
+
+        let region_id = MouseRegionId::new::<Tag>(*view_id, region_id);
+        MouseState {
+            hovered: self.hovered_region_ids.contains(&region_id),
+            clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
+                if ids.contains(&region_id) {
+                    Some(*button)
+                } else {
+                    None
+                }
+            }),
+            accessed_hovered: false,
+            accessed_clicked: false,
+        }
+    }
+
     fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
         let print_error = |view_id| {
             format!(

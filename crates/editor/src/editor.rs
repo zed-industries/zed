@@ -39,11 +39,10 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
-    scene::MouseClick,
     serde_json::json,
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    EventContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -6448,6 +6447,7 @@ impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let style = self.style(cx);
         let font_changed = self.display_map.update(cx, |map, cx| {
+            map.set_fold_ellipses_color(style.folds.ellipses.text_color);
             map.set_font(style.text.font_id, style.text.font_size, cx)
         });
 

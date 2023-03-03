@@ -76,6 +76,22 @@ export default function editor(colorScheme: ColorScheme) {
                     color: foreground(layer, "on"),
                 },
             },
+            ellipses: {
+                textColor: colorScheme.ramps.neutral(0.71).hex(),
+                cornerRadiusFactor: 0.15,
+                background: {
+                    // Copied from hover_popover highlight
+                    color: colorScheme.ramps.neutral(0.5).alpha(0.0).hex(),
+
+                    hover: {
+                        color: colorScheme.ramps.neutral(0.5).alpha(0.5).hex(),
+                    },
+
+                    clicked: {
+                        color: colorScheme.ramps.neutral(0.5).alpha(0.7).hex(),
+                    },
+                }
+            },
             foldBackground: foreground(layer, "variant"),
         },
         diff: {

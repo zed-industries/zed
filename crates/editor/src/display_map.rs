@@ -8,6 +8,7 @@ use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
+    color::Color,
     fonts::{FontId, HighlightStyle},
     Entity, ModelContext, ModelHandle,
 };
@@ -216,6 +217,10 @@ impl DisplayMap {
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font(font_id, font_size, cx))
+    }
+
+    pub fn set_fold_ellipses_color(&mut self, color: Color) -> bool {
+        self.fold_map.set_ellipses_color(color)
     }
 
     pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
