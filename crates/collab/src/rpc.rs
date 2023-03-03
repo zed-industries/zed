@@ -57,7 +57,7 @@ use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
-pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 lazy_static! {
