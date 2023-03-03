@@ -1,8 +1,6 @@
 import deepmerge from "deepmerge"
 import { FontWeight, fontWeights } from "../../common"
-import {
-    ColorScheme,
-} from "./colorScheme"
+import { ColorScheme } from "./colorScheme"
 
 export interface SyntaxHighlightStyle {
     color: string
