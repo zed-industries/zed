@@ -23,10 +23,18 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
     git clone https://github.com/zed-industries/zed.dev
     ```
 
-* Set up a local `zed` database and seed it with some initial users:
+* Initialize submodules
 
     ```
-    script/bootstrap
+    git submodule update --init --recursive
+    ```
+
+* Set up a local `zed` database and seed it with some initial users:
+
+    Create a personal GitHub token to run `script/bootstrap` once successfully. Then delete that token.
+
+    ```
+    GITHUB_TOKEN=<$token> script/bootstrap
     ```
 
 ### Testing against locally-running servers
