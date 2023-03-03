@@ -56,7 +56,8 @@ export interface Syntax {
     "string.regex": SyntaxHighlightStyle
 
     // == Types ====== /
-    constructor: SyntaxHighlightStyle
+    // We allow Function here because all JS objects literals have this property
+    constructor: SyntaxHighlightStyle | Function
     variant: SyntaxHighlightStyle
     type: SyntaxHighlightStyle
     // js: predefined_type
@@ -120,6 +121,7 @@ export interface Syntax {
 
 // HACK: "constructor" as a key in the syntax interface returns an error when a theme tries to use it.
 // For now hack around it by omiting constructor as a valid key for overrides.
+// export type ThemeSyntax = Partial<Omit<Syntax, "constructor">>
 export type ThemeSyntax = Partial<Syntax>
 
 const defaultSyntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
