@@ -507,15 +507,18 @@ impl Presenter {
                 }
                 // Handle Down events if the MouseRegion has a Click or Drag handler. This makes the api more intuitive as you would
                 // not expect a MouseRegion to be transparent to Down events if it also has a Click handler.
-                // This behavior can be overridden by adding a Down handler that calls cx.propogate_event
+                // This behavior can be overridden by adding a Down handler
                 if let MouseEvent::Down(e) = &mouse_event {
-                    if valid_region
+                    let has_click = valid_region
                         .handlers
-                        .contains(MouseEvent::click_disc(), Some(e.button))
-                        || valid_region
-                            .handlers
-                            .contains(MouseEvent::drag_disc(), Some(e.button))
-                    {
+                        .contains(MouseEvent::click_disc(), Some(e.button));
+                    let has_drag = valid_region
+                        .handlers
+                        .contains(MouseEvent::drag_disc(), Some(e.button));
+                    let has_down = valid_region
+                        .handlers
+                        .contains(MouseEvent::down_disc(), Some(e.button));
+                    if !has_down && (has_click || has_drag) {
                         event_cx.handled = true;
                     }
                 }
@@ -523,14 +526,13 @@ impl Presenter {
                 // `event_consumed` should only be true if there are any handlers for this event.
                 let mut event_consumed = event_cx.handled;
                 if let Some(callbacks) = valid_region.handlers.get(&mouse_event.handler_key()) {
-                    event_consumed = true;
                     for callback in callbacks {
                         event_cx.handled = true;
                         event_cx.with_current_view(valid_region.id().view_id(), {
                             let region_event = mouse_event.clone();
                             |cx| callback(region_event, cx)
                         });
-                        event_consumed &= event_cx.handled;
+                        event_consumed |= event_cx.handled;
                         any_event_handled |= event_cx.handled;
                     }
                 }
