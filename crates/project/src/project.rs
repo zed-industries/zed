@@ -1,6 +1,7 @@
 mod ignore;
 mod lsp_command;
 pub mod search;
+pub mod terminals;
 pub mod worktree;
 
 #[cfg(test)]
@@ -61,7 +62,8 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use terminal::{Terminal, TerminalBuilder};
+use terminals::Terminals;
+
 use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
@@ -123,6 +125,7 @@ pub struct Project {
     buffers_being_formatted: HashSet<usize>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
+    terminals: Terminals,
 }
 
 enum OpenBuffer {
@@ -439,6 +442,9 @@ impl Project {
             buffers_being_formatted: Default::default(),
             next_language_server_id: 0,
             nonce: StdRng::from_entropy().gen(),
+            terminals: Terminals {
+                local_handles: Vec::new(),
+            },
         })
     }
 
@@ -516,6 +522,9 @@ impl Project {
                 buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
+                terminals: Terminals {
+                    local_handles: Vec::new(),
+                },
             };
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
@@ -1182,34 +1191,6 @@ impl Project {
 
     pub fn is_remote(&self) -> bool {
         !self.is_local()
-    }
-
-    pub fn create_terminal(
-        &mut self,
-        working_directory: Option<PathBuf>,
-        window_id: usize,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<ModelHandle<Terminal>> {
-        if self.is_remote() {
-            return Err(anyhow!(
-                "creating terminals as a guest is not supported yet"
-            ));
-        } else {
-            let settings = cx.global::<Settings>();
-            let shell = settings.terminal_shell();
-            let envs = settings.terminal_env();
-            let scroll = settings.terminal_scroll();
-
-            TerminalBuilder::new(
-                working_directory.clone(),
-                shell,
-                envs,
-                settings.terminal_overrides.blinking.clone(),
-                scroll,
-                window_id,
-            )
-            .map(|builder| cx.add_model(|cx| builder.subscribe(cx)))
-        }
     }
 
     pub fn create_buffer(
