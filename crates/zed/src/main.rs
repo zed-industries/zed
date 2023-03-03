@@ -13,7 +13,6 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
 };
-
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -31,8 +30,10 @@ use settings::{
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
-use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
-use std::{fs::OpenOptions, os::unix::prelude::OsStrExt};
+use std::{
+    env, ffi::OsStr, fs::OpenOptions, io::Write as _, os::unix::prelude::OsStrExt, panic,
+    path::PathBuf, sync::Arc, thread, time::Duration,
+};
 use terminal_view::{get_working_directory, TerminalView};
 
 use fs::RealFs;
@@ -330,13 +331,18 @@ fn init_panic_hook(app_version: String) {
             ),
         };
 
-        let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-        std::fs::write(
-            paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
-            &message,
-        )
-        .context("error writing panic to disk")
-        .log_err();
+        let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+        let panic_file_path =
+            paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, timestamp));
+        let panic_file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&panic_file_path)
+            .log_err();
+        if let Some(mut panic_file) = panic_file {
+            write!(&mut panic_file, "{}", message).log_err();
+            panic_file.flush().log_err();
+        }
 
         if is_pty {
             eprintln!("{}", message);
