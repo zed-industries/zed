@@ -119,7 +119,9 @@ fn main() {
         ));
 
         watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
-        upload_previous_panics(http.clone(), cx);
+        if !stdout_is_a_pty() {
+            upload_previous_panics(http.clone(), cx);
+        }
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -330,18 +332,17 @@ fn init_panic_hook(app_version: String) {
             ),
         };
 
-        let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-        std::fs::write(
-            paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
-            &message,
-        )
-        .context("error writing panic to disk")
-        .log_err();
-
         if is_pty {
             eprintln!("{}", message);
         } else {
             log::error!(target: "panic", "{}", message);
+            let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+            std::fs::write(
+                paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
+                &message,
+            )
+            .context("error writing panic to disk")
+            .log_err();
         }
     }));
 }
