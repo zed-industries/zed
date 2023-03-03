@@ -14,7 +14,7 @@ use crate::{
     },
     mouse_context_menu::DeployMouseContextMenu,
     scroll::actions::Scroll,
-    EditorStyle, GutterHover, TextClickedCallback, UnfoldAt,
+    EditorStyle, GutterHover, UnfoldAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -30,7 +30,6 @@ use gpui::{
     },
     json::{self, ToJson},
     platform::CursorStyle,
-    scene::MouseClick,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
     Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
@@ -50,6 +49,8 @@ use std::{
     sync::Arc,
 };
 use workspace::item::Item;
+
+enum FoldMarkers {}
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -116,7 +117,6 @@ impl EditorElement {
     fn attach_mouse_handlers(
         view: &WeakViewHandle<Editor>,
         position_map: &Arc<PositionMap>,
-        click_ranges: Arc<Vec<(Range<DisplayPoint>, TextClickedCallback)>>,
         has_popovers: bool,
         visible_bounds: RectF,
         text_bounds: RectF,
@@ -211,21 +211,6 @@ impl EditorElement {
                             cx,
                         ) {
                             cx.propagate_event()
-                        }
-                    }
-                })
-                .on_click(MouseButton::Left, {
-                    let position_map = position_map.clone();
-                    move |e, cx| {
-                        let point =
-                            position_to_display_point(e.position, text_bounds, &position_map);
-                        if let Some(point) = point {
-                            for (range, callback) in click_ranges.iter() {
-                                // Range -> RangeInclusive
-                                if range.contains(&point) || range.end == point {
-                                    callback(&e, range, &position_map.snapshot, cx)
-                                }
-                            }
                         }
                     }
                 }),
@@ -723,9 +708,24 @@ impl EditorElement {
             },
         });
 
-        for (range, _) in layout.click_ranges.iter() {
+        let fold_corner_radius =
+            self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
+        for (id, range, color) in layout.fold_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                *color,
+                fold_corner_radius,
+                fold_corner_radius * 2.,
+                layout,
+                content_origin,
+                scroll_top,
+                scroll_left,
+                bounds,
+                cx,
+            );
+
             for bound in range_to_bounds(
-                range,
+                &range,
                 content_origin,
                 scroll_left,
                 scroll_top,
@@ -737,6 +737,16 @@ impl EditorElement {
                     bounds: bound,
                     style: CursorStyle::PointingHand,
                 });
+
+                let display_row = range.start.row();
+                cx.scene.push_mouse_region(
+                    MouseRegion::new::<FoldMarkers>(self.view.id(), *id as usize, bound)
+                        .on_click(MouseButton::Left, move |_, cx| {
+                            cx.dispatch_action(UnfoldAt { display_row })
+                        })
+                        .with_notify_on_hover(true)
+                        .with_notify_on_click(true),
+                )
             }
         }
 
@@ -756,9 +766,10 @@ impl EditorElement {
         }
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
+        let corner_radius = 0.15 * layout.position_map.line_height;
+
         for (replica_id, selections) in &layout.selections {
             let selection_style = style.replica_selection_style(*replica_id);
-            let corner_radius = 0.15 * layout.position_map.line_height;
 
             for selection in selections {
                 self.paint_highlighted_range(
@@ -1676,7 +1687,7 @@ impl Element for EditorElement {
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
-        let mut click_ranges = Vec::new();
+        let mut fold_ranges = Vec::new();
         let mut show_scrollbars = false;
         let mut include_root = false;
         let mut is_singleton = false;
@@ -1689,7 +1700,19 @@ impl Element for EditorElement {
             let theme = cx.global::<Settings>().theme.as_ref();
             highlighted_ranges =
                 view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
-            click_ranges = view.click_ranges_in_range(start_anchor..end_anchor, &display_map);
+
+            fold_ranges.extend(
+                snapshot
+                    .folds_in_range(start_anchor..end_anchor)
+                    .map(|anchor| {
+                        let start = anchor.start.to_point(&snapshot.buffer_snapshot);
+                        (
+                            start.row,
+                            start.to_display_point(&snapshot.display_snapshot)
+                                ..anchor.end.to_display_point(&snapshot),
+                        )
+                    }),
+            );
 
             let mut remote_selections = HashMap::default();
             for (replica_id, line_mode, cursor_shape, selection) in display_map
@@ -1758,6 +1781,21 @@ impl Element for EditorElement {
                 .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                 .unwrap_or_default()
         });
+
+        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)> = fold_ranges
+            .into_iter()
+            .map(|(id, fold)| {
+                let color = self
+                    .style
+                    .folds
+                    .ellipses
+                    .background
+                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize), false)
+                    .color;
+
+                (id, fold, color)
+            })
+            .collect();
 
         let line_number_layouts =
             self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
@@ -1946,7 +1984,7 @@ impl Element for EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
-                click_ranges: Arc::new(click_ranges),
+                fold_ranges,
                 line_number_layouts,
                 display_hunks,
                 blocks,
@@ -1978,7 +2016,6 @@ impl Element for EditorElement {
         Self::attach_mouse_handlers(
             &self.view,
             &layout.position_map,
-            layout.click_ranges.clone(), // No need to clone the vec
             layout.hover_popovers.is_some(),
             visible_bounds,
             text_bounds,
@@ -2062,6 +2099,8 @@ impl Element for EditorElement {
     }
 }
 
+type BufferRow = u32;
+
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
     gutter_size: Vector2F,
@@ -2076,7 +2115,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    click_ranges: Arc<Vec<(Range<DisplayPoint>, TextClickedCallback)>>,
+    fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -2380,29 +2419,6 @@ impl HighlightedRange {
         path.line_to(first_top_right - top_curve_width);
 
         scene.push_path(path.build(self.color, Some(bounds)));
-    }
-}
-
-pub trait ClickRange: 'static {
-    fn click_handler(
-        click: &MouseClick,
-        range: &Range<DisplayPoint>,
-        snapshot: &EditorSnapshot,
-        cx: &mut EventContext,
-    );
-}
-
-pub enum FoldMarker {}
-impl ClickRange for FoldMarker {
-    fn click_handler(
-        _click: &MouseClick,
-        range: &Range<DisplayPoint>,
-        _snapshot: &EditorSnapshot,
-        cx: &mut EventContext,
-    ) {
-        cx.dispatch_action(UnfoldAt {
-            display_row: range.start.row(),
-        })
     }
 }
 

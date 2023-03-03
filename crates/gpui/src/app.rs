@@ -4159,10 +4159,10 @@ pub struct RenderContext<'a, T: View> {
 
 #[derive(Debug, Clone, Default)]
 pub struct MouseState {
-    hovered: bool,
-    clicked: Option<MouseButton>,
-    accessed_hovered: bool,
-    accessed_clicked: bool,
+    pub(crate) hovered: bool,
+    pub(crate) clicked: Option<MouseButton>,
+    pub(crate) accessed_hovered: bool,
+    pub(crate) accessed_clicked: bool,
 }
 
 impl MouseState {

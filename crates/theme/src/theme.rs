@@ -634,15 +634,21 @@ pub struct FieldEditor {
 }
 
 #[derive(Clone, Deserialize, Default)]
+pub struct InteractiveColor {
+    pub color: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
 pub struct CodeActions {
     #[serde(default)]
-    pub indicator: Interactive<Indicator>,
+    pub indicator: Interactive<InteractiveColor>,
     pub vertical_scale: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Folds {
-    pub indicator: Interactive<Indicator>,
+    pub indicator: Interactive<InteractiveColor>,
+    pub ellipses: FoldEllipses,
     pub fold_background: Color,
     pub icon_width: f32,
     pub folded_icon: String,
@@ -650,8 +656,10 @@ pub struct Folds {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct Indicator {
-    pub color: Color,
+pub struct FoldEllipses {
+    pub text_color: Color,
+    pub background: Interactive<InteractiveColor>,
+    pub corner_radius_factor: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
