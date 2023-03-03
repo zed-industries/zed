@@ -14,7 +14,7 @@ use crate::{
     },
     mouse_context_menu::DeployMouseContextMenu,
     scroll::actions::Scroll,
-    EditorStyle, GutterHover, TextClickedCallback, UnfoldAt,
+    EditorStyle, GutterHover, UnfoldAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -30,7 +30,6 @@ use gpui::{
     },
     json::{self, ToJson},
     platform::CursorStyle,
-    scene::MouseClick,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
     Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
@@ -116,7 +115,7 @@ impl EditorElement {
     fn attach_mouse_handlers(
         view: &WeakViewHandle<Editor>,
         position_map: &Arc<PositionMap>,
-        click_ranges: Arc<Vec<(Range<DisplayPoint>, TextClickedCallback)>>,
+        fold_ranges: Arc<[Range<DisplayPoint>]>,
         has_popovers: bool,
         visible_bounds: RectF,
         text_bounds: RectF,
@@ -220,10 +219,12 @@ impl EditorElement {
                         let point =
                             position_to_display_point(e.position, text_bounds, &position_map);
                         if let Some(point) = point {
-                            for (range, callback) in click_ranges.iter() {
+                            for range in fold_ranges.iter() {
                                 // Range -> RangeInclusive
                                 if range.contains(&point) || range.end == point {
-                                    callback(&e, range, &position_map.snapshot, cx)
+                                    cx.dispatch_action(UnfoldAt {
+                                        display_row: point.row(),
+                                    })
                                 }
                             }
                         }
@@ -723,7 +724,7 @@ impl EditorElement {
             },
         });
 
-        for (range, _) in layout.click_ranges.iter() {
+        for range in layout.fold_ranges.iter() {
             for bound in range_to_bounds(
                 range,
                 content_origin,
@@ -1676,7 +1677,7 @@ impl Element for EditorElement {
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
-        let mut click_ranges = Vec::new();
+        let mut fold_ranges = Vec::new();
         let mut show_scrollbars = false;
         let mut include_root = false;
         let mut is_singleton = false;
@@ -1689,7 +1690,15 @@ impl Element for EditorElement {
             let theme = cx.global::<Settings>().theme.as_ref();
             highlighted_ranges =
                 view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
-            click_ranges = view.click_ranges_in_range(start_anchor..end_anchor, &display_map);
+
+            fold_ranges.extend(
+                snapshot
+                    .folds_in_range(start_anchor..end_anchor)
+                    .map(|anchor| {
+                        anchor.start.to_display_point(&snapshot.display_snapshot)
+                            ..anchor.end.to_display_point(&snapshot.display_snapshot)
+                    }),
+            );
 
             let mut remote_selections = HashMap::default();
             for (replica_id, line_mode, cursor_shape, selection) in display_map
@@ -1946,7 +1955,7 @@ impl Element for EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
-                click_ranges: Arc::new(click_ranges),
+                fold_ranges: fold_ranges.into(),
                 line_number_layouts,
                 display_hunks,
                 blocks,
@@ -1978,7 +1987,7 @@ impl Element for EditorElement {
         Self::attach_mouse_handlers(
             &self.view,
             &layout.position_map,
-            layout.click_ranges.clone(), // No need to clone the vec
+            layout.fold_ranges.clone(), // No need to clone the vec
             layout.hover_popovers.is_some(),
             visible_bounds,
             text_bounds,
@@ -2076,7 +2085,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    click_ranges: Arc<Vec<(Range<DisplayPoint>, TextClickedCallback)>>,
+    fold_ranges: Arc<[Range<DisplayPoint>]>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -2380,29 +2389,6 @@ impl HighlightedRange {
         path.line_to(first_top_right - top_curve_width);
 
         scene.push_path(path.build(self.color, Some(bounds)));
-    }
-}
-
-pub trait ClickRange: 'static {
-    fn click_handler(
-        click: &MouseClick,
-        range: &Range<DisplayPoint>,
-        snapshot: &EditorSnapshot,
-        cx: &mut EventContext,
-    );
-}
-
-pub enum FoldMarker {}
-impl ClickRange for FoldMarker {
-    fn click_handler(
-        _click: &MouseClick,
-        range: &Range<DisplayPoint>,
-        _snapshot: &EditorSnapshot,
-        cx: &mut EventContext,
-    ) {
-        cx.dispatch_action(UnfoldAt {
-            display_row: range.start.row(),
-        })
     }
 }
 

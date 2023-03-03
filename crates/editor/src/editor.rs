@@ -458,8 +458,6 @@ type CompletionId = usize;
 
 type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
-type TextClickedCallback =
-    fn(&MouseClick, &Range<DisplayPoint>, &EditorSnapshot, &mut EventContext);
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -488,7 +486,6 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
-    clickable_text: BTreeMap<TypeId, (TextClickedCallback, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
@@ -1159,7 +1156,6 @@ impl Editor {
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
-            clickable_text: Default::default(),
             nav_history: None,
             context_menu: None,
             mouse_context_menu: cx.add_view(context_menu::ContextMenu::new),
@@ -1196,19 +1192,6 @@ impl Editor {
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.platform().should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
-
-            // TODO: this does not work at all
-            let display_snapshot = this.snapshot(cx).display_snapshot;
-            let editor_snapshot = this.snapshot(cx);
-            if buffer.read(cx).is_singleton() {
-                this.insert_fold_styles(
-                    display_snapshot
-                        .folds_in_range(Anchor::min()..Anchor::max())
-                        .cloned(),
-                    &editor_snapshot,
-                    cx,
-                )
-            }
         }
 
         this.report_event("open editor", cx);
@@ -5866,45 +5849,14 @@ impl Editor {
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
-            let ranges = ranges.collect_vec();
-
-            self.display_map
-                .update(cx, |map, cx| map.fold(ranges.iter().cloned(), cx));
+            self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
 
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
             }
 
-            let snapshot = self.snapshot(cx);
-            let anchor_ranges = offset_to_anchors(ranges, &snapshot);
-
-            self.insert_fold_styles(anchor_ranges, &snapshot, cx);
-
             cx.notify();
         }
-    }
-
-    fn insert_fold_styles(
-        &mut self,
-        anchor_ranges: impl Iterator<Item = Range<Anchor>>,
-        snapshot: &EditorSnapshot,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
-            for range in anchor_ranges {
-                if let Err(idx) = click_ranges.binary_search_by(|click_range| {
-                    click_range.cmp(&range, &snapshot.buffer_snapshot)
-                }) {
-                    click_ranges.insert(idx, range)
-                }
-            }
-        });
-        let click_ranges = self.clone_click_ranges::<FoldMarker>();
-        self.highlight_background::<FoldMarker>(
-            click_ranges,
-            |theme| theme.editor.document_highlight_write_background,
-            cx,
-        );
     }
 
     pub fn unfold_ranges<T: ToOffset + Clone>(
@@ -5916,40 +5868,11 @@ impl Editor {
     ) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_some() {
-            let ranges = ranges.collect_vec();
-
-            self.display_map.update(cx, |map, cx| {
-                map.unfold(ranges.iter().cloned(), inclusive, cx)
-            });
+            self.display_map
+                .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
             }
-
-            let snapshot = self.snapshot(cx);
-            let anchor_ranges = offset_to_anchors(ranges, &snapshot);
-
-            self.change_click_ranges::<FoldMarker>(cx, |click_ranges| {
-                for range in anchor_ranges {
-                    let range_point = range.start.to_point(&snapshot.buffer_snapshot);
-                    // Fold and unfold ranges start at different points in the row.
-                    // But their rows do match, so we can use that to detect sameness.
-                    if let Ok(idx) = click_ranges.binary_search_by(|click_range| {
-                        click_range
-                            .start
-                            .to_point(&snapshot.buffer_snapshot)
-                            .row
-                            .cmp(&range_point.row)
-                    }) {
-                        click_ranges.remove(idx);
-                    }
-                }
-            });
-            let click_ranges = self.clone_click_ranges::<FoldMarker>();
-            self.highlight_background::<FoldMarker>(
-                click_ranges,
-                |theme| theme.editor.document_highlight_write_background,
-                cx,
-            );
 
             cx.notify();
         }
@@ -6074,69 +5997,6 @@ impl Editor {
                 cx.reveal_path(&file.abs_path(cx));
             }
         }
-    }
-
-    // FIXME: Consolidate the range styling APIs so that this clone isn't nescessary
-    pub fn clone_click_ranges<T: ClickRange>(&self) -> Vec<Range<Anchor>> {
-        self.clickable_text
-            .get(&TypeId::of::<T>())
-            .map(|click_range| click_range.1.clone())
-            .unwrap_or_default()
-    }
-
-    pub fn change_click_ranges<T: ClickRange>(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-        change: impl FnOnce(&mut Vec<Range<Anchor>>),
-    ) {
-        let mut ranges = self
-            .clickable_text
-            .remove(&TypeId::of::<T>())
-            .map(|click_range| click_range.1)
-            .unwrap_or_default();
-
-        change(&mut ranges);
-
-        self.clickable_text
-            .insert(TypeId::of::<T>(), (T::click_handler, ranges));
-
-        cx.notify();
-    }
-
-    pub fn click_ranges_in_range(
-        &self,
-        search_range: Range<Anchor>,
-        display_snapshot: &DisplaySnapshot,
-    ) -> Vec<(Range<DisplayPoint>, TextClickedCallback)> {
-        let mut results = Vec::new();
-        let buffer = &display_snapshot.buffer_snapshot;
-        for (callback, ranges) in self.clickable_text.values() {
-            let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = probe.end.cmp(&search_range.start, buffer);
-                if cmp.is_gt() {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
-            }) {
-                Ok(i) | Err(i) => i,
-            };
-            for range in &ranges[start_ix..] {
-                if range.start.cmp(&search_range.end, buffer).is_ge() {
-                    break;
-                }
-                let start = range
-                    .start
-                    .to_point(buffer)
-                    .to_display_point(display_snapshot);
-                let end = range
-                    .end
-                    .to_point(buffer)
-                    .to_display_point(display_snapshot);
-                results.push((start..end, *callback))
-            }
-        }
-        results
     }
 
     pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
@@ -6515,25 +6375,6 @@ fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) 
     } else {
         next_selection.end.row
     }
-}
-
-fn offset_to_anchors<
-    'snapshot,
-    'iter: 'snapshot,
-    T: ToOffset,
-    I: IntoIterator<Item = Range<T>> + 'iter,
->(
-    ranges: I,
-    snapshot: &'snapshot EditorSnapshot,
-) -> impl Iterator<Item = Range<Anchor>> + 'snapshot {
-    ranges.into_iter().map(|range| {
-        snapshot
-            .buffer_snapshot
-            .anchor_at(range.start.to_offset(&snapshot.buffer_snapshot), Bias::Left)
-            ..snapshot
-                .buffer_snapshot
-                .anchor_at(range.end.to_offset(&snapshot.buffer_snapshot), Bias::Right)
-    })
 }
 
 impl EditorSnapshot {
