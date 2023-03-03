@@ -90,11 +90,12 @@ impl SpriteCache {
         let fonts = &self.fonts;
         let atlases = &mut self.atlases;
         let subpixel_variant = (
-            (target_position.x().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
+            (target_position.x().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8
                 % SUBPIXEL_VARIANTS,
-            (target_position.y().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
+            (target_position.y().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8
                 % SUBPIXEL_VARIANTS,
         );
+
         self.glyphs
             .entry(GlyphDescriptor {
                 font_id,

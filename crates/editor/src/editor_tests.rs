@@ -1,23 +1,23 @@
-use drag_and_drop::DragAndDrop;
-use futures::StreamExt;
-use indoc::indoc;
-use std::{cell::RefCell, rc::Rc, time::Instant};
-use unindent::Unindent;
-
 use super::*;
 use crate::test::{
     assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
     editor_test_context::EditorTestContext, select_ranges,
 };
+use drag_and_drop::DragAndDrop;
+use futures::StreamExt;
 use gpui::{
     executor::Deterministic,
     geometry::{rect::RectF, vector::vec2f},
     platform::{WindowBounds, WindowOptions},
     serde_json,
 };
+use indoc::indoc;
 use language::{BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
+use parking_lot::Mutex;
 use project::FakeFs;
 use settings::EditorSettings;
+use std::{cell::RefCell, rc::Rc, time::Instant};
+use unindent::Unindent;
 use util::{
     assert_set_eq,
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
@@ -4299,6 +4299,121 @@ async fn test_concurrent_format_requests(cx: &mut gpui::TestAppContext) {
         one
             .twoˇ
     "});
+}
+
+#[gpui::test]
+async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext) {
+    cx.foreground().forbid_parking();
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Set up a buffer white some trailing whitespace and no trailing newline.
+    cx.set_state(
+        &[
+            "one ",   //
+            "twoˇ",  //
+            "three ", //
+            "four",   //
+        ]
+        .join("\n"),
+    );
+
+    // Submit a format request.
+    let format = cx
+        .update_editor(|editor, cx| editor.format(&Format, cx))
+        .unwrap();
+
+    // Record which buffer changes have been sent to the language server
+    let buffer_changes = Arc::new(Mutex::new(Vec::new()));
+    cx.lsp
+        .handle_notification::<lsp::notification::DidChangeTextDocument, _>({
+            let buffer_changes = buffer_changes.clone();
+            move |params, _| {
+                buffer_changes.lock().extend(
+                    params
+                        .content_changes
+                        .into_iter()
+                        .map(|e| (e.range.unwrap(), e.text)),
+                );
+            }
+        });
+
+    // Handle formatting requests to the language server.
+    cx.lsp.handle_request::<lsp::request::Formatting, _, _>({
+        let buffer_changes = buffer_changes.clone();
+        move |_, _| {
+            // When formatting is requested, trailing whitespace has already been stripped,
+            // and the trailing newline has already been added.
+            assert_eq!(
+                &buffer_changes.lock()[1..],
+                &[
+                    (
+                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                        "".into()
+                    ),
+                    (
+                        lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                        "".into()
+                    ),
+                    (
+                        lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                        "\n".into()
+                    ),
+                ]
+            );
+
+            // Insert blank lines between each line of the buffer.
+            async move {
+                Ok(Some(vec![
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
+                        new_text: "\n".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 0)),
+                        new_text: "\n".into(),
+                    },
+                ]))
+            }
+        }
+    });
+
+    // After formatting the buffer, the trailing whitespace is stripped,
+    // a newline is appended, and the edits provided by the language server
+    // have been applied.
+    format.await.unwrap();
+    cx.assert_editor_state(
+        &[
+            "one",   //
+            "",      //
+            "twoˇ", //
+            "",      //
+            "three", //
+            "four",  //
+            "",      //
+        ]
+        .join("\n"),
+    );
+
+    // Undoing the formatting undoes the trailing whitespace removal, the
+    // trailing newline, and the LSP edits.
+    cx.update_buffer(|buffer, cx| buffer.undo(cx));
+    cx.assert_editor_state(
+        &[
+            "one ",   //
+            "twoˇ",  //
+            "three ", //
+            "four",   //
+        ]
+        .join("\n"),
+    );
 }
 
 #[gpui::test]

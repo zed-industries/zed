@@ -3892,9 +3892,11 @@ async fn test_formatting_buffer(
         })
         .await
         .unwrap();
+
+    // The edits from the LSP are applied, and a final newline is added.
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
-        "let honey = \"two\""
+        "let honey = \"two\"\n"
     );
 
     // Ensure buffer can be formatted using an external command. Notice how the

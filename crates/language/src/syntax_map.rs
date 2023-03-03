@@ -165,6 +165,7 @@ struct ParseStep {
     mode: ParseMode,
 }
 
+#[derive(Debug)]
 enum ParseStepLanguage {
     Loaded { language: Arc<Language> },
     Pending { name: Arc<str> },
@@ -514,15 +515,32 @@ impl SyntaxSnapshot {
                     let Some(grammar) = language.grammar() else { continue };
                     let tree;
                     let changed_ranges;
+
                     let mut included_ranges = step.included_ranges;
+                    for range in &mut included_ranges {
+                        range.start_byte -= step_start_byte;
+                        range.end_byte -= step_start_byte;
+                        range.start_point = (Point::from_ts_point(range.start_point)
+                            - step_start_point)
+                            .to_ts_point();
+                        range.end_point = (Point::from_ts_point(range.end_point)
+                            - step_start_point)
+                            .to_ts_point();
+                    }
+
                     if let Some(SyntaxLayerContent::Parsed { tree: old_tree, .. }) =
                         old_layer.map(|layer| &layer.content)
                     {
                         if let ParseMode::Combined {
-                            parent_layer_changed_ranges,
+                            mut parent_layer_changed_ranges,
                             ..
                         } = step.mode
                         {
+                            for range in &mut parent_layer_changed_ranges {
+                                range.start -= step_start_byte;
+                                range.end -= step_start_byte;
+                            }
+
                             included_ranges = splice_included_ranges(
                                 old_tree.included_ranges(),
                                 &parent_layer_changed_ranges,
@@ -534,7 +552,6 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            step_start_point,
                             included_ranges,
                             Some(old_tree.clone()),
                         );
@@ -551,7 +568,6 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            step_start_point,
                             included_ranges,
                             None,
                         );
@@ -1060,17 +1076,9 @@ fn parse_text(
     grammar: &Grammar,
     text: &Rope,
     start_byte: usize,
-    start_point: Point,
-    mut ranges: Vec<tree_sitter::Range>,
+    ranges: Vec<tree_sitter::Range>,
     old_tree: Option<Tree>,
 ) -> Tree {
-    for range in &mut ranges {
-        range.start_byte -= start_byte;
-        range.end_byte -= start_byte;
-        range.start_point = (Point::from_ts_point(range.start_point) - start_point).to_ts_point();
-        range.end_point = (Point::from_ts_point(range.end_point) - start_point).to_ts_point();
-    }
-
     PARSER.with(|parser| {
         let mut parser = parser.borrow_mut();
         let mut chunks = text.chunks_in_range(start_byte..text.len());
@@ -2203,6 +2211,37 @@ mod tests {
                       <% end %>
                       eee
                       <% f %>
+                "#,
+            ],
+        );
+    }
+
+    #[gpui::test]
+    fn test_combined_injections_inside_injections() {
+        let (_buffer, _syntax_map) = test_edit_sequence(
+            "Markdown",
+            &[
+                r#"
+                      here is some ERB code:
+
+                      ```erb
+                      <ul>
+                        <% people.each do |person| %>
+                          <li><%= person.name %></li>
+                        <% end %>
+                      </ul>
+                      ```
+                "#,
+                r#"
+                    here is some ERB code:
+
+                    ```erb
+                    <ul>
+                      <% people«2».each do |person| %>
+                        <li><%= person.name %></li>
+                      <% end %>
+                    </ul>
+                    ```
                 "#,
             ],
         );

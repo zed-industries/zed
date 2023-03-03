@@ -6,6 +6,7 @@ use gpui::{ModelHandle, MutableAppContext};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
+use regex::RegexBuilder;
 use settings::Settings;
 use std::{
     cell::RefCell,
@@ -17,6 +18,13 @@ use std::{
 use text::network::Network;
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
+
+lazy_static! {
+    static ref TRAILING_WHITESPACE_REGEX: Regex = RegexBuilder::new("[ \t]+$")
+        .multi_line(true)
+        .build()
+        .unwrap();
+}
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -208,6 +216,79 @@ async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
         assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
+    let text = [
+        "zero",     //
+        "one  ",    // 2 trailing spaces
+        "two",      //
+        "three   ", // 3 trailing spaces
+        "four",     //
+        "five    ", // 4 trailing spaces
+    ]
+    .join("\n");
+
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+
+    // Spawn a task to format the buffer's whitespace.
+    // Pause so that the foratting task starts running.
+    let format = buffer.read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    smol::future::yield_now().await;
+
+    // Edit the buffer while the normalization task is running.
+    let version_before_edit = buffer.read_with(cx, |buffer, _| buffer.version());
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            [
+                (Point::new(0, 1)..Point::new(0, 1), "EE"),
+                (Point::new(3, 5)..Point::new(3, 5), "EEE"),
+            ],
+            None,
+            cx,
+        );
+    });
+
+    let format_diff = format.await;
+    buffer.update(cx, |buffer, cx| {
+        let version_before_format = format_diff.base_version.clone();
+        buffer.apply_diff(format_diff, cx);
+
+        // The outcome depends on the order of concurrent taks.
+        //
+        // If the edit occurred while searching for trailing whitespace ranges,
+        // then the trailing whitespace region touched by the edit is left intact.
+        if version_before_format == version_before_edit {
+            assert_eq!(
+                buffer.text(),
+                [
+                    "zEEero",      //
+                    "one",         //
+                    "two",         //
+                    "threeEEE   ", //
+                    "four",        //
+                    "five",        //
+                ]
+                .join("\n")
+            );
+        }
+        // Otherwise, all trailing whitespace is removed.
+        else {
+            assert_eq!(
+                buffer.text(),
+                [
+                    "zEEero",   //
+                    "one",      //
+                    "two",      //
+                    "threeEEE", //
+                    "four",     //
+                    "five",     //
+                ]
+                .join("\n")
+            );
+        }
     });
 }
 
@@ -1940,6 +2021,45 @@ fn test_contiguous_ranges() {
         )
         .collect::<Vec<_>>(),
         &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
+    );
+}
+
+#[gpui::test(iterations = 500)]
+fn test_trailing_whitespace_ranges(mut rng: StdRng) {
+    // Generate a random multi-line string containing
+    // some lines with trailing whitespace.
+    let mut text = String::new();
+    for _ in 0..rng.gen_range(0..16) {
+        for _ in 0..rng.gen_range(0..36) {
+            text.push(match rng.gen_range(0..10) {
+                0..=1 => ' ',
+                3 => '\t',
+                _ => rng.gen_range('a'..'z'),
+            });
+        }
+        text.push('\n');
+    }
+
+    match rng.gen_range(0..10) {
+        // sometimes remove the last newline
+        0..=1 => drop(text.pop()), //
+
+        // sometimes add extra newlines
+        2..=3 => text.push_str(&"\n".repeat(rng.gen_range(1..5))),
+        _ => {}
+    }
+
+    let rope = Rope::from(text.as_str());
+    let actual_ranges = trailing_whitespace_ranges(&rope);
+    let expected_ranges = TRAILING_WHITESPACE_REGEX
+        .find_iter(&text)
+        .map(|m| m.range())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_ranges,
+        expected_ranges,
+        "wrong ranges for text lines:\n{:?}",
+        text.split("\n").collect::<Vec<_>>()
     );
 }
 
