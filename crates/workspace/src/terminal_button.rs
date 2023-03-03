@@ -11,9 +11,10 @@ pub struct TerminalButton {
     workspace: WeakViewHandle<Workspace>,
 }
 
+// TODO: Rename this to `DeployTerminalButton`
 impl TerminalButton {
     pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
-        // When dock moves, redraw so that the icon and toggle status matches.
+        // When terminal moves, redraw so that the icon and toggle status matches.
         cx.subscribe(&workspace, |_, _, _, cx| cx.notify()).detach();
 
         Self {
@@ -63,6 +64,7 @@ impl View for TerminalButton {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_up(MouseButton::Left, move |_, _| {
+            // TODO: Do we need this stuff?
             // let dock_pane = workspace.read(cx.app).dock_pane();
             // let drop_index = dock_pane.read(cx.app).items_len() + 1;
             // handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
