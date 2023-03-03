@@ -108,7 +108,7 @@ impl Item for SharedScreen {
                 Svg::new("icons/disable_screen_sharing_12.svg")
                     .with_color(style.label.text.color)
                     .constrained()
-                    .with_width(style.icon_width)
+                    .with_width(style.type_icon_width)
                     .aligned()
                     .contained()
                     .with_margin_right(style.spacing)
