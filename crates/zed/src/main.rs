@@ -120,7 +120,9 @@ fn main() {
         ));
 
         watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
-        upload_previous_panics(http.clone(), cx);
+        if !stdout_is_a_pty() {
+            upload_previous_panics(http.clone(), cx);
+        }
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -331,6 +333,11 @@ fn init_panic_hook(app_version: String) {
             ),
         };
 
+        if is_pty {
+            eprintln!("{}", message);
+            return;
+        }
+
         let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
         let panic_file_path =
             paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, timestamp));
@@ -342,12 +349,6 @@ fn init_panic_hook(app_version: String) {
         if let Some(mut panic_file) = panic_file {
             write!(&mut panic_file, "{}", message).log_err();
             panic_file.flush().log_err();
-        }
-
-        if is_pty {
-            eprintln!("{}", message);
-        } else {
-            log::error!(target: "panic", "{}", message);
         }
     }));
 }
