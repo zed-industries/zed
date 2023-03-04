@@ -381,7 +381,47 @@ pub fn build_window_options(
 }
 
 fn restart(_: &Restart, cx: &mut gpui::MutableAppContext) {
-    cx.platform().restart();
+    let mut workspaces = cx
+        .window_ids()
+        .filter_map(|window_id| cx.root_view::<Workspace>(window_id))
+        .collect::<Vec<_>>();
+
+    // If multiple windows have unsaved changes, and need a save prompt,
+    // prompt in the active window before switching to a different window.
+    workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+
+    let should_confirm = cx.global::<Settings>().confirm_quit;
+    cx.spawn(|mut cx| async move {
+        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
+            let answer = cx
+                .prompt(
+                    workspace.window_id(),
+                    PromptLevel::Info,
+                    "Are you sure you want to restart?",
+                    &["Restart", "Cancel"],
+                )
+                .next()
+                .await;
+            if answer != Some(0) {
+                return Ok(());
+            }
+        }
+
+        // If the user cancels any save prompt, then keep the app open.
+        for workspace in workspaces {
+            if !workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.prepare_to_close(true, cx)
+                })
+                .await?
+            {
+                return Ok(());
+            }
+        }
+        cx.platform().restart();
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
