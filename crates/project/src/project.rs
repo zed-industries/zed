@@ -2557,7 +2557,7 @@ impl Project {
     pub fn update_diagnostics(
         &mut self,
         language_server_id: usize,
-        params: lsp::PublishDiagnosticsParams,
+        mut params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -2569,6 +2569,10 @@ impl Project {
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
         let mut supporting_diagnostics = HashMap::default();
+
+        // Ensure that primary diagnostics are always the most severe
+        params.diagnostics.sort_by_key(|item| item.severity);
+
         for diagnostic in &params.diagnostics {
             let source = diagnostic.source.as_ref();
             let code = diagnostic.code.as_ref().map(|code| match code {
