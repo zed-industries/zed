@@ -1,14 +1,13 @@
 use std::borrow::Cow;
 
 use gpui::{
-    color::Color,
-    elements::{Canvas, Empty, Flex, Label, MouseEventHandler, ParentElement, Stack, Svg},
+    elements::{Canvas, Empty, Flex, Image, Label, MouseEventHandler, ParentElement, Stack},
     geometry::rect::RectF,
     Action, Element, ElementBox, Entity, MouseButton, MouseRegion, MutableAppContext,
     RenderContext, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
-use theme::{CheckboxStyle, ContainedText, Interactive};
+use theme::CheckboxStyle;
 use workspace::{item::Item, Welcome, Workspace};
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -72,15 +71,14 @@ impl View for WelcomePage {
                     .with_children([
                         Flex::row()
                             .with_children([
-                                Svg::new("icons/terminal_16.svg")
-                                    .with_color(Color::red())
+                                Image::new("images/zed-logo-90x90.png")
                                     .constrained()
-                                    .with_width(100.)
-                                    .with_height(100.)
+                                    .with_width(90.)
+                                    .with_height(90.)
                                     .aligned()
                                     .contained()
                                     .boxed(),
-                                Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
+                                // Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
                             ])
                             .boxed(),
                         Label::new(

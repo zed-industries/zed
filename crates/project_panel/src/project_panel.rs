@@ -1325,7 +1325,7 @@ impl View for ProjectPanel {
                                 Canvas::new(|bounds, _visible_bounds, cx| {
                                     cx.scene.push_quad(gpui::Quad {
                                         bounds,
-                                        background: Some(Color::red()),
+                                        background: Some(Color::transparent_black()),
                                         ..Default::default()
                                     })
                                 })

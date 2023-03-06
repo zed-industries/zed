@@ -11,8 +11,13 @@ use crate::{
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc};
 
+enum ImageSource {
+    Path(&'static str),
+    Data(Arc<ImageData>),
+}
+
 pub struct Image {
-    data: Arc<ImageData>,
+    source: ImageSource,
     style: ImageStyle,
 }
 
@@ -31,9 +36,16 @@ pub struct ImageStyle {
 }
 
 impl Image {
-    pub fn new(data: Arc<ImageData>) -> Self {
+    pub fn new(asset_path: &'static str) -> Self {
         Self {
-            data,
+            source: ImageSource::Path(asset_path),
+            style: Default::default(),
+        }
+    }
+
+    pub fn from_data(data: Arc<ImageData>) -> Self {
+        Self {
+            source: ImageSource::Data(data),
             style: Default::default(),
         }
     }
@@ -45,39 +57,53 @@ impl Image {
 }
 
 impl Element for Image {
-    type LayoutState = ();
+    type LayoutState = Option<Arc<ImageData>>;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        _: &mut LayoutContext,
+        cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
+        let data = match &self.source {
+            ImageSource::Path(path) => match cx.asset_cache.png(path) {
+                Ok(data) => data,
+                Err(error) => {
+                    log::error!("could not load image: {}", error);
+                    return (Vector2F::zero(), None);
+                }
+            },
+            ImageSource::Data(data) => data.clone(),
+        };
+
         let desired_size = vec2f(
             self.style.width.unwrap_or_else(|| constraint.max.x()),
             self.style.height.unwrap_or_else(|| constraint.max.y()),
         );
         let size = constrain_size_preserving_aspect_ratio(
             constraint.constrain(desired_size),
-            self.data.size().to_f32(),
+            data.size().to_f32(),
         );
-        (size, ())
+
+        (size, Some(data))
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         _: RectF,
-        _: &mut Self::LayoutState,
+        layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.scene.push_image(scene::Image {
-            bounds,
-            border: self.style.border,
-            corner_radius: self.style.corner_radius,
-            grayscale: self.style.grayscale,
-            data: self.data.clone(),
-        });
+        if let Some(data) = layout {
+            cx.scene.push_image(scene::Image {
+                bounds,
+                border: self.style.border,
+                corner_radius: self.style.corner_radius,
+                grayscale: self.style.grayscale,
+                data: data.clone(),
+            });
+        }
     }
 
     fn rect_for_text_range(
