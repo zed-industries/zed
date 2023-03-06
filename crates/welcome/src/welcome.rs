@@ -100,6 +100,9 @@ impl View for WelcomePage {
                         .align_children_center()
                         .boxed(),
                 ])
+                .aligned()
+                .constrained()
+                .with_max_width(300.)
                 .boxed(),
         )
         .boxed()
