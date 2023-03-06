@@ -47,11 +47,11 @@ export interface Syntax {
     "string.special": SyntaxHighlightStyle
     // elixir: atom, quoted_atom, keyword, quoted_keyword
     // ruby: simple_symbol, delimited_symbol...
-    "string.special.symbol": SyntaxHighlightStyle
+    "string.special.symbol"?: SyntaxHighlightStyle
     // elixir, python, yaml...: escape_sequence
-    "string.escape": SyntaxHighlightStyle
+    "string.escape"?: SyntaxHighlightStyle
     // Regular expressions
-    "string.regex": SyntaxHighlightStyle
+    "string.regex"?: SyntaxHighlightStyle
 
     // == Types ====== /
     // We allow Function here because all JS objects literals have this property
@@ -59,16 +59,14 @@ export interface Syntax {
     variant: SyntaxHighlightStyle
     type: SyntaxHighlightStyle
     // js: predefined_type
-    "type.builtin": SyntaxHighlightStyle
+    "type.builtin"?: SyntaxHighlightStyle
 
     // == Values
     variable: SyntaxHighlightStyle
-    // racket: lang_name
-    "variable.builtin": SyntaxHighlightStyle
     // this, ...
     // css: -- (var(--foo))
     // lua: self
-    "variable.special": SyntaxHighlightStyle
+    "variable.special"?: SyntaxHighlightStyle
     // c: statement_identifier,
     label: SyntaxHighlightStyle
     // css: tag_name, nesting_selector, universal_selector...
@@ -90,24 +88,22 @@ export interface Syntax {
     boolean: SyntaxHighlightStyle
     // elixir: __MODULE__, __DIR__, __ENV__, etc
     // go: nil, iota
-    "constant.builtin": SyntaxHighlightStyle
+    "constant.builtin"?: SyntaxHighlightStyle
 
     // == Functions ====== /
 
     function: SyntaxHighlightStyle
     // lua: assert, error, loadfile, tostring, unpack...
-    "function.builtin": SyntaxHighlightStyle
-    // lua: function_call
-    "function.call": SyntaxHighlightStyle
+    "function.builtin"?: SyntaxHighlightStyle
     // go: call_expression, method_declaration
     // js: call_expression, method_definition, pair (key, arrow function)
     // rust: function_item name: (identifier)
-    "function.definition": SyntaxHighlightStyle
+    "function.definition"?: SyntaxHighlightStyle
     // rust: macro_definition name: (identifier)
-    "function.special.definition": SyntaxHighlightStyle
-    "function.method": SyntaxHighlightStyle
+    "function.special.definition"?: SyntaxHighlightStyle
+    "function.method"?: SyntaxHighlightStyle
     // ruby: identifier/"defined?" // Nate note: I don't fully understand this one.
-    "function.method.builtin": SyntaxHighlightStyle
+    "function.method.builtin"?: SyntaxHighlightStyle
 
     // == Unsorted ====== /
     // lua: hash_bang_line
@@ -117,9 +113,6 @@ export interface Syntax {
     embedded: SyntaxHighlightStyle
 }
 
-// HACK: "constructor" as a key in the syntax interface returns an error when a theme tries to use it.
-// For now hack around it by omiting constructor as a valid key for overrides.
-// export type ThemeSyntax = Partial<Omit<Syntax, "constructor">>
 export type ThemeSyntax = Partial<Syntax>
 
 const defaultSyntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
@@ -238,17 +231,8 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         type: {
             color: color.type,
         },
-        "type.builtin": {
-            color: color.type,
-        },
         variable: {
             color: color.primary,
-        },
-        "variable.builtin": {
-            color: colorScheme.ramps.blue(0.5).hex(),
-        },
-        "variable.special": {
-            color: colorScheme.ramps.blue(0.7).hex(),
         },
         label: {
             color: colorScheme.ramps.blue(0.5).hex(),
@@ -280,28 +264,7 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         boolean: {
             color: color.boolean,
         },
-        "constant.builtin": {
-            color: color.constant,
-        },
         function: {
-            color: color.function,
-        },
-        "function.builtin": {
-            color: color.function,
-        },
-        "function.call": {
-            color: color.function,
-        },
-        "function.definition": {
-            color: color.function,
-        },
-        "function.special.definition": {
-            color: color.function,
-        },
-        "function.method": {
-            color: color.function,
-        },
-        "function.method.builtin": {
             color: color.function,
         },
         preproc: {
