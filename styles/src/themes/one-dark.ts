@@ -63,6 +63,7 @@ const syntax: ThemeSyntax = {
     type: { color: color.teal },
     "variable.special": { color: color.orange },
     variant: { color: color.blue },
+    constructor: { color: color.blue },
 }
 
 export const dark = createColorScheme(name, false, ramps, syntax)
