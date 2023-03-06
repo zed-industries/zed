@@ -859,6 +859,8 @@ pub struct WelcomeStyle {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct CheckboxStyle {
+    pub icon: String,
+    pub icon_color: Color,
     pub width: f32,
     pub height: f32,
     pub default: ContainerStyle,

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use gpui::{
-    elements::{Canvas, Empty, Flex, Image, Label, MouseEventHandler, ParentElement, Stack},
+    elements::{Canvas, Empty, Flex, Image, Label, MouseEventHandler, ParentElement, Stack, Svg},
     geometry::rect::RectF,
     Action, Element, ElementBox, Entity, MouseButton, MouseRegion, MutableAppContext,
     RenderContext, Subscription, View, ViewContext,
@@ -104,6 +104,7 @@ impl View for WelcomePage {
                                 )
                                 .boxed(),
                             ])
+                            .align_children_center()
                             .boxed(),
                         Flex::row()
                             .with_children([
@@ -119,9 +120,9 @@ impl View for WelcomePage {
                                 )
                                 .boxed(),
                             ])
+                            .align_children_center()
                             .boxed(),
                     ])
-                    .aligned()
                     .boxed(),
             )
             .boxed()
@@ -177,8 +178,15 @@ impl WelcomePage {
         set_value: fn(&mut SettingsFileContent, checked: bool) -> (),
     ) -> ElementBox {
         MouseEventHandler::<T>::new(0, cx, |state, _| {
-            Empty::new()
-                .constrained()
+            let indicator = if checked {
+                Svg::new(style.icon.clone())
+                    .with_color(style.icon_color)
+                    .constrained()
+            } else {
+                Empty::new().constrained()
+            };
+
+            indicator
                 .with_width(style.width)
                 .with_height(style.height)
                 .contained()

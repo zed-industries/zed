@@ -1,6 +1,6 @@
 
 import { ColorScheme } from "../themes/common/colorScheme";
-import { border, background, text } from "./components";
+import { border, background, foreground, text } from "./components";
 
 
 export default function welcome(colorScheme: ColorScheme) {
@@ -10,15 +10,18 @@ export default function welcome(colorScheme: ColorScheme) {
   let checkboxBase = {
     cornerRadius: 4,
     padding: {
-      left: 8,
-      right: 8,
-      top: 4,
-      bottom: 4,
+      left: 3,
+      right: 3,
+      top: 3,
+      bottom: 3,
     },
     shadow: colorScheme.popoverShadow,
     border: border(layer),
     margin: {
-      left: -8,
+      left: 8,
+      right: 8,
+      top: 5,
+      bottom: 5
     },
   };
 
@@ -44,30 +47,40 @@ export default function welcome(colorScheme: ColorScheme) {
       },
     },
     checkbox: {
-      width: 9,
-      height: 9,
+      width: 12,
+      height: 12,
+      icon: "icons/check_12.svg",
+      iconColor: foreground(layer, "on"),
       default: {
         ...checkboxBase,
-        background: colorScheme.ramps.blue(0.5).hex(),
+        background: background(layer, "default"),
+        border: {
+          color: foreground(layer, "hovered"),
+          width: 1,
+        }
       },
       checked: {
         ...checkboxBase,
-        background: colorScheme.ramps.red(0.5).hex(),
+        background: background(layer, "hovered"),
+        border: {
+          color: foreground(layer, "hovered"),
+          width: 1,
+        }
       },
       hovered: {
         ...checkboxBase,
-        background: colorScheme.ramps.blue(0.5).hex(),
+        background: background(layer, "hovered"),
 
         border: {
-          color: colorScheme.ramps.green(0.5).hex(),
+          color: foreground(layer, "hovered"),
           width: 1,
         }
       },
       hoveredAndChecked: {
         ...checkboxBase,
-        background: colorScheme.ramps.red(0.5).hex(),
+        background: background(layer, "hovered"),
         border: {
-          color: colorScheme.ramps.green(0.5).hex(),
+          color: foreground(layer, "hovered"),
           width: 1,
         }
       }
