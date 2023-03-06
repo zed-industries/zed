@@ -1,14 +1,13 @@
 use std::borrow::Cow;
 
 use gpui::{
-    elements::{Canvas, Empty, Flex, Image, Label, MouseEventHandler, ParentElement, Stack, Svg},
-    geometry::rect::RectF,
-    Action, Element, ElementBox, Entity, MouseButton, MouseRegion, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext,
+    elements::{Empty, Flex, Image, Label, MouseEventHandler, ParentElement, Svg},
+    Action, Element, ElementBox, Entity, MouseButton, MutableAppContext, RenderContext,
+    Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
 use theme::CheckboxStyle;
-use workspace::{item::Item, Welcome, Workspace};
+use workspace::{item::Item, PaneBackdrop, Welcome, Workspace, WorkspaceId};
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
@@ -43,89 +42,67 @@ impl View for WelcomePage {
         enum Metrics {}
         enum Diagnostics {}
 
-        let background = theme.editor.background;
-
-        Stack::new()
-            .with_child(
-                // TODO: Can this be moved into the pane?
-                Canvas::new(move |bounds, visible_bounds, cx| {
-                    let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
-
-                    cx.paint_layer(Some(visible_bounds), |cx| {
-                        cx.scene.push_quad(gpui::Quad {
-                            bounds: RectF::new(bounds.origin(), bounds.size()),
-                            background: Some(background),
-                            ..Default::default()
-                        })
-                    });
-
-                    cx.scene.push_mouse_region(
-                        MouseRegion::new::<Self>(self_handle.id(), 0, visible_bounds)
-                            .on_down(gpui::MouseButton::Left, |_, cx| cx.focus_parent_view()),
-                    );
-                })
-                .boxed(),
-            )
-            .with_child(
-                Flex::column()
-                    .with_children([
-                        Flex::row()
-                            .with_children([
-                                Image::new("images/zed-logo-90x90.png")
-                                    .constrained()
-                                    .with_width(90.)
-                                    .with_height(90.)
-                                    .aligned()
-                                    .contained()
-                                    .boxed(),
-                                // Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
-                            ])
-                            .boxed(),
-                        Label::new(
-                            "Code at the speed of thought",
-                            theme.editor.hover_popover.prose.clone(),
-                        )
+        PaneBackdrop::new(
+            self_handle.id(),
+            Flex::column()
+                .with_children([
+                    Flex::row()
+                        .with_children([
+                            Image::new("images/zed-logo-90x90.png")
+                                .constrained()
+                                .with_width(90.)
+                                .with_height(90.)
+                                .aligned()
+                                .contained()
+                                .boxed(),
+                            // Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
+                        ])
                         .boxed(),
-                        self.render_cta_button(2, "Choose a theme", theme_selector::Toggle, cx),
-                        self.render_cta_button(3, "Choose a keymap", theme_selector::Toggle, cx),
-                        Flex::row()
-                            .with_children([
-                                self.render_settings_checkbox::<Metrics>(
-                                    &theme.welcome.checkbox,
-                                    metrics,
-                                    cx,
-                                    |content, checked| {
-                                        content.telemetry.set_metrics(checked);
-                                    },
-                                ),
-                                Label::new(
-                                    "Do you want to send telemetry?",
-                                    theme.editor.hover_popover.prose.clone(),
-                                )
-                                .boxed(),
-                            ])
-                            .align_children_center()
-                            .boxed(),
-                        Flex::row()
-                            .with_children([
-                                self.render_settings_checkbox::<Diagnostics>(
-                                    &theme.welcome.checkbox,
-                                    diagnostics,
-                                    cx,
-                                    |content, checked| content.telemetry.set_diagnostics(checked),
-                                ),
-                                Label::new(
-                                    "Send crash reports",
-                                    theme.editor.hover_popover.prose.clone(),
-                                )
-                                .boxed(),
-                            ])
-                            .align_children_center()
-                            .boxed(),
-                    ])
+                    Label::new(
+                        "Code at the speed of thought",
+                        theme.editor.hover_popover.prose.clone(),
+                    )
                     .boxed(),
-            )
-            .boxed()
+                    self.render_cta_button(2, "Choose a theme", theme_selector::Toggle, cx),
+                    self.render_cta_button(3, "Choose a keymap", theme_selector::Toggle, cx),
+                    Flex::row()
+                        .with_children([
+                            self.render_settings_checkbox::<Metrics>(
+                                &theme.welcome.checkbox,
+                                metrics,
+                                cx,
+                                |content, checked| {
+                                    content.telemetry.set_metrics(checked);
+                                },
+                            ),
+                            Label::new(
+                                "Do you want to send telemetry?",
+                                theme.editor.hover_popover.prose.clone(),
+                            )
+                            .boxed(),
+                        ])
+                        .align_children_center()
+                        .boxed(),
+                    Flex::row()
+                        .with_children([
+                            self.render_settings_checkbox::<Diagnostics>(
+                                &theme.welcome.checkbox,
+                                diagnostics,
+                                cx,
+                                |content, checked| content.telemetry.set_diagnostics(checked),
+                            ),
+                            Label::new(
+                                "Send crash reports",
+                                theme.editor.hover_popover.prose.clone(),
+                            )
+                            .boxed(),
+                        ])
+                        .align_children_center()
+                        .boxed(),
+                ])
+                .boxed(),
+        )
+        .boxed()
     }
 }
 
@@ -231,5 +208,12 @@ impl Item for WelcomePage {
 
     fn show_toolbar(&self) -> bool {
         false
+    }
+    fn clone_on_split(
+        &self,
+        _workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self> {
+        Some(WelcomePage::new(cx))
     }
 }

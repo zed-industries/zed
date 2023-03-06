@@ -324,20 +324,24 @@ impl Element for Flex {
             // overall flex element and each child. We then align these points. So 0 would center
             // each child relative to the overall height/width of the flex. -1 puts children at
             // the start. 1 puts children at the end.
-            let cross_axis = self.axis.invert();
-            let my_center = bounds.size().along(cross_axis) / 2.;
-            let my_target = my_center + my_center * self.child_alignment;
+            let aligned_child_origin = {
+                let cross_axis = self.axis.invert();
+                let my_center = bounds.size().along(cross_axis) / 2.;
+                let my_target = my_center + my_center * self.child_alignment;
 
-            let child_center = child.size().along(cross_axis) / 2.;
-            let child_target = child_center + child_center * self.child_alignment;
+                let child_center = child.size().along(cross_axis) / 2.;
+                let child_target = child_center + child_center * self.child_alignment;
 
-            let mut aligned_child_origin = child_origin;
-            match self.axis {
-                Axis::Horizontal => aligned_child_origin
-                    .set_y(aligned_child_origin.y() - (child_target - my_target)),
-                Axis::Vertical => aligned_child_origin
-                    .set_x(aligned_child_origin.x() - (child_target - my_target)),
-            }
+                let mut aligned_child_origin = child_origin;
+                match self.axis {
+                    Axis::Horizontal => aligned_child_origin
+                        .set_y(aligned_child_origin.y() - (child_target - my_target)),
+                    Axis::Vertical => aligned_child_origin
+                        .set_x(aligned_child_origin.x() - (child_target - my_target)),
+                }
+
+                aligned_child_origin
+            };
 
             child.paint(aligned_child_origin, visible_bounds, cx);
 
