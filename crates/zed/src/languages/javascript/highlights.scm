@@ -43,8 +43,10 @@
 
 ; Special identifiers
 
-((identifier) @constructor
- (#match? @constructor "^[A-Z]"))
+((identifier) @type
+ (#match? @type "^[A-Z]"))
+(type_identifier) @type
+(predefined_type) @type.builtin
 
 ([
   (identifier)
@@ -191,14 +193,6 @@
 (template_substitution
   "${" @punctuation.special
   "}" @punctuation.special) @embedded
-
-; Types
-
-(type_identifier) @type
-(predefined_type) @type.builtin
-
-((identifier) @type
- (#match? @type "^[A-Z]"))
 
 (type_arguments
   "<" @punctuation.bracket
