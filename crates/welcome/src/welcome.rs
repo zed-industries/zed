@@ -1,12 +1,14 @@
+use std::borrow::Cow;
+
 use gpui::{
     color::Color,
     elements::{Canvas, Empty, Flex, Label, MouseEventHandler, ParentElement, Stack, Svg},
     geometry::rect::RectF,
-    Element, ElementBox, Entity, MouseRegion, MutableAppContext, RenderContext, Subscription, View,
-    ViewContext,
+    Action, Element, ElementBox, Entity, MouseButton, MouseRegion, MutableAppContext,
+    RenderContext, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
-use theme::CheckboxStyle;
+use theme::{CheckboxStyle, ContainedText, Interactive};
 use workspace::{item::Item, Welcome, Workspace};
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -86,6 +88,8 @@ impl View for WelcomePage {
                             theme.editor.hover_popover.prose.clone(),
                         )
                         .boxed(),
+                        self.render_cta_button(2, "Choose a theme", theme_selector::Toggle, cx),
+                        self.render_cta_button(3, "Choose a keymap", theme_selector::Toggle, cx),
                         Flex::row()
                             .with_children([
                                 self.render_settings_checkbox::<Metrics>(
@@ -139,6 +143,32 @@ impl WelcomePage {
         WelcomePage {
             _settings_subscription: settings_subscription,
         }
+    }
+
+    fn render_cta_button<L, A>(
+        &self,
+        region_id: usize,
+        label: L,
+        action: A,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox
+    where
+        L: Into<Cow<'static, str>>,
+        A: 'static + Action + Clone,
+    {
+        let theme = cx.global::<Settings>().theme.clone();
+        MouseEventHandler::<A>::new(region_id, cx, |state, _| {
+            let style = theme.welcome.button.style_for(state, false);
+            Label::new(label, style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_action(action.clone())
+        })
+        .aligned()
+        .boxed()
     }
 
     fn render_settings_checkbox<T: 'static>(

@@ -854,6 +854,7 @@ pub struct FeedbackStyle {
 #[derive(Clone, Deserialize, Default)]
 pub struct WelcomeStyle {
     pub checkbox: CheckboxStyle,
+    pub button: Interactive<ContainedText>,
 }
 
 #[derive(Clone, Deserialize, Default)]

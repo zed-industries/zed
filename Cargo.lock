@@ -8024,6 +8024,7 @@ dependencies = [
  "project",
  "settings",
  "theme",
+ "theme_selector",
  "util",
  "workspace",
 ]
