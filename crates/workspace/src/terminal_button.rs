@@ -119,12 +119,17 @@ impl TerminalButton {
             let project = workspace.read(cx).project().read(cx);
             let local_terminal_handles = project.local_terminal_handles();
 
+            if !local_terminal_handles.is_empty() {
+                menu_options.push(ContextMenuItem::Separator)
+            }
+
             for local_terminal_handle in local_terminal_handles {
                 if let Some(terminal) = local_terminal_handle.upgrade(cx) {
-                    let title = terminal.read(cx).title();
-
                     // TODO: Replace the `NewTerminal` action with an action that instead focuses the selected terminal
-                    menu_options.push(ContextMenuItem::item(title, NewTerminal))
+                    menu_options.push(ContextMenuItem::item(
+                        terminal.read(cx).title(),
+                        NewTerminal,
+                    ))
                 }
             }
         }
