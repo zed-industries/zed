@@ -19,7 +19,7 @@
 (quote . (symbol)) @constant
 
 (extension) @keyword
-(lang_name) @variable.builtin
+(lang_name) @variable.special
 
 ((symbol) @operator
  (#match? @operator "^(\\+|-|\\*|/|=|>|<|>=|<=)$"))

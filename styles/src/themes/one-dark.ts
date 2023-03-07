@@ -51,6 +51,7 @@ const syntax: ThemeSyntax = {
     linkText: { color: color.blue, italic: false },
     linkUri: { color: color.teal },
     number: { color: color.orange },
+    constant: { color: color.yellow },
     operator: { color: color.teal },
     primary: { color: color.white },
     property: { color: color.red },
