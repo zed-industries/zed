@@ -2148,10 +2148,10 @@ fn get_indent_guides(
             for _ in 0..(current_depth - depth) {
                 let mut indent = indent_stack.pop().unwrap();
                 if last_display_row != first_display_row {
-                    // In this case, we landed on an empty row,
-                    // Had to seek forward And discovered that this indent
-                    // is ending. This means that the last display row must 
-                    // be on line that ends this indent range, and so we
+                    // In this case, we landed on an empty row, had to seek forward,
+                    // and discovered that the indent we where on is ending.
+                    // This means that the last display row must 
+                    // be on line that ends this indent range, so we
                     // should display the range up to the row before this
                     indent.0 = *indent.0.start()..=last_display_row - 1;
                 }

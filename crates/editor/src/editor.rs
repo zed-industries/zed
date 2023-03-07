@@ -258,8 +258,7 @@ actions!(
         Hover,
         Format,
         ToggleSoftWrap,
-        RevealInFinder,
-        LineIndent
+        RevealInFinder
     ]
 );
 
@@ -387,8 +386,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
-
-    cx.add_action(Editor::line_indent);
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
@@ -5782,33 +5779,6 @@ impl Editor {
         }
 
         self.fold_ranges(fold_ranges, true, cx);
-    }
-
-    pub fn line_indent(&mut self, _: &LineIndent, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
-
-        let selections = self.selections.all::<Point>(cx);
-        for selection in selections {
-            let language_name = self
-                .language_at(selection.start, cx)
-                .map(|language| language.name());
-            let settings = cx.global::<Settings>();
-            let indent_length = settings.tab_size(language_name.as_deref()).get();
-
-            let (line_indent_len, empty) = snapshot.line_indent(
-                selection
-                    .start
-                    .to_display_point(&snapshot.display_snapshot)
-                    .row(),
-            );
-
-            dbg!(
-                empty,
-                indent_length,
-                line_indent_len,
-                line_indent_len / indent_length
-            );
-        }
     }
 
     pub fn fold_at(&mut self, fold_at: &FoldAt, cx: &mut ViewContext<Self>) {
