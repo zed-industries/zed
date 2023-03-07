@@ -1766,9 +1766,15 @@ impl Element for EditorElement {
                         .collect(),
                 ));
             }
-            
-            indent_guides = get_indent_guides(start_row..end_row, &active_rows, &snapshot, &settings, view, cx);
 
+            indent_guides = get_indent_guides(
+                start_row..end_row,
+                &active_rows,
+                &snapshot,
+                &settings,
+                view,
+                cx,
+            );
 
             show_scrollbars = view.scroll_manager.scrollbars_visible();
             include_root = view
@@ -2173,7 +2179,7 @@ fn get_indent_guides(
                 indent_stack.push((
                     first_display_row..=last_display_row,
                     DisplayPoint::new(last_display_row, (next_depth) * indent_length.get() as u32),
-                    false
+                    false,
                 ))
             }
         }
@@ -2181,7 +2187,7 @@ fn get_indent_guides(
         for (indent, _, _) in indent_stack.iter_mut() {
             *indent = *indent.start()..=last_display_row;
         }
-        
+
         for i in first_display_row..=last_display_row {
             if let Some(contains_non_empty_selection) = active_rows.get(&i) {
                 if !contains_non_empty_selection {
@@ -2191,7 +2197,6 @@ fn get_indent_guides(
                 }
             }
         }
-        
     }
 
     result_vec.extend(indent_stack.into_iter());
@@ -2732,7 +2737,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..3, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..3,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0), false)])
@@ -2752,7 +2764,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..5, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..5,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
@@ -2785,7 +2804,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..12, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..12,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
@@ -2811,7 +2837,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..3, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..3,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
@@ -2842,7 +2875,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..8, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..8,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
@@ -2870,7 +2910,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..5, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..5,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
@@ -2900,7 +2947,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..9, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..9,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
@@ -2928,7 +2982,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..6, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..6,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
@@ -2958,7 +3019,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..9, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(
+                0..9,
+                &BTreeMap::new(),
+                &snapshot,
+                &Settings::test(cx),
+                editor,
+                cx,
+            )
         });
 
         assert_indent_range_eq(
