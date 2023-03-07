@@ -20,7 +20,7 @@ use project::Project;
 use std::{mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
-pub const RECONNECT_TIMEOUT: Duration = client::RECEIVE_TIMEOUT;
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
