@@ -266,7 +266,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             open_new(&app_state, cx, |workspace, cx| {
                 workspace.toggle_sidebar(SidebarSide::Left, cx);
                 let welcome_page = cx.add_view(|cx| welcome::WelcomePage::new(cx));
-                workspace.add_item(Box::new(welcome_page.clone()), cx);
+                workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
                 Dock::move_dock(workspace, settings::DockAnchor::Bottom, false, cx);
                 cx.focus(welcome_page);
                 cx.notify();

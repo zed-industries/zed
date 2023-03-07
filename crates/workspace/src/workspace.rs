@@ -1349,6 +1349,23 @@ impl Workspace {
         pane
     }
 
+    pub fn add_item_to_center(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(center_pane) = self.last_active_center_pane.clone() {
+            if let Some(center_pane) = center_pane.upgrade(cx) {
+                Pane::add_item(self, &center_pane, item, true, true, None, cx);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane().clone();
         Pane::add_item(self, &active_pane, item, true, true, None, cx);
