@@ -39,6 +39,7 @@ fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 go_to_line = { path = "../go_to_line" }
 gpui = { path = "../gpui" }
+install_cli = { path = "../install_cli" }
 journal = { path = "../journal" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }

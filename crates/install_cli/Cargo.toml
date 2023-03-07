@@ -1,0 +1,18 @@
+[package]
+name = "install_cli"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/install_cli.rs"
+
+[features]
+test-support = []
+
+[dependencies]
+smol = "1.2.5"
+anyhow = "1.0.38"
+log = "0.4"
+gpui = { path = "../gpui" }
+util = { path = "../util" }

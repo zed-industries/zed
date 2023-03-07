@@ -17,7 +17,7 @@ mod toolbar;
 
 pub use smallvec;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Context};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
@@ -65,7 +65,7 @@ use crate::{
 };
 use lazy_static::lazy_static;
 use log::{error, warn};
-use notifications::NotificationHandle;
+use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedItem, DB};
@@ -267,6 +267,28 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 })
         },
     );
+    
+    cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
+        cx.spawn(|workspace, mut cx| async move {
+            let err = install_cli::install_cli(&cx).await.context("Failed to create CLI symlink");
+                        
+            cx.update(|cx| {
+                workspace.update(cx, |workspace, cx| {
+                    if matches!(err, Err(_)) {
+                        err.notify_err(workspace, cx);
+                    } else {
+                        workspace.show_notification(1, cx, |cx| {
+                            cx.add_view(|_| MessageNotification::new_message("Successfully installed the 'zed' binary"))
+                        });
+                    }
+                })
+            })
+        
+        }).detach();
+        
+        
+        
+    });
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);

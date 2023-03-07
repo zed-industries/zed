@@ -66,6 +66,7 @@ impl View for WelcomePage {
                     .boxed(),
                     self.render_cta_button(2, "Choose a theme", theme_selector::Toggle, width, cx),
                     self.render_cta_button(3, "Choose a keymap", theme_selector::Toggle, width, cx),
+                    self.render_cta_button(4, "Install the CLI", install_cli::Install, width, cx),
                     self.render_settings_checkbox::<Metrics>(
                         "Do you want to send telemetry?",
                         &theme.welcome.checkbox,

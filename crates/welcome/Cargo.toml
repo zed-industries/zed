@@ -15,6 +15,7 @@ anyhow = "1.0.38"
 log = "0.4"
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+install_cli = { path = "../install_cli" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

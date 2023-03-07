@@ -19,7 +19,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                         MenuItem::action("Select Theme", theme_selector::Toggle),
                     ],
                 }),
-                MenuItem::action("Install CLI", super::InstallCommandLineInterface),
+                MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 MenuItem::action("Hide Zed", super::Hide),
                 MenuItem::action("Hide Others", super::HideOthers),

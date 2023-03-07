@@ -2,7 +2,7 @@ pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use anyhow::{anyhow, Context, Result};
+use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
@@ -21,7 +21,7 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource,  Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 pub use lsp;
@@ -68,7 +68,6 @@ actions!(
         IncreaseBufferFontSize,
         DecreaseBufferFontSize,
         ResetBufferFontSize,
-        InstallCommandLineInterface,
         ResetDatabase,
         WelcomeExperience
     ]
@@ -144,8 +143,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             cx.refresh_windows();
         });
     });
-    cx.add_global_action(move |_: &InstallCommandLineInterface, cx| {
-        cx.spawn(|cx| async move { install_cli(&cx).await.context("error creating CLI symlink") })
+    cx.add_global_action(move |_: &install_cli::Install, cx| {
+        cx.spawn(|cx| async move { install_cli::install_cli(&cx).await.context("error creating CLI symlink") })
             .detach_and_log_err(cx);
     });
     cx.add_action({
@@ -503,54 +502,6 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
         &format!("{app_name} {version}"),
         &["OK"],
     );
-}
-
-async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
-    let cli_path = cx.platform().path_for_auxiliary_executable("cli")?;
-    let link_path = Path::new("/usr/local/bin/zed");
-    let bin_dir_path = link_path.parent().unwrap();
-
-    // Don't re-create symlink if it points to the same CLI binary.
-    if smol::fs::read_link(link_path).await.ok().as_ref() == Some(&cli_path) {
-        return Ok(());
-    }
-
-    // If the symlink is not there or is outdated, first try replacing it
-    // without escalating.
-    smol::fs::remove_file(link_path).await.log_err();
-    if smol::fs::unix::symlink(&cli_path, link_path)
-        .await
-        .log_err()
-        .is_some()
-    {
-        return Ok(());
-    }
-
-    // The symlink could not be created, so use osascript with admin privileges
-    // to create it.
-    let status = smol::process::Command::new("osascript")
-        .args([
-            "-e",
-            &format!(
-                "do shell script \" \
-                    mkdir -p \'{}\' && \
-                    ln -sf \'{}\' \'{}\' \
-                \" with administrator privileges",
-                bin_dir_path.to_string_lossy(),
-                cli_path.to_string_lossy(),
-                link_path.to_string_lossy(),
-            ),
-        ])
-        .stdout(smol::process::Stdio::inherit())
-        .stderr(smol::process::Stdio::inherit())
-        .output()
-        .await?
-        .status;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!("error running osascript"))
-    }
 }
 
 fn open_config_file(
