@@ -1804,10 +1804,11 @@ impl BufferSnapshot {
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
         let language_name = self.language_at(position).map(|language| language.name());
         let settings = cx.global::<Settings>();
+        let tab_length = settings.tab_size(language_name.as_deref()).get();
         if settings.hard_tabs(language_name.as_deref()) {
             IndentSize::tab()
         } else {
-            IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
+            IndentSize::spaces(tab_length)
         }
     }
 

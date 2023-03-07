@@ -2725,6 +2725,11 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
 
+    pub fn language_indent_size_at(&self, point: Point, cx: &AppContext) -> Option<IndentSize> {
+        self.point_to_buffer_offset(point)
+            .map(|(buffer_snapshot, offset)| buffer_snapshot.language_indent_size_at(offset, cx))
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.is_dirty
     }

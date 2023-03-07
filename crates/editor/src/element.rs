@@ -45,8 +45,8 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::{DerefMut, Range},
-    sync::Arc,
+    ops::{DerefMut, Range, RangeInclusive},
+    sync::Arc, num::NonZeroU32,
 };
 use workspace::item::Item;
 
@@ -472,8 +472,9 @@ impl EditorElement {
         cx: &mut PaintContext,
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
-        let scroll_top =
-            layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
+        let scroll_top = layout.scroll_top();
+        let line_height = layout.line_height();
+
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
@@ -501,12 +502,11 @@ impl EditorElement {
                 if !contains_non_empty_selection {
                     let origin = vec2f(
                         bounds.origin_x(),
-                        bounds.origin_y() + (layout.position_map.line_height * *start_row as f32)
-                            - scroll_top,
+                        bounds.origin_y() + (line_height * *start_row as f32) - scroll_top,
                     );
                     let size = vec2f(
                         bounds.width(),
-                        layout.position_map.line_height * (end_row - start_row + 1) as f32,
+                        line_height * (end_row - start_row + 1) as f32,
                     );
                     cx.scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
@@ -520,14 +520,9 @@ impl EditorElement {
             if let Some(highlighted_rows) = &layout.highlighted_rows {
                 let origin = vec2f(
                     bounds.origin_x(),
-                    bounds.origin_y()
-                        + (layout.position_map.line_height * highlighted_rows.start as f32)
-                        - scroll_top,
+                    bounds.origin_y() + (line_height * highlighted_rows.start as f32) - scroll_top,
                 );
-                let size = vec2f(
-                    bounds.width(),
-                    layout.position_map.line_height * highlighted_rows.len() as f32,
-                );
+                let size = vec2f(bounds.width(), line_height * highlighted_rows.len() as f32);
                 cx.scene.push_quad(Quad {
                     bounds: RectF::new(origin, size),
                     background: Some(self.style.highlighted_line_background),
@@ -545,10 +540,8 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        let line_height = layout.position_map.line_height;
-
-        let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y() * line_height;
+        let line_height = layout.line_height();
+        let scroll_top = layout.scroll_top();
 
         let show_gutter = matches!(
             &cx.global::<Settings>()
@@ -598,10 +591,8 @@ impl EditorElement {
 
     fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
         let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
-        let line_height = layout.position_map.line_height;
-
-        let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y() * line_height;
+        let line_height = layout.line_height();
+        let scroll_top = layout.scroll_top();
 
         for hunk in &layout.display_hunks {
             let (display_row_range, status) = match hunk {
@@ -679,6 +670,26 @@ impl EditorElement {
         }
     }
 
+    fn paint_indent_guides(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &mut LayoutState,
+        cx: &mut PaintContext,
+    ) {
+        cx.paint_layer(Some(visible_bounds), |cx| {
+            for indent_guide in layout.indent_guides.iter() {
+                indent_guide_to_bounds(indent_guide, bounds, layout).map(|rect| {
+                    cx.scene.push_quad(Quad {
+                        bounds: rect,
+                        background: Some(gpui::color::Color::red()),
+                        ..Default::default()
+                    })
+                });
+            }
+        });
+    }
+
     fn paint_text(
         &mut self,
         bounds: RectF,
@@ -689,13 +700,10 @@ impl EditorElement {
         let view = self.view(cx.app);
         let style = &self.style;
         let local_replica_id = view.replica_id(cx);
-        let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = layout.visible_display_row_range.start;
-        let scroll_top = scroll_position.y() * layout.position_map.line_height;
-        let max_glyph_width = layout.position_map.em_width;
-        let scroll_left = scroll_position.x() * max_glyph_width;
-        let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
-        let line_end_overshoot = 0.15 * layout.position_map.line_height;
+        let (scroll_left, scroll_top) = layout.scrolls();
+        let content_origin = layout.content_origin(bounds);
+        let line_height = layout.line_height();
 
         cx.scene.push_layer(Some(bounds));
 
@@ -716,23 +724,12 @@ impl EditorElement {
                 *color,
                 fold_corner_radius,
                 fold_corner_radius * 2.,
-                layout,
-                content_origin,
-                scroll_top,
-                scroll_left,
                 bounds,
+                layout,
                 cx,
             );
 
-            for bound in range_to_bounds(
-                &range,
-                content_origin,
-                scroll_left,
-                scroll_top,
-                &layout.visible_display_row_range,
-                line_end_overshoot,
-                &layout.position_map,
-            ) {
+            for bound in range_to_rects(&range, bounds, line_height * 0.15, layout) {
                 cx.scene.push_cursor_region(CursorRegion {
                     bounds: bound,
                     style: CursorStyle::PointingHand,
@@ -755,12 +752,9 @@ impl EditorElement {
                 range.clone(),
                 *color,
                 0.,
-                line_end_overshoot,
-                layout,
-                content_origin,
-                scroll_top,
-                scroll_left,
+                line_height * 0.15,
                 bounds,
+                layout,
                 cx,
             );
         }
@@ -777,11 +771,8 @@ impl EditorElement {
                     selection_style.selection,
                     corner_radius,
                     corner_radius * 2.,
-                    layout,
-                    content_origin,
-                    scroll_top,
-                    scroll_left,
                     bounds,
+                    layout,
                     cx,
                 );
 
@@ -791,20 +782,18 @@ impl EditorElement {
                         .visible_display_row_range
                         .contains(&cursor_position.row())
                     {
-                        let cursor_row_layout = &layout.position_map.line_layouts
-                            [(cursor_position.row() - start_row) as usize];
+                        let cursor_row_layout =
+                            layout.line((cursor_position.row() - start_row) as usize);
                         let cursor_column = cursor_position.column() as usize;
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
                         let mut block_width =
                             cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
                         if block_width == 0.0 {
-                            block_width = layout.position_map.em_width;
+                            block_width = layout.max_glyph_width();
                         }
                         let block_text = if let CursorShape::Block = selection.cursor_shape {
                             layout
-                                .position_map
-                                .snapshot
                                 .chars_at(cursor_position)
                                 .next()
                                 .and_then(|(character, _)| {
@@ -830,13 +819,12 @@ impl EditorElement {
                         };
 
                         let x = cursor_character_x - scroll_left;
-                        let y = cursor_position.row() as f32 * layout.position_map.line_height
-                            - scroll_top;
+                        let y = cursor_position.row() as f32 * line_height - scroll_top;
                         cursors.push(Cursor {
                             color: selection_style.cursor,
                             block_width,
                             origin: vec2f(x, y),
-                            line_height: layout.position_map.line_height,
+                            line_height,
                             shape: selection.cursor_shape,
                             block_text,
                         });
@@ -847,16 +835,12 @@ impl EditorElement {
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
             // Draw glyphs
-            for (ix, line) in layout.position_map.line_layouts.iter().enumerate() {
+            for (ix, line) in layout.lines().iter().enumerate() {
                 let row = start_row + ix as u32;
                 line.paint(
-                    content_origin
-                        + vec2f(
-                            -scroll_left,
-                            row as f32 * layout.position_map.line_height - scroll_top,
-                        ),
+                    content_origin + vec2f(-scroll_left, row as f32 * line_height - scroll_top),
                     visible_text_bounds,
-                    layout.position_map.line_height,
+                    line_height,
                     cx,
                 );
             }
@@ -873,7 +857,7 @@ impl EditorElement {
             let cursor_row_layout =
                 &layout.position_map.line_layouts[(position.row() - start_row) as usize];
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
+            let y = (position.row() + 1) as f32 * line_height - scroll_top;
             let mut list_origin = content_origin + vec2f(x, y);
             let list_width = context_menu.size().x();
             let list_height = context_menu.size().y();
@@ -885,7 +869,7 @@ impl EditorElement {
             }
 
             if list_origin.y() + list_height > bounds.max_y() {
-                list_origin.set_y(list_origin.y() - layout.position_map.line_height - list_height);
+                list_origin.set_y(list_origin.y() - line_height - list_height);
             }
 
             context_menu.paint(
@@ -908,12 +892,12 @@ impl EditorElement {
             // height. This is the size we will use to decide whether to render popovers above or below
             // the hovered line.
             let first_size = hover_popovers[0].size();
-            let height_to_reserve = first_size.y()
-                + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.position_map.line_height;
+            let height_to_reserve =
+                first_size.y() + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * line_height;
 
             // Compute Hovered Point
             let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
+            let y = position.row() as f32 * line_height - scroll_top;
             let hovered_point = content_origin + vec2f(x, y);
 
             if hovered_point.y() - height_to_reserve > 0.0 {
@@ -938,7 +922,7 @@ impl EditorElement {
                 }
             } else {
                 // There is not enough space above. Render popovers below the hovered point
-                let mut current_y = hovered_point.y() + layout.position_map.line_height;
+                let mut current_y = hovered_point.y() + line_height;
                 for hover_popover in hover_popovers {
                     let size = hover_popover.size();
                     let mut popover_origin = vec2f(hovered_point.x(), current_y);
@@ -1084,34 +1068,33 @@ impl EditorElement {
         color: Color,
         corner_radius: f32,
         line_end_overshoot: f32,
-        layout: &LayoutState,
-        content_origin: Vector2F,
-        scroll_top: f32,
-        scroll_left: f32,
         bounds: RectF,
+        layout: &LayoutState,
         cx: &mut PaintContext,
     ) {
-        let start_row = layout.visible_display_row_range.start;
-        let end_row = layout.visible_display_row_range.end;
+        let content_origin = layout.content_origin(bounds);
+        let (scroll_left, scroll_top) = layout.scrolls();
+        let line_height = layout.line_height();
+        let visible_range = layout.visible_range();
+
         if range.start != range.end {
-            let row_range = if range.end.column() == 0 {
-                cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
+            let mut row_range = if range.end.column() == 0 {
+                range.start.row()..range.end.row()
             } else {
-                cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
+                range.start.row()..range.end.row() + 1
             };
+
+            row_range.clip_to(visible_range);
 
             let highlighted_range = HighlightedRange {
                 color,
-                line_height: layout.position_map.line_height,
+                line_height,
                 corner_radius,
-                start_y: content_origin.y()
-                    + row_range.start as f32 * layout.position_map.line_height
-                    - scroll_top,
+                start_y: content_origin.y() + row_range.start as f32 * line_height - scroll_top,
                 lines: row_range
                     .into_iter()
                     .map(|row| {
-                        let line_layout =
-                            &layout.position_map.line_layouts[(row - start_row) as usize];
+                        let line_layout = layout.line((row - visible_range.start) as usize);
                         HighlightedRangeLine {
                             start_x: if row == range.start.row() {
                                 content_origin.x()
@@ -1691,13 +1674,19 @@ impl Element for EditorElement {
         let mut show_scrollbars = false;
         let mut include_root = false;
         let mut is_singleton = false;
+        let mut indent_guides = Vec::new();
+
         self.update_view(cx.app, |view, cx| {
             is_singleton = view.is_singleton(cx);
 
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             highlighted_rows = view.highlighted_rows();
-            let theme = cx.global::<Settings>().theme.as_ref();
+            let settings = cx.global::<Settings>();
+
+            indent_guides = get_indent_guides(start_row..end_row, &snapshot, &settings, view, cx);
+
+            let theme = settings.theme.as_ref();
             highlighted_ranges =
                 view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
 
@@ -1984,6 +1973,7 @@ impl Element for EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
+                indent_guides,
                 fold_ranges,
                 line_number_layouts,
                 display_hunks,
@@ -2028,6 +2018,7 @@ impl Element for EditorElement {
         if layout.gutter_size.x() > 0. {
             self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
         }
+        self.paint_indent_guides(text_bounds, visible_bounds, layout, cx);
         self.paint_text(text_bounds, visible_bounds, layout, cx);
 
         cx.scene.push_layer(Some(bounds));
@@ -2099,7 +2090,95 @@ impl Element for EditorElement {
     }
 }
 
+fn get_indent_guides(
+    display_range: Range<DisplayRow>,
+    snapshot: &EditorSnapshot,
+    settings: &Settings,
+    view: &mut Editor,
+    cx: &AppContext,
+) -> Vec<IndentGuide> {
+    fn get_indent_length(display_row: u32, settings: &Settings, snapshot: &EditorSnapshot, view: &mut Editor, cx: &AppContext) -> NonZeroU32 {
+        settings.tab_size(
+            view.language_at(
+                DisplayPoint::new(display_row, 0).to_point(snapshot),
+                cx,
+            )
+            .map(|language| language.name())
+            .as_deref(),
+        )
+    }
+    
+    let mut result_vec = vec![];
+    let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
+    let mut display_iter = display_range.into_iter();
+    while let Some(first_display_row) = display_iter.next() {
+        let current_depth = indent_stack.len() as u32;
+
+        let (mut line_indent, empty) = snapshot.display_snapshot.line_indent(first_display_row);
+
+        let mut indent_length = get_indent_length(first_display_row, settings, snapshot, view, cx);
+
+        // When encountering empty, continue until found useful line indent
+        // then add to the indent stack with the depth found
+        let mut found_indent = false;
+        let mut last_display_row = first_display_row;
+        if empty {
+            while let Some(display_row) = display_iter.next() {
+                let (new_line_indent, empty) = snapshot.display_snapshot.line_indent(display_row);
+                if empty {
+                    continue;
+                }
+                last_display_row = display_row;
+                line_indent = new_line_indent;
+                found_indent = true;
+                indent_length = get_indent_length(display_row, settings, snapshot, view, cx);
+                break;
+            }
+        } else {
+            found_indent = true
+        }
+
+        let depth = if found_indent {
+            line_indent / indent_length + ((line_indent % indent_length) > 0) as u32
+        } else {
+            current_depth
+        };
+        
+        if depth < current_depth {
+            for _ in 0..(current_depth - depth) {
+                let mut indent = indent_stack.pop().unwrap();
+                if last_display_row != first_display_row {
+                    // In this case, we landed on an empty row,
+                    // Had to seek forward And discovered that this indent
+                    // is ending. This means that the last display row must 
+                    // be on line that ends this indent range, and so we
+                    // should display the range up to the row before this
+                    indent.0 = *indent.0.start()..=last_display_row - 1;
+                }
+                result_vec.push(indent)
+            }
+        } else if depth > current_depth {
+            for next_depth in current_depth..depth {
+                indent_stack.push((
+                    first_display_row..=last_display_row,
+                    DisplayPoint::new(last_display_row, (next_depth) * indent_length.get() as u32)
+                ))
+            }
+        }
+
+        for (indent, _) in indent_stack.iter_mut() {
+            *indent = *indent.start()..=last_display_row;
+        }
+    }
+
+    result_vec.extend(indent_stack.into_iter());
+
+    result_vec
+}
+
 type BufferRow = u32;
+type DisplayRow = u32;
+type IndentGuide = (RangeInclusive<DisplayRow>, DisplayPoint);
 
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
@@ -2117,6 +2196,7 @@ pub struct LayoutState {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
+    indent_guides: Vec<IndentGuide>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     max_row: u32,
@@ -2124,6 +2204,52 @@ pub struct LayoutState {
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
     fold_indicators: Option<Vec<(u32, ElementBox)>>,
+}
+
+impl LayoutState {
+    /// Returns (scroll_left, scroll_top)
+    fn scrolls(&self) -> (f32, f32) {
+        let position = self.scroll_position();
+        let top = position.y() * self.position_map.line_height;
+        let left = position.x() * self.max_glyph_width();
+        (left, top)
+    }
+
+    fn scroll_position(&self) -> Vector2F {
+        self.position_map.snapshot.scroll_position()
+    }
+
+    fn scroll_top(&self) -> f32 {
+        self.scroll_position().y() * self.position_map.line_height
+    }
+
+    fn content_origin(&self, bounds: RectF) -> Vector2F {
+        bounds.origin() + vec2f(self.gutter_margin, 0.)
+    }
+
+    fn max_glyph_width(&self) -> f32 {
+        self.position_map.em_width
+    }
+
+    fn line_height(&self) -> f32 {
+        self.position_map.line_height
+    }
+
+    fn lines(&self) -> &[Line] {
+        &self.position_map.line_layouts
+    }
+
+    fn line(&self, line: usize) -> &Line {
+        &self.position_map.line_layouts[line]
+    }
+
+    fn chars_at(&self, point: DisplayPoint) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
+        self.position_map.snapshot.chars_at(point)
+    }
+
+    fn visible_range(&self) -> &Range<DisplayRow> {
+        &self.visible_display_row_range
+    }
 }
 
 pub struct PositionMap {
@@ -2439,23 +2565,53 @@ pub fn position_to_display_point(
     }
 }
 
-pub fn range_to_bounds(
+pub fn indent_guide_to_bounds(
+    (guide_range, target_point): &IndentGuide,
+    bounds: RectF,
+    layout: &LayoutState,
+) -> Option<RectF> {
+    let content_origin = layout.content_origin(bounds);
+    let line_height = layout.line_height();
+    let (scroll_left, scroll_top) = layout.scrolls();
+
+    let line = layout.line((target_point.row() - layout.visible_range().start) as usize);
+
+    let start_x = line.x_for_index(target_point.column() as usize);
+
+    let origin = content_origin
+        + vec2f(
+            -scroll_left + start_x,
+            *guide_range.start() as f32 * line_height - scroll_top,
+        );
+
+    Some(RectF::new(
+        origin,
+        vec2f(
+            2.,
+            (*guide_range.end() - *guide_range.start() + 1) as f32 * line_height,
+        ),
+    ))
+}
+
+pub fn range_to_rects(
     range: &Range<DisplayPoint>,
-    content_origin: Vector2F,
-    scroll_left: f32,
-    scroll_top: f32,
-    visible_row_range: &Range<u32>,
+    bounds: RectF,
     line_end_overshoot: f32,
-    position_map: &PositionMap,
+    layout: &LayoutState,
 ) -> impl Iterator<Item = RectF> {
+    let (scroll_left, scroll_top) = layout.scrolls();
+    let line_height = layout.line_height();
+    let content_origin = layout.content_origin(bounds);
+    let display_range = layout.visible_range();
+
     let mut bounds: SmallVec<[RectF; 1]> = SmallVec::new();
 
     if range.start == range.end {
         return bounds.into_iter();
     }
 
-    let start_row = visible_row_range.start;
-    let end_row = visible_row_range.end;
+    let start_row = display_range.start;
+    let end_row = display_range.end;
 
     let row_range = if range.end.column() == 0 {
         cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
@@ -2463,11 +2619,10 @@ pub fn range_to_bounds(
         cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
     };
 
-    let first_y =
-        content_origin.y() + row_range.start as f32 * position_map.line_height - scroll_top;
+    let first_y = content_origin.y() + row_range.start as f32 * line_height - scroll_top;
 
     for (idx, row) in row_range.enumerate() {
-        let line_layout = &position_map.line_layouts[(row - start_row) as usize];
+        let line_layout = layout.line((row - start_row) as usize);
 
         let start_x = if row == range.start.row() {
             content_origin.x() + line_layout.x_for_index(range.start.column() as usize)
@@ -2483,12 +2638,25 @@ pub fn range_to_bounds(
         };
 
         bounds.push(RectF::from_points(
-            vec2f(start_x, first_y + position_map.line_height * idx as f32),
-            vec2f(end_x, first_y + position_map.line_height * (idx + 1) as f32),
+            vec2f(start_x, first_y + line_height * idx as f32),
+            vec2f(end_x, first_y + line_height * (idx + 1) as f32),
         ))
     }
 
     bounds.into_iter()
+}
+
+trait RowRangeClip {
+    fn clip_to(&mut self, other: &Self);
+}
+
+impl RowRangeClip for Range<DisplayRow> {
+    fn clip_to(&mut self, other: &Self) {
+        let start = cmp::max(self.start, other.start);
+        let end = cmp::min(self.end, other.end);
+        self.start = start;
+        self.end = end;
+    }
 }
 
 pub fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
@@ -2506,10 +2674,227 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{BlockDisposition, BlockProperties},
+        test::editor_test_context::EditorTestContext,
         Editor, MultiBuffer,
     };
     use settings::Settings;
     use util::test::sample_text;
+
+    fn sort_indents(first_indent: &IndentGuide, second_indent: &IndentGuide) -> std::cmp::Ordering {
+        let range_cmp = first_indent.0.clone().cmp(second_indent.0.clone());
+        if range_cmp.is_eq() {
+            first_indent.1.cmp(&second_indent.1)
+        } else {
+            range_cmp
+        }
+    }
+
+    // does an order independent compare of left and right
+    fn assert_indent_range_eq(mut left: Vec<IndentGuide>, mut right: Vec<IndentGuide>) {
+        left.sort_by(sort_indents);
+        right.sort_by(sort_indents);
+        assert_eq!(left, right);
+    }
+
+    #[gpui::test]
+    async fn test_simple_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn main() {
+                println!(\"\")ˇ
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..3, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0))])
+    }
+
+    #[gpui::test]
+    async fn test_multiple_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn main() {
+                {
+                    println!(\"\")ˇ
+                }
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..5, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=3, DisplayPoint::new(1, 0)), (2..=2, DisplayPoint::new(2, 4))]);
+    }
+
+    #[gpui::test]
+    async fn test_more_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn main() {
+                {
+                    println!(\"\");ˇ
+                }
+                {
+                    println!(\"\");
+                    println!(\"\");
+                    {
+                        println!(\"\");
+                    }
+                }
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..12, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(
+            ranges,
+            vec![(1..=10, DisplayPoint::new(1, 0)), (2..=2, DisplayPoint::new(2, 4)), (5..=9, DisplayPoint::new(5, 4)), (8..=8, DisplayPoint::new(8, 8))],
+        )
+    }
+
+    #[gpui::test]
+    async fn test_large_jump_indent_range(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn main() {
+                    println!(\"\");ˇ
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..3, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0)), (1..=1, DisplayPoint::new(0, 4))]);
+    }
+
+    #[gpui::test]
+    async fn test_messed_up_formatting_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        // Note the 5th space in the second block
+        cx.set_state(indoc::indoc! {"
+            fn main() {
+                    println!(\"\");
+            {
+                ˇ println!(\"\");
+            }
+            {
+            println!(\"\");
+            }
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..8, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0)), (1..=1, DisplayPoint::new(1, 4)), (3..=3, DisplayPoint::new(3, 0)), (3..=3, DisplayPoint::new(3, 4))]);
+    }
+
+    #[gpui::test]
+    async fn test_empty_after_range_start_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn main() {
+                {
+            ˇ
+                    }
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..5, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=3, DisplayPoint::new(1, 0)), (2..=3, DisplayPoint::new(3, 4))]);
+    }
+
+    #[gpui::test]
+    async fn test_multiple_empty_after_range_start_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn main() {
+                {
+            ˇ
+            
+            
+            
+            
+                        }
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..9, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=7, DisplayPoint::new(1, 0)), (2..=7, DisplayPoint::new(7, 4)), (2..=7, DisplayPoint::new(7, 8))]);
+    }
+
+    #[gpui::test]
+    async fn test_ending_on_empty_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn test() {
+                if true {
+                    println!(\"\");
+            ˇ
+                }
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..6, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=4, DisplayPoint::new(1, 0)), (2..=3, DisplayPoint::new(2, 4))]);
+    }
+    
+    #[gpui::test]
+    async fn test_ending_on_multiple_empty_indent_ranges(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        cx.set_state(indoc::indoc! {"
+            fn test() {
+                if true {
+                        println!(\"\");
+            ˇ
+            ˇ
+            ˇ
+            ˇ
+                }
+            }
+        "});
+
+        let ranges = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            get_indent_guides(0..9, &snapshot, &Settings::test(cx), editor, cx)
+        });
+
+        assert_indent_range_eq(ranges, vec![(1..=7, DisplayPoint::new(1, 0)), (2..=6, DisplayPoint::new(2, 4)), (2..=6, DisplayPoint::new(2, 8))]);
+    }
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
