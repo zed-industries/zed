@@ -1774,7 +1774,7 @@ impl Element for EditorElement {
             indent_guides = view.is_singleton(cx).then(|| {
                 get_indent_guides(
                     start_row..end_row,
-                    &active_rows,
+                    // &active_rows,
                     &snapshot,
                     &settings,
                     view,
@@ -2111,7 +2111,7 @@ impl Element for EditorElement {
 
 fn get_indent_guides(
     display_range: Range<DisplayRow>,
-    active_rows: &BTreeMap<DisplayRow, bool>,
+    // active_rows: &BTreeMap<DisplayRow, bool>,
     snapshot: &EditorSnapshot,
     settings: &Settings,
     view: &mut Editor,
@@ -2194,15 +2194,15 @@ fn get_indent_guides(
             *indent = *indent.start()..=last_display_row;
         }
 
-        for i in first_display_row..=last_display_row {
-            if let Some(contains_non_empty_selection) = active_rows.get(&i) {
-                if !contains_non_empty_selection {
-                    if let Some(ref mut indent) = indent_stack.last_mut() {
-                        indent.2 = true;
-                    }
-                }
-            }
-        }
+        // for i in first_display_row..=last_display_row {
+        //     if let Some(contains_non_empty_selection) = active_rows.get(&i) {
+        //         if !contains_non_empty_selection {
+        //             if let Some(ref mut indent) = indent_stack.last_mut() {
+        //                 indent.2 = true;
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     result_vec.extend(indent_stack.into_iter());
@@ -2745,7 +2745,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..3,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -2772,7 +2772,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..5,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -2812,7 +2812,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..12,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -2845,7 +2845,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..3,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -2883,7 +2883,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..8,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -2918,7 +2918,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..5,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -2955,7 +2955,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..9,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -2990,7 +2990,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..6,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
@@ -3027,7 +3027,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             get_indent_guides(
                 0..9,
-                &BTreeMap::new(),
+                // &BTreeMap::new(),
                 &snapshot,
                 &Settings::test(cx),
                 editor,
