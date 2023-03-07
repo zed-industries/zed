@@ -50,7 +50,6 @@ impl ThemeSelector {
         theme_names.sort_unstable_by(|a, b| {
             a.is_light
                 .cmp(&b.is_light)
-                .reverse()
                 .then(a.name.cmp(&b.name))
         });
         let matches = theme_names

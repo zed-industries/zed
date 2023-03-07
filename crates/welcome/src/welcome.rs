@@ -84,6 +84,7 @@ impl View for WelcomePage {
                 ])
                 .constrained()
                 .with_max_width(width)
+                .contained().with_uniform_padding(10.)
                 .aligned()
                 .boxed(),
         )
@@ -126,7 +127,7 @@ impl WelcomePage {
                 .contained()
                 .with_style(style.container)
                 .constrained()
-                .with_width(width)
+                .with_max_width(width)
                 .boxed()
         })
         .on_click(MouseButton::Left, move |_, cx| {
