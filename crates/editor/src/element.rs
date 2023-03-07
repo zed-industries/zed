@@ -2798,7 +2798,7 @@ mod tests {
             ranges,
             vec![
                 (1..=1, DisplayPoint::new(1, 0)),
-                (1..=1, DisplayPoint::new(0, 4)),
+                (1..=1, DisplayPoint::new(1, 4)),
             ],
         );
     }
