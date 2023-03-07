@@ -829,7 +829,7 @@ async fn test_server_restarts(
 
     // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -1001,7 +1001,7 @@ async fn test_server_restarts(
     client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
     client_b.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
