@@ -7,7 +7,7 @@ const variant: Variant = {
     meta: {
         name: `${name} Dune Dark`,
         ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/cave/",
+        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/",
     },
     colors: {
         base00: "#20201d",

@@ -5,27 +5,27 @@ import { metaCommon, name, buildSyntax, Variant } from "./common/atelier-common"
 
 const variant: Variant = {
     meta: {
-        name: `${name} Dune Light`,
+        name: `${name} Estuary Light`,
         ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/",
+        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/estuary/",
     },
     colors: {
-        base00: "#fefbec",
-        base01: "#e8e4cf",
-        base02: "#a6a28c",
-        base03: "#999580",
-        base04: "#7d7a68",
-        base05: "#6e6b5e",
-        base06: "#292824",
-        base07: "#20201d",
-        base08: "#d73737",
-        base09: "#b65611",
-        base0A: "#ae9513",
-        base0B: "#60ac39",
-        base0C: "#1fad83",
-        base0D: "#6684e1",
-        base0E: "#b854d4",
-        base0F: "#d43552"
+        base00: "#f4f3ec",
+        base01: "#e7e6df",
+        base02: "#929181",
+        base03: "#878573",
+        base04: "#6c6b5a",
+        base05: "#5f5e4e",
+        base06: "#302f27",
+        base07: "#22221b",
+        base08: "#ba6236",
+        base09: "#ae7313",
+        base0A: "#a5980d",
+        base0B: "#7d9726",
+        base0C: "#5b9d48",
+        base0D: "#36a166",
+        base0E: "#5f9182",
+        base0F: "#9d6c7c"
     }
 }
 
