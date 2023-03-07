@@ -1,7 +1,7 @@
 import * as fs from "fs"
 import toml from "toml"
 import { schemeMeta } from "./colorSchemes"
-import { Meta } from "./themes/common/colorScheme"
+import { Meta, Verification } from "./themes/common/colorScheme"
 import https from "https"
 import crypto from "crypto"
 
@@ -36,40 +36,45 @@ function getLicenseText(
     callback: (meta: Meta, license_text: string) => void
 ) {
     for (let meta of schemeMeta) {
-        // The following copied from the example code on nodejs.org:
-        // https://nodejs.org/api/http.html#httpgetoptions-callback
-        https
-            .get(meta.license.https_url, (res) => {
-                const { statusCode } = res
+        if (typeof meta.license.license_text == "string") {
+            callback(meta, meta.license.license_text)
+        } else {
+            let license_text_obj: Verification = meta.license.license_text;
+            // The following copied from the example code on nodejs.org:
+            // https://nodejs.org/api/http.html#httpgetoptions-callback
+            https
+                .get(license_text_obj.https_url, (res) => {
+                    const { statusCode } = res
 
-                if (statusCode < 200 || statusCode >= 300) {
-                    throw new Error(
-                        `Failed to fetch license for: ${meta.name}, Status Code: ${statusCode}`
-                    )
-                }
-
-                res.setEncoding("utf8")
-                let rawData = ""
-                res.on("data", (chunk) => {
-                    rawData += chunk
-                })
-                res.on("end", () => {
-                    const hash = crypto
-                        .createHash("sha256")
-                        .update(rawData)
-                        .digest("hex")
-                    if (meta.license.license_checksum == hash) {
-                        callback(meta, rawData)
-                    } else {
-                        throw Error(
-                            `Checksum for ${meta.name} did not match file downloaded from ${meta.license.https_url}`
+                    if (statusCode < 200 || statusCode >= 300) {
+                        throw new Error(
+                            `Failed to fetch license for: ${meta.name}, Status Code: ${statusCode}`
                         )
                     }
+
+                    res.setEncoding("utf8")
+                    let rawData = ""
+                    res.on("data", (chunk) => {
+                        rawData += chunk
+                    })
+                    res.on("end", () => {
+                        const hash = crypto
+                            .createHash("sha256")
+                            .update(rawData)
+                            .digest("hex")
+                        if (license_text_obj.license_checksum == hash) {
+                            callback(meta, rawData)
+                        } else {
+                            throw Error(
+                                `Checksum for ${meta.name} did not match file downloaded from ${license_text_obj.https_url}`
+                            )
+                        }
+                    })
                 })
-            })
-            .on("error", (e) => {
-                throw e
-            })
+                .on("error", (e) => {
+                    throw e
+                })
+        }
     }
 }
 
