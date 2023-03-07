@@ -113,13 +113,23 @@ impl TerminalButton {
         _action: &DeployTerminalMenu,
         cx: &mut ViewContext<Self>,
     ) {
+        let mut menu_options = vec![ContextMenuItem::item("New Terminal", NewTerminal)];
+
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            let project = workspace.read(cx).project().read(cx);
+            let local_terminal_handles = project.local_terminal_handles();
+
+            for local_terminal_handle in local_terminal_handles {
+                if let Some(_) = local_terminal_handle.upgrade(cx) {
+                    // TODO: Obtain the actual terminal "name" and put it in the menu
+                    // TODO: Replace the `NewTerminal` action with an action that instead focuses the selected terminal
+                    menu_options.push(ContextMenuItem::item("Terminal", NewTerminal))
+                }
+            }
+        }
+
         self.popup_menu.update(cx, |menu, cx| {
-            menu.show(
-                vec2f(0., 0.),
-                AnchorCorner::TopLeft,
-                vec![ContextMenuItem::item("New Terminal", NewTerminal)],
-                cx,
-            );
+            menu.show(vec2f(0., 0.), AnchorCorner::TopLeft, menu_options, cx);
         });
     }
 }
