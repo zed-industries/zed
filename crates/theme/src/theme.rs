@@ -853,14 +853,18 @@ pub struct FeedbackStyle {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct WelcomeStyle {
+    pub page_width: f32,
+    pub logo_subheading: ContainedText,
     pub checkbox: CheckboxStyle,
     pub button: Interactive<ContainedText>,
 }
 
 #[derive(Clone, Deserialize, Default)]
 pub struct CheckboxStyle {
-    pub icon: String,
-    pub icon_color: Color,
+    pub check_icon: String,
+    pub check_icon_color: Color,
+    pub label: ContainedText,
+    pub container: ContainerStyle,
     pub width: f32,
     pub height: f32,
     pub default: ContainerStyle,

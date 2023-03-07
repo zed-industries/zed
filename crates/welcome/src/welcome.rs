@@ -34,6 +34,8 @@ impl View for WelcomePage {
         let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();
 
+        let width = theme.welcome.page_width;
+
         let (diagnostics, metrics) = {
             let telemetry = settings.telemetry();
             (telemetry.diagnostics(), telemetry.metrics())
@@ -46,63 +48,42 @@ impl View for WelcomePage {
             self_handle.id(),
             Flex::column()
                 .with_children([
-                    Flex::row()
-                        .with_children([
-                            Image::new("images/zed-logo-90x90.png")
-                                .constrained()
-                                .with_width(90.)
-                                .with_height(90.)
-                                .aligned()
-                                .contained()
-                                .boxed(),
-                            // Label::new("Zed", theme.editor.hover_popover.prose.clone()).boxed(),
-                        ])
+                    Image::new("images/zed-logo-90x90.png")
+                        .constrained()
+                        .with_width(90.)
+                        .with_height(90.)
+                        .aligned()
+                        .contained()
+                        .aligned()
                         .boxed(),
                     Label::new(
                         "Code at the speed of thought",
-                        theme.editor.hover_popover.prose.clone(),
+                        theme.welcome.logo_subheading.text.clone(),
                     )
+                    .aligned()
+                    .contained()
+                    .with_style(theme.welcome.logo_subheading.container)
                     .boxed(),
-                    self.render_cta_button(2, "Choose a theme", theme_selector::Toggle, cx),
-                    self.render_cta_button(3, "Choose a keymap", theme_selector::Toggle, cx),
-                    Flex::row()
-                        .with_children([
-                            self.render_settings_checkbox::<Metrics>(
-                                &theme.welcome.checkbox,
-                                metrics,
-                                cx,
-                                |content, checked| {
-                                    content.telemetry.set_metrics(checked);
-                                },
-                            ),
-                            Label::new(
-                                "Do you want to send telemetry?",
-                                theme.editor.hover_popover.prose.clone(),
-                            )
-                            .boxed(),
-                        ])
-                        .align_children_center()
-                        .boxed(),
-                    Flex::row()
-                        .with_children([
-                            self.render_settings_checkbox::<Diagnostics>(
-                                &theme.welcome.checkbox,
-                                diagnostics,
-                                cx,
-                                |content, checked| content.telemetry.set_diagnostics(checked),
-                            ),
-                            Label::new(
-                                "Send crash reports",
-                                theme.editor.hover_popover.prose.clone(),
-                            )
-                            .boxed(),
-                        ])
-                        .align_children_center()
-                        .boxed(),
+                    self.render_cta_button(2, "Choose a theme", theme_selector::Toggle, width, cx),
+                    self.render_cta_button(3, "Choose a keymap", theme_selector::Toggle, width, cx),
+                    self.render_settings_checkbox::<Metrics>(
+                        "Do you want to send telemetry?",
+                        &theme.welcome.checkbox,
+                        metrics,
+                        cx,
+                        |content, checked| content.telemetry.set_metrics(checked),
+                    ),
+                    self.render_settings_checkbox::<Diagnostics>(
+                        "Send crash reports",
+                        &theme.welcome.checkbox,
+                        diagnostics,
+                        cx,
+                        |content, checked| content.telemetry.set_diagnostics(checked),
+                    ),
                 ])
-                .aligned()
                 .constrained()
-                .with_max_width(300.)
+                .with_max_width(width)
+                .aligned()
                 .boxed(),
         )
         .boxed()
@@ -129,6 +110,7 @@ impl WelcomePage {
         region_id: usize,
         label: L,
         action: A,
+        width: f32,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox
     where
@@ -139,19 +121,23 @@ impl WelcomePage {
         MouseEventHandler::<A>::new(region_id, cx, |state, _| {
             let style = theme.welcome.button.style_for(state, false);
             Label::new(label, style.text.clone())
+                .aligned()
                 .contained()
                 .with_style(style.container)
+                .constrained()
+                .with_width(width)
                 .boxed()
         })
         .on_click(MouseButton::Left, move |_, cx| {
             cx.dispatch_action(action.clone())
         })
-        .aligned()
+        .with_cursor_style(gpui::CursorStyle::PointingHand)
         .boxed()
     }
 
     fn render_settings_checkbox<T: 'static>(
         &self,
+        label: &'static str,
         style: &CheckboxStyle,
         checked: bool,
         cx: &mut RenderContext<Self>,
@@ -159,35 +145,44 @@ impl WelcomePage {
     ) -> ElementBox {
         MouseEventHandler::<T>::new(0, cx, |state, _| {
             let indicator = if checked {
-                Svg::new(style.icon.clone())
-                    .with_color(style.icon_color)
+                Svg::new(style.check_icon.clone())
+                    .with_color(style.check_icon_color)
                     .constrained()
             } else {
                 Empty::new().constrained()
             };
 
-            indicator
-                .with_width(style.width)
-                .with_height(style.height)
-                .contained()
-                .with_style(if checked {
-                    if state.hovered() {
-                        style.hovered_and_checked
-                    } else {
-                        style.checked
-                    }
-                } else {
-                    if state.hovered() {
-                        style.hovered
-                    } else {
-                        style.default
-                    }
-                })
+            Flex::row()
+                .with_children([
+                    indicator
+                        .with_width(style.width)
+                        .with_height(style.height)
+                        .contained()
+                        .with_style(if checked {
+                            if state.hovered() {
+                                style.hovered_and_checked
+                            } else {
+                                style.checked
+                            }
+                        } else {
+                            if state.hovered() {
+                                style.hovered
+                            } else {
+                                style.default
+                            }
+                        })
+                        .boxed(),
+                    Label::new(label, style.label.text.clone()).contained().with_style(style.label.container).boxed(),
+                ])
+                .align_children_center()
                 .boxed()
         })
         .on_click(gpui::MouseButton::Left, move |_, cx| {
             SettingsFile::update(cx, move |content| set_value(content, !checked))
         })
+        .with_cursor_style(gpui::CursorStyle::PointingHand)
+        .contained()
+        .with_style(style.container)
         .boxed()
     }
 }
