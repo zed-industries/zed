@@ -24,6 +24,7 @@ use tree_sitter::Query;
 use util::ResultExt as _;
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
+pub use watched_json::watch_files;
 
 #[derive(Clone)]
 pub struct Settings {
@@ -54,6 +55,24 @@ pub struct Settings {
     pub telemetry_defaults: TelemetrySettings,
     pub telemetry_overrides: TelemetrySettings,
     pub auto_update: bool,
+    pub base_keymap: Option<BaseKeymap>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum BaseKeymap {
+    JetBrains,
+    Sublime,
+    Atom,
+}
+
+impl BaseKeymap {
+    pub fn asset_path(&self) -> &str {
+        match self {
+            BaseKeymap::JetBrains => "keymaps/jetbrains.json",
+            BaseKeymap::Sublime => "keymaps/sublime_text.json",
+            BaseKeymap::Atom => "keymaps/atom.json",
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -326,6 +345,8 @@ pub struct SettingsFileContent {
     pub telemetry: TelemetrySettings,
     #[serde(default)]
     pub auto_update: Option<bool>,
+    #[serde(default)]
+    pub base_keymap: Option<BaseKeymap>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -396,6 +417,7 @@ impl Settings {
             telemetry_defaults: defaults.telemetry,
             telemetry_overrides: Default::default(),
             auto_update: defaults.auto_update.unwrap(),
+            base_keymap: Default::default(),
         }
     }
 
@@ -433,6 +455,7 @@ impl Settings {
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
+        merge(&mut self.base_keymap, Some(data.base_keymap));
 
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
@@ -610,6 +633,7 @@ impl Settings {
             },
             telemetry_overrides: Default::default(),
             auto_update: true,
+            base_keymap: None,
         }
     }
 

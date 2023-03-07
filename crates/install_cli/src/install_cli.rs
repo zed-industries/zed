@@ -1,11 +1,10 @@
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
-use gpui::{AsyncAppContext, actions};
+use anyhow::{anyhow, Result};
+use gpui::{actions, AsyncAppContext};
 use util::ResultExt;
 
-actions!(cli, [ Install ]);
-
+actions!(cli, [Install]);
 
 pub async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
     let cli_path = cx.platform().path_for_auxiliary_executable("cli")?;

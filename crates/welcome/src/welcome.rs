@@ -84,7 +84,8 @@ impl View for WelcomePage {
                 ])
                 .constrained()
                 .with_max_width(width)
-                .contained().with_uniform_padding(10.)
+                .contained()
+                .with_uniform_padding(10.)
                 .aligned()
                 .boxed(),
         )
@@ -174,7 +175,10 @@ impl WelcomePage {
                             }
                         })
                         .boxed(),
-                    Label::new(label, style.label.text.clone()).contained().with_style(style.label.container).boxed(),
+                    Label::new(label, style.label.text.clone())
+                        .contained()
+                        .with_style(style.label.container)
+                        .boxed(),
                 ])
                 .align_children_center()
                 .boxed()

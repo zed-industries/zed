@@ -38,7 +38,7 @@ use std::{
 use terminal_view::{get_working_directory, TerminalView};
 
 use fs::RealFs;
-use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
+use settings::watched_json::WatchedJsonFile;
 use theme::ThemeRegistry;
 #[cfg(debug_assertions)]
 use util::StaffMode;
@@ -123,7 +123,14 @@ fn main() {
             fs.clone(),
         ));
 
-        watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
+        settings::watch_files(
+            default_settings,
+            settings_file_content,
+            themes.clone(),
+            keymap_file,
+            cx,
+        );
+
         if !stdout_is_a_pty() {
             upload_previous_panics(http.clone(), cx);
         }
@@ -135,8 +142,6 @@ fn main() {
         let languages = Arc::new(languages);
         languages::init(languages.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-
-        watch_keymap_file(keymap_file, cx);
 
         cx.set_global(client.clone());
 

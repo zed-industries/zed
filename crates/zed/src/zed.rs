@@ -21,7 +21,7 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource,  Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 pub use lsp;
@@ -144,8 +144,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         });
     });
     cx.add_global_action(move |_: &install_cli::Install, cx| {
-        cx.spawn(|cx| async move { install_cli::install_cli(&cx).await.context("error creating CLI symlink") })
-            .detach_and_log_err(cx);
+        cx.spawn(|cx| async move {
+            install_cli::install_cli(&cx)
+                .await
+                .context("error creating CLI symlink")
+        })
+        .detach_and_log_err(cx);
     });
     cx.add_action({
         let app_state = app_state.clone();
