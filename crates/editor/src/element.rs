@@ -678,22 +678,24 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        cx.paint_layer(Some(visible_bounds), |cx| {
-            for indent_guide in layout.indent_guides.iter() {
-                let color = if indent_guide.2 {
-                    self.style.indent_guides.active.as_ref().unwrap().color
-                } else {
-                    self.style.indent_guides.default.color
-                };
-                indent_guide_to_bounds(indent_guide, bounds, layout).map(|rect| {
-                    cx.scene.push_quad(Quad {
-                        bounds: rect,
-                        background: Some(color),
-                        ..Default::default()
-                    })
-                });
-            }
-        });
+        if let Some(indent_guides) = &layout.indent_guides {
+            cx.paint_layer(Some(visible_bounds), |cx| {
+                for indent_guide in indent_guides.iter() {
+                    let color = if indent_guide.2 {
+                        self.style.indent_guides.active.as_ref().unwrap().color
+                    } else {
+                        self.style.indent_guides.default.color
+                    };
+                    indent_guide_to_bounds(indent_guide, bounds, layout).map(|rect| {
+                        cx.scene.push_quad(Quad {
+                            bounds: rect,
+                            background: Some(color),
+                            ..Default::default()
+                        })
+                    });
+                }
+            });
+        }
     }
 
     fn paint_text(
@@ -1680,7 +1682,7 @@ impl Element for EditorElement {
         let mut show_scrollbars = false;
         let mut include_root = false;
         let mut is_singleton = false;
-        let mut indent_guides = Vec::new();
+        let mut indent_guides = None;
 
         self.update_view(cx.app, |view, cx| {
             is_singleton = view.is_singleton(cx);
@@ -1767,14 +1769,16 @@ impl Element for EditorElement {
                 ));
             }
 
-            indent_guides = get_indent_guides(
-                start_row..end_row,
-                &active_rows,
-                &snapshot,
-                &settings,
-                view,
-                cx,
-            );
+            indent_guides = view.is_singleton(cx).then(|| {
+                get_indent_guides(
+                    start_row..end_row,
+                    &active_rows,
+                    &snapshot,
+                    &settings,
+                    view,
+                    cx,
+                )
+            });
 
             show_scrollbars = view.scroll_manager.scrollbars_visible();
             include_root = view
@@ -2224,7 +2228,7 @@ pub struct LayoutState {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
-    indent_guides: Vec<IndentGuide>,
+    indent_guides: Option<Vec<IndentGuide>>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     max_row: u32,
