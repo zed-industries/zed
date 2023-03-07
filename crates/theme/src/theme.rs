@@ -578,6 +578,7 @@ pub struct Editor {
     pub autocomplete: AutocompleteStyle,
     pub code_actions: CodeActions,
     pub folds: Folds,
+    pub indent_guides: Interactive<InteractiveColor>,
     pub unnecessary_code_fade: f32,
     pub hover_popover: HoverPopover,
     pub link_definition: HighlightStyle,

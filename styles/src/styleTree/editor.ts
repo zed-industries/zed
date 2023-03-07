@@ -59,6 +59,12 @@ export default function editor(colorScheme: ColorScheme) {
             },
             verticalScale: 0.55,
         },
+        indentGuides: {
+            color: background(layer, "on"),
+            active: { 
+              color: foreground(layer, "variant")
+            },
+        },
         folds: {
             iconMarginScale: 2.5,
             foldedIcon: "icons/chevron_right_8.svg",

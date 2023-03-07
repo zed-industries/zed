@@ -680,10 +680,15 @@ impl EditorElement {
     ) {
         cx.paint_layer(Some(visible_bounds), |cx| {
             for indent_guide in layout.indent_guides.iter() {
+                let color = if indent_guide.2 {
+                    self.style.indent_guides.active.as_ref().unwrap().color
+                } else {
+                    self.style.indent_guides.default.color
+                };
                 indent_guide_to_bounds(indent_guide, bounds, layout).map(|rect| {
                     cx.scene.push_quad(Quad {
                         bounds: rect,
-                        background: Some(gpui::color::Color::red()),
+                        background: Some(color),
                         ..Default::default()
                     })
                 });
@@ -1685,8 +1690,6 @@ impl Element for EditorElement {
             highlighted_rows = view.highlighted_rows();
             let settings = cx.global::<Settings>();
 
-            indent_guides = get_indent_guides(start_row..end_row, &snapshot, &settings, view, cx);
-
             let theme = settings.theme.as_ref();
             highlighted_ranges =
                 view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
@@ -1763,6 +1766,9 @@ impl Element for EditorElement {
                         .collect(),
                 ));
             }
+            
+            indent_guides = get_indent_guides(start_row..end_row, &active_rows, &snapshot, &settings, view, cx);
+
 
             show_scrollbars = view.scroll_manager.scrollbars_visible();
             include_root = view
@@ -2093,6 +2099,7 @@ impl Element for EditorElement {
 
 fn get_indent_guides(
     display_range: Range<DisplayRow>,
+    active_rows: &BTreeMap<DisplayRow, bool>,
     snapshot: &EditorSnapshot,
     settings: &Settings,
     view: &mut Editor,
@@ -2166,13 +2173,25 @@ fn get_indent_guides(
                 indent_stack.push((
                     first_display_row..=last_display_row,
                     DisplayPoint::new(last_display_row, (next_depth) * indent_length.get() as u32),
+                    false
                 ))
             }
         }
 
-        for (indent, _) in indent_stack.iter_mut() {
+        for (indent, _, _) in indent_stack.iter_mut() {
             *indent = *indent.start()..=last_display_row;
         }
+        
+        for i in first_display_row..=last_display_row {
+            if let Some(contains_non_empty_selection) = active_rows.get(&i) {
+                if !contains_non_empty_selection {
+                    if let Some(ref mut indent) = indent_stack.last_mut() {
+                        indent.2 = true;
+                    }
+                }
+            }
+        }
+        
     }
 
     result_vec.extend(indent_stack.into_iter());
@@ -2182,7 +2201,7 @@ fn get_indent_guides(
 
 type BufferRow = u32;
 type DisplayRow = u32;
-type IndentGuide = (RangeInclusive<DisplayRow>, DisplayPoint);
+type IndentGuide = (RangeInclusive<DisplayRow>, DisplayPoint, bool);
 
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
@@ -2570,13 +2589,14 @@ pub fn position_to_display_point(
 }
 
 pub fn indent_guide_to_bounds(
-    (guide_range, target_point): &IndentGuide,
+    (guide_range, target_point, _): &IndentGuide,
     bounds: RectF,
     layout: &LayoutState,
 ) -> Option<RectF> {
     let content_origin = layout.content_origin(bounds);
     let line_height = layout.line_height();
     let (scroll_left, scroll_top) = layout.scrolls();
+    let offset = (layout.max_glyph_width() / 2.) - 0.5;
 
     let line = layout.line((target_point.row() - layout.visible_range().start) as usize);
 
@@ -2584,14 +2604,14 @@ pub fn indent_guide_to_bounds(
 
     let origin = content_origin
         + vec2f(
-            -scroll_left + start_x,
+            -scroll_left + start_x + offset,
             *guide_range.start() as f32 * line_height - scroll_top,
         );
 
     Some(RectF::new(
         origin,
         vec2f(
-            2.,
+            1.,
             (*guide_range.end() - *guide_range.start() + 1) as f32 * line_height,
         ),
     ))
@@ -2712,10 +2732,10 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..3, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..3, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0))])
+        assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0), false)])
     }
 
     #[gpui::test]
@@ -2732,14 +2752,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..5, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..5, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=3, DisplayPoint::new(1, 0)),
-                (2..=2, DisplayPoint::new(2, 4)),
+                (1..=3, DisplayPoint::new(1, 0), false),
+                (2..=2, DisplayPoint::new(2, 4), false),
             ],
         );
     }
@@ -2765,16 +2785,16 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..12, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..12, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=10, DisplayPoint::new(1, 0)),
-                (2..=2, DisplayPoint::new(2, 4)),
-                (5..=9, DisplayPoint::new(5, 4)),
-                (8..=8, DisplayPoint::new(8, 8)),
+                (1..=10, DisplayPoint::new(1, 0), false),
+                (2..=2, DisplayPoint::new(2, 4), false),
+                (5..=9, DisplayPoint::new(5, 4), false),
+                (8..=8, DisplayPoint::new(8, 8), false),
             ],
         )
     }
@@ -2791,14 +2811,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..3, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..3, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=1, DisplayPoint::new(1, 0)),
-                (1..=1, DisplayPoint::new(1, 4)),
+                (1..=1, DisplayPoint::new(1, 0), false),
+                (1..=1, DisplayPoint::new(1, 4), false),
             ],
         );
     }
@@ -2822,16 +2842,16 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..8, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..8, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=1, DisplayPoint::new(1, 0)),
-                (1..=1, DisplayPoint::new(1, 4)),
-                (3..=3, DisplayPoint::new(3, 0)),
-                (3..=3, DisplayPoint::new(3, 4)),
+                (1..=1, DisplayPoint::new(1, 0), false),
+                (1..=1, DisplayPoint::new(1, 4), false),
+                (3..=3, DisplayPoint::new(3, 0), false),
+                (3..=3, DisplayPoint::new(3, 4), false),
             ],
         );
     }
@@ -2850,14 +2870,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..5, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..5, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=3, DisplayPoint::new(1, 0)),
-                (2..=3, DisplayPoint::new(3, 4)),
+                (1..=3, DisplayPoint::new(1, 0), false),
+                (2..=3, DisplayPoint::new(3, 4), false),
             ],
         );
     }
@@ -2880,15 +2900,15 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..9, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..9, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=7, DisplayPoint::new(1, 0)),
-                (2..=7, DisplayPoint::new(7, 4)),
-                (2..=7, DisplayPoint::new(7, 8)),
+                (1..=7, DisplayPoint::new(1, 0), false),
+                (2..=7, DisplayPoint::new(7, 4), false),
+                (2..=7, DisplayPoint::new(7, 8), false),
             ],
         );
     }
@@ -2908,14 +2928,14 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..6, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..6, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=4, DisplayPoint::new(1, 0)),
-                (2..=3, DisplayPoint::new(2, 4)),
+                (1..=4, DisplayPoint::new(1, 0), false),
+                (2..=3, DisplayPoint::new(2, 4), false),
             ],
         );
     }
@@ -2938,15 +2958,15 @@ mod tests {
 
         let ranges = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            get_indent_guides(0..9, &snapshot, &Settings::test(cx), editor, cx)
+            get_indent_guides(0..9, &BTreeMap::new(), &snapshot, &Settings::test(cx), editor, cx)
         });
 
         assert_indent_range_eq(
             ranges,
             vec![
-                (1..=7, DisplayPoint::new(1, 0)),
-                (2..=6, DisplayPoint::new(2, 4)),
-                (2..=6, DisplayPoint::new(2, 8)),
+                (1..=7, DisplayPoint::new(1, 0), false),
+                (2..=6, DisplayPoint::new(2, 4), false),
+                (2..=6, DisplayPoint::new(2, 8), false),
             ],
         );
     }
