@@ -45,8 +45,9 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
+    num::NonZeroU32,
     ops::{DerefMut, Range, RangeInclusive},
-    sync::Arc, num::NonZeroU32,
+    sync::Arc,
 };
 use workspace::item::Item;
 
@@ -2097,17 +2098,20 @@ fn get_indent_guides(
     view: &mut Editor,
     cx: &AppContext,
 ) -> Vec<IndentGuide> {
-    fn get_indent_length(display_row: u32, settings: &Settings, snapshot: &EditorSnapshot, view: &mut Editor, cx: &AppContext) -> NonZeroU32 {
+    fn get_indent_length(
+        display_row: u32,
+        settings: &Settings,
+        snapshot: &EditorSnapshot,
+        view: &mut Editor,
+        cx: &AppContext,
+    ) -> NonZeroU32 {
         settings.tab_size(
-            view.language_at(
-                DisplayPoint::new(display_row, 0).to_point(snapshot),
-                cx,
-            )
-            .map(|language| language.name())
-            .as_deref(),
+            view.language_at(DisplayPoint::new(display_row, 0).to_point(snapshot), cx)
+                .map(|language| language.name())
+                .as_deref(),
         )
     }
-    
+
     let mut result_vec = vec![];
     let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
     let mut display_iter = display_range.into_iter();
@@ -2143,14 +2147,14 @@ fn get_indent_guides(
         } else {
             current_depth
         };
-        
+
         if depth < current_depth {
             for _ in 0..(current_depth - depth) {
                 let mut indent = indent_stack.pop().unwrap();
                 if last_display_row != first_display_row {
                     // In this case, we landed on an empty row, had to seek forward,
                     // and discovered that the indent we where on is ending.
-                    // This means that the last display row must 
+                    // This means that the last display row must
                     // be on line that ends this indent range, so we
                     // should display the range up to the row before this
                     indent.0 = *indent.0.start()..=last_display_row - 1;
@@ -2161,7 +2165,7 @@ fn get_indent_guides(
             for next_depth in current_depth..depth {
                 indent_stack.push((
                     first_display_row..=last_display_row,
-                    DisplayPoint::new(last_display_row, (next_depth) * indent_length.get() as u32)
+                    DisplayPoint::new(last_display_row, (next_depth) * indent_length.get() as u32),
                 ))
             }
         }
@@ -2731,7 +2735,13 @@ mod tests {
             get_indent_guides(0..5, &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=3, DisplayPoint::new(1, 0)), (2..=2, DisplayPoint::new(2, 4))]);
+        assert_indent_range_eq(
+            ranges,
+            vec![
+                (1..=3, DisplayPoint::new(1, 0)),
+                (2..=2, DisplayPoint::new(2, 4)),
+            ],
+        );
     }
 
     #[gpui::test]
@@ -2760,7 +2770,12 @@ mod tests {
 
         assert_indent_range_eq(
             ranges,
-            vec![(1..=10, DisplayPoint::new(1, 0)), (2..=2, DisplayPoint::new(2, 4)), (5..=9, DisplayPoint::new(5, 4)), (8..=8, DisplayPoint::new(8, 8))],
+            vec![
+                (1..=10, DisplayPoint::new(1, 0)),
+                (2..=2, DisplayPoint::new(2, 4)),
+                (5..=9, DisplayPoint::new(5, 4)),
+                (8..=8, DisplayPoint::new(8, 8)),
+            ],
         )
     }
 
@@ -2779,7 +2794,13 @@ mod tests {
             get_indent_guides(0..3, &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0)), (1..=1, DisplayPoint::new(0, 4))]);
+        assert_indent_range_eq(
+            ranges,
+            vec![
+                (1..=1, DisplayPoint::new(1, 0)),
+                (1..=1, DisplayPoint::new(0, 4)),
+            ],
+        );
     }
 
     #[gpui::test]
@@ -2804,7 +2825,15 @@ mod tests {
             get_indent_guides(0..8, &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0)), (1..=1, DisplayPoint::new(1, 4)), (3..=3, DisplayPoint::new(3, 0)), (3..=3, DisplayPoint::new(3, 4))]);
+        assert_indent_range_eq(
+            ranges,
+            vec![
+                (1..=1, DisplayPoint::new(1, 0)),
+                (1..=1, DisplayPoint::new(1, 4)),
+                (3..=3, DisplayPoint::new(3, 0)),
+                (3..=3, DisplayPoint::new(3, 4)),
+            ],
+        );
     }
 
     #[gpui::test]
@@ -2824,7 +2853,13 @@ mod tests {
             get_indent_guides(0..5, &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=3, DisplayPoint::new(1, 0)), (2..=3, DisplayPoint::new(3, 4))]);
+        assert_indent_range_eq(
+            ranges,
+            vec![
+                (1..=3, DisplayPoint::new(1, 0)),
+                (2..=3, DisplayPoint::new(3, 4)),
+            ],
+        );
     }
 
     #[gpui::test]
@@ -2848,7 +2883,14 @@ mod tests {
             get_indent_guides(0..9, &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=7, DisplayPoint::new(1, 0)), (2..=7, DisplayPoint::new(7, 4)), (2..=7, DisplayPoint::new(7, 8))]);
+        assert_indent_range_eq(
+            ranges,
+            vec![
+                (1..=7, DisplayPoint::new(1, 0)),
+                (2..=7, DisplayPoint::new(7, 4)),
+                (2..=7, DisplayPoint::new(7, 8)),
+            ],
+        );
     }
 
     #[gpui::test]
@@ -2869,9 +2911,15 @@ mod tests {
             get_indent_guides(0..6, &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=4, DisplayPoint::new(1, 0)), (2..=3, DisplayPoint::new(2, 4))]);
+        assert_indent_range_eq(
+            ranges,
+            vec![
+                (1..=4, DisplayPoint::new(1, 0)),
+                (2..=3, DisplayPoint::new(2, 4)),
+            ],
+        );
     }
-    
+
     #[gpui::test]
     async fn test_ending_on_multiple_empty_indent_ranges(cx: &mut gpui::TestAppContext) {
         let mut cx = EditorTestContext::new(cx);
@@ -2893,7 +2941,14 @@ mod tests {
             get_indent_guides(0..9, &snapshot, &Settings::test(cx), editor, cx)
         });
 
-        assert_indent_range_eq(ranges, vec![(1..=7, DisplayPoint::new(1, 0)), (2..=6, DisplayPoint::new(2, 4)), (2..=6, DisplayPoint::new(2, 8))]);
+        assert_indent_range_eq(
+            ranges,
+            vec![
+                (1..=7, DisplayPoint::new(1, 0)),
+                (2..=6, DisplayPoint::new(2, 4)),
+                (2..=6, DisplayPoint::new(2, 8)),
+            ],
+        );
     }
 
     #[gpui::test]
