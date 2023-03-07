@@ -5971,3 +5971,324 @@ fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewCo
         marked_text
     );
 }
+
+// does an order independent compare of left and right
+fn assert_indent_range_eq(mut left: Vec<IndentGuide>, mut right: Vec<IndentGuide>) {
+    left.sort();
+    right.sort();
+    assert_eq!(left, right);
+}
+
+#[gpui::test]
+async fn test_simple_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn main() {
+            println!(\"\")ˇ
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..3,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(ranges, vec![(1..=1, DisplayPoint::new(1, 0), false)])
+}
+
+#[gpui::test]
+async fn test_multiple_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn main() {
+            {
+                println!(\"\")ˇ
+            }
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..5,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=3, DisplayPoint::new(1, 0), false),
+            (2..=2, DisplayPoint::new(2, 4), false),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_more_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn main() {
+            {
+                println!(\"\");ˇ
+            }
+            {
+                println!(\"\");
+                println!(\"\");
+                {
+                    println!(\"\");
+                }
+            }
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..12,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=10, DisplayPoint::new(1, 0), false),
+            (2..=2, DisplayPoint::new(2, 4), false),
+            (5..=9, DisplayPoint::new(5, 4), false),
+            (8..=8, DisplayPoint::new(8, 8), false),
+        ],
+    )
+}
+
+#[gpui::test]
+async fn test_large_jump_indent_range(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn main() {
+                println!(\"\");ˇ
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..3,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=1, DisplayPoint::new(1, 0), false),
+            (1..=1, DisplayPoint::new(1, 4), false),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_messed_up_formatting_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    // Note the 5th space in the second block
+    cx.set_state(indoc::indoc! {"
+        fn main() {
+                println!(\"\");
+        {
+            ˇ println!(\"\");
+        }
+        {
+        println!(\"\");
+        }
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..8,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=1, DisplayPoint::new(1, 0), false),
+            (1..=1, DisplayPoint::new(1, 4), false),
+            (3..=3, DisplayPoint::new(3, 0), false),
+            (3..=3, DisplayPoint::new(3, 4), false),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_empty_after_range_start_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn main() {
+            {
+        ˇ
+                }
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..5,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=3, DisplayPoint::new(1, 0), false),
+            (2..=3, DisplayPoint::new(3, 4), false),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_multiple_empty_after_range_start_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn main() {
+            {
+        ˇ
+        
+        
+        
+        
+                    }
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..9,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=7, DisplayPoint::new(1, 0), false),
+            (2..=7, DisplayPoint::new(7, 4), false),
+            (2..=7, DisplayPoint::new(7, 8), false),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_ending_on_empty_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn test() {
+            if true {
+                println!(\"\");
+        ˇ
+            }
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..6,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=4, DisplayPoint::new(1, 0), false),
+            (2..=3, DisplayPoint::new(2, 4), false),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_ending_on_multiple_empty_indent_ranges(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    cx.set_state(indoc::indoc! {"
+        fn test() {
+            if true {
+                    println!(\"\");
+        ˇ
+        ˇ
+        ˇ
+        ˇ
+            }
+        }
+    "});
+
+    let ranges = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        get_indent_guides(
+            0..9,
+            // &BTreeMap::new(),
+            &snapshot,
+            &Settings::test(cx),
+            editor,
+            cx,
+        )
+    });
+
+    assert_indent_range_eq(
+        ranges,
+        vec![
+            (1..=7, DisplayPoint::new(1, 0), false),
+            (2..=6, DisplayPoint::new(2, 4), false),
+            (2..=6, DisplayPoint::new(2, 8), false),
+        ],
+    );
+}

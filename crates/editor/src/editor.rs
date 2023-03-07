@@ -292,6 +292,14 @@ pub enum Direction {
     Next,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Debug)]
+struct IndentGuide {
+    start_row: u32,
+    end_row: u32,
+    guide_source: DisplayPoint 
+}
+
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::new_file);
     cx.add_action(Editor::select);
@@ -6400,6 +6408,104 @@ impl EditorSnapshot {
 
     pub fn scroll_position(&self) -> Vector2F {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
+    }
+        
+    fn indent_guides_for_range(
+        &self,
+        display_range: Range<u32>,
+        settings: &Settings,
+    ) -> Vec<IndentGuide> {
+        fn get_indent_length(
+            this: &EditorSnapshot,
+            display_row: u32,
+            settings: &Settings,
+        ) -> NonZeroU32 {
+            settings.tab_size(
+                this.language_at(DisplayPoint::new(display_row, 0).to_point(this))
+                    .map(|language| language.name())
+                    .as_deref(),
+            )
+        }
+    
+        let mut result_vec = vec![];
+        let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
+        let mut display_iter = display_range.into_iter();
+        
+        // let excerpt_boundaries = snapshot.buffer_snapshot.excerpt_boundaries_in_range(range);
+        // How to flush the stack:
+        // 1. Update all indent guides in the stack to extend to the current line
+        // 2. Push to result vec
+        // 3. Update the current excerpt boundary
+        // let current_excerpt_boundary = excerpt_boundaries.next();
+        // get excerpt boundaries, convert those boundaries into display rows
+        
+        while let Some(first_display_row) = display_iter.next() {
+            let current_depth = indent_stack.len() as u32;
+    
+            let (mut line_indent, empty) = self.display_snapshot.line_indent(first_display_row);
+    
+            let mut indent_length = get_indent_length(self, first_display_row, settings);
+    
+            // When encountering empty, continue until found useful line indent
+            // then add to the indent stack with the depth found
+            let mut found_indent = false;
+            let mut last_display_row = first_display_row;
+            if empty {
+                while let Some(display_row) = display_iter.next() {
+                    let (new_line_indent, empty) = self.display_snapshot.line_indent(display_row);
+                    if empty {
+                        continue;
+                    }
+                    last_display_row = display_row;
+                    line_indent = new_line_indent;
+                    found_indent = true;
+                    indent_length = get_indent_length(self, first_display_row, settings);
+                    break;
+                }
+            } else {
+                found_indent = true
+            }
+    
+            let depth = if found_indent {
+                line_indent / indent_length + ((line_indent % indent_length) > 0) as u32
+            } else {
+                current_depth
+            };
+    
+            if depth < current_depth {
+                for _ in 0..(current_depth - depth) {
+                    let mut indent = indent_stack.pop().unwrap();
+                    if last_display_row != first_display_row {
+                        // In this case, we landed on an empty row, had to seek forward,
+                        // and discovered that the indent we where on is ending.
+                        // This means that the last display row must
+                        // be on line that ends this indent range, so we
+                        // should display the range up to the row before this
+                        indent.end_row = last_display_row - 1;
+                    }
+                    result_vec.push(indent)
+                }
+            } else if depth > current_depth {
+                for next_depth in current_depth..depth {
+                    
+                    indent_stack.push(
+                        IndentGuide {
+                            start_row: first_display_row, 
+                            end_row: last_display_row,
+                            guide_source: DisplayPoint::new(last_display_row, (next_depth) * indent_length.get() as u32),
+                        }
+                    );
+                }
+            }
+    
+            for indent in indent_stack.iter_mut() {
+                indent.end_row = last_display_row;
+            }
+        }
+    
+        result_vec.extend(indent_stack.into_iter());
+    
+        result_vec
     }
 }
 
