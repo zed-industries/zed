@@ -32,8 +32,9 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
-    Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
-    PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle,
+    Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseState,
+    MutableAppContext, PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext,
+    WeakViewHandle,
 };
 use itertools::Itertools;
 use json::json;
@@ -681,11 +682,12 @@ impl EditorElement {
         if let Some(indent_guides) = &layout.indent_guides {
             cx.paint_layer(Some(visible_bounds), |cx| {
                 for indent_guide in indent_guides.iter() {
-                    let color = if indent_guide.2 {
-                        self.style.indent_guides.active.as_ref().unwrap().color
-                    } else {
-                        self.style.indent_guides.default.color
-                    };
+                    let color = self
+                        .style
+                        .indent_guides
+                        .style_for(&mut MouseState::default(), indent_guide.2)
+                        .color;
+
                     indent_guide_to_bounds(indent_guide, bounds, layout).map(|rect| {
                         cx.scene.push_quad(Quad {
                             bounds: rect,
