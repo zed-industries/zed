@@ -5,9 +5,8 @@ use futures::stream::StreamExt;
 use gpui::{
     actions,
     anyhow::{anyhow, Result},
-    color::Color,
     elements::{
-        AnchorCorner, Canvas, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex,
+        AnchorCorner, ChildView, ConstrainedBox, Container, ContainerStyle, Empty, Flex,
         KeystrokeLabel, Label, MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg,
         UniformList, UniformListState,
     },
@@ -15,7 +14,7 @@ use gpui::{
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
+    Action, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -29,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::ProjectPanelEntry;
+use theme::{ContainedText, ProjectPanelEntry};
 use unicase::UniCase;
 use workspace::Workspace;
 
@@ -1317,79 +1316,36 @@ impl View for ProjectPanel {
                 .boxed()
         } else {
             let parent_view_id = cx.handle().id();
-            Stack::new()
+            Flex::column()
                 .with_child(
-                    MouseEventHandler::<ProjectPanel>::new(1, cx, |_, cx| {
-                        Stack::new()
-                            .with_child(
-                                Canvas::new(|bounds, _visible_bounds, cx| {
-                                    cx.scene.push_quad(gpui::Quad {
-                                        bounds,
-                                        background: Some(Color::transparent_black()),
-                                        ..Default::default()
-                                    })
-                                })
-                                .boxed(),
-                            )
-                            .with_child(
-                                MouseEventHandler::<Self>::new(2, cx, |state, cx| {
-                                    let style = &cx
-                                        .global::<Settings>()
-                                        .theme
-                                        .search
-                                        .option_button
-                                        .style_for(state, false);
+                    MouseEventHandler::<Self>::new(2, cx, {
+                        let button_style = theme.open_project_button.clone();
+                        let context_menu_item_style =
+                            cx.global::<Settings>().theme.context_menu.item.clone();
+                        move |state, cx| {
+                            let button_style = button_style.style_for(state, false).clone();
+                            let context_menu_item =
+                                context_menu_item_style.style_for(state, true).clone();
 
-                                    let context_menu_item = cx
-                                        .global::<Settings>()
-                                        .theme
-                                        .context_menu
-                                        .clone()
-                                        .item
-                                        .style_for(state, true)
-                                        .clone();
-
-                                    Flex::row()
-                                        .with_child(
-                                            Label::new(
-                                                "Open a new project!".to_string(),
-                                                context_menu_item.label.clone(),
-                                            )
-                                            .contained()
-                                            .boxed(),
-                                        )
-                                        .with_child({
-                                            KeystrokeLabel::new(
-                                                cx.window_id(),
-                                                parent_view_id,
-                                                Box::new(workspace::Open),
-                                                context_menu_item.keystroke.container,
-                                                context_menu_item.keystroke.text.clone(),
-                                            )
-                                            .flex_float()
-                                            .boxed()
-                                        })
-                                        .contained()
-                                        .with_style(style.container)
-                                        .aligned()
-                                        .top()
-                                        .constrained()
-                                        .with_width(100.)
-                                        .with_height(20.)
-                                        .boxed()
-                                })
-                                .on_click(MouseButton::Left, move |_, cx| {
-                                    cx.dispatch_action(workspace::Open)
-                                })
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .boxed(),
+                            keystroke_label(
+                                parent_view_id,
+                                "Open a new project",
+                                &button_style,
+                                context_menu_item.keystroke,
+                                workspace::Open,
+                                cx,
                             )
                             .boxed()
+                        }
                     })
-                    // TODO is this nescessary?
-                    .on_click(MouseButton::Left, |_, cx| cx.focus_parent_view())
+                    .on_click(MouseButton::Left, move |_, cx| {
+                        cx.dispatch_action(workspace::Open)
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
                     .boxed(),
                 )
+                .contained()
+                .with_style(container_style)
                 .boxed()
         }
     }
@@ -1399,6 +1355,38 @@ impl View for ProjectPanel {
         cx.add_identifier("menu");
         cx
     }
+}
+
+fn keystroke_label<A>(
+    view_id: usize,
+    label_text: &'static str,
+    label_style: &ContainedText,
+    keystroke_style: ContainedText,
+    action: A,
+    cx: &mut RenderContext<ProjectPanel>,
+) -> Container
+where
+    A: Action,
+{
+    Flex::row()
+        .with_child(
+            Label::new(label_text, label_style.text.clone())
+                .contained()
+                .boxed(),
+        )
+        .with_child({
+            KeystrokeLabel::new(
+                cx.window_id(),
+                view_id,
+                Box::new(action),
+                keystroke_style.container,
+                keystroke_style.text.clone(),
+            )
+            .flex_float()
+            .boxed()
+        })
+        .contained()
+        .with_style(label_style.container)
 }
 
 impl Entity for ProjectPanel {

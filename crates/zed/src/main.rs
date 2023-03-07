@@ -237,7 +237,6 @@ fn main() {
                 let app_state = app_state.clone();
                 async move {
                     while let Some(paths) = open_paths_rx.next().await {
-                        log::error!("OPEN PATHS FROM HANDLE");
                         cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
                             .detach();
                     }

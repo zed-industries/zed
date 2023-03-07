@@ -346,6 +346,7 @@ pub struct ProjectPanel {
     pub cut_entry: Interactive<ProjectPanelEntry>,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
+    pub open_project_button: Interactive<ContainedText>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

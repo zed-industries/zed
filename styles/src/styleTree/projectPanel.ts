@@ -29,6 +29,39 @@ export default function projectPanel(colorScheme: ColorScheme) {
     }
 
     return {
+        openProjectButton: {
+            ...text(layer, "mono", "active", { size: "sm" }),
+            background: background(layer, "on"),
+            cornerRadius: 6,
+            border: border(layer, "on"),
+            margin: {
+                top: 20,
+                left: 10,
+                right: 10
+            },
+            padding: {
+                bottom: 2,
+                left: 10,
+                right: 10,
+                top: 2,
+            },
+            active: {
+                ...text(layer, "mono", "on", "inverted"),
+                background: background(layer, "on", "inverted"),
+                border: border(layer, "on", "inverted"),
+            },
+            clicked: {
+                ...text(layer, "mono", "on", "pressed"),
+                background: background(layer, "on", "pressed"),
+                border: border(layer, "on", "pressed"),
+            },
+            hover: {
+                ...text(layer, "mono", "on", "hovered"),
+                background: background(layer, "on", "hovered"),
+                border: border(layer, "on", "hovered"),
+            },
+
+        },
         background: background(layer),
         padding: { left: 12, right: 12, top: 6, bottom: 6 },
         indentWidth: 8,

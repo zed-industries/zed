@@ -111,14 +111,10 @@ mod tests {
         let default_settings = cx.read(Settings::test);
 
         cx.update(|cx| {
-            cx.add_global_action(|_: &A, _cx| {
-            });
-            cx.add_global_action(|_: &B, _cx| {
-            });
-            cx.add_global_action(|_: &ActivatePreviousPane, _cx| {
-            });
-            cx.add_global_action(|_: &ActivatePrevItem, _cx| {
-            });
+            cx.add_global_action(|_: &A, _cx| {});
+            cx.add_global_action(|_: &B, _cx| {});
+            cx.add_global_action(|_: &ActivatePreviousPane, _cx| {});
+            cx.add_global_action(|_: &ActivatePrevItem, _cx| {});
             watch_files(
                 default_settings,
                 settings_file,
@@ -132,7 +128,11 @@ mod tests {
 
         // Test loading the keymap base at all
         cx.update(|cx| {
-            assert_keybindings_for(cx, vec![("backspace", &A), ("k", &ActivatePreviousPane)], line!());
+            assert_keybindings_for(
+                cx,
+                vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+                line!(),
+            );
         });
 
         // Test modifying the users keymap, while retaining the base keymap
@@ -152,13 +152,17 @@ mod tests {
         )
         .await
         .unwrap();
-        
+
         cx.foreground().run_until_parked();
 
         cx.update(|cx| {
-            assert_keybindings_for(cx, vec![("backspace", &B), ("k", &ActivatePreviousPane)], line!());
+            assert_keybindings_for(
+                cx,
+                vec![("backspace", &B), ("k", &ActivatePreviousPane)],
+                line!(),
+            );
         });
-        
+
         // Test modifying the base, while retaining the users keymap
         fs.save(
             "/settings.json".as_ref(),
@@ -172,11 +176,15 @@ mod tests {
         )
         .await
         .unwrap();
-        
+
         cx.foreground().run_until_parked();
 
         cx.update(|cx| {
-            assert_keybindings_for(cx, vec![("backspace", &B), ("[", &ActivatePrevItem)], line!());
+            assert_keybindings_for(
+                cx,
+                vec![("backspace", &B), ("[", &ActivatePrevItem)],
+                line!(),
+            );
         });
     }
 
@@ -185,17 +193,22 @@ mod tests {
         actions: Vec<(&'static str, &'a dyn Action)>,
         line: u32,
     ) {
-        
         for (key, action) in actions {
             // assert that...
-            assert!(cx.available_actions(0, 0).any(|(_, bound_action, b)| {
-                // action names match...
-                bound_action.name() == action.name()
+            assert!(
+                cx.available_actions(0, 0).any(|(_, bound_action, b)| {
+                    // action names match...
+                    bound_action.name() == action.name()
                     && bound_action.namespace() == action.namespace()
                     // and key strokes contain the given key
                     && b.iter()
                         .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
-            }), "On {} Failed to find {} with keybinding {}", line,  action.name(), key);
+                }),
+                "On {} Failed to find {} with keybinding {}",
+                line,
+                action.name(),
+                key
+            );
         }
     }
 

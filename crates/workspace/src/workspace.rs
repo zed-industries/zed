@@ -2815,6 +2815,7 @@ fn open(_: &Open, cx: &mut MutableAppContext) {
         directories: true,
         multiple: true,
     });
+
     cx.spawn(|mut cx| async move {
         if let Some(paths) = paths.recv().await.flatten() {
             cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths }));
