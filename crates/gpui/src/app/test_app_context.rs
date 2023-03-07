@@ -18,9 +18,10 @@ use smol::stream::StreamExt;
 
 use crate::{
     executor, geometry::vector::Vector2F, keymap_matcher::Keystroke, platform, Action,
-    AnyViewHandle, AppContext, Appearance, Entity, Event, FontCache, InputHandler, KeyDownEvent,
-    ModelContext, ModelHandle, MutableAppContext, Platform, ReadModelWith, ReadViewWith,
-    RenderContext, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle, WeakHandle,
+    AnyViewHandle, AppContext, Appearance, Entity, Event, FontCache, Handle, InputHandler,
+    KeyDownEvent, ModelContext, ModelHandle, MutableAppContext, Platform, ReadModelWith,
+    ReadViewWith, RenderContext, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle,
+    WeakHandle,
 };
 use collections::BTreeMap;
 
@@ -327,6 +328,14 @@ impl TestAppContext {
             .leak_detector()
             .lock()
             .assert_dropped(handle.id())
+    }
+
+    /// Drop a handle, assuming it is the last. If it is not the last, panic with debug information about
+    /// where the stray handles were created.
+    pub fn drop_last<T, W: WeakHandle, H: Handle<T, Weak = W>>(&mut self, handle: H) {
+        let weak = handle.downgrade();
+        self.update(|_| drop(handle));
+        self.assert_dropped(weak);
     }
 
     fn window_mut(&self, window_id: usize) -> std::cell::RefMut<platform::test::Window> {
