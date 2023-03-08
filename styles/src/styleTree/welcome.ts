@@ -1,5 +1,6 @@
 
 import { ColorScheme } from "../themes/common/colorScheme";
+import { withOpacity } from "../utils/color";
 import { border, background, foreground, text, TextProperties } from "./components";
 
 
@@ -27,50 +28,61 @@ export default function welcome(colorScheme: ColorScheme) {
 
     return {
         pageWidth: 320,
+        logo: {
+            color: foreground(layer, "default"),
+            icon: "icons/logo_96.svg",
+            dimensions: {
+                width: 64,
+                height: 64,
+            }
+        },
         logoSubheading: {
-            ...text(layer, "sans", { size: "lg" }),
+            ...text(layer, "sans", "variant", { size: "md" }),
             margin: {
                 top: 10,
                 bottom: 7,
             },
         },
         buttonGroup: {
-            border: border(layer, "active"),
             margin: {
                 top: 8,
-                bottom: 7
+                bottom: 16
             },
         },
         headingGroup: {
             margin: {
                 top: 8,
-                bottom: 7
+                bottom: 12
             },
         },
         checkboxGroup: {
-            margin: {
-                top: 8,
-                bottom: 7
+            border: border(layer, "variant"),
+            background: withOpacity(background(layer, "hovered"), 0.25),
+            cornerRadius: 4,
+            padding: {
+                left: 12,
+                top: 2,
+                bottom: 2
             },
         },
         button: {
             background: background(layer),
-            border: border(layer, "default"),
+            border: border(layer, "active"),
             cornerRadius: 4,
             margin: {
-                top: 8,
-                bottom: 7
+                top: 4,
+                bottom: 4
             },
             padding: {
-                top: 1,
-                bottom: 1,
+                top: 3,
+                bottom: 3,
                 left: 7,
                 right: 7,
             },
             ...text(layer, "sans", "default", interactive_text_size),
             hover: {
                 ...text(layer, "sans", "default", interactive_text_size),
-                background: background(layer, "default"),
+                background: background(layer, "hovered"),
                 border: border(layer, "active"),
             },
         },
@@ -81,7 +93,7 @@ export default function welcome(colorScheme: ColorScheme) {
             },
             container: {
                 margin: {
-                    top: 5,
+                    top: 4,
                 },
             },
             width: 12,
@@ -101,7 +113,7 @@ export default function welcome(colorScheme: ColorScheme) {
             hovered: {
                 ...checkboxBase,
                 background: background(layer, "hovered"),
-                border: border(layer, "hovered")
+                border: border(layer, "active")
             },
             hoveredAndChecked: {
                 ...checkboxBase,

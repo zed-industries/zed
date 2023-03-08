@@ -3,7 +3,7 @@ mod base_keymap_picker;
 use std::borrow::Cow;
 
 use gpui::{
-    elements::{Empty, Flex, Image, Label, MouseEventHandler, ParentElement, Svg},
+    elements::{Empty, Flex, Label, MouseEventHandler, ParentElement, Svg},
     Action, Element, ElementBox, Entity, MouseButton, MutableAppContext, RenderContext,
     Subscription, View, ViewContext,
 };
@@ -56,10 +56,11 @@ impl View for WelcomePage {
                 .with_children([
                     Flex::column()
                         .with_children([
-                            Image::new("images/zed-logo-90x90.png")
+                            Svg::new(theme.welcome.logo.icon.clone())
+                                .with_color(theme.welcome.logo.color)
                                 .constrained()
-                                .with_width(90.)
-                                .with_height(90.)
+                                .with_width(theme.welcome.logo.dimensions.width)
+                                .with_height(theme.welcome.logo.dimensions.height)
                                 .aligned()
                                 .contained()
                                 .aligned()
@@ -75,8 +76,10 @@ impl View for WelcomePage {
                         ])
                         .contained()
                         .with_style(theme.welcome.heading_group)
+                        .constrained()
+                        .with_width(width)
                         .boxed(),
-                    Flex::row()
+                    Flex::column()
                         .with_children([
                             self.render_cta_button(
                                 "Choose a theme",
@@ -99,6 +102,8 @@ impl View for WelcomePage {
                         ])
                         .contained()
                         .with_style(theme.welcome.button_group)
+                        .constrained()
+                        .with_width(width)
                         .boxed(),
                     Flex::column()
                         .with_children([
@@ -119,6 +124,8 @@ impl View for WelcomePage {
                         ])
                         .contained()
                         .with_style(theme.welcome.checkbox_group)
+                        .constrained()
+                        .with_width(width)
                         .boxed(),
                 ])
                 .constrained()
