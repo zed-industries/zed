@@ -8,7 +8,6 @@ use breadcrumbs::Breadcrumbs;
 pub use client;
 use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
 use collections::VecDeque;
-use db::kvp::KEY_VALUE_STORE;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
@@ -35,9 +34,7 @@ use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{open_new, sidebar::SidebarSide, AppState, Restart, Workspace};
-
-pub const FIRST_OPEN: &str = "first_open";
+use workspace::{sidebar::SidebarSide, AppState, Restart, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -69,7 +66,6 @@ actions!(
         DecreaseBufferFontSize,
         ResetBufferFontSize,
         ResetDatabase,
-        WelcomeExperience
     ]
 );
 
@@ -258,29 +254,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
         },
     );
-
-    cx.add_global_action({
-        let app_state = app_state.clone();
-        move |_: &WelcomeExperience, cx| {
-            if !matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-                return; //noop, in case someone fires this from the command palette
-            }
-
-            open_new(&app_state, cx, |workspace, cx| {
-                workspace.toggle_sidebar(SidebarSide::Left, cx);
-                let welcome_page = cx.add_view(|cx| welcome::WelcomePage::new(cx));
-                workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
-                cx.focus(welcome_page);
-                cx.notify();
-            })
-            .detach();
-
-            db::write_and_log(cx, || {
-                KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
-            });
-        }
-    });
-
     activity_indicator::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);

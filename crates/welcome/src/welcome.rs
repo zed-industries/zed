@@ -1,7 +1,8 @@
 mod base_keymap_picker;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Empty, Flex, Label, MouseEventHandler, ParentElement, Svg},
     Action, Element, ElementBox, Entity, MouseButton, MutableAppContext, RenderContext,
@@ -9,9 +10,14 @@ use gpui::{
 };
 use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
 use theme::CheckboxStyle;
-use workspace::{item::Item, PaneBackdrop, Welcome, Workspace, WorkspaceId};
+use workspace::{
+    item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
+    WorkspaceId,
+};
 
 use crate::base_keymap_picker::ToggleBaseKeymapSelector;
+
+pub const FIRST_OPEN: &str = "first_open";
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
@@ -20,6 +26,21 @@ pub fn init(cx: &mut MutableAppContext) {
     });
 
     base_keymap_picker::init(cx);
+}
+
+pub fn show_welcome_experience(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+    open_new(&app_state, cx, |workspace, cx| {
+        workspace.toggle_sidebar(SidebarSide::Left, cx);
+        let welcome_page = cx.add_view(|cx| WelcomePage::new(cx));
+        workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
+        cx.focus(welcome_page);
+        cx.notify();
+    })
+    .detach();
+
+    db::write_and_log(cx, || {
+        KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+    });
 }
 
 pub struct WelcomePage {

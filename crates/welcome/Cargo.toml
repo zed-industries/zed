@@ -16,6 +16,7 @@ log = "0.4"
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
+db = { path = "../db" }
 install_cli = { path = "../install_cli" }
 project = { path = "../project" }
 settings = { path = "../settings" }

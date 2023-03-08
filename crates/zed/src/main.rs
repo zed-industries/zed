@@ -36,6 +36,7 @@ use std::{
     path::PathBuf, sync::Arc, thread, time::Duration,
 };
 use terminal_view::{get_working_directory, TerminalView};
+use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
 use settings::watched_json::WatchedJsonFile;
@@ -46,10 +47,7 @@ use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
 };
-use zed::{
-    self, build_window_options, initialize_workspace, languages, menus, WelcomeExperience,
-    FIRST_OPEN,
-};
+use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();
@@ -206,7 +204,7 @@ fn main() {
             cx.platform().activate(true);
             let paths = collect_path_args();
             if paths.is_empty() {
-                cx.spawn(|cx| async move { restore_or_create_workspace(cx).await })
+                cx.spawn(|cx| async move { restore_or_create_workspace(&app_state, cx).await })
                     .detach()
             } else {
                 cx.dispatch_global_action(OpenPaths { paths });
@@ -219,8 +217,11 @@ fn main() {
                 cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                     .detach();
             } else {
-                cx.spawn(|cx| async move { restore_or_create_workspace(cx).await })
-                    .detach()
+                cx.spawn({
+                    let app_state = app_state.clone();
+                    |cx| async move { restore_or_create_workspace(&app_state, cx).await }
+                })
+                .detach()
             }
 
             cx.spawn(|cx| {
@@ -259,7 +260,7 @@ fn main() {
     });
 }
 
-async fn restore_or_create_workspace(mut cx: AsyncAppContext) {
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
     if let Some(location) = workspace::last_opened_workspace_paths().await {
         cx.update(|cx| {
             cx.dispatch_global_action(OpenPaths {
@@ -267,9 +268,7 @@ async fn restore_or_create_workspace(mut cx: AsyncAppContext) {
             })
         });
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| {
-            cx.dispatch_global_action(WelcomeExperience);
-        });
+        cx.update(|cx| show_welcome_experience(app_state, cx));
     } else {
         cx.update(|cx| {
             cx.dispatch_global_action(NewFile);
