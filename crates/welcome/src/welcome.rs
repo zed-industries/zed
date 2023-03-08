@@ -1,3 +1,5 @@
+mod base_keymap_picker;
+
 use std::borrow::Cow;
 
 use gpui::{
@@ -9,11 +11,15 @@ use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
 use theme::CheckboxStyle;
 use workspace::{item::Item, PaneBackdrop, Welcome, Workspace, WorkspaceId};
 
+use crate::base_keymap_picker::ToggleBaseKeymapSelector;
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
         let welcome_page = cx.add_view(WelcomePage::new);
         workspace.add_item(Box::new(welcome_page), cx)
-    })
+    });
+
+    base_keymap_picker::init(cx);
 }
 
 pub struct WelcomePage {
@@ -64,9 +70,9 @@ impl View for WelcomePage {
                     .contained()
                     .with_style(theme.welcome.logo_subheading.container)
                     .boxed(),
-                    self.render_cta_button(2, "Choose a theme", theme_selector::Toggle, width, cx),
-                    self.render_cta_button(3, "Choose a keymap", theme_selector::Toggle, width, cx),
-                    self.render_cta_button(4, "Install the CLI", install_cli::Install, width, cx),
+                    self.render_cta_button("Choose a theme", theme_selector::Toggle, width, cx),
+                    self.render_cta_button("Choose a keymap", ToggleBaseKeymapSelector, width, cx),
+                    self.render_cta_button("Install the CLI", install_cli::Install, width, cx),
                     self.render_settings_checkbox::<Metrics>(
                         "Do you want to send telemetry?",
                         &theme.welcome.checkbox,
@@ -110,7 +116,6 @@ impl WelcomePage {
 
     fn render_cta_button<L, A>(
         &self,
-        region_id: usize,
         label: L,
         action: A,
         width: f32,
@@ -121,7 +126,7 @@ impl WelcomePage {
         A: 'static + Action + Clone,
     {
         let theme = cx.global::<Settings>().theme.clone();
-        MouseEventHandler::<A>::new(region_id, cx, |state, _| {
+        MouseEventHandler::<A>::new(0, cx, |state, _| {
             let style = theme.welcome.button.style_for(state, false);
             Label::new(label, style.text.clone())
                 .aligned()

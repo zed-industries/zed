@@ -55,23 +55,45 @@ pub struct Settings {
     pub telemetry_defaults: TelemetrySettings,
     pub telemetry_overrides: TelemetrySettings,
     pub auto_update: bool,
-    pub base_keymap: Option<BaseKeymap>,
+    pub base_keymap: BaseKeymap,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub enum BaseKeymap {
+    #[default]
+    VSCode,
     JetBrains,
     Sublime,
     Atom,
 }
 
 impl BaseKeymap {
-    pub fn asset_path(&self) -> &str {
+    pub const OPTIONS: [(&'static str, Self); 4] = [
+        ("VSCode (Default)", Self::VSCode),
+        ("Atom", Self::Atom),
+        ("JetBrains", Self::JetBrains),
+        ("Sublime", Self::Sublime),
+    ];
+
+    pub fn asset_path(&self) -> Option<&'static str> {
         match self {
-            BaseKeymap::JetBrains => "keymaps/jetbrains.json",
-            BaseKeymap::Sublime => "keymaps/sublime_text.json",
-            BaseKeymap::Atom => "keymaps/atom.json",
+            BaseKeymap::JetBrains => Some("keymaps/jetbrains.json"),
+            BaseKeymap::Sublime => Some("keymaps/sublime_text.json"),
+            BaseKeymap::Atom => Some("keymaps/atom.json"),
+            BaseKeymap::VSCode => None,
         }
+    }
+
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        Self::OPTIONS.iter().map(|(name, _)| *name)
+    }
+
+    pub fn from_names(option: &str) -> BaseKeymap {
+        Self::OPTIONS
+            .iter()
+            .copied()
+            .find_map(|(name, value)| (name == option).then(|| value))
+            .unwrap_or_default()
     }
 }
 
@@ -455,7 +477,7 @@ impl Settings {
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
-        merge(&mut self.base_keymap, Some(data.base_keymap));
+        merge(&mut self.base_keymap, data.base_keymap);
 
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
@@ -633,7 +655,7 @@ impl Settings {
             },
             telemetry_overrides: Default::default(),
             auto_update: true,
-            base_keymap: None,
+            base_keymap: Default::default(),
         }
     }
 
@@ -722,13 +744,7 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
     )?)
 }
 
-/// Expects the key to be unquoted, and the value to be valid JSON
-/// (e.g. values should be unquoted for numbers and bools, quoted for strings)
-pub fn write_settings_key<T: ?Sized + Serialize + Clone>(
-    settings_content: &mut String,
-    key_path: &[&str],
-    new_value: &T,
-) {
+fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_value: &Value) {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(tree_sitter_json::language()).unwrap();
     let tree = parser.parse(&settings_content, None).unwrap();

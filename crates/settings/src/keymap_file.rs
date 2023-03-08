@@ -46,8 +46,8 @@ impl KeymapFileContent {
             Self::load(path, cx).unwrap();
         }
 
-        if let Some(base_keymap) = cx.global::<Settings>().base_keymap {
-            Self::load(base_keymap.asset_path(), cx).log_err();
+        if let Some(asset_path) = cx.global::<Settings>().base_keymap.asset_path() {
+            Self::load(asset_path, cx).log_err();
         }
     }
 

@@ -1329,7 +1329,7 @@ impl View for ProjectPanel {
 
                             keystroke_label(
                                 parent_view_id,
-                                "Open a new project",
+                                "Open project",
                                 &button_style,
                                 context_menu_item.keystroke,
                                 workspace::Open,

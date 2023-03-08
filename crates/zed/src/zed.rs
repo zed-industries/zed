@@ -35,7 +35,7 @@ use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{dock::Dock, open_new, sidebar::SidebarSide, AppState, Restart, Workspace};
+use workspace::{open_new, sidebar::SidebarSide, AppState, Restart, Workspace};
 
 pub const FIRST_OPEN: &str = "first_open";
 
@@ -270,7 +270,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
                 workspace.toggle_sidebar(SidebarSide::Left, cx);
                 let welcome_page = cx.add_view(|cx| welcome::WelcomePage::new(cx));
                 workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
-                Dock::move_dock(workspace, settings::DockAnchor::Bottom, false, cx);
                 cx.focus(welcome_page);
                 cx.notify();
             })

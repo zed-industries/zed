@@ -14,6 +14,7 @@ test-support = []
 anyhow = "1.0.38"
 log = "0.4"
 editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 install_cli = { path = "../install_cli" }
 project = { path = "../project" }
@@ -21,4 +22,5 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
+picker = { path = "../picker" }
 workspace = { path = "../workspace" }

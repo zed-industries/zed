@@ -8030,9 +8030,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "fuzzy",
  "gpui",
  "install_cli",
  "log",
+ "picker",
  "project",
  "settings",
  "theme",
