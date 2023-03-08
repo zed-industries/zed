@@ -1434,7 +1434,19 @@ impl Project {
         let worktree = file.worktree.clone();
         let path = file.path.clone();
         worktree.update(cx, |worktree, cx| match worktree {
-            Worktree::Local(worktree) => worktree.save_buffer(buffer, path, false, cx),
+            Worktree::Local(worktree) => {
+                if buffer.read(cx).is_dirty() || buffer.read(cx).has_conflict() {
+                    worktree.save_buffer(buffer, path, false, cx)
+                } else {
+                    buffer.update(cx, |buffer, cx| {
+                        let version = buffer.saved_version().clone();
+                        let fingerprint = buffer.saved_version_fingerprint();
+                        let mtime = buffer.saved_mtime();
+                        buffer.did_save(version.clone(), fingerprint, mtime, cx);
+                        Task::ready(Ok((version, fingerprint, mtime)))
+                    })
+                }
+            }
             Worktree::Remote(worktree) => worktree.save_buffer(buffer, cx),
         })
     }
