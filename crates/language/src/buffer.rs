@@ -1353,7 +1353,13 @@ impl Buffer {
     }
 
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
-        self.set_active_selections(Arc::from([]), false, Default::default(), cx);
+        if self
+            .remote_selections
+            .get(&self.text.replica_id())
+            .map_or(true, |set| !set.selections.is_empty())
+        {
+            self.set_active_selections(Arc::from([]), false, Default::default(), cx);
+        }
     }
 
     pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
