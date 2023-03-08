@@ -1757,17 +1757,14 @@ impl Database {
                         .add(follower::Column::ProjectId.eq(project_id))
                         .add(
                             follower::Column::LeaderConnectionServerId
-                                .eq(leader_connection.owner_id)
-                                .and(follower::Column::LeaderConnectionId.eq(leader_connection.id)),
+                                .eq(leader_connection.owner_id),
                         )
+                        .add(follower::Column::LeaderConnectionId.eq(leader_connection.id))
                         .add(
                             follower::Column::FollowerConnectionServerId
-                                .eq(follower_connection.owner_id)
-                                .and(
-                                    follower::Column::FollowerConnectionId
-                                        .eq(follower_connection.id),
-                                ),
-                        ),
+                                .eq(follower_connection.owner_id),
+                        )
+                        .add(follower::Column::FollowerConnectionId.eq(follower_connection.id)),
                 )
                 .exec(&*tx)
                 .await?;
@@ -2560,7 +2557,7 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
-    ) -> Result<RoomGuard<LeftProject>> {
+    ) -> Result<RoomGuard<(proto::Room, LeftProject)>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             let result = project_collaborator::Entity::delete_many()
@@ -2592,13 +2589,39 @@ impl Database {
                 .map(|collaborator| collaborator.connection())
                 .collect();
 
+            follower::Entity::delete_many()
+                .filter(
+                    Condition::any()
+                        .add(
+                            Condition::all()
+                                .add(follower::Column::ProjectId.eq(project_id))
+                                .add(
+                                    follower::Column::LeaderConnectionServerId
+                                        .eq(connection.owner_id),
+                                )
+                                .add(follower::Column::LeaderConnectionId.eq(connection.id)),
+                        )
+                        .add(
+                            Condition::all()
+                                .add(follower::Column::ProjectId.eq(project_id))
+                                .add(
+                                    follower::Column::FollowerConnectionServerId
+                                        .eq(connection.owner_id),
+                                )
+                                .add(follower::Column::FollowerConnectionId.eq(connection.id)),
+                        ),
+                )
+                .exec(&*tx)
+                .await?;
+
+            let room = self.get_room(project.room_id, &tx).await?;
             let left_project = LeftProject {
                 id: project_id,
                 host_user_id: project.host_user_id,
                 host_connection_id: project.host_connection()?,
                 connection_ids,
             };
-            Ok(left_project)
+            Ok((room, left_project))
         })
         .await
     }

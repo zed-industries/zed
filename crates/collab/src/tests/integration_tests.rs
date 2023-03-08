@@ -5792,11 +5792,12 @@ async fn test_contact_requests(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_following(
+async fn test_basic_following(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
+    cx_d: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
     cx_a.update(editor::init);
@@ -5806,11 +5807,14 @@ async fn test_following(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
+    let client_d = server.create_client(cx_d, "user_d").await;
     server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    server
-        .make_contacts(&mut [(&client_a, cx_a), (&client_c, cx_c)])
+        .create_room(&mut [
+            (&client_a, cx_a),
+            (&client_b, cx_b),
+            (&client_c, cx_c),
+            (&client_d, cx_d),
+        ])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
@@ -5877,6 +5881,7 @@ async fn test_following(
     let peer_id_a = client_a.peer_id().unwrap();
     let peer_id_b = client_b.peer_id().unwrap();
     let peer_id_c = client_c.peer_id().unwrap();
+    let peer_id_d = client_d.peer_id().unwrap();
 
     // Client A updates their selections in those editors
     editor_a1.update(cx_a, |editor, cx| {
@@ -5896,25 +5901,15 @@ async fn test_following(
         .await
         .unwrap();
 
-    // Client A invites client C to the call.
-    active_call_a
-        .update(cx_a, |call, cx| {
-            call.invite(client_c.current_user_id(cx_c).to_proto(), None, cx)
-        })
-        .await
-        .unwrap();
     cx_c.foreground().run_until_parked();
     let active_call_c = cx_c.read(ActiveCall::global);
-    active_call_c
-        .update(cx_c, |call, cx| call.accept_incoming(cx))
-        .await
-        .unwrap();
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
     let workspace_c = client_c.build_workspace(&project_c, cx_c);
     active_call_c
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
         .await
         .unwrap();
+    drop(project_c);
 
     // Client C also follows client A.
     workspace_c
@@ -5926,12 +5921,23 @@ async fn test_following(
         .await
         .unwrap();
 
+    cx_d.foreground().run_until_parked();
+    let active_call_d = cx_d.read(ActiveCall::global);
+    let project_d = client_d.build_remote_project(project_id, cx_d).await;
+    let workspace_d = client_d.build_workspace(&project_d, cx_d);
+    active_call_d
+        .update(cx_d, |call, cx| call.set_location(Some(&project_d), cx))
+        .await
+        .unwrap();
+    drop(project_d);
+
     // All clients see that clients B and C are following client A.
     cx_c.foreground().run_until_parked();
     for (name, active_call, cx) in [
         ("A", &active_call_a, &cx_a),
         ("B", &active_call_b, &cx_b),
         ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
     ] {
         active_call.read_with(*cx, |call, cx| {
             let room = call.room().unwrap().read(cx);
@@ -5954,6 +5960,7 @@ async fn test_following(
         ("A", &active_call_a, &cx_a),
         ("B", &active_call_b, &cx_b),
         ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
     ] {
         active_call.read_with(*cx, |call, cx| {
             let room = call.room().unwrap().read(cx);
@@ -5961,6 +5968,90 @@ async fn test_following(
                 room.followers_for(peer_id_a, project_id),
                 &[peer_id_b],
                 "checking followers for A as {name}"
+            );
+        });
+    }
+
+    // Client C re-follows client A.
+    workspace_c.update(cx_c, |workspace, cx| {
+        workspace.toggle_follow(&ToggleFollow(peer_id_a), cx);
+    });
+
+    // All clients see that clients B and C are following client A.
+    cx_c.foreground().run_until_parked();
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_a, project_id),
+                &[peer_id_b, peer_id_c],
+                "checking followers for A as {name}"
+            );
+        });
+    }
+
+    // Client D follows client C.
+    workspace_d
+        .update(cx_d, |workspace, cx| {
+            workspace
+                .toggle_follow(&ToggleFollow(peer_id_c), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // All clients see that D is following C
+    cx_d.foreground().run_until_parked();
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_c, project_id),
+                &[peer_id_d],
+                "checking followers for C as {name}"
+            );
+        });
+    }
+
+    // Client C closes the project.
+    cx_c.drop_last(workspace_c);
+
+    // Clients A and B see that client B is following A, and client C is not present in the followers.
+    cx_c.foreground().run_until_parked();
+    for (name, active_call, cx) in [("A", &active_call_a, &cx_a), ("B", &active_call_b, &cx_b)] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_a, project_id),
+                &[peer_id_b],
+                "checking followers for A as {name}"
+            );
+        });
+    }
+
+    // All clients see that no-one is following C
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_c, project_id),
+                &[],
+                "checking followers for C as {name}"
             );
         });
     }

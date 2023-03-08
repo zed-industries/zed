@@ -1408,7 +1408,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
 
-    let project = session
+    let (room, project) = &*session
         .db()
         .await
         .leave_project(project_id, sender_id)
@@ -1419,7 +1419,9 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
         host_connection_id = %project.host_connection_id,
         "leave project"
     );
+
     project_left(&project, &session);
+    room_updated(&room, &session.peer);
 
     Ok(())
 }
