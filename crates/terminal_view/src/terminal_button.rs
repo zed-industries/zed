@@ -1,21 +1,26 @@
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
-    actions, elements::*, geometry::vector::vec2f, CursorStyle, Element, ElementBox, Entity,
-    MouseButton, MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, geometry::vector::vec2f, impl_internal_actions, CursorStyle, Element,
+    ElementBox, Entity, MouseButton, MutableAppContext, RenderContext, View, ViewContext,
+    ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use settings::Settings;
+use terminal::Terminal;
+use workspace::{dock::FocusDock, item::ItemHandle, NewTerminal, StatusItemView, Workspace};
 
-use crate::{dock::FocusDock, item::ItemHandle, NewTerminal, StatusItemView, Workspace};
+use crate::TerminalView;
 
-// #[derive(Clone, PartialEq)]
-// pub struct DeployTerminalMenu {
-//     position: Vector2F,
-// }
+#[derive(Clone, PartialEq)]
+pub struct FocusTerminal {
+    terminal_handle: WeakModelHandle<Terminal>,
+}
 
 actions!(terminal, [DeployTerminalMenu]);
+impl_internal_actions!(terminal, [FocusTerminal]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalButton::deploy_terminal_menu);
+    cx.add_action(TerminalButton::focus_terminal);
 }
 
 pub struct TerminalButton {
@@ -125,10 +130,11 @@ impl TerminalButton {
 
             for local_terminal_handle in local_terminal_handles {
                 if let Some(terminal) = local_terminal_handle.upgrade(cx) {
-                    // TODO: Replace the `NewTerminal` action with an action that instead focuses the selected terminal
                     menu_options.push(ContextMenuItem::item(
                         terminal.read(cx).title(),
-                        NewTerminal,
+                        FocusTerminal {
+                            terminal_handle: local_terminal_handle.clone(),
+                        },
                     ))
                 }
             }
@@ -137,6 +143,21 @@ impl TerminalButton {
         self.popup_menu.update(cx, |menu, cx| {
             menu.show(vec2f(0., 0.), AnchorCorner::TopRight, menu_options, cx);
         });
+    }
+
+    pub fn focus_terminal(&mut self, action: &FocusTerminal, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            workspace.update(cx, |workspace, cx| {
+                let terminal = workspace
+                    .items_of_type::<TerminalView>(cx)
+                    .find(|terminal| {
+                        terminal.read(cx).model().downgrade() == action.terminal_handle
+                    });
+                if let Some(terminal) = terminal {
+                    workspace.activate_item(&terminal, cx);
+                }
+            });
+        }
     }
 }
 

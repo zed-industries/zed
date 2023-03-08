@@ -12,7 +12,6 @@ pub mod searchable;
 pub mod shared_screen;
 pub mod sidebar;
 mod status_bar;
-pub mod terminal_button;
 mod toolbar;
 
 pub use smallvec;
@@ -57,7 +56,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use terminal_button::TerminalButton;
 
 use crate::{
     notifications::simple_message_notification::{MessageNotification, OsOpen},
@@ -83,7 +81,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{ResultExt, StaffMode};
+use util::ResultExt;
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
@@ -185,7 +183,6 @@ impl_actions!(workspace, [ActivatePane]);
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
     dock::init(cx);
-    terminal_button::init(cx);
     notifications::init(cx);
 
     cx.add_global_action(open);
@@ -587,7 +584,6 @@ impl Workspace {
         let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
         let left_sidebar_buttons = cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), cx));
-        let toggle_terminal = cx.add_view(|cx| TerminalButton::new(handle.clone(), cx));
         let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(handle, cx));
         let right_sidebar_buttons =
             cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), cx));
@@ -596,10 +592,6 @@ impl Workspace {
             status_bar.add_left_item(left_sidebar_buttons, cx);
             status_bar.add_right_item(right_sidebar_buttons, cx);
             status_bar.add_right_item(toggle_dock, cx);
-            // TOOD: Remove this when things are done
-            if **cx.default_global::<StaffMode>() {
-                status_bar.add_right_item(toggle_terminal, cx);
-            }
             status_bar
         });
 

@@ -1,4 +1,5 @@
 mod persistence;
+pub mod terminal_button;
 pub mod terminal_element;
 
 use std::{
@@ -177,8 +178,8 @@ impl TerminalView {
         }
     }
 
-    pub fn handle(&self) -> ModelHandle<Terminal> {
-        self.terminal.clone()
+    pub fn model(&self) -> &ModelHandle<Terminal> {
+        &self.terminal
     }
 
     pub fn has_new_content(&self) -> bool {
