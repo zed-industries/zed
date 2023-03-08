@@ -216,7 +216,7 @@ fn main() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
             } else if let Ok(Some(paths)) = open_paths_rx.try_next() {
-                cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                     .detach();
             } else {
                 cx.spawn(|cx| async move { restore_or_create_workspace(cx).await })
@@ -237,7 +237,7 @@ fn main() {
                 let app_state = app_state.clone();
                 async move {
                     while let Some(paths) = open_paths_rx.next().await {
-                        cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                        cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                             .detach();
                     }
                 }
@@ -603,7 +603,7 @@ async fn handle_cli_connection(
                     paths
                 };
                 let (workspace, items) = cx
-                    .update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                    .update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                     .await;
 
                 let mut errored = false;
