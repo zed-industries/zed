@@ -228,16 +228,27 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             }
         }
     });
-    cx.add_action({
+    cx.add_async_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_, action: &OpenPaths, cx: &mut ViewContext<Workspace>| {
-            if let Some(app_state) = app_state.upgrade() {
-                let window_id = cx.window_id();
-                let action = action.clone();
-                cx.as_mut().defer(move |cx| {
-                    open_paths(&action.paths, &app_state, Some(window_id), cx).detach();
-                })
+        move |workspace, action: &OpenPaths, cx: &mut ViewContext<Workspace>| {
+            if !workspace.project().read(cx).is_local() {
+                cx.propagate_action();
+                return None;
             }
+
+            let app_state = app_state.upgrade()?;
+            let window_id = cx.window_id();
+            let action = action.clone();
+            let close = workspace.prepare_to_close(false, cx);
+
+            Some(cx.spawn_weak(|_, mut cx| async move {
+                let can_close = close.await?;
+                if can_close {
+                    cx.update(|cx| open_paths(&action.paths, &app_state, Some(window_id), cx))
+                        .await;
+                }
+                Ok(())
+            }))
         }
     });
 
