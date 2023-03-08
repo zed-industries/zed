@@ -135,7 +135,7 @@ impl TerminalButton {
         }
 
         self.popup_menu.update(cx, |menu, cx| {
-            menu.show(vec2f(0., 0.), AnchorCorner::TopLeft, menu_options, cx);
+            menu.show(vec2f(0., 0.), AnchorCorner::TopRight, menu_options, cx);
         });
     }
 }
