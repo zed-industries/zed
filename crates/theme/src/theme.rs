@@ -858,6 +858,9 @@ pub struct WelcomeStyle {
     pub logo_subheading: ContainedText,
     pub checkbox: CheckboxStyle,
     pub button: Interactive<ContainedText>,
+    pub button_group: ContainerStyle,
+    pub heading_group: ContainerStyle,
+    pub checkbox_group: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

@@ -54,39 +54,72 @@ impl View for WelcomePage {
             self_handle.id(),
             Flex::column()
                 .with_children([
-                    Image::new("images/zed-logo-90x90.png")
-                        .constrained()
-                        .with_width(90.)
-                        .with_height(90.)
-                        .aligned()
+                    Flex::column()
+                        .with_children([
+                            Image::new("images/zed-logo-90x90.png")
+                                .constrained()
+                                .with_width(90.)
+                                .with_height(90.)
+                                .aligned()
+                                .contained()
+                                .aligned()
+                                .boxed(),
+                            Label::new(
+                                "Code at the speed of thought",
+                                theme.welcome.logo_subheading.text.clone(),
+                            )
+                            .aligned()
+                            .contained()
+                            .with_style(theme.welcome.logo_subheading.container)
+                            .boxed(),
+                        ])
                         .contained()
-                        .aligned()
+                        .with_style(theme.welcome.heading_group)
                         .boxed(),
-                    Label::new(
-                        "Code at the speed of thought",
-                        theme.welcome.logo_subheading.text.clone(),
-                    )
-                    .aligned()
-                    .contained()
-                    .with_style(theme.welcome.logo_subheading.container)
-                    .boxed(),
-                    self.render_cta_button("Choose a theme", theme_selector::Toggle, width, cx),
-                    self.render_cta_button("Choose a keymap", ToggleBaseKeymapSelector, width, cx),
-                    self.render_cta_button("Install the CLI", install_cli::Install, width, cx),
-                    self.render_settings_checkbox::<Metrics>(
-                        "Do you want to send telemetry?",
-                        &theme.welcome.checkbox,
-                        metrics,
-                        cx,
-                        |content, checked| content.telemetry.set_metrics(checked),
-                    ),
-                    self.render_settings_checkbox::<Diagnostics>(
-                        "Send crash reports",
-                        &theme.welcome.checkbox,
-                        diagnostics,
-                        cx,
-                        |content, checked| content.telemetry.set_diagnostics(checked),
-                    ),
+                    Flex::row()
+                        .with_children([
+                            self.render_cta_button(
+                                "Choose a theme",
+                                theme_selector::Toggle,
+                                width,
+                                cx,
+                            ),
+                            self.render_cta_button(
+                                "Choose a keymap",
+                                ToggleBaseKeymapSelector,
+                                width,
+                                cx,
+                            ),
+                            self.render_cta_button(
+                                "Install the CLI",
+                                install_cli::Install,
+                                width,
+                                cx,
+                            ),
+                        ])
+                        .contained()
+                        .with_style(theme.welcome.button_group)
+                        .boxed(),
+                    Flex::column()
+                        .with_children([
+                            self.render_settings_checkbox::<Metrics>(
+                                "Do you want to send telemetry?",
+                                &theme.welcome.checkbox,
+                                metrics,
+                                cx,
+                                |content, checked| content.telemetry.set_metrics(checked),
+                            ),
+                            self.render_settings_checkbox::<Diagnostics>(
+                                "Send crash reports",
+                                &theme.welcome.checkbox,
+                                diagnostics,
+                                cx,
+                                |content, checked| content.telemetry.set_diagnostics(checked),
+                            ),
+                        ])
+                        .contained()
+                        .with_style(theme.welcome.checkbox_group)
+                        .boxed(),
                 ])
                 .constrained()
                 .with_max_width(width)
