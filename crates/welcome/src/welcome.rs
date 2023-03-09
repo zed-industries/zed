@@ -125,7 +125,7 @@ impl View for WelcomePage {
                     Flex::column()
                         .with_children([
                             theme::ui::checkbox::<Metrics, Self>(
-                                "Do you want to send telemetry?",
+                                "Send anonymous usage data to improve Zed (View what we're sending via Help > View Telemetry Log)",
                                 &theme.welcome.checkbox,
                                 metrics,
                                 cx,
