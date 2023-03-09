@@ -40,34 +40,40 @@ export default function workspace(colorScheme: ColorScheme) {
     const followerAvatarOuterWidth = followerAvatarWidth + 4
 
     return {
-        background: background(layer),
+        background: background(colorScheme.lowest),
         blankPane: {
             logo: {
-                color: background(layer, "on"),
+                color: border(layer, "active").color,
                 icon: "icons/logo_96.svg",
                 dimensions: {
-                    width: 256,
-                    height: 256,
+                    width: 272,
+                    height: 272,
                 }
             },
             keyboardHints: {
                 margin: {
-                    top: 32
+                    top: 32,
+                    // bottom: -8.
                 },
                 padding: {
-                    bottom: -8.
-                }
+                    top: 8,
+                    left: 8,
+                    right: 8,
+                },
+                background: background(colorScheme.lowest),
+                border: border(layer, "active"),
+                cornerRadius: 4,
             },
             keyboardHint: {
-                ...text(colorScheme.lowest, "sans", "variant", { size: "sm" }),
+                ...text(layer, "sans", "variant", { size: "sm" }),
                 margin: {
                     bottom: 8
                 },
                 hover: {
-                    ...text(colorScheme.lowest, "sans", "hovered", { size: "sm" }),
+                    ...text(layer, "sans", "hovered", { size: "sm" }),
                 }
             },
-            keyboardHintWidth: 256,
+            keyboardHintWidth: 272,
         },
         joiningProjectAvatar: {
             cornerRadius: 40,
