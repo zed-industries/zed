@@ -79,7 +79,6 @@ impl View for TerminalButton {
                 .on_click(MouseButton::Left, move |_, cx| {
                     if has_terminals {
                         cx.dispatch_action(DeployTerminalMenu);
-                        println!("Yes, has_terminals {}", terminal_count);
                     } else {
                         cx.dispatch_action(FocusDock);
                     };
