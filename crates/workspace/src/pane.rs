@@ -110,6 +110,8 @@ impl_internal_actions!(
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
+pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
         pane.activate_item(action.0, true, true, cx);
@@ -215,6 +217,7 @@ pub struct Pane {
     toolbar: ViewHandle<Toolbar>,
     tab_bar_context_menu: ViewHandle<ContextMenu>,
     docked: Option<DockAnchor>,
+    background_actions: BackgroundActions,
 }
 
 pub struct ItemNavHistory {
@@ -271,7 +274,11 @@ enum ItemType {
 }
 
 impl Pane {
-    pub fn new(docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        docked: Option<DockAnchor>,
+        background_actions: BackgroundActions,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let handle = cx.weak_handle();
         let context_menu = cx.add_view(ContextMenu::new);
         Self {
@@ -292,6 +299,7 @@ impl Pane {
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
             tab_bar_context_menu: context_menu,
             docked,
+            background_actions,
         }
     }
 
@@ -1415,6 +1423,64 @@ impl Pane {
             .flex(1., false)
             .boxed()
     }
+
+    fn render_blank_pane(&mut self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        let background = theme.workspace.background;
+        let keystroke_style = &theme.context_menu.item;
+        let theme = &theme.workspace.blank_pane;
+        Stack::new()
+            .with_children([
+                Empty::new()
+                    .contained()
+                    .with_background_color(background)
+                    .boxed(),
+                Flex::column()
+                    .align_children_center()
+                    .with_children([
+                        theme::ui::icon(&theme.logo).aligned().boxed(),
+                        Flex::column()
+                            .with_children({
+                                enum KeyboardHint {}
+                                let keyboard_hint = &theme.keyboard_hint;
+                                (self.background_actions)().into_iter().enumerate().map(
+                                    move |(idx, (text, action))| {
+                                        let hint_action = action.boxed_clone();
+                                        MouseEventHandler::<KeyboardHint>::new(
+                                            idx,
+                                            cx,
+                                            move |state, cx| {
+                                                theme::ui::keystroke_label(
+                                                    text,
+                                                    &keyboard_hint.style_for(state, false),
+                                                    &keystroke_style
+                                                        .style_for(state, false)
+                                                        .keystroke,
+                                                    hint_action,
+                                                    cx,
+                                                )
+                                                .boxed()
+                                            },
+                                        )
+                                        .on_click(MouseButton::Left, move |_, cx| {
+                                            cx.dispatch_any_action(action.boxed_clone())
+                                        })
+                                        .with_cursor_style(CursorStyle::PointingHand)
+                                        .boxed()
+                                    },
+                                )
+                            })
+                            .contained()
+                            .with_style(theme.keyboard_hints)
+                            .constrained()
+                            .with_max_width(theme.keyboard_hint_width)
+                            .aligned()
+                            .boxed(),
+                    ])
+                    .aligned()
+                    .boxed(),
+            ])
+            .boxed()
+    }
 }
 
 impl Entity for Pane {
@@ -1508,11 +1574,8 @@ impl View for Pane {
                         enum EmptyPane {}
                         let theme = cx.global::<Settings>().theme.clone();
 
-                        dragged_item_receiver::<EmptyPane, _>(0, 0, false, None, cx, |_, _| {
-                            Empty::new()
-                                .contained()
-                                .with_background_color(theme.workspace.background)
-                                .boxed()
+                        dragged_item_receiver::<EmptyPane, _>(0, 0, false, None, cx, |_, cx| {
+                            self.render_blank_pane(&theme, cx)
                         })
                         .on_down(MouseButton::Left, |_, cx| {
                             cx.focus_parent_view();
@@ -1809,9 +1872,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1899,9 +1960,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1977,9 +2036,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view
@@ -2088,8 +2145,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(None, 0, project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labled_item(&workspace, &pane, "A", cx);

@@ -432,6 +432,7 @@ pub struct AppState {
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
     pub dock_default_item_factory: DockDefaultItemFactory,
+    pub background_actions: BackgroundActions,
 }
 
 impl AppState {
@@ -455,6 +456,7 @@ impl AppState {
             initialize_workspace: |_, _, _| {},
             build_window_options: |_, _, _| Default::default(),
             dock_default_item_factory: |_, _| unimplemented!(),
+            background_actions: || unimplemented!(),
         })
     }
 }
@@ -542,6 +544,7 @@ pub struct Workspace {
     active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
+    background_actions: BackgroundActions,
     _window_subscriptions: [Subscription; 3],
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<()>,
@@ -572,6 +575,7 @@ impl Workspace {
         workspace_id: WorkspaceId,
         project: ModelHandle<Project>,
         dock_default_factory: DockDefaultItemFactory,
+        background_actions: BackgroundActions,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -602,7 +606,7 @@ impl Workspace {
         })
         .detach();
 
-        let center_pane = cx.add_view(|cx| Pane::new(None, cx));
+        let center_pane = cx.add_view(|cx| Pane::new(None, background_actions, cx));
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -610,7 +614,7 @@ impl Workspace {
         .detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
-        let dock = Dock::new(dock_default_factory, cx);
+        let dock = Dock::new(dock_default_factory, background_actions, cx);
         let dock_pane = dock.pane().clone();
 
         let fs = project.read(cx).fs().clone();
@@ -730,6 +734,7 @@ impl Workspace {
             window_edited: false,
             active_call,
             database_id: workspace_id,
+            background_actions,
             _observe_current_user,
             _apply_leader_updates,
             leader_updates_tx,
@@ -818,6 +823,7 @@ impl Workspace {
                         workspace_id,
                         project_handle,
                         app_state.dock_default_item_factory,
+                        app_state.background_actions,
                         cx,
                     );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
@@ -1432,7 +1438,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(None, cx));
+        let pane = cx.add_view(|cx| Pane::new(None, self.background_actions, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -2648,6 +2654,11 @@ impl Workspace {
         })
         .detach();
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        Self::new(None, 0, project, |_, _| None, || &[], cx)
+    }
 }
 
 fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAppContext) {
@@ -2988,16 +2999,9 @@ mod tests {
 
     use super::*;
     use fs::FakeFs;
-    use gpui::{executor::Deterministic, TestAppContext, ViewContext};
+    use gpui::{executor::Deterministic, TestAppContext};
     use project::{Project, ProjectEntryId};
     use serde_json::json;
-
-    pub fn default_item_factory(
-        _workspace: &mut Workspace,
-        _cx: &mut ViewContext<Workspace>,
-    ) -> Option<Box<dyn ItemHandle>> {
-        unimplemented!()
-    }
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -3011,7 +3015,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                default_item_factory,
+                |_, _| unimplemented!(),
+                || unimplemented!(),
                 cx,
             )
         });
@@ -3083,7 +3088,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                default_item_factory,
+                |_, _| unimplemented!(),
+                || unimplemented!(),
                 cx,
             )
         });
@@ -3183,7 +3189,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                default_item_factory,
+                |_, _| unimplemented!(),
+                || unimplemented!(),
                 cx,
             )
         });
@@ -3222,7 +3229,14 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(
+                Default::default(),
+                0,
+                project,
+                |_, _| unimplemented!(),
+                || unimplemented!(),
+                cx,
+            )
         });
 
         let item1 = cx.add_view(&workspace, |cx| {
@@ -3331,7 +3345,14 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(
+                Default::default(),
+                0,
+                project,
+                |_, _| unimplemented!(),
+                || unimplemented!(),
+                cx,
+            )
         });
 
         // Create several workspace items with single project entries, and two
@@ -3440,7 +3461,14 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(
+                Default::default(),
+                0,
+                project,
+                |_, _| unimplemented!(),
+                || unimplemented!(),
+                cx,
+            )
         });
 
         let item = cx.add_view(&workspace, |cx| {
@@ -3559,7 +3587,14 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(
+                Default::default(),
+                0,
+                project,
+                |_, _| unimplemented!(),
+                || unimplemented!(),
+                cx,
+            )
         });
 
         let item = cx.add_view(&workspace, |cx| {

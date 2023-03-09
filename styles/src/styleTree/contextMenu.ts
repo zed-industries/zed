@@ -26,14 +26,19 @@ export default function contextMenu(colorScheme: ColorScheme) {
             hover: {
                 background: background(layer, "hovered"),
                 label: text(layer, "sans", "hovered", { size: "sm" }),
+                keystroke: {
+                    ...text(layer, "sans", "hovered", {
+                        size: "sm",
+                        weight: "bold",
+                    }),
+                    padding: { left: 3, right: 3 },
+                },
             },
             active: {
                 background: background(layer, "active"),
-                label: text(layer, "sans", "active", { size: "sm" }),
             },
             activeHover: {
                 background: background(layer, "active"),
-                label: text(layer, "sans", "active", { size: "sm" }),
             },
         },
         separator: {

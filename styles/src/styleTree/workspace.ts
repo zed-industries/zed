@@ -41,6 +41,34 @@ export default function workspace(colorScheme: ColorScheme) {
 
     return {
         background: background(layer),
+        blankPane: {
+            logo: {
+                color: background(layer, "on"),
+                icon: "icons/logo_96.svg",
+                dimensions: {
+                    width: 240,
+                    height: 240,
+                }
+            },
+            keyboardHints: {
+                margin: {
+                    top: 32
+                },
+                padding: {
+                    bottom: -8.
+                }
+            },
+            keyboardHint: {
+                ...text(colorScheme.lowest, "sans", "variant", { size: "sm" }),
+                margin: {
+                    bottom: 8
+                },
+                hover: {
+                    ...text(colorScheme.lowest, "sans", "hovered", { size: "sm" }),
+                }
+            },
+            keyboardHintWidth: 240,
+        },
         joiningProjectAvatar: {
             cornerRadius: 40,
             width: 80,

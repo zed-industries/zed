@@ -13,7 +13,7 @@ use gpui::{
 use settings::{DockAnchor, Settings};
 use theme::Theme;
 
-use crate::{sidebar::SidebarSide, ItemHandle, Pane, Workspace};
+use crate::{sidebar::SidebarSide, BackgroundActions, ItemHandle, Pane, Workspace};
 pub use toggle_dock_button::ToggleDockButton;
 
 #[derive(PartialEq, Clone, Deserialize)]
@@ -182,11 +182,12 @@ pub struct Dock {
 impl Dock {
     pub fn new(
         default_item_factory: DockDefaultItemFactory,
+        background_actions: BackgroundActions,
         cx: &mut ViewContext<Workspace>,
     ) -> Self {
         let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
 
-        let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), cx));
+        let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), background_actions, cx));
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
@@ -492,6 +493,7 @@ mod tests {
                 0,
                 project.clone(),
                 default_item_factory,
+                || unimplemented!(),
                 cx,
             )
         });
@@ -620,7 +622,14 @@ mod tests {
             cx.update(|cx| init(cx));
             let project = Project::test(fs, [], cx).await;
             let (window_id, workspace) = cx.add_window(|cx| {
-                Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+                Workspace::new(
+                    Default::default(),
+                    0,
+                    project,
+                    default_item_factory,
+                    || unimplemented!(),
+                    cx,
+                )
             });
 
             workspace.update(cx, |workspace, cx| {

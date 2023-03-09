@@ -6,15 +6,14 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ConstrainedBox, Container, ContainerStyle, Empty, Flex,
-        KeystrokeLabel, Label, MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg,
-        UniformList, UniformListState,
+        AnchorCorner, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex, Label,
+        MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
-    Action, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -28,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::{ContainedText, ProjectPanelEntry};
+use theme::ProjectPanelEntry;
 use unicase::UniCase;
 use workspace::Workspace;
 
@@ -1315,7 +1314,6 @@ impl View for ProjectPanel {
                 .with_child(ChildView::new(&self.context_menu, cx).boxed())
                 .boxed()
         } else {
-            let parent_view_id = cx.handle().id();
             Flex::column()
                 .with_child(
                     MouseEventHandler::<Self>::new(2, cx, {
@@ -1327,12 +1325,11 @@ impl View for ProjectPanel {
                             let context_menu_item =
                                 context_menu_item_style.style_for(state, true).clone();
 
-                            keystroke_label(
-                                parent_view_id,
+                            theme::ui::keystroke_label(
                                 "Open a project",
                                 &button_style,
-                                context_menu_item.keystroke,
-                                workspace::Open,
+                                &context_menu_item.keystroke,
+                                Box::new(workspace::Open),
                                 cx,
                             )
                             .boxed()
@@ -1355,38 +1352,6 @@ impl View for ProjectPanel {
         cx.add_identifier("menu");
         cx
     }
-}
-
-fn keystroke_label<A>(
-    view_id: usize,
-    label_text: &'static str,
-    label_style: &ContainedText,
-    keystroke_style: ContainedText,
-    action: A,
-    cx: &mut RenderContext<ProjectPanel>,
-) -> Container
-where
-    A: Action,
-{
-    Flex::row()
-        .with_child(
-            Label::new(label_text, label_style.text.clone())
-                .contained()
-                .boxed(),
-        )
-        .with_child({
-            KeystrokeLabel::new(
-                cx.window_id(),
-                view_id,
-                Box::new(action),
-                keystroke_style.container,
-                keystroke_style.text.clone(),
-            )
-            .flex_float()
-            .boxed()
-        })
-        .contained()
-        .with_style(label_style.container)
 }
 
 impl Entity for ProjectPanel {
@@ -1474,15 +1439,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1574,15 +1531,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);

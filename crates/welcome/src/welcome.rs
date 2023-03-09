@@ -4,12 +4,12 @@ use std::{borrow::Cow, sync::Arc};
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    elements::{Empty, Flex, Label, MouseEventHandler, ParentElement, Svg},
+    elements::{Flex, Label, MouseEventHandler, ParentElement},
     Action, Element, ElementBox, Entity, MouseButton, MutableAppContext, RenderContext,
     Subscription, View, ViewContext,
 };
-use settings::{settings_file::SettingsFile, Settings, SettingsFileContent};
-use theme::CheckboxStyle;
+use settings::{settings_file::SettingsFile, Settings};
+
 use workspace::{
     item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
@@ -77,11 +77,7 @@ impl View for WelcomePage {
                 .with_children([
                     Flex::column()
                         .with_children([
-                            Svg::new(theme.welcome.logo.icon.clone())
-                                .with_color(theme.welcome.logo.color)
-                                .constrained()
-                                .with_width(theme.welcome.logo.dimensions.width)
-                                .with_height(theme.welcome.logo.dimensions.height)
+                            theme::ui::icon(&theme.welcome.logo)
                                 .aligned()
                                 .contained()
                                 .aligned()
@@ -128,20 +124,34 @@ impl View for WelcomePage {
                         .boxed(),
                     Flex::column()
                         .with_children([
-                            self.render_settings_checkbox::<Metrics>(
+                            theme::ui::checkbox::<Metrics, Self>(
                                 "Do you want to send telemetry?",
                                 &theme.welcome.checkbox,
                                 metrics,
                                 cx,
-                                |content, checked| content.telemetry.set_metrics(checked),
-                            ),
-                            self.render_settings_checkbox::<Diagnostics>(
+                                |checked, cx| {
+                                    SettingsFile::update(cx, move |file| {
+                                        file.telemetry.set_metrics(checked)
+                                    })
+                                },
+                            )
+                            .contained()
+                            .with_style(theme.welcome.checkbox_container)
+                            .boxed(),
+                            theme::ui::checkbox::<Diagnostics, Self>(
                                 "Send crash reports",
                                 &theme.welcome.checkbox,
                                 diagnostics,
                                 cx,
-                                |content, checked| content.telemetry.set_diagnostics(checked),
-                            ),
+                                |checked, cx| {
+                                    SettingsFile::update(cx, move |file| {
+                                        file.telemetry.set_diagnostics(checked)
+                                    })
+                                },
+                            )
+                            .contained()
+                            .with_style(theme.welcome.checkbox_container)
+                            .boxed(),
                         ])
                         .contained()
                         .with_style(theme.welcome.checkbox_group)
@@ -204,59 +214,59 @@ impl WelcomePage {
         .boxed()
     }
 
-    fn render_settings_checkbox<T: 'static>(
-        &self,
-        label: &'static str,
-        style: &CheckboxStyle,
-        checked: bool,
-        cx: &mut RenderContext<Self>,
-        set_value: fn(&mut SettingsFileContent, checked: bool) -> (),
-    ) -> ElementBox {
-        MouseEventHandler::<T>::new(0, cx, |state, _| {
-            let indicator = if checked {
-                Svg::new(style.check_icon.clone())
-                    .with_color(style.check_icon_color)
-                    .constrained()
-            } else {
-                Empty::new().constrained()
-            };
+    // fn render_settings_checkbox<T: 'static>(
+    //     &self,
+    //     label: &'static str,
+    //     style: &CheckboxStyle,
+    //     checked: bool,
+    //     cx: &mut RenderContext<Self>,
+    //     set_value: fn(&mut SettingsFileContent, checked: bool) -> (),
+    // ) -> ElementBox {
+    //     MouseEventHandler::<T>::new(0, cx, |state, _| {
+    //         let indicator = if checked {
+    //             Svg::new(style.check_icon.clone())
+    //                 .with_color(style.check_icon_color)
+    //                 .constrained()
+    //         } else {
+    //             Empty::new().constrained()
+    //         };
 
-            Flex::row()
-                .with_children([
-                    indicator
-                        .with_width(style.width)
-                        .with_height(style.height)
-                        .contained()
-                        .with_style(if checked {
-                            if state.hovered() {
-                                style.hovered_and_checked
-                            } else {
-                                style.checked
-                            }
-                        } else {
-                            if state.hovered() {
-                                style.hovered
-                            } else {
-                                style.default
-                            }
-                        })
-                        .boxed(),
-                    Label::new(label, style.label.text.clone())
-                        .contained()
-                        .with_style(style.label.container)
-                        .boxed(),
-                ])
-                .align_children_center()
-                .boxed()
-        })
-        .on_click(gpui::MouseButton::Left, move |_, cx| {
-            SettingsFile::update(cx, move |content| set_value(content, !checked))
-        })
-        .with_cursor_style(gpui::CursorStyle::PointingHand)
-        .contained()
-        .with_style(style.container)
-        .boxed()
-    }
+    //         Flex::row()
+    //             .with_children([
+    //                 indicator
+    //                     .with_width(style.width)
+    //                     .with_height(style.height)
+    //                     .contained()
+    //                     .with_style(if checked {
+    //                         if state.hovered() {
+    //                             style.hovered_and_checked
+    //                         } else {
+    //                             style.checked
+    //                         }
+    //                     } else {
+    //                         if state.hovered() {
+    //                             style.hovered
+    //                         } else {
+    //                             style.default
+    //                         }
+    //                     })
+    //                     .boxed(),
+    //                 Label::new(label, style.label.text.clone())
+    //                     .contained()
+    //                     .with_style(style.label.container)
+    //                     .boxed(),
+    //             ])
+    //             .align_children_center()
+    //             .boxed()
+    //     })
+    //     .on_click(gpui::MouseButton::Left, move |_, cx| {
+    //         SettingsFile::update(cx, move |content| set_value(content, !checked))
+    //     })
+    //     .with_cursor_style(gpui::CursorStyle::PointingHand)
+    //     .contained()
+    //     .with_style(style.container)
+    //     .boxed()
+    // }
 }
 
 impl Item for WelcomePage {

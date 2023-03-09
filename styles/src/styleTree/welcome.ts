@@ -86,20 +86,24 @@ export default function welcome(colorScheme: ColorScheme) {
                 border: border(layer, "active"),
             },
         },
+        checkboxContainer: {
+            margin: {
+                top: 4,
+            },
+        },
         checkbox: {
             label: {
                 ...text(layer, "sans", interactive_text_size),
                 // Also supports margin, container, border, etc.
             },
-            container: {
-                margin: {
-                    top: 4,
-                },
+            icon: {
+                color: foreground(layer, "on"),
+                icon: "icons/check_12.svg",
+                dimensions: {
+                    width: 12,
+                    height: 12,
+                }
             },
-            width: 12,
-            height: 12,
-            checkIcon: "icons/check_12.svg",
-            checkIconColor: foreground(layer, "on"),
             default: {
                 ...checkboxBase,
                 background: background(layer, "default"),

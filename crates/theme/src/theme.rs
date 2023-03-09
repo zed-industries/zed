@@ -9,6 +9,9 @@ use gpui::{
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
+use ui::{CheckboxStyle, IconStyle};
+
+pub mod ui;
 
 pub use theme_registry::*;
 
@@ -50,6 +53,7 @@ pub struct ThemeMeta {
 #[derive(Deserialize, Default)]
 pub struct Workspace {
     pub background: Color,
+    pub blank_pane: BlankPaneStyle,
     pub titlebar: Titlebar,
     pub tab_bar: TabBar,
     pub pane_divider: Border,
@@ -67,6 +71,14 @@ pub struct Workspace {
     pub external_location_message: ContainedText,
     pub dock: Dock,
     pub drop_target_overlay_color: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct BlankPaneStyle {
+    pub logo: IconStyle,
+    pub keyboard_hints: ContainerStyle,
+    pub keyboard_hint: Interactive<ContainedText>,
+    pub keyboard_hint_width: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -858,6 +870,7 @@ pub struct WelcomeStyle {
     pub logo: IconStyle,
     pub logo_subheading: ContainedText,
     pub checkbox: CheckboxStyle,
+    pub checkbox_container: ContainerStyle,
     pub button: Interactive<ContainedText>,
     pub button_group: ContainerStyle,
     pub heading_group: ContainerStyle,
@@ -865,39 +878,10 @@ pub struct WelcomeStyle {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct IconStyle {
-    pub color: Color,
-    pub icon: String,
-    pub dimensions: Dimensions,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct Dimensions {
-    pub width: f32,
-    pub height: f32,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct CheckboxStyle {
-    pub check_icon: String,
-    pub check_icon_color: Color,
-    pub label: ContainedText,
-    pub container: ContainerStyle,
-    pub width: f32,
-    pub height: f32,
-    pub default: ContainerStyle,
-    pub checked: ContainerStyle,
-    pub hovered: ContainerStyle,
-    pub hovered_and_checked: ContainerStyle,
-}
-
-#[derive(Clone, Deserialize, Default)]
 pub struct ColorScheme {
     pub name: String,
     pub is_light: bool,
-
     pub ramps: RampSet,
-
     pub lowest: Layer,
     pub middle: Layer,
     pub highest: Layer,

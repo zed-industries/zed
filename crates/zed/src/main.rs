@@ -18,7 +18,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{App, AssetSource, AsyncAppContext, MutableAppContext, Task, ViewContext};
+use gpui::{Action, App, AssetSource, AsyncAppContext, MutableAppContext, Task, ViewContext};
 use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -45,9 +45,10 @@ use theme::ThemeRegistry;
 use util::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
+    self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile,
+    OpenPaths, Workspace,
 };
-use zed::{self, build_window_options, initialize_workspace, languages, menus};
+use zed::{self, build_window_options, initialize_workspace, languages, menus, OpenSettings};
 
 fn main() {
     let http = http::client();
@@ -186,6 +187,7 @@ fn main() {
             build_window_options,
             initialize_workspace,
             dock_default_item_factory,
+            background_actions,
         });
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
@@ -702,4 +704,14 @@ pub fn dock_default_item_factory(
     let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
 
     Some(Box::new(terminal_view))
+}
+
+pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
+    &[
+        ("Go to file", &file_finder::Toggle),
+        ("Open the command palette", &command_palette::Toggle),
+        ("Focus the dock", &FocusDock),
+        ("Open recent projects", &recent_projects::OpenRecent),
+        ("Change your settings", &OpenSettings),
+    ]
 }
