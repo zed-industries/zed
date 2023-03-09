@@ -606,9 +606,10 @@ impl Workspace {
         })
         .detach();
 
-        let workspace_view_id = cx.handle().id();
+        let weak_handle = cx.weak_handle();
+
         let center_pane =
-            cx.add_view(|cx| Pane::new(workspace_view_id, None, background_actions, cx));
+            cx.add_view(|cx| Pane::new(weak_handle.id(), None, background_actions, cx));
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -616,7 +617,12 @@ impl Workspace {
         .detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
-        let dock = Dock::new(dock_default_factory, background_actions, cx);
+        let dock = Dock::new(
+            weak_handle.id(),
+            dock_default_factory,
+            background_actions,
+            cx,
+        );
         let dock_pane = dock.pane().clone();
 
         let fs = project.read(cx).fs().clone();
@@ -639,7 +645,6 @@ impl Workspace {
             }
         });
         let handle = cx.handle();
-        let weak_handle = cx.weak_handle();
 
         // All leader updates are enqueued and then processed in a single task, so
         // that each asynchronous operation can be run in order.
@@ -1440,7 +1445,14 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(cx.handle().id(), None, self.background_actions, cx));
+        let pane = cx.add_view(|cx| {
+            Pane::new(
+                dbg!(self.weak_handle().id()),
+                None,
+                self.background_actions,
+                cx,
+            )
+        });
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)

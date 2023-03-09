@@ -181,6 +181,7 @@ pub struct Dock {
 
 impl Dock {
     pub fn new(
+        workspace_id: usize,
         default_item_factory: DockDefaultItemFactory,
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Workspace>,
@@ -189,7 +190,7 @@ impl Dock {
 
         let pane = cx.add_view(|cx| {
             Pane::new(
-                cx.handle().id(),
+                workspace_id,
                 Some(position.anchor()),
                 background_actions,
                 cx,
