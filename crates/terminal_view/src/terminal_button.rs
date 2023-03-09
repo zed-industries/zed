@@ -1,6 +1,6 @@
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
-    actions, elements::*, geometry::vector::vec2f, impl_internal_actions, CursorStyle, Element,
+    elements::*, geometry::vector::Vector2F, impl_internal_actions, CursorStyle, Element,
     ElementBox, Entity, MouseButton, MutableAppContext, RenderContext, View, ViewContext,
     ViewHandle, WeakModelHandle, WeakViewHandle,
 };
@@ -15,8 +15,12 @@ pub struct FocusTerminal {
     terminal_handle: WeakModelHandle<Terminal>,
 }
 
-actions!(terminal, [DeployTerminalMenu]);
-impl_internal_actions!(terminal, [FocusTerminal]);
+#[derive(Clone, PartialEq)]
+pub struct DeployTerminalMenu {
+    position: Vector2F,
+}
+
+impl_internal_actions!(terminal, [FocusTerminal, DeployTerminalMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalButton::deploy_terminal_menu);
@@ -44,7 +48,6 @@ impl View for TerminalButton {
             None => return Empty::new().boxed(),
         };
         let has_terminals = !project.local_terminal_handles().is_empty();
-        let terminal_count = project.local_terminal_handles().iter().count();
         let theme = cx.global::<Settings>().theme.clone();
 
         Stack::new()
@@ -76,9 +79,11 @@ impl View for TerminalButton {
                     // let drop_index = dock_pane.read(cx.app).items_len() + 1;
                     // handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
                 })
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |e, cx| {
                     if has_terminals {
-                        cx.dispatch_action(DeployTerminalMenu);
+                        cx.dispatch_action(DeployTerminalMenu {
+                            position: e.region.upper_right(),
+                        });
                     } else {
                         cx.dispatch_action(FocusDock);
                     };
@@ -106,7 +111,7 @@ impl TerminalButton {
             workspace: workspace.downgrade(),
             popup_menu: cx.add_view(|cx| {
                 let mut menu = ContextMenu::new(cx);
-                menu.set_position_mode(OverlayPositionMode::Local);
+                menu.set_position_mode(OverlayPositionMode::Window);
                 menu
             }),
         }
@@ -114,7 +119,7 @@ impl TerminalButton {
 
     pub fn deploy_terminal_menu(
         &mut self,
-        _action: &DeployTerminalMenu,
+        action: &DeployTerminalMenu,
         cx: &mut ViewContext<Self>,
     ) {
         let mut menu_options = vec![ContextMenuItem::item("New Terminal", NewTerminal)];
@@ -140,7 +145,7 @@ impl TerminalButton {
         }
 
         self.popup_menu.update(cx, |menu, cx| {
-            menu.show(vec2f(0., 0.), AnchorCorner::TopRight, menu_options, cx);
+            menu.show(action.position, AnchorCorner::BottomRight, menu_options, cx);
         });
     }
 
