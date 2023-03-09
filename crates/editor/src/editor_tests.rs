@@ -2353,12 +2353,16 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         e.paste(&Paste, cx);
         e.handle_input(") ", cx);
     });
-    cx.assert_editor_state(indoc! {"
-        ( one✅ 
-        three 
-        five ) ˇtwo one✅ four three six five ( one✅ 
-        three 
-        five ) ˇ"});
+    cx.assert_editor_state(
+        &([
+            "( one✅ ",
+            "three ",
+            "five ) ˇtwo one✅ four three six five ( one✅ ",
+            "three ",
+            "five ) ˇ",
+        ]
+        .join("\n")),
+    );
 
     // Cut with three selections, one of which is full-line.
     cx.set_state(indoc! {"
