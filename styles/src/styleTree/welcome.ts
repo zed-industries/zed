@@ -88,8 +88,9 @@ export default function welcome(colorScheme: ColorScheme) {
         },
         usageNote: {
             ...text(layer, "sans", "variant", { size: "2xs" }),
-            margin: {
-                top: -4
+            padding: {
+                top: -4,
+
             }
         },
         checkboxContainer: {
