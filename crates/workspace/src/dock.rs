@@ -500,7 +500,7 @@ mod tests {
                 0,
                 project.clone(),
                 default_item_factory,
-                || unimplemented!(),
+                || &[],
                 cx,
             )
         });
@@ -634,7 +634,7 @@ mod tests {
                     0,
                     project,
                     default_item_factory,
-                    || unimplemented!(),
+                    || &[],
                     cx,
                 )
             });

@@ -455,8 +455,8 @@ impl AppState {
             user_store,
             initialize_workspace: |_, _, _| {},
             build_window_options: |_, _, _| Default::default(),
-            dock_default_item_factory: |_, _| unimplemented!(),
-            background_actions: || unimplemented!(),
+            dock_default_item_factory: |_, _| None,
+            background_actions: || &[],
         })
     }
 }
@@ -3017,8 +3017,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                |_, _| unimplemented!(),
-                || unimplemented!(),
+                |_, _| None,
+                || &[],
                 cx,
             )
         });
@@ -3090,8 +3090,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                |_, _| unimplemented!(),
-                || unimplemented!(),
+                |_, _| None,
+                || &[],
                 cx,
             )
         });
@@ -3191,8 +3191,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                |_, _| unimplemented!(),
-                || unimplemented!(),
+                |_, _| None,
+                || &[],
                 cx,
             )
         });
@@ -3231,14 +3231,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project,
-                |_, _| unimplemented!(),
-                || unimplemented!(),
-                cx,
-            )
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         let item1 = cx.add_view(&workspace, |cx| {
@@ -3347,14 +3340,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project,
-                |_, _| unimplemented!(),
-                || unimplemented!(),
-                cx,
-            )
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         // Create several workspace items with single project entries, and two
@@ -3463,14 +3449,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project,
-                |_, _| unimplemented!(),
-                || unimplemented!(),
-                cx,
-            )
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         let item = cx.add_view(&workspace, |cx| {
@@ -3589,14 +3568,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project,
-                |_, _| unimplemented!(),
-                || unimplemented!(),
-                cx,
-            )
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         let item = cx.add_view(&workspace, |cx| {
