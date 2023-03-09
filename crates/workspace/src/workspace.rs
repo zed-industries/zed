@@ -606,7 +606,9 @@ impl Workspace {
         })
         .detach();
 
-        let center_pane = cx.add_view(|cx| Pane::new(None, background_actions, cx));
+        let workspace_view_id = cx.handle().id();
+        let center_pane =
+            cx.add_view(|cx| Pane::new(workspace_view_id, None, background_actions, cx));
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -1438,7 +1440,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(None, self.background_actions, cx));
+        let pane = cx.add_view(|cx| Pane::new(cx.handle().id(), None, self.background_actions, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)

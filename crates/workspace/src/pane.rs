@@ -218,6 +218,7 @@ pub struct Pane {
     tab_bar_context_menu: ViewHandle<ContextMenu>,
     docked: Option<DockAnchor>,
     background_actions: BackgroundActions,
+    workspace_id: usize,
 }
 
 pub struct ItemNavHistory {
@@ -275,6 +276,7 @@ enum ItemType {
 
 impl Pane {
     pub fn new(
+        workspace_id: usize,
         docked: Option<DockAnchor>,
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Self>,
@@ -300,6 +302,7 @@ impl Pane {
             tab_bar_context_menu: context_menu,
             docked,
             background_actions,
+            workspace_id,
         }
     }
 
@@ -1442,6 +1445,7 @@ impl Pane {
                             .with_children({
                                 enum KeyboardHint {}
                                 let keyboard_hint = &theme.keyboard_hint;
+                                let workspace_id = self.workspace_id;
                                 (self.background_actions)().into_iter().enumerate().map(
                                     move |(idx, (text, action))| {
                                         let hint_action = action.boxed_clone();
@@ -1449,14 +1453,15 @@ impl Pane {
                                             idx,
                                             cx,
                                             move |state, cx| {
-                                                theme::ui::keystroke_label(
+                                                theme::ui::keystroke_label_for(
+                                                    cx.window_id(),
+                                                    workspace_id,
                                                     text,
                                                     &keyboard_hint.style_for(state, false),
                                                     &keystroke_style
                                                         .style_for(state, false)
                                                         .keystroke,
                                                     hint_action,
-                                                    cx,
                                                 )
                                                 .boxed()
                                             },

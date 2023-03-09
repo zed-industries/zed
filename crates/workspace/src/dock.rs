@@ -187,7 +187,14 @@ impl Dock {
     ) -> Self {
         let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
 
-        let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), background_actions, cx));
+        let pane = cx.add_view(|cx| {
+            Pane::new(
+                cx.handle().id(),
+                Some(position.anchor()),
+                background_actions,
+                cx,
+            )
+        });
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });

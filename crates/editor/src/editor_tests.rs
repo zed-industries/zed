@@ -485,7 +485,7 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
     cx.set_global(DragAndDrop::<Workspace>::default());
     use workspace::item::Item;
     let (_, pane) = cx.add_window(Default::default(), |cx| {
-        Pane::new(None, || unimplemented!(), cx)
+        Pane::new(0, None, || unimplemented!(), cx)
     });
     let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
@@ -5564,7 +5564,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     Settings::test_async(cx);
     let fs = FakeFs::new(cx.background());
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    let (_, pane) = cx.add_window(|cx| Pane::new(None, || unimplemented!(), cx));
+    let (_, pane) = cx.add_window(|cx| Pane::new(0, None, || unimplemented!(), cx));
 
     let leader = pane.update(cx, |_, cx| {
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
