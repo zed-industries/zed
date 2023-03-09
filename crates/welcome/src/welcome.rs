@@ -124,8 +124,25 @@ impl View for WelcomePage {
                         .boxed(),
                     Flex::column()
                         .with_children([
-                            theme::ui::checkbox::<Metrics, Self>(
-                                "Send anonymous usage data to improve Zed (View what we're sending via Help > View Telemetry Log)",
+                            theme::ui::checkbox_with_label::<Metrics, Self>(
+                                Flex::column()
+                                    .with_children([
+                                        Label::new(
+                                            "Send anonymous usage data",
+                                            theme.welcome.checkbox.label.text.clone(),
+                                        )
+                                        .contained()
+                                        .with_style(theme.welcome.checkbox.label.container)
+                                        .boxed(),
+                                        Label::new(
+                                            "Help > View Telemetry",
+                                            theme.welcome.usage_note.text.clone(),
+                                        )
+                                        .contained()
+                                        .with_style(theme.welcome.usage_note.container)
+                                        .boxed(),
+                                    ])
+                                    .boxed(),
                                 &theme.welcome.checkbox,
                                 metrics,
                                 cx,

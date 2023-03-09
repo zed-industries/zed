@@ -869,6 +869,7 @@ pub struct WelcomeStyle {
     pub page_width: f32,
     pub logo: IconStyle,
     pub logo_subheading: ContainedText,
+    pub usage_note: ContainedText,
     pub checkbox: CheckboxStyle,
     pub checkbox_container: ContainerStyle,
     pub button: Interactive<ContainedText>,

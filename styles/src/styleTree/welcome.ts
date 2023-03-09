@@ -86,10 +86,19 @@ export default function welcome(colorScheme: ColorScheme) {
                 border: border(layer, "active"),
             },
         },
+        usageNote: {
+            ...text(layer, "sans", "variant", { size: "2xs" }),
+            margin: {
+                top: -4
+            }
+        },
         checkboxContainer: {
             margin: {
                 top: 4,
             },
+            padding: {
+                bottom: 8,
+            }
         },
         checkbox: {
             label: {

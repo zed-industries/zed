@@ -4,7 +4,7 @@ use gpui::{
         ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label,
         MouseEventHandler, ParentElement, Svg,
     },
-    Action, Element, EventContext, RenderContext, View,
+    Action, Element, ElementBox, EventContext, RenderContext, View,
 };
 use serde::Deserialize;
 
@@ -22,6 +22,21 @@ pub struct CheckboxStyle {
 
 pub fn checkbox<T: 'static, V: View>(
     label: &'static str,
+    style: &CheckboxStyle,
+    checked: bool,
+    cx: &mut RenderContext<V>,
+    change: fn(checked: bool, cx: &mut EventContext) -> (),
+) -> MouseEventHandler<T> {
+    let label = Label::new(label, style.label.text.clone())
+        .contained()
+        .with_style(style.label.container)
+        .boxed();
+
+    checkbox_with_label(label, style, checked, cx, change)
+}
+
+pub fn checkbox_with_label<T: 'static, V: View>(
+    label: ElementBox,
     style: &CheckboxStyle,
     checked: bool,
     cx: &mut RenderContext<V>,
@@ -55,10 +70,7 @@ pub fn checkbox<T: 'static, V: View>(
                         }
                     })
                     .boxed(),
-                Label::new(label, style.label.text.clone())
-                    .contained()
-                    .with_style(style.label.container)
-                    .boxed(),
+                label,
             ])
             .align_children_center()
             .boxed()

@@ -137,7 +137,7 @@ pub fn menus() -> Vec<Menu<'static>> {
             items: vec![
                 MenuItem::action("Command Palette", command_palette::Toggle),
                 MenuItem::separator(),
-                MenuItem::action("View Telemetry Log", crate::OpenTelemetryLog),
+                MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::separator(),
                 MenuItem::action(
