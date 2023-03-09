@@ -73,12 +73,6 @@ impl View for TerminalButton {
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_up(MouseButton::Left, move |_, _| {
-                    // TODO: Do we need this stuff?
-                    // let dock_pane = workspace.read(cx.app).dock_pane();
-                    // let drop_index = dock_pane.read(cx.app).items_len() + 1;
-                    // handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
-                })
                 .on_click(MouseButton::Left, move |e, cx| {
                     if has_terminals {
                         cx.dispatch_action(DeployTerminalMenu {
