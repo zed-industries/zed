@@ -439,6 +439,89 @@ async fn test_managing_language_servers(
 }
 
 #[gpui::test]
+async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
+    cx.foreground().forbid_parking();
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/the-root",
+        json!({
+            "a.rs": "",
+            "b.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    project.update(cx, |project, _| {
+        project.languages.add(Arc::new(language));
+    });
+    cx.foreground().run_until_parked();
+
+    // Start the language server by opening a buffer with a compatible file extension.
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/the-root/a.rs", cx)
+        })
+        .await
+        .unwrap();
+
+    // Keep track of the FS events reported to the language server.
+    let fake_server = fake_servers.next().await.unwrap();
+    let file_changes = Arc::new(Mutex::new(Vec::new()));
+    fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
+        let file_changes = file_changes.clone();
+        move |params, _| {
+            let mut file_changes = file_changes.lock();
+            file_changes.extend(params.changes);
+            file_changes.sort_by(|a, b| a.uri.cmp(&b.uri));
+        }
+    });
+
+    cx.foreground().run_until_parked();
+    assert_eq!(file_changes.lock().len(), 0);
+
+    // Perform some file system mutations.
+    fs.create_file("/the-root/c.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.remove_file("/the-root/b.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+
+    // The language server receives events for both FS mutations.
+    cx.foreground().run_until_parked();
+    assert_eq!(
+        &*file_changes.lock(),
+        &[
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path("/the-root/c.rs").unwrap(),
+                typ: lsp::FileChangeType::CREATED,
+            },
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path("/the-root/b.rs").unwrap(),
+                typ: lsp::FileChangeType::DELETED,
+            }
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     cx.foreground().forbid_parking();
 
@@ -1585,7 +1668,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestApp
             buffer.text(),
             "
                 use a::{b, c};
-                
+
                 fn f() {
                     b();
                     c();
@@ -1603,7 +1686,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
     let text = "
         use a::b;
         use a::c;
-        
+
         fn f() {
             b();
             c();
@@ -1688,7 +1771,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
             buffer.text(),
             "
                 use a::{b, c};
-                
+
                 fn f() {
                     b();
                     c();
