@@ -25,8 +25,8 @@ const variant: Variant = {
         base0C: "#398bc6",
         base0D: "#576ddb",
         base0E: "#955ae7",
-        base0F: "#bf40bf"
-    }
+        base0F: "#bf40bf",
+    },
 }
 
 const syntax = buildSyntax(variant)
@@ -34,20 +34,33 @@ const syntax = buildSyntax(variant)
 const theme = (variant: Variant) => {
     const { meta, colors } = variant
 
-    return createColorScheme(meta.name, true, {
-        neutral: chroma
-            .scale([
-                colors.base00, colors.base01, colors.base02, colors.base03, colors.base04, colors.base05, colors.base06, colors.base07
-            ].reverse()),
-        red: colorRamp(chroma(colors.base08)),
-        orange: colorRamp(chroma(colors.base09)),
-        yellow: colorRamp(chroma(colors.base0A)),
-        green: colorRamp(chroma(colors.base0B)),
-        cyan: colorRamp(chroma(colors.base0C)),
-        blue: colorRamp(chroma(colors.base0D)),
-        violet: colorRamp(chroma(colors.base0E)),
-        magenta: colorRamp(chroma(colors.base0F)),
-    }, syntax)
+    return createColorScheme(
+        meta.name,
+        true,
+        {
+            neutral: chroma.scale(
+                [
+                    colors.base00,
+                    colors.base01,
+                    colors.base02,
+                    colors.base03,
+                    colors.base04,
+                    colors.base05,
+                    colors.base06,
+                    colors.base07,
+                ].reverse()
+            ),
+            red: colorRamp(chroma(colors.base08)),
+            orange: colorRamp(chroma(colors.base09)),
+            yellow: colorRamp(chroma(colors.base0A)),
+            green: colorRamp(chroma(colors.base0B)),
+            cyan: colorRamp(chroma(colors.base0C)),
+            blue: colorRamp(chroma(colors.base0D)),
+            violet: colorRamp(chroma(colors.base0E)),
+            magenta: colorRamp(chroma(colors.base0F)),
+        },
+        syntax
+    )
 }
 
 export const dark = theme(variant)
