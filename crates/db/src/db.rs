@@ -42,7 +42,7 @@ const DB_FILE_NAME: &'static str = "db.sqlite";
 
 lazy_static::lazy_static! {
     // !!!!!!! CHANGE BACK TO DEFAULT FALSE BEFORE SHIPPING
-    static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(true, |v| !v.is_empty());
+    static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
     static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
     pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);
@@ -66,11 +66,11 @@ pub async fn open_db<M: Migrator + 'static>(
     let connection = async_iife!({
         // Note: This still has a race condition where 1 set of migrations succeeds
         // (e.g. (Workspace, Editor)) and another fails (e.g. (Workspace, Terminal))
-        // This will cause the first connection to have the database taken out 
+        // This will cause the first connection to have the database taken out
         // from under it. This *should* be fine though. The second dabatase failure will
         // cause errors in the log and so should be observed by developers while writing
         // soon-to-be good migrations. If user databases are corrupted, we toss them out
-        // and try again from a blank. As long as running all migrations from start to end 
+        // and try again from a blank. As long as running all migrations from start to end
         // on a blank database is ok, this race condition will never be triggered.
         //
         // Basically: Don't ever push invalid migrations to stable or everyone will have
@@ -88,7 +88,7 @@ pub async fn open_db<M: Migrator + 'static>(
             };
         }
 
-        // Take a lock in the failure case so that we move the db once per process instead 
+        // Take a lock in the failure case so that we move the db once per process instead
         // of potentially multiple times from different threads. This shouldn't happen in the
         // normal path
         let _lock = DB_FILE_OPERATIONS.lock();
