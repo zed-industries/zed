@@ -39,7 +39,7 @@ export const meta: Meta = {
                 "https://raw.githubusercontent.com/EliverLara/Andromeda/master/LICENSE.md",
             license_checksum:
                 "2f7886f1a05cefc2c26f5e49de1a39fa4466413c1ccb06fc80960e73f5ed4b89",
-        }
+        },
     },
     url: "https://github.com/EliverLara/Andromeda",
 }

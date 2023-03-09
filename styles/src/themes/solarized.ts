@@ -40,7 +40,7 @@ export const meta: Metadata = {
                 "https://raw.githubusercontent.com/altercation/solarized/master/LICENSE",
             license_checksum:
                 "494aefdabf86acce06bd63001ad8aedad4ee38da23509d3f917d95aa3368b9a6",
-        }
+        },
     },
     url: "https://github.com/altercation/solarized",
 }
