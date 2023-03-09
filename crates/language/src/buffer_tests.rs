@@ -1804,25 +1804,31 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             }
             30..=39 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
-                    let mut selections = Vec::new();
-                    for id in 0..rng.gen_range(1..=5) {
-                        let range = buffer.random_byte_range(0, &mut rng);
-                        selections.push(Selection {
-                            id,
-                            start: buffer.anchor_before(range.start),
-                            end: buffer.anchor_before(range.end),
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        });
+                    if rng.gen_bool(0.2) {
+                        log::info!("peer {} clearing active selections", replica_id);
+                        active_selections.remove(&replica_id);
+                        buffer.remove_active_selections(cx);
+                    } else {
+                        let mut selections = Vec::new();
+                        for id in 0..rng.gen_range(1..=5) {
+                            let range = buffer.random_byte_range(0, &mut rng);
+                            selections.push(Selection {
+                                id,
+                                start: buffer.anchor_before(range.start),
+                                end: buffer.anchor_before(range.end),
+                                reversed: false,
+                                goal: SelectionGoal::None,
+                            });
+                        }
+                        let selections: Arc<[Selection<Anchor>]> = selections.into();
+                        log::info!(
+                            "peer {} setting active selections: {:?}",
+                            replica_id,
+                            selections
+                        );
+                        active_selections.insert(replica_id, selections.clone());
+                        buffer.set_active_selections(selections, false, Default::default(), cx);
                     }
-                    let selections: Arc<[Selection<Anchor>]> = selections.into();
-                    log::info!(
-                        "peer {} setting active selections: {:?}",
-                        replica_id,
-                        selections
-                    );
-                    active_selections.insert(replica_id, selections.clone());
-                    buffer.set_active_selections(selections, false, Default::default(), cx);
                 });
                 mutation_count -= 1;
             }
