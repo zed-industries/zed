@@ -572,15 +572,13 @@ impl CollabTitlebarItem {
         room: &ModelHandle<Room>,
         cx: &mut RenderContext<Self>,
     ) -> Vec<ElementBox> {
-        let project = workspace.read(cx).project().read(cx);
-
         let mut participants = room
             .read(cx)
             .remote_participants()
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        participants.sort_by_key(|p| Some(project.collaborators().get(&p.peer_id)?.replica_id));
+        participants.sort_by_cached_key(|p| p.user.github_login.clone());
 
         participants
             .into_iter()
