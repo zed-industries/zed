@@ -612,9 +612,34 @@ impl Item for Editor {
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.as_mut().spawn(|mut cx| async move {
             format.await?;
-            project
-                .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))
-                .await?;
+
+            if buffers.len() == 1 {
+                project
+                    .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))
+                    .await?;
+            } else {
+                // For multi-buffers, only save those ones that contain changes. For clean buffers
+                // we simulate saving by calling `Buffer::did_save`, so that language servers or
+                // other downstream listeners of save events get notified.
+                let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
+                    buffer.read_with(&cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
+                });
+
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.save_buffers(dirty_buffers, cx)
+                    })
+                    .await?;
+                for buffer in clean_buffers {
+                    buffer.update(&mut cx, |buffer, cx| {
+                        let version = buffer.saved_version().clone();
+                        let fingerprint = buffer.saved_version_fingerprint();
+                        let mtime = buffer.saved_mtime();
+                        buffer.did_save(version, fingerprint, mtime, cx);
+                    });
+                }
+            }
+
             Ok(())
         })
     }
