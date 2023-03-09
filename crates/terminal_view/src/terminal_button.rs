@@ -57,7 +57,7 @@ impl View for TerminalButton {
                             .status_bar
                             .sidebar_buttons
                             .item
-                            .style_for(state, true);
+                            .style_for(state, false);
 
                         Svg::new("icons/terminal_12.svg")
                             .with_color(style.icon_color)
