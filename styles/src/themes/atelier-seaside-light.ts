@@ -5,19 +5,19 @@ import { metaCommon, name, buildSyntax, Variant } from "./common/atelier-common"
 
 const variant: Variant = {
     meta: {
-        name: `${name} Seaside Dark`,
+        name: `${name} Seaside Light`,
         ...metaCommon,
         url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/seaside/",
     },
     colors: {
-        base00: "#131513",
-        base01: "#242924",
-        base02: "#5e6e5e",
-        base03: "#687d68",
-        base04: "#809980",
-        base05: "#8ca68c",
-        base06: "#cfe8cf",
-        base07: "#f4fbf4",
+        base00: "#f4fbf4",
+        base01: "#cfe8cf",
+        base02: "#8ca68c",
+        base03: "#809980",
+        base04: "#687d68",
+        base05: "#5e6e5e",
+        base06: "#242924",
+        base07: "#131513",
         base08: "#e6193c",
         base09: "#87711d",
         base0A: "#98981b",
@@ -25,7 +25,7 @@ const variant: Variant = {
         base0C: "#1999b3",
         base0D: "#3d62f5",
         base0E: "#ad2bee",
-        base0F: "#e619c3"
+        base0F: "#e619c3",
     }
 }
 
@@ -34,11 +34,11 @@ const syntax = buildSyntax(variant)
 const theme = (variant: Variant) => {
     const { meta, colors } = variant
 
-    return createColorScheme(meta.name, false, {
+    return createColorScheme(meta.name, true, {
         neutral: chroma
             .scale([
                 colors.base00, colors.base01, colors.base02, colors.base03, colors.base04, colors.base05, colors.base06, colors.base07
-            ]),
+            ].reverse()),
         red: colorRamp(chroma(colors.base08)),
         orange: colorRamp(chroma(colors.base09)),
         yellow: colorRamp(chroma(colors.base0A)),
