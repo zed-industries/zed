@@ -139,6 +139,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::separator(),
                 MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
+                MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Copy System Specs Into Clipboard",

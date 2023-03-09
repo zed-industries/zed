@@ -1445,14 +1445,8 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| {
-            Pane::new(
-                dbg!(self.weak_handle().id()),
-                None,
-                self.background_actions,
-                cx,
-            )
-        });
+        let pane =
+            cx.add_view(|cx| Pane::new(self.weak_handle().id(), None, self.background_actions, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
