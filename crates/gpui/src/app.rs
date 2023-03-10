@@ -485,7 +485,9 @@ pub struct MutableAppContext {
     cx: AppContext,
     action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
+    // Entity Types -> { Action Types -> Action Handlers }
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
+    // Action Types -> Action Handlers
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: KeymapMatcher,
     next_entity_id: usize,
@@ -1239,20 +1241,34 @@ impl MutableAppContext {
         action: &dyn Action,
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         let mut contexts = Vec::new();
-        for view_id in self.ancestors(window_id, view_id) {
+        let mut highest_handler = None;
+        for (i, view_id) in self.ancestors(window_id, view_id).enumerate() {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
+                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
+                    if actions.contains_key(&action.as_any().type_id()) {
+                        highest_handler = Some(i);
+                    }
+                }
                 contexts.push(view.keymap_context(self));
             }
+        }
+
+        if self.global_actions.contains_key(&action.as_any().type_id()) {
+            highest_handler = Some(contexts.len())
         }
 
         self.keystroke_matcher
             .bindings_for_action_type(action.as_any().type_id())
             .find_map(|b| {
-                if b.match_dispatch_path_context(&contexts) {
-                    Some(b.keystrokes().into())
-                } else {
-                    None
-                }
+                highest_handler
+                    .map(|highest_handler| {
+                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
+                            Some(b.keystrokes().into())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
             })
     }
 
@@ -1261,29 +1277,47 @@ impl MutableAppContext {
         window_id: usize,
         view_id: usize,
     ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
-        let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
-
         let mut contexts = Vec::new();
-        for view_id in self.ancestors(window_id, view_id) {
+        let mut handler_depth_by_action_type = HashMap::<TypeId, Option<usize>>::default();
+        for (i, view_id) in self.ancestors(window_id, view_id).enumerate() {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
                 contexts.push(view.keymap_context(self));
                 let view_type = view.as_any().type_id();
                 if let Some(actions) = self.actions.get(&view_type) {
-                    action_types.extend(actions.keys().copied());
+                    handler_depth_by_action_type.extend(
+                        actions
+                            .keys()
+                            .copied()
+                            .map(|action_type| (action_type, Some(i))),
+                    );
                 }
             }
         }
 
+        handler_depth_by_action_type.extend(
+            self.global_actions
+                .keys()
+                .copied()
+                .map(|action_type| (action_type, None)),
+        );
+
         self.action_deserializers
             .iter()
             .filter_map(move |(name, (type_id, deserialize))| {
-                if action_types.contains(type_id) {
+                if let Some(action_depth) = handler_depth_by_action_type.get(type_id) {
                     Some((
                         *name,
                         deserialize("{}").ok()?,
                         self.keystroke_matcher
                             .bindings_for_action_type(*type_id)
-                            .filter(|b| b.match_dispatch_path_context(&contexts))
+                            .filter(|b| {
+                                if let Some(action_depth) = *action_depth {
+                                    (0..=action_depth)
+                                        .any(|depth| b.match_context(&contexts[depth..]))
+                                } else {
+                                    true
+                                }
+                            })
                             .collect(),
                     ))
                 } else {
