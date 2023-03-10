@@ -1248,7 +1248,7 @@ impl MutableAppContext {
         self.keystroke_matcher
             .bindings_for_action_type(action.as_any().type_id())
             .find_map(|b| {
-                if b.match_context(&contexts) {
+                if b.match_dispatch_path_context(&contexts) {
                     Some(b.keystrokes().into())
                 } else {
                     None
@@ -1283,7 +1283,7 @@ impl MutableAppContext {
                         deserialize("{}").ok()?,
                         self.keystroke_matcher
                             .bindings_for_action_type(*type_id)
-                            .filter(|b| b.match_context(&contexts))
+                            .filter(|b| b.match_dispatch_path_context(&contexts))
                             .collect(),
                     ))
                 } else {

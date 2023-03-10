@@ -42,6 +42,15 @@ impl Binding {
             .unwrap_or(true)
     }
 
+    pub fn match_dispatch_path_context(&self, contexts: &[KeymapContext]) -> bool {
+        for i in 0..contexts.len() {
+            if self.match_context(&contexts[i..]) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn match_keys_and_context(
         &self,
         pending_keystrokes: &Vec<Keystroke>,
