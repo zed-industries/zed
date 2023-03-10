@@ -4465,7 +4465,10 @@ impl Project {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
-                worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
+                worktree::Event::UpdatedEntries(changes) => {
+                    this.update_local_worktree_buffers(&worktree, cx);
+                    this.update_local_worktree_language_servers(&worktree, changes, cx);
+                }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
                 }
@@ -4496,7 +4499,7 @@ impl Project {
 
     fn update_local_worktree_buffers(
         &mut self,
-        worktree_handle: ModelHandle<Worktree>,
+        worktree_handle: &ModelHandle<Worktree>,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
@@ -4506,7 +4509,7 @@ impl Project {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
                     if let Some(old_file) = File::from_dyn(buffer.file()) {
-                        if old_file.worktree != worktree_handle {
+                        if old_file.worktree != *worktree_handle {
                             return;
                         }
 
@@ -4575,6 +4578,42 @@ impl Project {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
             self.detect_language_for_buffer(&buffer, cx);
             self.register_buffer_with_language_server(&buffer, cx);
+        }
+    }
+
+    fn update_local_worktree_language_servers(
+        &mut self,
+        worktree_handle: &ModelHandle<Worktree>,
+        changes: &HashMap<Arc<Path>, PathChange>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_id = worktree_handle.read(cx).id();
+        let abs_path = worktree_handle.read(cx).abs_path();
+        for ((server_worktree_id, _), server_id) in &self.language_server_ids {
+            if *server_worktree_id == worktree_id {
+                if let Some(server) = self.language_servers.get(server_id) {
+                    if let LanguageServerState::Running { server, .. } = server {
+                        server
+                            .notify::<lsp::notification::DidChangeWatchedFiles>(
+                                lsp::DidChangeWatchedFilesParams {
+                                    changes: changes
+                                        .iter()
+                                        .map(|(path, change)| lsp::FileEvent {
+                                            uri: lsp::Url::from_file_path(abs_path.join(path))
+                                                .unwrap(),
+                                            typ: match change {
+                                                PathChange::Added => lsp::FileChangeType::CREATED,
+                                                PathChange::Removed => lsp::FileChangeType::DELETED,
+                                                PathChange::Updated => lsp::FileChangeType::CHANGED,
+                                            },
+                                        })
+                                        .collect(),
+                                },
+                            )
+                            .log_err();
+                    }
+                }
+            }
         }
     }
 

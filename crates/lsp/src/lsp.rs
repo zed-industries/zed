@@ -319,6 +319,9 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
+                    did_change_watched_files: Some(DynamicRegistrationClientCapabilities {
+                        dynamic_registration: Some(true),
+                    }),
                     did_change_configuration: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: Some(true),
                     }),

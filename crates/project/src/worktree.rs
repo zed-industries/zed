@@ -33,7 +33,6 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -65,6 +64,7 @@ pub enum Worktree {
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     background_snapshot: Arc<Mutex<LocalSnapshot>>,
+    background_changes: Arc<Mutex<HashMap<Arc<Path>, PathChange>>>,
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
     poll_task: Option<Task<()>>,
@@ -175,7 +175,7 @@ struct ShareState {
 }
 
 pub enum Event {
-    UpdatedEntries,
+    UpdatedEntries(HashMap<Arc<Path>, PathChange>),
     UpdatedGitRepositories(Vec<GitRepositoryEntry>),
 }
 
@@ -198,11 +198,17 @@ impl Worktree {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.abs_path().clone();
             let background_snapshot = tree.background_snapshot.clone();
+            let background_changes = tree.background_changes.clone();
             let background = cx.background().clone();
             tree._background_scanner_task = Some(cx.background().spawn(async move {
                 let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
-                let scanner =
-                    BackgroundScanner::new(background_snapshot, scan_states_tx, fs, background);
+                let scanner = BackgroundScanner::new(
+                    background_snapshot,
+                    background_changes,
+                    scan_states_tx,
+                    fs,
+                    background,
+                );
                 scanner.run(events).await;
             }));
         });
@@ -451,6 +457,7 @@ impl LocalWorktree {
             let tree = Self {
                 snapshot: snapshot.clone(),
                 background_snapshot: Arc::new(Mutex::new(snapshot)),
+                background_changes: Arc::new(Mutex::new(HashMap::default())),
                 last_scan_state_rx,
                 _background_scanner_task: None,
                 share: None,
@@ -563,6 +570,7 @@ impl LocalWorktree {
         match self.scan_state() {
             ScanState::Idle => {
                 let new_snapshot = self.background_snapshot.lock().clone();
+                let changes = mem::take(&mut *self.background_changes.lock());
                 let updated_repos = Self::changed_repos(
                     &self.snapshot.git_repositories,
                     &new_snapshot.git_repositories,
@@ -573,7 +581,7 @@ impl LocalWorktree {
                     *share.snapshots_tx.borrow_mut() = self.snapshot.clone();
                 }
 
-                cx.emit(Event::UpdatedEntries);
+                cx.emit(Event::UpdatedEntries(changes));
 
                 if !updated_repos.is_empty() {
                     cx.emit(Event::UpdatedGitRepositories(updated_repos));
@@ -602,7 +610,7 @@ impl LocalWorktree {
                     }
                 }));
 
-                cx.emit(Event::UpdatedEntries);
+                cx.emit(Event::UpdatedEntries(Default::default()));
 
                 if !updated_repos.is_empty() {
                     cx.emit(Event::UpdatedGitRepositories(updated_repos));
@@ -994,15 +1002,26 @@ impl LocalWorktree {
                 let inserted_entry;
                 {
                     let mut snapshot = this.background_snapshot.lock();
+                    let mut changes = this.background_changes.lock();
                     let mut entry = Entry::new(path, &metadata, &next_entry_id, root_char_bag);
                     entry.is_ignored = snapshot
                         .ignore_stack_for_abs_path(&abs_path, entry.is_dir())
                         .is_abs_path_ignored(&abs_path, entry.is_dir());
                     if let Some(old_path) = old_path {
                         snapshot.remove_path(&old_path);
+                        changes.insert(old_path.clone(), PathChange::Removed);
                     }
                     snapshot.scan_started();
+                    let exists = snapshot.entry_for_path(&entry.path).is_some();
                     inserted_entry = snapshot.insert_entry(entry, fs.as_ref());
+                    changes.insert(
+                        inserted_entry.path.clone(),
+                        if exists {
+                            PathChange::Updated
+                        } else {
+                            PathChange::Added
+                        },
+                    );
                     snapshot.scan_completed();
                 }
                 this.poll_snapshot(true, cx);
@@ -1111,7 +1130,7 @@ impl RemoteWorktree {
 
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Worktree>) {
         self.snapshot = self.background_snapshot.lock().clone();
-        cx.emit(Event::UpdatedEntries);
+        cx.emit(Event::UpdatedEntries(Default::default()));
         cx.notify();
     }
 
@@ -2048,6 +2067,13 @@ pub enum EntryKind {
     File(CharBag),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum PathChange {
+    Added,
+    Removed,
+    Updated,
+}
+
 impl Entry {
     fn new(
         path: Arc<Path>,
@@ -2206,6 +2232,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 struct BackgroundScanner {
     fs: Arc<dyn Fs>,
     snapshot: Arc<Mutex<LocalSnapshot>>,
+    changes: Arc<Mutex<HashMap<Arc<Path>, PathChange>>>,
     notify: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
 }
@@ -2213,6 +2240,7 @@ struct BackgroundScanner {
 impl BackgroundScanner {
     fn new(
         snapshot: Arc<Mutex<LocalSnapshot>>,
+        changes: Arc<Mutex<HashMap<Arc<Path>, PathChange>>>,
         notify: UnboundedSender<ScanState>,
         fs: Arc<dyn Fs>,
         executor: Arc<executor::Background>,
@@ -2220,6 +2248,7 @@ impl BackgroundScanner {
         Self {
             fs,
             snapshot,
+            changes,
             notify,
             executor,
         }
@@ -2486,12 +2515,14 @@ impl BackgroundScanner {
         let root_char_bag;
         let root_abs_path;
         let next_entry_id;
+        let prev_snapshot;
         {
             let mut snapshot = self.snapshot.lock();
-            snapshot.scan_started();
+            prev_snapshot = snapshot.snapshot.clone();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
             next_entry_id = snapshot.next_entry_id.clone();
+            snapshot.scan_started();
         }
 
         let root_canonical_path = if let Ok(path) = self.fs.canonicalize(&root_abs_path).await {
@@ -2510,6 +2541,7 @@ impl BackgroundScanner {
         // Hold the snapshot lock while clearing and re-inserting the root entries
         // for each event. This way, the snapshot is not observable to the foreground
         // thread while this operation is in-progress.
+        let mut event_paths = Vec::with_capacity(events.len());
         let (scan_queue_tx, scan_queue_rx) = channel::unbounded();
         {
             let mut snapshot = self.snapshot.lock();
@@ -2531,6 +2563,7 @@ impl BackgroundScanner {
                         continue;
                     }
                 };
+                event_paths.push(path.clone());
                 let abs_path = root_abs_path.join(&path);
 
                 match metadata {
@@ -2599,6 +2632,7 @@ impl BackgroundScanner {
 
         self.update_ignore_statuses().await;
         self.update_git_repositories();
+        self.build_change_set(prev_snapshot, event_paths);
         self.snapshot.lock().scan_completed();
         true
     }
@@ -2713,6 +2747,60 @@ impl BackgroundScanner {
         let mut snapshot = self.snapshot.lock();
         snapshot.entries_by_path.edit(entries_by_path_edits, &());
         snapshot.entries_by_id.edit(entries_by_id_edits, &());
+    }
+
+    fn build_change_set(&self, old_snapshot: Snapshot, event_paths: Vec<Arc<Path>>) {
+        let new_snapshot = self.snapshot.lock();
+        let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>();
+        let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>();
+
+        let mut change_set = self.changes.lock();
+        for path in event_paths {
+            let path = PathKey(path);
+            old_paths.seek(&path, Bias::Left, &());
+            new_paths.seek(&path, Bias::Left, &());
+
+            loop {
+                match (old_paths.item(), new_paths.item()) {
+                    (Some(old_entry), Some(new_entry)) => {
+                        if old_entry.path > path.0
+                            && new_entry.path > path.0
+                            && !old_entry.path.starts_with(&path.0)
+                            && !new_entry.path.starts_with(&path.0)
+                        {
+                            break;
+                        }
+
+                        match Ord::cmp(&old_entry.path, &new_entry.path) {
+                            Ordering::Less => {
+                                change_set.insert(old_entry.path.clone(), PathChange::Removed);
+                                old_paths.next(&());
+                            }
+                            Ordering::Equal => {
+                                if old_entry.mtime != new_entry.mtime {
+                                    change_set.insert(old_entry.path.clone(), PathChange::Updated);
+                                }
+                                old_paths.next(&());
+                                new_paths.next(&());
+                            }
+                            Ordering::Greater => {
+                                change_set.insert(new_entry.path.clone(), PathChange::Added);
+                                new_paths.next(&());
+                            }
+                        }
+                    }
+                    (Some(old_entry), None) => {
+                        change_set.insert(old_entry.path.clone(), PathChange::Removed);
+                        old_paths.next(&());
+                    }
+                    (None, Some(new_entry)) => {
+                        change_set.insert(new_entry.path.clone(), PathChange::Added);
+                        new_paths.next(&());
+                    }
+                    (None, None) => break,
+                }
+            }
+        }
     }
 }
 
@@ -3500,6 +3588,7 @@ mod tests {
         );
         let mut scanner = BackgroundScanner::new(
             Arc::new(Mutex::new(initial_snapshot.clone())),
+            Arc::new(Mutex::new(HashMap::default())),
             notify_tx,
             fs.clone(),
             Arc::new(gpui::executor::Background::new()),
@@ -3533,6 +3622,7 @@ mod tests {
         let (notify_tx, _notify_rx) = mpsc::unbounded();
         let mut new_scanner = BackgroundScanner::new(
             Arc::new(Mutex::new(initial_snapshot)),
+            Arc::new(Mutex::new(HashMap::default())),
             notify_tx,
             scanner.fs.clone(),
             scanner.executor.clone(),
