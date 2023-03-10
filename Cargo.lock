@@ -3287,6 +3287,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_selector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "picker",
+ "project",
+ "settings",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8399,6 +8415,7 @@ dependencies = [
  "isahc",
  "journal",
  "language",
+ "language_selector",
  "lazy_static",
  "libc",
  "log",
