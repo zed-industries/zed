@@ -342,10 +342,10 @@ pub fn initialize_workspace(
     let feedback_button =
         cx.add_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton {});
     workspace.status_bar().update(cx, |status_bar, cx| {
+        status_bar.add_left_item(feedback_button, cx);
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
         status_bar.add_right_item(cursor_position, cx);
-        status_bar.add_right_item(feedback_button, cx);
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
