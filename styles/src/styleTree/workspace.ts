@@ -42,38 +42,46 @@ export default function workspace(colorScheme: ColorScheme) {
     return {
         background: background(colorScheme.lowest),
         blankPane: {
+            logoContainer: {
+                width: 256,
+                height: 256,
+            },
             logo: {
-                color: border(layer, "active").color,
-                icon: "icons/logo_96.svg",
+                color: withOpacity("#000000", colorScheme.isLight ? 0.6 : 0.8),
+                icon: "icons/logo_256.svg",
                 dimensions: {
-                    width: 272,
-                    height: 272,
-                }
+                    width: 256,
+                    height: 256,
+                },
+            },
+            logoShadow: {
+                color: withOpacity(colorScheme.isLight ? "#FFFFFF" : colorScheme.lowest.base.default.background, colorScheme.isLight ? 1 : 0.6),
+                icon: "icons/logo_shadow_256.svg",
+                dimensions: {
+                    width: 256,
+                    height: 256,
+                },
             },
             keyboardHints: {
                 margin: {
-                    top: 32,
-                    // bottom: -8.
+                    top: 96,
                 },
-                padding: {
-                    top: 8,
-                    left: 8,
-                    right: 8,
-                },
-                background: background(colorScheme.lowest),
-                border: border(layer, "active"),
                 cornerRadius: 4,
             },
             keyboardHint: {
                 ...text(layer, "sans", "variant", { size: "sm" }),
-                margin: {
-                    bottom: 8
+                padding: {
+                    top: 3,
+                    left: 8,
+                    right: 8,
+                    bottom: 3
                 },
+                cornerRadius: 8,
                 hover: {
-                    ...text(layer, "sans", "hovered", { size: "sm" }),
+                    ...text(layer, "sans", "active", { size: "sm" }),
                 }
             },
-            keyboardHintWidth: 272,
+            keyboardHintWidth: 320,
         },
         joiningProjectAvatar: {
             cornerRadius: 40,

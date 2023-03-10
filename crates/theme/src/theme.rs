@@ -76,6 +76,8 @@ pub struct Workspace {
 #[derive(Clone, Deserialize, Default)]
 pub struct BlankPaneStyle {
     pub logo: IconStyle,
+    pub logo_shadow: IconStyle,
+    pub logo_container: ContainerStyle,
     pub keyboard_hints: ContainerStyle,
     pub keyboard_hint: Interactive<ContainedText>,
     pub keyboard_hint_width: f32,

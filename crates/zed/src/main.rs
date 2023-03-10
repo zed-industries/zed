@@ -709,7 +709,7 @@ pub fn dock_default_item_factory(
 pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
     &[
         ("Go to file", &file_finder::Toggle),
-        ("Open the command palette", &command_palette::Toggle),
+        ("Open command palette", &command_palette::Toggle),
         ("Focus the dock", &FocusDock),
         ("Open recent projects", &recent_projects::OpenRecent),
         ("Change your settings", &OpenSettings),

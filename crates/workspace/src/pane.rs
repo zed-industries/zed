@@ -1429,7 +1429,6 @@ impl Pane {
 
     fn render_blank_pane(&mut self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
         let background = theme.workspace.background;
-        let keystroke_style = &theme.context_menu.item;
         let theme = &theme.workspace.blank_pane;
         Stack::new()
             .with_children([
@@ -1440,7 +1439,14 @@ impl Pane {
                 Flex::column()
                     .align_children_center()
                     .with_children([
-                        theme::ui::icon(&theme.logo).aligned().boxed(),
+                        Stack::new()
+                            .with_children([
+                                theme::ui::icon(&theme.logo_shadow).aligned().boxed(),
+                                theme::ui::icon(&theme.logo).aligned().boxed(),
+                            ])
+                            .contained()
+                            .with_style(theme.logo_container)
+                            .boxed(),
                         Flex::column()
                             .with_children({
                                 enum KeyboardHint {}
@@ -1453,14 +1459,13 @@ impl Pane {
                                             idx,
                                             cx,
                                             move |state, cx| {
+                                                let style = keyboard_hint.style_for(state, false);
                                                 theme::ui::keystroke_label_for(
                                                     cx.window_id(),
                                                     workspace_id,
                                                     text,
-                                                    &keyboard_hint.style_for(state, false),
-                                                    &keystroke_style
-                                                        .style_for(state, false)
-                                                        .keystroke,
+                                                    &style,
+                                                    &style,
                                                     hint_action,
                                                 )
                                                 .boxed()
