@@ -217,8 +217,8 @@ pub struct Pane {
     toolbar: ViewHandle<Toolbar>,
     tab_bar_context_menu: ViewHandle<ContextMenu>,
     docked: Option<DockAnchor>,
-    background_actions: BackgroundActions,
-    workspace_id: usize,
+    _background_actions: BackgroundActions,
+    _workspace_id: usize,
 }
 
 pub struct ItemNavHistory {
@@ -301,8 +301,8 @@ impl Pane {
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
             tab_bar_context_menu: context_menu,
             docked,
-            background_actions,
-            workspace_id,
+            _background_actions: background_actions,
+            _workspace_id: workspace_id,
         }
     }
 
@@ -1427,68 +1427,11 @@ impl Pane {
             .boxed()
     }
 
-    fn render_blank_pane(&mut self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_blank_pane(&mut self, theme: &Theme, _cx: &mut RenderContext<Self>) -> ElementBox {
         let background = theme.workspace.background;
-        let theme = &theme.workspace.blank_pane;
-        Stack::new()
-            .with_children([
-                Empty::new()
-                    .contained()
-                    .with_background_color(background)
-                    .boxed(),
-                Flex::column()
-                    .align_children_center()
-                    .with_children([
-                        Stack::new()
-                            .with_children([
-                                theme::ui::icon(&theme.logo_shadow).aligned().boxed(),
-                                theme::ui::icon(&theme.logo).aligned().boxed(),
-                            ])
-                            .contained()
-                            .with_style(theme.logo_container)
-                            .boxed(),
-                        Flex::column()
-                            .with_children({
-                                enum KeyboardHint {}
-                                let keyboard_hint = &theme.keyboard_hint;
-                                let workspace_id = self.workspace_id;
-                                (self.background_actions)().into_iter().enumerate().map(
-                                    move |(idx, (text, action))| {
-                                        let hint_action = action.boxed_clone();
-                                        MouseEventHandler::<KeyboardHint>::new(
-                                            idx,
-                                            cx,
-                                            move |state, cx| {
-                                                let style = keyboard_hint.style_for(state, false);
-                                                theme::ui::keystroke_label_for(
-                                                    cx.window_id(),
-                                                    workspace_id,
-                                                    text,
-                                                    &style,
-                                                    &style,
-                                                    hint_action,
-                                                )
-                                                .boxed()
-                                            },
-                                        )
-                                        .on_click(MouseButton::Left, move |_, cx| {
-                                            cx.dispatch_any_action(action.boxed_clone())
-                                        })
-                                        .with_cursor_style(CursorStyle::PointingHand)
-                                        .boxed()
-                                    },
-                                )
-                            })
-                            .contained()
-                            .with_style(theme.keyboard_hints)
-                            .constrained()
-                            .with_max_width(theme.keyboard_hint_width)
-                            .aligned()
-                            .boxed(),
-                    ])
-                    .aligned()
-                    .boxed(),
-            ])
+        Empty::new()
+            .contained()
+            .with_background_color(background)
             .boxed()
     }
 }
