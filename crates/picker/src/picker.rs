@@ -205,6 +205,11 @@ impl<D: PickerDelegate> Picker<D> {
         self.query_editor.read(cx).text(cx)
     }
 
+    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
+        self.query_editor
+            .update(cx, |editor, cx| editor.set_text(query, cx));
+    }
+
     fn on_query_editor_event(
         &mut self,
         _: ViewHandle<Editor>,
