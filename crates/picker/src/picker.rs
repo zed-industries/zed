@@ -102,7 +102,10 @@ impl<D: PickerDelegate> View for Picker<D> {
                                         .read(cx)
                                         .render_match(ix, state, ix == selected_ix, cx)
                                 })
-                                .on_down(MouseButton::Left, move |_, cx| {
+                                // Capture mouse events
+                                .on_down(MouseButton::Left, |_, _| {})
+                                .on_up(MouseButton::Left, |_, _| {})
+                                .on_click(MouseButton::Left, move |_, cx| {
                                     cx.dispatch_action(SelectIndex(ix))
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)

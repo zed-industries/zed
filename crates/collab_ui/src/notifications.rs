@@ -24,7 +24,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
         .with_child(
             Flex::row()
                 .with_children(user.avatar.clone().map(|avatar| {
-                    Image::new(avatar)
+                    Image::from_data(avatar)
                         .with_style(theme.header_avatar)
                         .aligned()
                         .constrained()

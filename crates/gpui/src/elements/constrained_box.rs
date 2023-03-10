@@ -153,7 +153,9 @@ impl Element for ConstrainedBox {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), visible_bounds, cx);
+        cx.paint_layer(Some(visible_bounds), |cx| {
+            self.child.paint(bounds.origin(), visible_bounds, cx);
+        })
     }
 
     fn rect_for_text_range(

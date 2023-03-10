@@ -29,6 +29,7 @@ context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 diagnostics = { path = "../diagnostics" }
+db = { path = "../db" }
 editor = { path = "../editor" }
 feedback = { path = "../feedback" }
 file_finder = { path = "../file_finder" }
@@ -38,6 +39,7 @@ fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 go_to_line = { path = "../go_to_line" }
 gpui = { path = "../gpui" }
+install_cli = { path = "../install_cli" }
 journal = { path = "../journal" }
 language = { path = "../language" }
 language_selector = { path = "../language_selector" }
@@ -59,6 +61,7 @@ theme_testbench = { path = "../theme_testbench" }
 util = { path = "../util" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
+welcome = { path = "../welcome" }
 anyhow = "1.0.38"
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"

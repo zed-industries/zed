@@ -9,6 +9,9 @@ use gpui::{
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
+use ui::{CheckboxStyle, IconStyle};
+
+pub mod ui;
 
 pub use theme_registry::*;
 
@@ -37,6 +40,7 @@ pub struct Theme {
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
     pub feedback: FeedbackStyle,
+    pub welcome: WelcomeStyle,
     pub color_scheme: ColorScheme,
 }
 
@@ -49,6 +53,7 @@ pub struct ThemeMeta {
 #[derive(Deserialize, Default)]
 pub struct Workspace {
     pub background: Color,
+    pub blank_pane: BlankPaneStyle,
     pub titlebar: Titlebar,
     pub tab_bar: TabBar,
     pub pane_divider: Border,
@@ -66,6 +71,16 @@ pub struct Workspace {
     pub external_location_message: ContainedText,
     pub dock: Dock,
     pub drop_target_overlay_color: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct BlankPaneStyle {
+    pub logo: IconStyle,
+    pub logo_shadow: IconStyle,
+    pub logo_container: ContainerStyle,
+    pub keyboard_hints: ContainerStyle,
+    pub keyboard_hint: Interactive<ContainedText>,
+    pub keyboard_hint_width: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -345,6 +360,7 @@ pub struct ProjectPanel {
     pub cut_entry: Interactive<ProjectPanelEntry>,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
+    pub open_project_button: Interactive<ContainedText>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -851,12 +867,24 @@ pub struct FeedbackStyle {
 }
 
 #[derive(Clone, Deserialize, Default)]
+pub struct WelcomeStyle {
+    pub page_width: f32,
+    pub logo: IconStyle,
+    pub logo_subheading: ContainedText,
+    pub usage_note: ContainedText,
+    pub checkbox: CheckboxStyle,
+    pub checkbox_container: ContainerStyle,
+    pub button: Interactive<ContainedText>,
+    pub button_group: ContainerStyle,
+    pub heading_group: ContainerStyle,
+    pub checkbox_group: ContainerStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
 pub struct ColorScheme {
     pub name: String,
     pub is_light: bool,
-
     pub ramps: RampSet,
-
     pub lowest: Layer,
     pub middle: Layer,
     pub highest: Layer,

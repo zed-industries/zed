@@ -736,7 +736,7 @@ impl ContactList {
     ) -> ElementBox {
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.contact_avatar)
                     .aligned()
                     .left()
@@ -1090,7 +1090,7 @@ impl ContactList {
                         };
                         Stack::new()
                             .with_child(
-                                Image::new(avatar)
+                                Image::from_data(avatar)
                                     .with_style(theme.contact_avatar)
                                     .aligned()
                                     .left()
@@ -1183,7 +1183,7 @@ impl ContactList {
 
         let mut row = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.contact_avatar)
                     .aligned()
                     .left()

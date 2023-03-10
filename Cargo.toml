@@ -26,6 +26,7 @@ members = [
     "crates/go_to_line",
     "crates/gpui",
     "crates/gpui_macros",
+    "crates/install_cli",
     "crates/journal",
     "crates/language",
     "crates/language_selector",
@@ -59,6 +60,7 @@ members = [
     "crates/util",
     "crates/vim",
     "crates/workspace",
+    "crates/welcome",
     "crates/zed",
 ]
 default-members = ["crates/zed"]
