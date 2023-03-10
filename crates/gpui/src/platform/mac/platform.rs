@@ -587,8 +587,8 @@ impl platform::Platform for MacPlatform {
         Box::new(Window::open(id, options, executor, self.fonts()))
     }
 
-    fn key_window_id(&self) -> Option<usize> {
-        Window::key_window_id()
+    fn main_window_id(&self) -> Option<usize> {
+        Window::main_window_id()
     }
 
     fn add_status_item(&self) -> Box<dyn platform::Window> {

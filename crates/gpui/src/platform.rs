@@ -58,7 +58,7 @@ pub trait Platform: Send + Sync {
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
-    fn key_window_id(&self) -> Option<usize>;
+    fn main_window_id(&self) -> Option<usize>;
 
     fn add_status_item(&self) -> Box<dyn Window>;
 
