@@ -185,6 +185,7 @@ fn main() {
         workspace::init(app_state.clone(), cx);
 
         journal::init(app_state.clone(), cx);
+        language_selector::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
         collab_ui::init(app_state.clone(), cx);

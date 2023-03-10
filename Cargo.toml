@@ -28,6 +28,7 @@ members = [
     "crates/gpui_macros",
     "crates/journal",
     "crates/language",
+    "crates/language_selector",
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",

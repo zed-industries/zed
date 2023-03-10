@@ -1,0 +1,21 @@
+[package]
+name = "language_selector"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/language_selector.rs"
+doctest = false
+
+[dependencies]
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+language = { path = "../language" }
+gpui = { path = "../gpui" }
+picker = { path = "../picker" }
+project = { path = "../project" }
+theme = { path = "../theme" }
+settings = { path = "../settings" }
+workspace = { path = "../workspace" }
+anyhow = "1.0"

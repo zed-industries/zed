@@ -1464,7 +1464,7 @@ impl Project {
                 })
                 .await?;
             this.update(&mut cx, |this, cx| {
-                this.assign_language_to_buffer(&buffer, cx);
+                this.detect_language_for_buffer(&buffer, cx);
                 this.register_buffer_with_language_server(&buffer, cx);
             });
             Ok(())
@@ -1531,7 +1531,7 @@ impl Project {
         })
         .detach();
 
-        self.assign_language_to_buffer(buffer, cx);
+        self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_server(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
@@ -1818,7 +1818,7 @@ impl Project {
                         }
 
                         for buffer in plain_text_buffers {
-                            project.assign_language_to_buffer(&buffer, cx);
+                            project.detect_language_for_buffer(&buffer, cx);
                             project.register_buffer_with_language_server(&buffer, cx);
                         }
 
@@ -1831,7 +1831,7 @@ impl Project {
         })
     }
 
-    fn assign_language_to_buffer(
+    fn detect_language_for_buffer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
@@ -1843,6 +1843,16 @@ impl Project {
             .language_for_path(&full_path)
             .now_or_never()?
             .ok()?;
+        self.set_language_for_buffer(buffer, new_language, cx);
+        None
+    }
+
+    pub fn set_language_for_buffer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        new_language: Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) {
         buffer.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
@@ -1851,13 +1861,13 @@ impl Project {
             }
         });
 
-        let file = File::from_dyn(buffer.read(cx).file())?;
-        let worktree = file.worktree.read(cx).as_local()?;
-        let worktree_id = worktree.id();
-        let worktree_abs_path = worktree.abs_path().clone();
-        self.start_language_server(worktree_id, worktree_abs_path, new_language, cx);
-
-        None
+        if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+            if let Some(worktree) = file.worktree.read(cx).as_local() {
+                let worktree_id = worktree.id();
+                let worktree_abs_path = worktree.abs_path().clone();
+                self.start_language_server(worktree_id, worktree_abs_path, new_language, cx);
+            }
+        }
     }
 
     fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
@@ -4553,7 +4563,7 @@ impl Project {
 
         for (buffer, old_path) in renamed_buffers {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
-            self.assign_language_to_buffer(&buffer, cx);
+            self.detect_language_for_buffer(&buffer, cx);
             self.register_buffer_with_language_server(&buffer, cx);
         }
     }
@@ -5222,7 +5232,7 @@ impl Project {
                 buffer.update(cx, |buffer, cx| {
                     buffer.file_updated(Arc::new(file), cx).detach();
                 });
-                this.assign_language_to_buffer(&buffer, cx);
+                this.detect_language_for_buffer(&buffer, cx);
             }
             Ok(())
         })
