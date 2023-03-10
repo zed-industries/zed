@@ -25,6 +25,12 @@ export default function statusBar(colorScheme: ColorScheme) {
         },
         border: border(layer, { top: true, overlay: true }),
         cursorPosition: text(layer, "sans", "variant"),
+        activeLanguage: {
+            ...text(layer, "sans", "variant"),
+            hover: {
+                ...text(layer, "sans", "on")
+            }
+        },
         autoUpdateProgressMessage: text(layer, "sans", "variant"),
         autoUpdateDoneMessage: text(layer, "sans", "variant"),
         lspStatus: {
@@ -45,9 +51,10 @@ export default function statusBar(colorScheme: ColorScheme) {
             hover: text(layer, "sans", "hovered"),
         },
         feedback: {
+            margin: { left: 2 },
             color: foreground(layer, "variant"),
             iconWidth: 14,
-            buttonWidth: 20,
+            buttonWidth: 14,
             hover: {
               color: foreground(layer, "on"),
             },

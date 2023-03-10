@@ -1,5 +1,6 @@
-use std::sync::Arc;
+mod active_buffer_language;
 
+pub use active_buffer_language::ActiveBufferLanguage;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -10,6 +11,7 @@ use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
+use std::sync::Arc;
 use workspace::{AppState, Workspace};
 
 actions!(language_selector, [Toggle]);
