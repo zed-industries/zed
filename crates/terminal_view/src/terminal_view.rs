@@ -653,7 +653,7 @@ impl Item for TerminalView {
 
     fn deserialize(
         project: ModelHandle<Project>,
-        _workspace: WeakViewHandle<Workspace>,
+        workspace: WeakViewHandle<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
@@ -663,7 +663,18 @@ impl Item for TerminalView {
             let cwd = TERMINAL_DB
                 .get_working_directory(item_id, workspace_id)
                 .log_err()
-                .flatten();
+                .flatten()
+                .or_else(|| {
+                    cx.read(|cx| {
+                        let strategy = cx.global::<Settings>().terminal_strategy();
+                        workspace
+                            .upgrade(cx)
+                            .map(|workspace| {
+                                get_working_directory(workspace.read(cx), cx, strategy)
+                            })
+                            .flatten()
+                    })
+                });
 
             cx.update(|cx| {
                 let terminal = project.update(cx, |project, cx| {
