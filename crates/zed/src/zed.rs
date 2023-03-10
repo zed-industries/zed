@@ -167,9 +167,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
-        move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
+        move |_: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
-                workspace,
                 app_state.clone(),
                 "licenses.md",
                 "Open Source License Attribution",
@@ -192,9 +191,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
-        move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
+        move |_: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
-                workspace,
                 app_state.clone(),
                 "keymaps/default.json",
                 "Default Key Bindings",
@@ -205,11 +203,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
-        move |workspace: &mut Workspace,
-              _: &OpenDefaultSettings,
-              cx: &mut ViewContext<Workspace>| {
+        move |_: &mut Workspace, _: &OpenDefaultSettings, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
-                workspace,
                 app_state.clone(),
                 "settings/default.json",
                 "Default Settings",
@@ -218,32 +213,41 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             );
         }
     });
-    cx.add_action(
-        |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
+    cx.add_action({
+        let app_state = app_state.clone();
+        move |_: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
+            let app_state = app_state.clone();
+            let markdown = app_state.languages.language_for_name("JSON");
             let content = to_string_pretty(&cx.debug_elements()).unwrap();
-            let project = workspace.project().clone();
-            let json_language = project
-                .read(cx)
-                .languages()
-                .language_for_name("JSON")
-                .unwrap();
-            if project.read(cx).is_remote() {
-                cx.propagate_action();
-            } else if let Some(buffer) = project
-                .update(cx, |project, cx| {
-                    project.create_buffer(&content, Some(json_language), cx)
-                })
-                .log_err()
-            {
-                workspace.add_item(
-                    Box::new(
-                        cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
-                    ),
-                    cx,
-                );
-            }
-        },
-    );
+            cx.spawn(|workspace, mut cx| async move {
+                let markdown = markdown.await.log_err();
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.with_local_workspace(&app_state, cx, move |workspace, cx| {
+                            let project = workspace.project().clone();
+
+                            let buffer = project
+                                .update(cx, |project, cx| {
+                                    project.create_buffer(&content, markdown, cx)
+                                })
+                                .expect("creating buffers on a local workspace always succeeds");
+                            let buffer = cx.add_model(|cx| {
+                                MultiBuffer::singleton(buffer, cx)
+                                    .with_title("Debug Elements".into())
+                            });
+                            workspace.add_item(
+                                Box::new(cx.add_view(|cx| {
+                                    Editor::for_multibuffer(buffer, Some(project.clone()), cx)
+                                })),
+                                cx,
+                            );
+                        })
+                    })
+                    .await;
+            })
+            .detach();
+        }
+    });
     cx.add_action(
         |workspace: &mut Workspace,
          _: &project_panel::ToggleFocus,
@@ -633,6 +637,7 @@ fn open_telemetry_log_file(
                 start_offset += newline_offset + 1;
             }
             let log_suffix = &log[start_offset..];
+            let json = app_state.languages.language_for_name("JSON").await.log_err();
 
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
@@ -640,7 +645,7 @@ fn open_telemetry_log_file(
                     .update(cx, |project, cx| project.create_buffer("", None, cx))
                     .expect("creating buffers on a local workspace always succeeds");
                 buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(app_state.languages.language_for_name("JSON"), cx);
+                    buffer.set_language(json, cx);
                     buffer.edit(
                         [(
                             0..0,
@@ -673,35 +678,42 @@ fn open_telemetry_log_file(
 }
 
 fn open_bundled_file(
-    workspace: &mut Workspace,
     app_state: Arc<AppState>,
     asset_path: &'static str,
     title: &'static str,
     language: &'static str,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace
-        .with_local_workspace(&app_state, cx, |workspace, cx| {
-            let project = workspace.project().clone();
-            let buffer = project.update(cx, |project, cx| {
-                let text = Assets::get(asset_path)
-                    .map(|f| f.data)
-                    .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
-                let text = str::from_utf8(text.as_ref()).unwrap();
-                project
-                    .create_buffer(text, project.languages().language_for_name(language), cx)
-                    .expect("creating buffers on a local workspace always succeeds")
-            });
-            let buffer =
-                cx.add_model(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
-            workspace.add_item(
-                Box::new(
-                    cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), cx)),
-                ),
-                cx,
-            );
-        })
-        .detach();
+    let language = app_state.languages.language_for_name(language);
+    cx.spawn(|workspace, mut cx| async move {
+        let language = language.await.log_err();
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
+                    let project = workspace.project();
+                    let buffer = project.update(cx, |project, cx| {
+                        let text = Assets::get(asset_path)
+                            .map(|f| f.data)
+                            .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
+                        let text = str::from_utf8(text.as_ref()).unwrap();
+                        project
+                            .create_buffer(text, language, cx)
+                            .expect("creating buffers on a local workspace always succeeds")
+                    });
+                    let buffer = cx.add_model(|cx| {
+                        MultiBuffer::singleton(buffer, cx).with_title(title.into())
+                    });
+                    workspace.add_item(
+                        Box::new(cx.add_view(|cx| {
+                            Editor::for_multibuffer(buffer, Some(project.clone()), cx)
+                        })),
+                        cx,
+                    );
+                })
+            })
+            .await;
+    })
+    .detach();
 }
 
 fn schema_file_match(path: &Path) -> &Path {

@@ -73,7 +73,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 }
             }
 
-            Ok(())
+            anyhow::Ok(())
         }
         .log_err()
     })
