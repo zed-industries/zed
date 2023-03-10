@@ -20,6 +20,7 @@ use postage::prelude::Stream;
 
 use project::Project;
 use serde::Serialize;
+use util::ResultExt;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
@@ -200,24 +201,28 @@ impl FeedbackEditor {
 impl FeedbackEditor {
     pub fn deploy(
         system_specs: SystemSpecs,
-        workspace: &mut Workspace,
+        _: &mut Workspace,
         app_state: Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        workspace
-            .with_local_workspace(&app_state, cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                let markdown_language = project.read(cx).languages().language_for_name("Markdown");
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.create_buffer("", markdown_language, cx)
+        let markdown = app_state.languages.language_for_name("Markdown");
+        cx.spawn(|workspace, mut cx| async move {
+            let markdown = markdown.await.log_err();
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", markdown, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        let feedback_editor = cx
+                            .add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
+                        workspace.add_item(Box::new(feedback_editor), cx);
                     })
-                    .expect("creating buffers on a local workspace always succeeds");
-                let feedback_editor =
-                    cx.add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
-                workspace.add_item(Box::new(feedback_editor), cx);
-            })
-            .detach();
+                })
+                .await;
+        })
+        .detach();
     }
 }
 
