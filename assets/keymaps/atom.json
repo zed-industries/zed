@@ -1,0 +1,68 @@
+[
+  {
+    "bindings": {
+      "cmd-k cmd-p": "workspace::ActivatePreviousPane",
+      "cmd-k cmd-n": "workspace::ActivateNextPane"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "cmd-b": "editor::GoToDefinition",
+      "cmd-<": "editor::ScrollCursorCenter",
+      "cmd-g": [
+        "editor::SelectNext",
+        {
+          "replace_newest": true
+        }
+      ],
+      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-up": "editor::AddSelectionAbove",
+      "cmd-shift-backspace": "editor::DeleteToBeginningOfLine"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "cmd-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "cmd-f3": "search::SelectNextMatch",
+      "cmd-shift-f3": "search::SelectPrevMatch"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-\\": "workspace::ToggleLeftSidebar",
+      "cmd-k cmd-b": "workspace::ToggleLeftSidebar",
+      "cmd-t": "file_finder::Toggle",
+      "cmd-shift-r": "project_symbols::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "alt-cmd-/": "search::ToggleRegex",
+      "ctrl-0": "project_panel::ToggleFocus"
+    }
+  },
+  {
+    "context": "ProjectPanel",
+    "bindings": {
+      "ctrl-[": "project_panel::CollapseSelectedEntry",
+      "ctrl-b": "project_panel::CollapseSelectedEntry",
+      "h": "project_panel::CollapseSelectedEntry",
+      "ctrl-]": "project_panel::ExpandSelectedEntry",
+      "ctrl-f": "project_panel::ExpandSelectedEntry",
+      "ctrl-shift-c": "project_panel::CopyPath"
+    }
+  },
+  {
+    "context": "Dock",
+    "bindings": {}
+  }
+]

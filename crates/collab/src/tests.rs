@@ -197,7 +197,8 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _| unimplemented!(),
-            dock_default_item_factory: |_, _| unimplemented!(),
+            dock_default_item_factory: |_, _| None,
+            background_actions: || &[],
         });
 
         Project::init(&client);
@@ -434,15 +435,7 @@ impl TestClient {
         cx: &mut TestAppContext,
     ) -> ViewHandle<Workspace> {
         let (_, root_view) = cx.add_window(|_| EmptyView);
-        cx.add_view(&root_view, |cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        })
+        cx.add_view(&root_view, |cx| Workspace::test_new(project.clone(), cx))
     }
 
     fn create_new_root_dir(&mut self) -> PathBuf {

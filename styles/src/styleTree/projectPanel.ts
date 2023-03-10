@@ -29,6 +29,28 @@ export default function projectPanel(colorScheme: ColorScheme) {
     }
 
     return {
+        openProjectButton: {
+            background: background(layer),
+            border: border(layer, "active"),
+            cornerRadius: 4,
+            margin: {
+                top: 16,
+                left: 16,
+                right: 16,
+            },
+            padding: {
+                top: 3,
+                bottom: 3,
+                left: 7,
+                right: 7,
+            },
+            ...text(layer, "sans", "default", { size: "sm" }),
+            hover: {
+                ...text(layer, "sans", "default", { size: "sm" }),
+                background: background(layer, "hovered"),
+                border: border(layer, "active"),
+            },
+        },
         background: background(layer),
         padding: { left: 12, right: 12, top: 6, bottom: 6 },
         indentWidth: 8,

@@ -86,6 +86,7 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut Mutable
                         0,
                         project,
                         app_state.dock_default_item_factory,
+                        app_state.background_actions,
                         cx,
                     );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);

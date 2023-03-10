@@ -981,15 +981,7 @@ mod tests {
         let params = cx.update(AppState::test);
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         (project, workspace)
     }

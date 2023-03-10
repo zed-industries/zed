@@ -5115,7 +5115,7 @@ impl<T: Entity> From<WeakModelHandle<T>> for AnyWeakModelHandle {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy)]
 pub struct WeakViewHandle<T> {
     window_id: usize,
     view_id: usize,

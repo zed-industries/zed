@@ -867,7 +867,7 @@ impl LocalWorktree {
         let old_path = self.entry_for_id(entry_id)?.path.clone();
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
-        let abs_new_path = self.absolutize(&new_path);
+        let abs_new_path = self.absolutize(new_path.as_ref());
         let rename = cx.background().spawn({
             let fs = self.fs.clone();
             let abs_new_path = abs_new_path.clone();

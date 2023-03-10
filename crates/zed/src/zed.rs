@@ -2,7 +2,7 @@ pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use anyhow::{anyhow, Context, Result};
+use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
@@ -20,7 +20,7 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 pub use lsp;
@@ -65,7 +65,6 @@ actions!(
         IncreaseBufferFontSize,
         DecreaseBufferFontSize,
         ResetBufferFontSize,
-        InstallCommandLineInterface,
         ResetDatabase,
     ]
 );
@@ -140,9 +139,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             cx.refresh_windows();
         });
     });
-    cx.add_global_action(move |_: &InstallCommandLineInterface, cx| {
-        cx.spawn(|cx| async move { install_cli(&cx).await.context("error creating CLI symlink") })
-            .detach_and_log_err(cx);
+    cx.add_global_action(move |_: &install_cli::Install, cx| {
+        cx.spawn(|cx| async move {
+            install_cli::install_cli(&cx)
+                .await
+                .context("error creating CLI symlink")
+        })
+        .detach_and_log_err(cx);
     });
     cx.add_action({
         let app_state = app_state.clone();
@@ -255,7 +258,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
         },
     );
-
     activity_indicator::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
@@ -482,54 +484,6 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
         &format!("{app_name} {version}"),
         &["OK"],
     );
-}
-
-async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
-    let cli_path = cx.platform().path_for_auxiliary_executable("cli")?;
-    let link_path = Path::new("/usr/local/bin/zed");
-    let bin_dir_path = link_path.parent().unwrap();
-
-    // Don't re-create symlink if it points to the same CLI binary.
-    if smol::fs::read_link(link_path).await.ok().as_ref() == Some(&cli_path) {
-        return Ok(());
-    }
-
-    // If the symlink is not there or is outdated, first try replacing it
-    // without escalating.
-    smol::fs::remove_file(link_path).await.log_err();
-    if smol::fs::unix::symlink(&cli_path, link_path)
-        .await
-        .log_err()
-        .is_some()
-    {
-        return Ok(());
-    }
-
-    // The symlink could not be created, so use osascript with admin privileges
-    // to create it.
-    let status = smol::process::Command::new("osascript")
-        .args([
-            "-e",
-            &format!(
-                "do shell script \" \
-                    mkdir -p \'{}\' && \
-                    ln -sf \'{}\' \'{}\' \
-                \" with administrator privileges",
-                bin_dir_path.to_string_lossy(),
-                cli_path.to_string_lossy(),
-                link_path.to_string_lossy(),
-            ),
-        ])
-        .stdout(smol::process::Stdio::inherit())
-        .stderr(smol::process::Stdio::inherit())
-        .output()
-        .await?
-        .status;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!("error running osascript"))
-    }
 }
 
 fn open_config_file(
@@ -765,6 +719,10 @@ mod tests {
                         "ca": null,
                         "cb": null,
                     },
+                    "d": {
+                        "da": null,
+                        "db": null,
+                    },
                 }),
             )
             .await;
@@ -773,13 +731,14 @@ mod tests {
             open_paths(
                 &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
                 &app_state,
+                None,
                 cx,
             )
         })
         .await;
         assert_eq!(cx.window_ids().len(), 1);
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await;
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
@@ -793,11 +752,37 @@ mod tests {
             open_paths(
                 &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
                 &app_state,
+                None,
                 cx,
             )
         })
         .await;
         assert_eq!(cx.window_ids().len(), 2);
+
+        // Replace existing windows
+        let window_id = cx.window_ids()[0];
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
+                &app_state,
+                Some(window_id),
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 2);
+        let workspace_1 = cx.root_view::<Workspace>(window_id).unwrap();
+        workspace_1.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .worktrees(cx)
+                    .map(|w| w.read(cx).abs_path())
+                    .collect::<Vec<_>>(),
+                &[Path::new("/root/c").into(), Path::new("/root/d").into()]
+            );
+            assert!(workspace.left_sidebar().read(cx).is_open());
+            assert!(workspace.active_pane().is_focused(cx));
+        });
     }
 
     #[gpui::test]
@@ -809,7 +794,7 @@ mod tests {
             .insert_tree("/root", json!({"a": "hey"}))
             .await;
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await;
         assert_eq!(cx.window_ids().len(), 1);
 
@@ -847,7 +832,7 @@ mod tests {
         assert!(!cx.is_window_edited(workspace.window_id()));
 
         // Opening the buffer again doesn't impact the window's edited state.
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await;
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
@@ -877,7 +862,8 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.update(|cx| open_new(&app_state, cx)).await;
+        cx.update(|cx| open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)))
+            .await;
 
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
@@ -922,9 +908,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1043,9 +1027,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1204,9 +1186,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1248,9 +1228,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -1339,9 +1317,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, NewFile);
@@ -1394,9 +1370,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1470,15 +1444,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1742,15 +1708,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));

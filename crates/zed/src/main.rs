@@ -13,11 +13,12 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
 };
+use db::kvp::KEY_VALUE_STORE;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{App, AssetSource, AsyncAppContext, MutableAppContext, Task, ViewContext};
+use gpui::{Action, App, AssetSource, AsyncAppContext, MutableAppContext, Task, ViewContext};
 use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -35,17 +36,19 @@ use std::{
     path::PathBuf, sync::Arc, thread, time::Duration,
 };
 use terminal_view::{get_working_directory, TerminalView};
+use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
-use settings::watched_json::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
+use settings::watched_json::WatchedJsonFile;
 use theme::ThemeRegistry;
 #[cfg(debug_assertions)]
 use util::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    self, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile, OpenPaths, Workspace,
+    self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile,
+    OpenPaths, Workspace,
 };
-use zed::{self, build_window_options, initialize_workspace, languages, menus};
+use zed::{self, build_window_options, initialize_workspace, languages, menus, OpenSettings};
 
 fn main() {
     let http = http::client();
@@ -119,7 +122,14 @@ fn main() {
             fs.clone(),
         ));
 
-        watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
+        settings::watch_files(
+            default_settings,
+            settings_file_content,
+            themes.clone(),
+            keymap_file,
+            cx,
+        );
+
         if !stdout_is_a_pty() {
             upload_previous_panics(http.clone(), cx);
         }
@@ -131,8 +141,6 @@ fn main() {
         let languages = Arc::new(languages);
         languages::init(languages.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-
-        watch_keymap_file(keymap_file, cx);
 
         cx.set_global(client.clone());
 
@@ -179,6 +187,7 @@ fn main() {
             build_window_options,
             initialize_workspace,
             dock_default_item_factory,
+            background_actions,
         });
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
@@ -190,6 +199,7 @@ fn main() {
         zed::init(&app_state, cx);
         collab_ui::init(app_state.clone(), cx);
         feedback::init(app_state.clone(), cx);
+        welcome::init(cx);
 
         cx.set_menus(menus::menus());
 
@@ -197,7 +207,7 @@ fn main() {
             cx.platform().activate(true);
             let paths = collect_path_args();
             if paths.is_empty() {
-                cx.spawn(|cx| async move { restore_or_create_workspace(cx).await })
+                cx.spawn(|cx| async move { restore_or_create_workspace(&app_state, cx).await })
                     .detach()
             } else {
                 cx.dispatch_global_action(OpenPaths { paths });
@@ -207,11 +217,14 @@ fn main() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
             } else if let Ok(Some(paths)) = open_paths_rx.try_next() {
-                cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                     .detach();
             } else {
-                cx.spawn(|cx| async move { restore_or_create_workspace(cx).await })
-                    .detach()
+                cx.spawn({
+                    let app_state = app_state.clone();
+                    |cx| async move { restore_or_create_workspace(&app_state, cx).await }
+                })
+                .detach()
             }
 
             cx.spawn(|cx| {
@@ -228,8 +241,7 @@ fn main() {
                 let app_state = app_state.clone();
                 async move {
                     while let Some(paths) = open_paths_rx.next().await {
-                        log::error!("OPEN PATHS FROM HANDLE");
-                        cx.update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                        cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                             .detach();
                     }
                 }
@@ -251,13 +263,15 @@ fn main() {
     });
 }
 
-async fn restore_or_create_workspace(mut cx: AsyncAppContext) {
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
     if let Some(location) = workspace::last_opened_workspace_paths().await {
         cx.update(|cx| {
             cx.dispatch_global_action(OpenPaths {
                 paths: location.paths().as_ref().clone(),
             })
         });
+    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        cx.update(|cx| show_welcome_experience(app_state, cx));
     } else {
         cx.update(|cx| {
             cx.dispatch_global_action(NewFile);
@@ -591,7 +605,7 @@ async fn handle_cli_connection(
                     paths
                 };
                 let (workspace, items) = cx
-                    .update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                    .update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                     .await;
 
                 let mut errored = false;
@@ -691,4 +705,14 @@ pub fn dock_default_item_factory(
     let terminal_view = cx.add_view(|cx| TerminalView::new(terminal, workspace.database_id(), cx));
 
     Some(Box::new(terminal_view))
+}
+
+pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
+    &[
+        ("Go to file", &file_finder::Toggle),
+        ("Open command palette", &command_palette::Toggle),
+        ("Focus the dock", &FocusDock),
+        ("Open recent projects", &recent_projects::OpenRecent),
+        ("Change your settings", &OpenSettings),
+    ]
 }

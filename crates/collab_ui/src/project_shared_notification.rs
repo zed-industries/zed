@@ -108,7 +108,7 @@ impl ProjectSharedNotification {
         let theme = &cx.global::<Settings>().theme.project_shared_notification;
         Flex::row()
             .with_children(self.owner.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.owner_avatar)
                     .aligned()
                     .boxed()

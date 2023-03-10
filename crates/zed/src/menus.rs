@@ -19,7 +19,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                         MenuItem::action("Select Theme", theme_selector::Toggle),
                     ],
                 }),
-                MenuItem::action("Install CLI", super::InstallCommandLineInterface),
+                MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 MenuItem::action("Hide Zed", super::Hide),
                 MenuItem::action("Hide Others", super::HideOthers),
@@ -137,8 +137,9 @@ pub fn menus() -> Vec<Menu<'static>> {
             items: vec![
                 MenuItem::action("Command Palette", command_palette::Toggle),
                 MenuItem::separator(),
-                MenuItem::action("View Telemetry Log", crate::OpenTelemetryLog),
+                MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
+                MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::separator(),
                 MenuItem::action("Give us feedback", feedback::feedback_editor::GiveFeedback),
                 MenuItem::action(

@@ -27,6 +27,7 @@ context_menu = { path = "../context_menu" }
 drag_and_drop = { path = "../drag_and_drop" }
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
+install_cli = { path = "../install_cli" }
 language = { path = "../language" }
 menu = { path = "../menu" }
 project = { path = "../project" }

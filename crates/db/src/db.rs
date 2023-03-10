@@ -4,6 +4,7 @@ pub mod query;
 // Re-export
 pub use anyhow;
 use anyhow::Context;
+use gpui::MutableAppContext;
 pub use indoc::indoc;
 pub use lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -17,6 +18,7 @@ use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::fs::create_dir_all;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -39,6 +41,7 @@ const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
 const DB_FILE_NAME: &'static str = "db.sqlite";
 
 lazy_static::lazy_static! {
+    // !!!!!!! CHANGE BACK TO DEFAULT FALSE BEFORE SHIPPING
     static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
     static ref DB_FILE_OPERATIONS: Mutex<()> = Mutex::new(());
     pub static ref BACKUP_DB_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
@@ -63,11 +66,11 @@ pub async fn open_db<M: Migrator + 'static>(
     let connection = async_iife!({
         // Note: This still has a race condition where 1 set of migrations succeeds
         // (e.g. (Workspace, Editor)) and another fails (e.g. (Workspace, Terminal))
-        // This will cause the first connection to have the database taken out 
+        // This will cause the first connection to have the database taken out
         // from under it. This *should* be fine though. The second dabatase failure will
         // cause errors in the log and so should be observed by developers while writing
         // soon-to-be good migrations. If user databases are corrupted, we toss them out
-        // and try again from a blank. As long as running all migrations from start to end 
+        // and try again from a blank. As long as running all migrations from start to end
         // on a blank database is ok, this race condition will never be triggered.
         //
         // Basically: Don't ever push invalid migrations to stable or everyone will have
@@ -85,7 +88,7 @@ pub async fn open_db<M: Migrator + 'static>(
             };
         }
 
-        // Take a lock in the failure case so that we move the db once per process instead 
+        // Take a lock in the failure case so that we move the db once per process instead
         // of potentially multiple times from different threads. This shouldn't happen in the
         // normal path
         let _lock = DB_FILE_OPERATIONS.lock();
@@ -234,6 +237,15 @@ macro_rules! define_connection {
             pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db(&$crate::DB_DIR, &$crate::RELEASE_CHANNEL)));
         }
     };
+}
+
+pub fn write_and_log<F>(cx: &mut MutableAppContext, db_write: impl FnOnce() -> F + Send + 'static)
+where
+    F: Future<Output = anyhow::Result<()>> + Send,
+{
+    cx.background()
+        .spawn(async move { db_write().await.log_err() })
+        .detach()
 }
 
 #[cfg(test)]

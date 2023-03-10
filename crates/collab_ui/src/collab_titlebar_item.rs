@@ -833,7 +833,7 @@ impl CollabTitlebarItem {
         avatar_style: AvatarStyle,
         background_color: Color,
     ) -> ElementBox {
-        Image::new(avatar)
+        Image::from_data(avatar)
             .with_style(avatar_style.image)
             .aligned()
             .contained()

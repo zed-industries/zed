@@ -1,8 +1,7 @@
-use crate::{watched_json::WatchedJsonFile, write_top_level_setting, SettingsFileContent};
+use crate::{update_settings_file, watched_json::WatchedJsonFile, SettingsFileContent};
 use anyhow::Result;
 use fs::Fs;
 use gpui::MutableAppContext;
-use serde_json::Value;
 use std::{path::Path, sync::Arc};
 
 // TODO: Switch SettingsFile to open a worktree and buffer for synchronization
@@ -27,57 +26,24 @@ impl SettingsFile {
         }
     }
 
-    pub fn update(cx: &mut MutableAppContext, update: impl FnOnce(&mut SettingsFileContent)) {
+    pub fn update(
+        cx: &mut MutableAppContext,
+        update: impl 'static + Send + FnOnce(&mut SettingsFileContent),
+    ) {
         let this = cx.global::<SettingsFile>();
 
         let current_file_content = this.settings_file_content.current();
-        let mut new_file_content = current_file_content.clone();
-
-        update(&mut new_file_content);
 
         let fs = this.fs.clone();
         let path = this.path.clone();
 
         cx.background()
             .spawn(async move {
-                // Unwrap safety: These values are all guarnteed to be well formed, and we know
-                // that they will deserialize to our settings object. All of the following unwraps
-                // are therefore safe.
-                let tmp = serde_json::to_value(current_file_content).unwrap();
-                let old_json = tmp.as_object().unwrap();
+                let old_text = fs.load(path).await?;
 
-                let new_tmp = serde_json::to_value(new_file_content).unwrap();
-                let new_json = new_tmp.as_object().unwrap();
+                let new_text = update_settings_file(old_text, current_file_content, update);
 
-                // Find changed fields
-                let mut diffs = vec![];
-                for (key, old_value) in old_json.iter() {
-                    let new_value = new_json.get(key).unwrap();
-                    if old_value != new_value {
-                        if matches!(
-                            new_value,
-                            &Value::Null | &Value::Object(_) | &Value::Array(_)
-                        ) {
-                            unimplemented!(
-                                "We only support updating basic values at the top level"
-                            );
-                        }
-
-                        let new_json = serde_json::to_string_pretty(new_value)
-                            .expect("Could not serialize new json field to string");
-
-                        diffs.push((key, new_json));
-                    }
-                }
-
-                // Have diffs, rewrite the settings file now.
-                let mut content = fs.load(path).await?;
-
-                for (key, new_value) in diffs {
-                    content = write_top_level_setting(content, key, &new_value)
-                }
-
-                fs.atomic_write(path.to_path_buf(), content).await?;
+                fs.atomic_write(path.to_path_buf(), new_text).await?;
 
                 Ok(()) as Result<()>
             })
@@ -88,9 +54,163 @@ impl SettingsFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{watched_json::watch_settings_file, EditorSettings, Settings, SoftWrap};
+    use crate::{
+        watch_files, watched_json::watch_settings_file, EditorSettings, Settings, SoftWrap,
+    };
     use fs::FakeFs;
+    use gpui::{actions, Action};
     use theme::ThemeRegistry;
+
+    #[gpui::test]
+    async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
+        let executor = cx.background();
+        let fs = FakeFs::new(executor.clone());
+        let font_cache = cx.font_cache();
+
+        actions!(test, [A, B]);
+        // From the Atom keymap
+        actions!(workspace, [ActivatePreviousPane]);
+        // From the JetBrains keymap
+        actions!(pane, [ActivatePrevItem]);
+
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+            {
+                "base_keymap": "Atom"
+            }
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+            [
+                {
+                    "bindings": {
+                        "backspace": "test::A"
+                    }
+                }
+            ]
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        let settings_file =
+            WatchedJsonFile::new(fs.clone(), &executor, "/settings.json".as_ref()).await;
+        let keymaps_file =
+            WatchedJsonFile::new(fs.clone(), &executor, "/keymap.json".as_ref()).await;
+
+        let default_settings = cx.read(Settings::test);
+
+        cx.update(|cx| {
+            cx.add_global_action(|_: &A, _cx| {});
+            cx.add_global_action(|_: &B, _cx| {});
+            cx.add_global_action(|_: &ActivatePreviousPane, _cx| {});
+            cx.add_global_action(|_: &ActivatePrevItem, _cx| {});
+            watch_files(
+                default_settings,
+                settings_file,
+                ThemeRegistry::new((), font_cache),
+                keymaps_file,
+                cx,
+            )
+        });
+
+        cx.foreground().run_until_parked();
+
+        // Test loading the keymap base at all
+        cx.update(|cx| {
+            assert_keybindings_for(
+                cx,
+                vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+                line!(),
+            );
+        });
+
+        // Test modifying the users keymap, while retaining the base keymap
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+            [
+                {
+                    "bindings": {
+                        "backspace": "test::B"
+                    }
+                }
+            ]
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.foreground().run_until_parked();
+
+        cx.update(|cx| {
+            assert_keybindings_for(
+                cx,
+                vec![("backspace", &B), ("k", &ActivatePreviousPane)],
+                line!(),
+            );
+        });
+
+        // Test modifying the base, while retaining the users keymap
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+            {
+                "base_keymap": "JetBrains"
+            }
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.foreground().run_until_parked();
+
+        cx.update(|cx| {
+            assert_keybindings_for(
+                cx,
+                vec![("backspace", &B), ("[", &ActivatePrevItem)],
+                line!(),
+            );
+        });
+    }
+
+    fn assert_keybindings_for<'a>(
+        cx: &mut MutableAppContext,
+        actions: Vec<(&'static str, &'a dyn Action)>,
+        line: u32,
+    ) {
+        for (key, action) in actions {
+            // assert that...
+            assert!(
+                cx.available_actions(0, 0).any(|(_, bound_action, b)| {
+                    // action names match...
+                    bound_action.name() == action.name()
+                    && bound_action.namespace() == action.namespace()
+                    // and key strokes contain the given key
+                    && b.iter()
+                        .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
+                }),
+                "On {} Failed to find {} with keybinding {}",
+                line,
+                action.name(),
+                key
+            );
+        }
+    }
 
     #[gpui::test]
     async fn test_watch_settings_files(cx: &mut gpui::TestAppContext) {

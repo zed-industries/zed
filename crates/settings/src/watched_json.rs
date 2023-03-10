@@ -62,7 +62,18 @@ where
     }
 }
 
-pub fn watch_settings_file(
+pub fn watch_files(
+    defaults: Settings,
+    settings_file: WatchedJsonFile<SettingsFileContent>,
+    theme_registry: Arc<ThemeRegistry>,
+    keymap_file: WatchedJsonFile<KeymapFileContent>,
+    cx: &mut MutableAppContext,
+) {
+    watch_settings_file(defaults, settings_file, theme_registry, cx);
+    watch_keymap_file(keymap_file, cx);
+}
+
+pub(crate) fn watch_settings_file(
     defaults: Settings,
     mut file: WatchedJsonFile<SettingsFileContent>,
     theme_registry: Arc<ThemeRegistry>,
@@ -77,13 +88,13 @@ pub fn watch_settings_file(
     .detach();
 }
 
-pub fn keymap_updated(content: KeymapFileContent, cx: &mut MutableAppContext) {
+fn keymap_updated(content: KeymapFileContent, cx: &mut MutableAppContext) {
     cx.clear_bindings();
     KeymapFileContent::load_defaults(cx);
     content.add_to_cx(cx).log_err();
 }
 
-pub fn settings_updated(
+fn settings_updated(
     defaults: &Settings,
     content: SettingsFileContent,
     theme_registry: &Arc<ThemeRegistry>,
@@ -95,10 +106,20 @@ pub fn settings_updated(
     cx.refresh_windows();
 }
 
-pub fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFileContent>, cx: &mut MutableAppContext) {
+fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFileContent>, cx: &mut MutableAppContext) {
     cx.spawn(|mut cx| async move {
+        let mut settings_subscription = None;
         while let Some(content) = file.0.recv().await {
-            cx.update(|cx| keymap_updated(content, cx));
+            cx.update(|cx| {
+                let old_base_keymap = cx.global::<Settings>().base_keymap;
+                keymap_updated(content.clone(), cx);
+                settings_subscription = Some(cx.observe_global::<Settings, _>(move |cx| {
+                    let settings = cx.global::<Settings>();
+                    if settings.base_keymap != old_base_keymap {
+                        keymap_updated(content.clone(), cx);
+                    }
+                }));
+            });
         }
     })
     .detach();

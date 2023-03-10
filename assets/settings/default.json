@@ -50,7 +50,7 @@
     //     "default_dock_anchor": "right"
     // 3. Position the dock full screen over the entire workspace"
     //     "default_dock_anchor": "expanded"
-    "default_dock_anchor": "right",
+    "default_dock_anchor": "bottom",
     // Whether or not to remove any trailing whitespace from lines of a buffer
     // before saving it.
     "remove_trailing_whitespace_on_save": true,

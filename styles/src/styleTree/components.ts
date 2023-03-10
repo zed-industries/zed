@@ -93,7 +93,7 @@ interface Text {
     underline?: boolean
 }
 
-interface TextProperties {
+export interface TextProperties {
     size?: keyof typeof fontSizes
     weight?: FontWeight
     underline?: boolean
