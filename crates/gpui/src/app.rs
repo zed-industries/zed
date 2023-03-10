@@ -485,7 +485,9 @@ pub struct MutableAppContext {
     cx: AppContext,
     action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
+    // Entity Types -> { Action Types -> Action Handlers }
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
+    // Action Types -> Action Handlers
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: KeymapMatcher,
     next_entity_id: usize,
@@ -1239,20 +1241,34 @@ impl MutableAppContext {
         action: &dyn Action,
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         let mut contexts = Vec::new();
-        for view_id in self.ancestors(window_id, view_id) {
+        let mut handler_depth = None;
+        for (i, view_id) in self.ancestors(window_id, view_id).enumerate() {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
+                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
+                    if actions.contains_key(&action.as_any().type_id()) {
+                        handler_depth = Some(i);
+                    }
+                }
                 contexts.push(view.keymap_context(self));
             }
+        }
+
+        if self.global_actions.contains_key(&action.as_any().type_id()) {
+            handler_depth = Some(contexts.len())
         }
 
         self.keystroke_matcher
             .bindings_for_action_type(action.as_any().type_id())
             .find_map(|b| {
-                if b.match_context(&contexts) {
-                    Some(b.keystrokes().into())
-                } else {
-                    None
-                }
+                handler_depth
+                    .map(|highest_handler| {
+                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
+                            Some(b.keystrokes().into())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
             })
     }
 
@@ -1261,29 +1277,42 @@ impl MutableAppContext {
         window_id: usize,
         view_id: usize,
     ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
-        let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
-
         let mut contexts = Vec::new();
-        for view_id in self.ancestors(window_id, view_id) {
+        let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
+        for (depth, view_id) in self.ancestors(window_id, view_id).enumerate() {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
                 contexts.push(view.keymap_context(self));
                 let view_type = view.as_any().type_id();
                 if let Some(actions) = self.actions.get(&view_type) {
-                    action_types.extend(actions.keys().copied());
+                    handler_depths_by_action_type.extend(
+                        actions
+                            .keys()
+                            .copied()
+                            .map(|action_type| (action_type, depth)),
+                    );
                 }
             }
         }
 
+        handler_depths_by_action_type.extend(
+            self.global_actions
+                .keys()
+                .copied()
+                .map(|action_type| (action_type, contexts.len())),
+        );
+
         self.action_deserializers
             .iter()
             .filter_map(move |(name, (type_id, deserialize))| {
-                if action_types.contains(type_id) {
+                if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
                     Some((
                         *name,
                         deserialize("{}").ok()?,
                         self.keystroke_matcher
                             .bindings_for_action_type(*type_id)
-                            .filter(|b| b.match_context(&contexts))
+                            .filter(|b| {
+                                (0..=action_depth).any(|depth| b.match_context(&contexts[depth..]))
+                            })
                             .collect(),
                     ))
                 } else {
@@ -5287,6 +5316,7 @@ impl Subscription {
 mod tests {
     use super::*;
     use crate::{actions, elements::*, impl_actions, MouseButton, MouseButtonEvent};
+    use itertools::Itertools;
     use postage::{sink::Sink, stream::Stream};
     use serde::Deserialize;
     use smol::future::poll_once;
@@ -6715,6 +6745,128 @@ mod tests {
         cx.dispatch_keystroke(window_id, &Keystroke::parse("d").unwrap());
         assert_eq!(&*actions.borrow(), &["2 d"]);
         actions.borrow_mut().clear();
+    }
+
+    #[crate::test(self)]
+    fn test_keystrokes_for_action(cx: &mut MutableAppContext) {
+        actions!(test, [Action1, Action2, GlobalAction]);
+
+        struct View1 {}
+        struct View2 {}
+
+        impl Entity for View1 {
+            type Event = ();
+        }
+        impl Entity for View2 {
+            type Event = ();
+        }
+
+        impl super::View for View1 {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+            fn ui_name() -> &'static str {
+                "View1"
+            }
+        }
+        impl super::View for View2 {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+            fn ui_name() -> &'static str {
+                "View2"
+            }
+        }
+
+        let (window_id, view_1) = cx.add_window(Default::default(), |_| View1 {});
+        let view_2 = cx.add_view(&view_1, |cx| {
+            cx.focus_self();
+            View2 {}
+        });
+
+        cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
+        cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
+        cx.add_global_action(|_: &GlobalAction, _| {});
+
+        cx.add_bindings(vec![
+            Binding::new("a", Action1, Some("View1")),
+            Binding::new("b", Action2, Some("View1 > View2")),
+            Binding::new("c", GlobalAction, Some("View3")), // View 3 does not exist
+        ]);
+
+        // Sanity check
+        assert_eq!(
+            cx.keystrokes_for_action(window_id, view_1.id(), &Action1)
+                .unwrap()
+                .as_slice(),
+            &[Keystroke::parse("a").unwrap()]
+        );
+        assert_eq!(
+            cx.keystrokes_for_action(window_id, view_2.id(), &Action2)
+                .unwrap()
+                .as_slice(),
+            &[Keystroke::parse("b").unwrap()]
+        );
+
+        // The 'a' keystroke propagates up the view tree from view_2
+        // to view_1. The action, Action1, is handled by view_1.
+        assert_eq!(
+            cx.keystrokes_for_action(window_id, view_2.id(), &Action1)
+                .unwrap()
+                .as_slice(),
+            &[Keystroke::parse("a").unwrap()]
+        );
+
+        // Actions that are handled below the current view don't have bindings
+        assert_eq!(
+            cx.keystrokes_for_action(window_id, view_1.id(), &Action2),
+            None
+        );
+
+        // Actions that are handled in other branches of the tree should not have a binding
+        assert_eq!(
+            cx.keystrokes_for_action(window_id, view_2.id(), &GlobalAction),
+            None
+        );
+
+        // Produces a list of actions and keybindings
+        fn available_actions(
+            window_id: usize,
+            view_id: usize,
+            cx: &mut MutableAppContext,
+        ) -> Vec<(&'static str, Vec<Keystroke>)> {
+            cx.available_actions(window_id, view_id)
+                .map(|(action_name, _, bindings)| {
+                    (
+                        action_name,
+                        bindings
+                            .iter()
+                            .map(|binding| binding.keystrokes()[0].clone())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .sorted_by(|(name1, _), (name2, _)| name1.cmp(name2))
+                .collect()
+        }
+
+        // Check that global actions do not have a binding, even if a binding does exist in another view
+        assert_eq!(
+            &available_actions(window_id, view_1.id(), cx),
+            &[
+                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                ("test::GlobalAction", vec![])
+            ],
+        );
+
+        // Check that view 1 actions and bindings are available even when called from view 2
+        assert_eq!(
+            &available_actions(window_id, view_2.id(), cx),
+            &[
+                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
+                ("test::GlobalAction", vec![]),
+            ],
+        );
     }
 
     #[crate::test(self)]
