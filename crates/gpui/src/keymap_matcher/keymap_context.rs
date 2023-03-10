@@ -64,7 +64,13 @@ impl KeymapContextPredicate {
     pub fn eval(&self, contexts: &[KeymapContext]) -> bool {
         let Some(context) = contexts.first() else { return false };
         match self {
-            Self::Identifier(name) => (&context.set).contains(name.as_str()),
+            Self::Identifier(name) => {
+                if (&context.set).contains(name.as_str()) {
+                    true
+                } else {
+                    self.eval(&contexts[1..])
+                }
+            }
             Self::Equal(left, right) => context
                 .map
                 .get(left.as_str())
