@@ -5831,7 +5831,7 @@ impl Project {
                                 })?;
                             }
 
-                            Ok(())
+                            anyhow::Ok(())
                         }
                         .log_err(),
                     )
