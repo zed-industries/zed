@@ -1259,6 +1259,7 @@ dependencies = [
  "collections",
  "context_menu",
  "editor",
+ "feedback",
  "futures 0.3.25",
  "fuzzy",
  "gpui",

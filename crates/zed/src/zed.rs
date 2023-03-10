@@ -340,10 +340,7 @@ pub fn initialize_workspace(
         activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
     let active_buffer_language = cx.add_view(|_| language_selector::ActiveBufferLanguage::new());
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    let feedback_button =
-        cx.add_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton {});
     workspace.status_bar().update(cx, |status_bar, cx| {
-        status_bar.add_left_item(feedback_button, cx);
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
         status_bar.add_right_item(active_buffer_language, cx);

@@ -140,6 +140,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::action("View Telemetry Log", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::separator(),
+                MenuItem::action("Give us feedback", feedback::feedback_editor::GiveFeedback),
                 MenuItem::action(
                     "Copy System Specs Into Clipboard",
                     feedback::CopySystemSpecsIntoClipboard,
