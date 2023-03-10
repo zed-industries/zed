@@ -27,8 +27,9 @@ impl ActiveBufferLanguage {
     }
 
     fn update_language(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
-        let editor = editor.read(cx);
         self.active_language.take();
+
+        let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             if let Some(language) = buffer.read(cx).language() {
                 self.active_language = Some(language.name());
