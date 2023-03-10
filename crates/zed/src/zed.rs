@@ -346,8 +346,8 @@ pub fn initialize_workspace(
         status_bar.add_left_item(feedback_button, cx);
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
-        status_bar.add_right_item(cursor_position, cx);
         status_bar.add_right_item(active_buffer_language, cx);
+        status_bar.add_right_item(cursor_position, cx);
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);

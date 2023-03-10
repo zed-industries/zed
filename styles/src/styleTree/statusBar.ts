@@ -26,6 +26,7 @@ export default function statusBar(colorScheme: ColorScheme) {
         border: border(layer, { top: true, overlay: true }),
         cursorPosition: text(layer, "sans", "variant"),
         activeLanguage: {
+            padding: { left: 6, right: 6 },
             ...text(layer, "sans", "variant"),
             hover: {
                 ...text(layer, "sans", "on")
