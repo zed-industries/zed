@@ -224,7 +224,7 @@ impl Telemetry {
                             .header("Content-Type", "application/json")
                             .body(json_bytes.into())?;
                         this.http_client.send(request).await?;
-                        Ok(())
+                        anyhow::Ok(())
                     }
                     .log_err(),
                 )
@@ -320,7 +320,7 @@ impl Telemetry {
                             .header("Content-Type", "application/json")
                             .body(json_bytes.into())?;
                         this.http_client.send(request).await?;
-                        Ok(())
+                        anyhow::Ok(())
                     }
                     .log_err(),
                 )

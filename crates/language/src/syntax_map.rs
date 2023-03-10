@@ -1,5 +1,6 @@
 use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
 use collections::HashMap;
+use futures::FutureExt;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::{
@@ -382,11 +383,11 @@ impl SyntaxSnapshot {
                 cursor.next(text);
                 while let Some(layer) = cursor.item() {
                     let SyntaxLayerContent::Pending { language_name } = &layer.content else { unreachable!() };
-                    if {
-                        let language_registry = &registry;
-                        language_registry.language_for_name_or_extension(language_name)
-                    }
-                    .is_some()
+                    if registry
+                        .language_for_name_or_extension(language_name)
+                        .now_or_never()
+                        .and_then(|language| language.ok())
+                        .is_some()
                     {
                         resolved_injection_ranges.push(layer.range.to_offset(text));
                     }
@@ -1116,7 +1117,10 @@ fn get_injections(
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
-            if let Some(language) = language_registry.language_for_name_or_extension(language_name)
+            if let Some(language) = language_registry
+                .language_for_name_or_extension(language_name)
+                .now_or_never()
+                .and_then(|language| language.ok())
             {
                 combined_injection_ranges.insert(language, Vec::new());
             }
@@ -1162,10 +1166,10 @@ fn get_injections(
             };
 
             if let Some(language_name) = language_name {
-                let language = {
-                    let language_name: &str = &language_name;
-                    language_registry.language_for_name_or_extension(language_name)
-                };
+                let language = language_registry
+                    .language_for_name_or_extension(&language_name)
+                    .now_or_never()
+                    .and_then(|language| language.ok());
                 let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
                 if let Some(language) = language {
                     if combined {
@@ -2522,7 +2526,11 @@ mod tests {
         registry.add(Arc::new(html_lang()));
         registry.add(Arc::new(erb_lang()));
         registry.add(Arc::new(markdown_lang()));
-        let language = registry.language_for_name(language_name).unwrap();
+        let language = registry
+            .language_for_name(language_name)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         let mut buffer = Buffer::new(0, 0, Default::default());
 
         let mut mutated_syntax_map = SyntaxMap::new();

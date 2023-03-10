@@ -1838,7 +1838,11 @@ impl Project {
     ) -> Option<()> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let full_path = buffer.read(cx).file()?.full_path(cx);
-        let new_language = self.languages.language_for_path(&full_path)?;
+        let new_language = self
+            .languages
+            .language_for_path(&full_path)
+            .now_or_never()?
+            .ok()?;
         buffer.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
@@ -2248,8 +2252,14 @@ impl Project {
             })
             .collect();
         for (worktree_id, worktree_abs_path, full_path) in language_server_lookup_info {
-            let language = self.languages.language_for_path(&full_path)?;
-            self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
+            if let Some(language) = self
+                .languages
+                .language_for_path(&full_path)
+                .now_or_never()
+                .and_then(|language| language.ok())
+            {
+                self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
+            }
         }
 
         None
@@ -3278,12 +3288,14 @@ impl Project {
                                 path: path.into(),
                             };
                             let signature = this.symbol_signature(&project_path);
+                            let adapter_language = adapter_language.clone();
                             let language = this
                                 .languages
                                 .language_for_path(&project_path.path)
-                                .unwrap_or(adapter_language.clone());
+                                .unwrap_or_else(move |_| adapter_language);
                             let language_server_name = adapter.name.clone();
                             Some(async move {
+                                let language = language.await;
                                 let label = language
                                     .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
                                     .await;
@@ -5831,7 +5843,7 @@ impl Project {
                                 })?;
                             }
 
-                            Ok(())
+                            anyhow::Ok(())
                         }
                         .log_err(),
                     )
@@ -6060,7 +6072,7 @@ impl Project {
                 worktree_id,
                 path: PathBuf::from(serialized_symbol.path).into(),
             };
-            let language = languages.language_for_path(&path.path);
+            let language = languages.language_for_path(&path.path).await.log_err();
             Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),

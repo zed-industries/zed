@@ -68,7 +68,7 @@ impl PickerDelegate for ContactFinder {
                     this.potential_contacts = potential_contacts.into();
                     cx.notify();
                 });
-                Ok(())
+                anyhow::Ok(())
             }
             .log_err()
             .await;

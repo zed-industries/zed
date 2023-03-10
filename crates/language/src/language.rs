@@ -13,8 +13,9 @@ use async_trait::async_trait;
 use client::http::HttpClient;
 use collections::HashMap;
 use futures::{
+    channel::oneshot,
     future::{BoxFuture, Shared},
-    FutureExt, TryFutureExt,
+    FutureExt, TryFutureExt as _,
 };
 use gpui::{executor::Background, MutableAppContext, Task};
 use highlight_map::HighlightMap;
@@ -43,7 +44,7 @@ use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]
 use futures::channel::mpsc;
@@ -484,7 +485,7 @@ impl LanguageRegistry {
         let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
             language_server_download_dir: None,
-            languages: Default::default(),
+            languages: RwLock::new(vec![PLAIN_TEXT.clone()]),
             available_languages: Default::default(),
             lsp_binary_statuses_tx,
             lsp_binary_statuses_rx,
@@ -568,12 +569,18 @@ impl LanguageRegistry {
         self.language_server_download_dir = Some(path.into());
     }
 
-    pub fn language_for_name(self: &Arc<Self>, name: &str) -> Option<Arc<Language>> {
+    pub fn language_for_name(
+        self: &Arc<Self>,
+        name: &str,
+    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let name = UniCase::new(name);
         self.get_or_load_language(|config| UniCase::new(config.name.as_ref()) == name)
     }
 
-    pub fn language_for_name_or_extension(self: &Arc<Self>, string: &str) -> Option<Arc<Language>> {
+    pub fn language_for_name_or_extension(
+        self: &Arc<Self>,
+        string: &str,
+    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let string = UniCase::new(string);
         self.get_or_load_language(|config| {
             UniCase::new(config.name.as_ref()) == string
@@ -584,7 +591,10 @@ impl LanguageRegistry {
         })
     }
 
-    pub fn language_for_path(self: &Arc<Self>, path: impl AsRef<Path>) -> Option<Arc<Language>> {
+    pub fn language_for_path(
+        self: &Arc<Self>,
+        path: impl AsRef<Path>,
+    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension().and_then(|name| name.to_str());
@@ -600,17 +610,17 @@ impl LanguageRegistry {
     fn get_or_load_language(
         self: &Arc<Self>,
         callback: impl Fn(&LanguageConfig) -> bool,
-    ) -> Option<Arc<Language>> {
+    ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
+        let (tx, rx) = oneshot::channel();
+
         if let Some(language) = self
             .languages
             .read()
             .iter()
             .find(|language| callback(&language.config))
         {
-            return Some(language.clone());
-        }
-
-        if let Some(executor) = self.executor.clone() {
+            let _ = tx.send(Ok(language.clone()));
+        } else if let Some(executor) = self.executor.clone() {
             let mut available_languages = self.available_languages.write();
 
             if let Some(ix) = available_languages.iter().position(|l| callback(&l.config)) {
@@ -625,18 +635,29 @@ impl LanguageRegistry {
                             .with_lsp_adapter(language.lsp_adapter)
                             .await;
                         match language.with_queries(queries) {
-                            Ok(language) => this.add(Arc::new(language)),
+                            Ok(language) => {
+                                let language = Arc::new(language);
+                                this.add(language.clone());
+                                let _ = tx.send(Ok(language));
+                            }
                             Err(err) => {
-                                log::error!("failed  to load language {}: {}", name, err);
-                                return;
+                                let _ = tx.send(Err(anyhow!(
+                                    "failed to load language {}: {}",
+                                    name,
+                                    err
+                                )));
                             }
                         };
                     })
                     .detach();
+            } else {
+                let _ = tx.send(Err(anyhow!("language not found")));
             }
+        } else {
+            let _ = tx.send(Err(anyhow!("executor does not exist")));
         }
 
-        None
+        rx.unwrap()
     }
 
     pub fn to_vec(&self) -> Vec<Arc<Language>> {

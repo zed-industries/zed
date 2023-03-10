@@ -1,3 +1,4 @@
+use futures::FutureExt;
 use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, Text},
@@ -327,12 +328,10 @@ impl InfoPopover {
         MouseEventHandler::<InfoPopover>::new(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
-                let project = self.project.read(cx);
-                if let Some(language) = content
-                    .language
-                    .clone()
-                    .and_then(|language| project.languages().language_for_name(&language))
-                {
+                let languages = self.project.read(cx).languages();
+                if let Some(language) = content.language.clone().and_then(|language| {
+                    languages.language_for_name(&language).now_or_never()?.ok()
+                }) {
                     let runs = language
                         .highlight_text(&content.text.as_str().into(), 0..content.text.len());
 

@@ -124,11 +124,15 @@ pub trait TryFutureExt {
     fn warn_on_err(self) -> LogErrorFuture<Self>
     where
         Self: Sized;
+    fn unwrap(self) -> UnwrapFuture<Self>
+    where
+        Self: Sized;
 }
 
-impl<F, T> TryFutureExt for F
+impl<F, T, E> TryFutureExt for F
 where
-    F: Future<Output = anyhow::Result<T>>,
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
 {
     fn log_err(self) -> LogErrorFuture<Self>
     where
@@ -143,17 +147,25 @@ where
     {
         LogErrorFuture(self, log::Level::Warn)
     }
+
+    fn unwrap(self) -> UnwrapFuture<Self>
+    where
+        Self: Sized,
+    {
+        UnwrapFuture(self)
+    }
 }
 
 pub struct LogErrorFuture<F>(F, log::Level);
 
-impl<F, T> Future for LogErrorFuture<F>
+impl<F, T, E> Future for LogErrorFuture<F>
 where
-    F: Future<Output = anyhow::Result<T>>,
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
 {
     type Output = Option<T>;
 
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let level = self.1;
         let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
         match inner.poll(cx) {
@@ -164,6 +176,24 @@ where
                     None
                 }
             }),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub struct UnwrapFuture<F>(F);
+
+impl<F, T, E> Future for UnwrapFuture<F>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
+{
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
+        match inner.poll(cx) {
+            Poll::Ready(result) => Poll::Ready(result.unwrap()),
             Poll::Pending => Poll::Pending,
         }
     }
