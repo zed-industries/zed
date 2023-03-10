@@ -48,7 +48,7 @@ export default function workspace(colorScheme: ColorScheme) {
             },
             logo: {
                 color: withOpacity("#000000", colorScheme.isLight ? 0.6 : 0.8),
-                icon: "icons/logo_256.svg",
+                icon: "icons/logo_96.svg",
                 dimensions: {
                     width: 256,
                     height: 256,
@@ -56,7 +56,7 @@ export default function workspace(colorScheme: ColorScheme) {
             },
             logoShadow: {
                 color: withOpacity(colorScheme.isLight ? "#FFFFFF" : colorScheme.lowest.base.default.background, colorScheme.isLight ? 1 : 0.6),
-                icon: "icons/logo_shadow_256.svg",
+                icon: "icons/logo_96.svg",
                 dimensions: {
                     width: 256,
                     height: 256,
