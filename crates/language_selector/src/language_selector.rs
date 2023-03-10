@@ -211,11 +211,16 @@ impl PickerDelegate for LanguageSelector {
     ) -> ElementBox {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
-        let theme_match = &self.matches[ix];
+        let mat = &self.matches[ix];
         let style = theme.picker.item.style_for(mouse_state, selected);
+        let buffer_language_name = self.buffer.read(cx).language().map(|l| l.name());
+        let mut label = mat.string.clone();
+        if buffer_language_name.as_deref() == Some(mat.string.as_str()) {
+            label.push_str(" (current)");
+        }
 
-        Label::new(theme_match.string.clone(), style.label.clone())
-            .with_highlights(theme_match.positions.clone())
+        Label::new(label, style.label.clone())
+            .with_highlights(mat.positions.clone())
             .contained()
             .with_style(style.container)
             .boxed()
