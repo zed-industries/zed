@@ -510,13 +510,13 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         &*file_changes.lock(),
         &[
             lsp::FileEvent {
+                uri: lsp::Url::from_file_path("/the-root/b.rs").unwrap(),
+                typ: lsp::FileChangeType::DELETED,
+            },
+            lsp::FileEvent {
                 uri: lsp::Url::from_file_path("/the-root/c.rs").unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
-            lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/b.rs").unwrap(),
-                typ: lsp::FileChangeType::DELETED,
-            }
         ]
     );
 }
