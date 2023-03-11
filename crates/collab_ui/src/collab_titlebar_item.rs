@@ -304,12 +304,22 @@ impl CollabTitlebarItem {
                         label: "Sign out".into(),
                         action: Box::new(SignOut),
                     },
+                    ContextMenuItem::Item {
+                        label: "Give Feedback".into(),
+                        action: Box::new(feedback::feedback_editor::GiveFeedback),
+                    },
                 ]
             } else {
-                vec![ContextMenuItem::Item {
-                    label: "Sign in".into(),
-                    action: Box::new(Authenticate),
-                }]
+                vec![
+                    ContextMenuItem::Item {
+                        label: "Sign in".into(),
+                        action: Box::new(Authenticate),
+                    },
+                    ContextMenuItem::Item {
+                        label: "Give Feedback".into(),
+                        action: Box::new(feedback::feedback_editor::GiveFeedback),
+                    },
+                ]
             };
 
             user_menu.show(
