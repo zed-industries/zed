@@ -81,7 +81,7 @@ spec:
                   name: database
                   key: url
             - name: DATABASE_MAX_CONNECTIONS
-              value: ${DATABASE_MAX_CONNECTIONS}
+              value: "${DATABASE_MAX_CONNECTIONS}"
             - name: API_TOKEN
               valueFrom:
                 secretKeyRef:
