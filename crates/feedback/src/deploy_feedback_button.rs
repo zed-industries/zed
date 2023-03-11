@@ -25,10 +25,10 @@ impl View for DeployFeedbackButton {
 
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
         let active = self.active;
+        let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self>::new(0, cx, |state, cx| {
-                    let theme = &cx.global::<Settings>().theme;
+                MouseEventHandler::<Self>::new(0, cx, |state, _| {
                     let style = &theme
                         .workspace
                         .status_bar
@@ -54,6 +54,13 @@ impl View for DeployFeedbackButton {
                         cx.dispatch_action(GiveFeedback)
                     }
                 })
+                .with_tooltip::<Self, _>(
+                    0,
+                    "Give Feedback".into(),
+                    Some(Box::new(GiveFeedback)),
+                    theme.tooltip.clone(),
+                    cx,
+                )
                 .boxed(),
             )
             .boxed()
