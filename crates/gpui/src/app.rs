@@ -1323,7 +1323,7 @@ impl MutableAppContext {
 
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
         let action_type = action.as_any().type_id();
-        if let Some(window_id) = self.cx.platform.key_window_id() {
+        if let Some(window_id) = self.cx.platform.main_window_id() {
             if let Some(focused_view_id) = self.focused_view_id(window_id) {
                 for view_id in self.ancestors(window_id, focused_view_id) {
                     if let Some(view) = self.views.get(&(window_id, view_id)) {
