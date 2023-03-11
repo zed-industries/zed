@@ -105,7 +105,6 @@ impl View for TerminalButton {
     }
 }
 
-// TODO: Rename this to `DeployTerminalButton`
 impl TerminalButton {
     pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         // When terminal moves, redraw so that the icon and toggle status matches.
