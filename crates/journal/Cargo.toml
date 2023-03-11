@@ -13,6 +13,7 @@ editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
+anyhow = "1.0"
 chrono = "0.4"
 dirs = "4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }

@@ -90,7 +90,7 @@ export default function editor(colorScheme: ColorScheme) {
                     clicked: {
                         color: colorScheme.ramps.neutral(0.5).alpha(0.7).hex(),
                     },
-                }
+                },
             },
             foldBackground: foreground(layer, "variant"),
         },

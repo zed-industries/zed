@@ -151,6 +151,9 @@ pub trait Item: View {
             "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
         )
     }
+    fn show_toolbar(&self) -> bool {
+        true
+    }
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
@@ -213,6 +216,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
+    fn show_toolbar(&self, cx: &AppContext) -> bool;
 }
 
 pub trait WeakItemHandle {
@@ -590,6 +594,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn serialized_item_kind(&self) -> Option<&'static str> {
         T::serialized_item_kind()
+    }
+
+    fn show_toolbar(&self, cx: &AppContext) -> bool {
+        self.read(cx).show_toolbar()
     }
 }
 

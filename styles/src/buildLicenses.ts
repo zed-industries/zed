@@ -39,7 +39,7 @@ function getLicenseText(
         if (typeof meta.license.license_text == "string") {
             callback(meta, meta.license.license_text)
         } else {
-            let license_text_obj: Verification = meta.license.license_text;
+            let license_text_obj: Verification = meta.license.license_text
             // The following copied from the example code on nodejs.org:
             // https://nodejs.org/api/http.html#httpgetoptions-callback
             https

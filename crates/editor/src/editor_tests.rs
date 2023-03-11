@@ -484,7 +484,7 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
     cx.set_global(DragAndDrop::<Workspace>::default());
     use workspace::item::Item;
-    let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(None, cx));
+    let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(0, None, || &[], cx));
     let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
     cx.add_view(&pane, |cx| {
@@ -2353,12 +2353,16 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         e.paste(&Paste, cx);
         e.handle_input(") ", cx);
     });
-    cx.assert_editor_state(indoc! {"
-        ( one✅ 
-        three 
-        five ) ˇtwo one✅ four three six five ( one✅ 
-        three 
-        five ) ˇ"});
+    cx.assert_editor_state(
+        &([
+            "( one✅ ",
+            "three ",
+            "five ) ˇtwo one✅ four three six five ( one✅ ",
+            "three ",
+            "five ) ˇ",
+        ]
+        .join("\n")),
+    );
 
     // Cut with three selections, one of which is full-line.
     cx.set_state(indoc! {"
@@ -5562,7 +5566,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     Settings::test_async(cx);
     let fs = FakeFs::new(cx.background());
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    let (_, pane) = cx.add_window(|cx| Pane::new(None, cx));
+    let (_, pane) = cx.add_window(|cx| Pane::new(0, None, || &[], cx));
 
     let leader = pane.update(cx, |_, cx| {
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
@@ -5831,11 +5835,11 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     cx.assert_editor_state(
         &r#"
         ˇuse some::modified;
-    
-    
+
+
         fn main() {
             println!("hello there");
-    
+
             println!("around the");
             println!("world");
         }

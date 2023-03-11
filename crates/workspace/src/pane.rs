@@ -24,8 +24,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, NavigationDirection},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseButton, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseButton, MouseRegion, MutableAppContext, PromptLevel, Quad, RenderContext,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -109,6 +109,8 @@ impl_internal_actions!(
 );
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
+
+pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
@@ -215,6 +217,8 @@ pub struct Pane {
     toolbar: ViewHandle<Toolbar>,
     tab_bar_context_menu: ViewHandle<ContextMenu>,
     docked: Option<DockAnchor>,
+    _background_actions: BackgroundActions,
+    _workspace_id: usize,
 }
 
 pub struct ItemNavHistory {
@@ -271,7 +275,12 @@ enum ItemType {
 }
 
 impl Pane {
-    pub fn new(docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace_id: usize,
+        docked: Option<DockAnchor>,
+        background_actions: BackgroundActions,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let handle = cx.weak_handle();
         let context_menu = cx.add_view(ContextMenu::new);
         Self {
@@ -292,6 +301,8 @@ impl Pane {
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
             tab_bar_context_menu: context_menu,
             docked,
+            _background_actions: background_actions,
+            _workspace_id: workspace_id,
         }
     }
 
@@ -1415,6 +1426,14 @@ impl Pane {
             .flex(1., false)
             .boxed()
     }
+
+    fn render_blank_pane(&mut self, theme: &Theme, _cx: &mut RenderContext<Self>) -> ElementBox {
+        let background = theme.workspace.background;
+        Empty::new()
+            .contained()
+            .with_background_color(background)
+            .boxed()
+    }
 }
 
 impl Entity for Pane {
@@ -1485,11 +1504,12 @@ impl View for Pane {
                                     cx,
                                     {
                                         let toolbar = self.toolbar.clone();
+                                        let toolbar_hidden = toolbar.read(cx).hidden();
                                         move |_, cx| {
                                             Flex::column()
-                                                .with_child(
-                                                    ChildView::new(&toolbar, cx).expanded().boxed(),
-                                                )
+                                                .with_children((!toolbar_hidden).then(|| {
+                                                    ChildView::new(&toolbar, cx).expanded().boxed()
+                                                }))
                                                 .with_child(
                                                     ChildView::new(active_item, cx)
                                                         .flex(1., true)
@@ -1507,11 +1527,8 @@ impl View for Pane {
                         enum EmptyPane {}
                         let theme = cx.global::<Settings>().theme.clone();
 
-                        dragged_item_receiver::<EmptyPane, _>(0, 0, false, None, cx, |_, _| {
-                            Empty::new()
-                                .contained()
-                                .with_background_color(theme.workspace.background)
-                                .boxed()
+                        dragged_item_receiver::<EmptyPane, _>(0, 0, false, None, cx, |_, cx| {
+                            self.render_blank_pane(&theme, cx)
                         })
                         .on_down(MouseButton::Left, |_, cx| {
                             cx.focus_parent_view();
@@ -1705,6 +1722,93 @@ impl NavHistory {
     }
 }
 
+pub struct PaneBackdrop {
+    child_view: usize,
+    child: ElementBox,
+}
+impl PaneBackdrop {
+    pub fn new(pane_item_view: usize, child: ElementBox) -> Self {
+        PaneBackdrop {
+            child,
+            child_view: pane_item_view,
+        }
+    }
+}
+
+impl Element for PaneBackdrop {
+    type LayoutState = ();
+
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: gpui::SizeConstraint,
+        cx: &mut gpui::LayoutContext,
+    ) -> (Vector2F, Self::LayoutState) {
+        let size = self.child.layout(constraint, cx);
+        (size, ())
+    }
+
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        _: &mut Self::LayoutState,
+        cx: &mut gpui::PaintContext,
+    ) -> Self::PaintState {
+        let background = cx.global::<Settings>().theme.editor.background;
+
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+
+        cx.scene.push_quad(gpui::Quad {
+            bounds: RectF::new(bounds.origin(), bounds.size()),
+            background: Some(background),
+            ..Default::default()
+        });
+
+        let child_view_id = self.child_view;
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
+                gpui::MouseButton::Left,
+                move |_, cx| {
+                    let window_id = cx.window_id;
+                    cx.focus(window_id, Some(child_view_id))
+                },
+            ),
+        );
+
+        cx.paint_layer(Some(bounds), |cx| {
+            self.child.paint(bounds.origin(), visible_bounds, cx)
+        })
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: std::ops::Range<usize>,
+        _bounds: RectF,
+        _visible_bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        cx: &gpui::MeasurementContext,
+    ) -> Option<RectF> {
+        self.child.rect_for_text_range(range_utf16, cx)
+    }
+
+    fn debug(
+        &self,
+        _bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        cx: &gpui::DebugContext,
+    ) -> serde_json::Value {
+        gpui::json::json!({
+            "type": "Pane Back Drop",
+            "view": self.child_view,
+            "child": self.child.debug(cx),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1721,9 +1825,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1811,9 +1913,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1889,9 +1989,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view
@@ -2000,8 +2098,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) =
-            cx.add_window(|cx| Workspace::new(None, 0, project, |_, _| unimplemented!(), cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labled_item(&workspace, &pane, "A", cx);

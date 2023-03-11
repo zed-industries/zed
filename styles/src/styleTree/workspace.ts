@@ -40,7 +40,49 @@ export default function workspace(colorScheme: ColorScheme) {
     const followerAvatarOuterWidth = followerAvatarWidth + 4
 
     return {
-        background: background(layer),
+        background: background(colorScheme.lowest),
+        blankPane: {
+            logoContainer: {
+                width: 256,
+                height: 256,
+            },
+            logo: {
+                color: withOpacity("#000000", colorScheme.isLight ? 0.6 : 0.8),
+                icon: "icons/logo_96.svg",
+                dimensions: {
+                    width: 256,
+                    height: 256,
+                },
+            },
+            logoShadow: {
+                color: withOpacity(colorScheme.isLight ? "#FFFFFF" : colorScheme.lowest.base.default.background, colorScheme.isLight ? 1 : 0.6),
+                icon: "icons/logo_96.svg",
+                dimensions: {
+                    width: 256,
+                    height: 256,
+                },
+            },
+            keyboardHints: {
+                margin: {
+                    top: 96,
+                },
+                cornerRadius: 4,
+            },
+            keyboardHint: {
+                ...text(layer, "sans", "variant", { size: "sm" }),
+                padding: {
+                    top: 3,
+                    left: 8,
+                    right: 8,
+                    bottom: 3
+                },
+                cornerRadius: 8,
+                hover: {
+                    ...text(layer, "sans", "active", { size: "sm" }),
+                }
+            },
+            keyboardHintWidth: 320,
+        },
         joiningProjectAvatar: {
             cornerRadius: 40,
             width: 80,
@@ -248,7 +290,7 @@ export default function workspace(colorScheme: ColorScheme) {
         },
         dock: {
             initialSizeRight: 640,
-            initialSizeBottom: 480,
+            initialSizeBottom: 304,
             wash_color: withOpacity(background(colorScheme.highest), 0.5),
             panel: {
                 border: border(colorScheme.middle),

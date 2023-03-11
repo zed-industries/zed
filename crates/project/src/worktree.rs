@@ -867,7 +867,7 @@ impl LocalWorktree {
         let old_path = self.entry_for_id(entry_id)?.path.clone();
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
-        let abs_new_path = self.absolutize(&new_path);
+        let abs_new_path = self.absolutize(new_path.as_ref());
         let rename = cx.background().spawn({
             let fs = self.fs.clone();
             let abs_new_path = abs_new_path.clone();
@@ -2361,7 +2361,7 @@ impl BackgroundScanner {
         job: &ScanJob,
     ) -> Result<()> {
         let mut new_entries: Vec<Entry> = Vec::new();
-        let mut new_jobs: Vec<ScanJob> = Vec::new();
+        let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
 
@@ -2374,6 +2374,7 @@ impl BackgroundScanner {
                     continue;
                 }
             };
+
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
             let child_metadata = match self.fs.metadata(&child_abs_path).await {
@@ -2412,12 +2413,15 @@ impl BackgroundScanner {
                     let entry_abs_path = self.abs_path().join(&entry.path);
                     entry.is_ignored =
                         ignore_stack.is_abs_path_ignored(&entry_abs_path, entry.is_dir());
+
                     if entry.is_dir() {
-                        new_jobs.next().unwrap().ignore_stack = if entry.is_ignored {
-                            IgnoreStack::all()
-                        } else {
-                            ignore_stack.clone()
-                        };
+                        if let Some(job) = new_jobs.next().expect("Missing scan job for entry") {
+                            job.ignore_stack = if entry.is_ignored {
+                                IgnoreStack::all()
+                            } else {
+                                ignore_stack.clone()
+                            };
+                        }
                     }
                 }
             }
@@ -2433,10 +2437,12 @@ impl BackgroundScanner {
                 let is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_ignored = is_ignored;
 
+                // Avoid recursing until crash in the case of a recursive symlink
                 if !job.ancestor_inodes.contains(&child_entry.inode) {
                     let mut ancestor_inodes = job.ancestor_inodes.clone();
                     ancestor_inodes.insert(child_entry.inode);
-                    new_jobs.push(ScanJob {
+
+                    new_jobs.push(Some(ScanJob {
                         abs_path: child_abs_path,
                         path: child_path,
                         ignore_stack: if is_ignored {
@@ -2446,7 +2452,9 @@ impl BackgroundScanner {
                         },
                         ancestor_inodes,
                         scan_queue: job.scan_queue.clone(),
-                    });
+                    }));
+                } else {
+                    new_jobs.push(None);
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
@@ -2461,8 +2469,11 @@ impl BackgroundScanner {
             new_ignore,
             self.fs.as_ref(),
         );
+
         for new_job in new_jobs {
-            job.scan_queue.send(new_job).await.unwrap();
+            if let Some(new_job) = new_job {
+                job.scan_queue.send(new_job).await.unwrap();
+            }
         }
 
         Ok(())

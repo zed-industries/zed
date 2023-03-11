@@ -43,19 +43,23 @@ impl ContactsPopover {
             user_store,
             _subscription: None,
         };
-        this.show_contact_list(cx);
+        this.show_contact_list(String::new(), cx);
         this
     }
 
     fn toggle_contact_finder(&mut self, _: &ToggleContactFinder, cx: &mut ViewContext<Self>) {
         match &self.child {
-            Child::ContactList(_) => self.show_contact_finder(cx),
-            Child::ContactFinder(_) => self.show_contact_list(cx),
+            Child::ContactList(list) => self.show_contact_finder(list.read(cx).editor_text(cx), cx),
+            Child::ContactFinder(finder) => {
+                self.show_contact_list(finder.read(cx).editor_text(cx), cx)
+            }
         }
     }
 
-    fn show_contact_finder(&mut self, cx: &mut ViewContext<ContactsPopover>) {
-        let child = cx.add_view(|cx| ContactFinder::new(self.user_store.clone(), cx));
+    fn show_contact_finder(&mut self, editor_text: String, cx: &mut ViewContext<ContactsPopover>) {
+        let child = cx.add_view(|cx| {
+            ContactFinder::new(self.user_store.clone(), cx).with_editor_text(editor_text, cx)
+        });
         cx.focus(&child);
         self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
             crate::contact_finder::Event::Dismissed => cx.emit(Event::Dismissed),
@@ -64,9 +68,11 @@ impl ContactsPopover {
         cx.notify();
     }
 
-    fn show_contact_list(&mut self, cx: &mut ViewContext<ContactsPopover>) {
-        let child =
-            cx.add_view(|cx| ContactList::new(self.project.clone(), self.user_store.clone(), cx));
+    fn show_contact_list(&mut self, editor_text: String, cx: &mut ViewContext<ContactsPopover>) {
+        let child = cx.add_view(|cx| {
+            ContactList::new(self.project.clone(), self.user_store.clone(), cx)
+                .with_editor_text(editor_text, cx)
+        });
         cx.focus(&child);
         self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
             crate::contact_list::Event::Dismissed => cx.emit(Event::Dismissed),

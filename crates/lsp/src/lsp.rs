@@ -160,15 +160,13 @@ impl LanguageServer {
         server: Option<Child>,
         root_path: &Path,
         cx: AsyncAppContext,
-        mut on_unhandled_notification: F,
+        on_unhandled_notification: F,
     ) -> Self
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
         F: FnMut(AnyNotification) + 'static + Send,
     {
-        let mut stdin = BufWriter::new(stdin);
-        let mut stdout = BufReader::new(stdout);
         let (outbound_tx, outbound_rx) = channel::unbounded::<Vec<u8>>();
         let notification_handlers =
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
@@ -177,89 +175,19 @@ impl LanguageServer {
         let input_task = cx.spawn(|cx| {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
-            async move {
-                let _clear_response_handlers = util::defer({
-                    let response_handlers = response_handlers.clone();
-                    move || {
-                        response_handlers.lock().take();
-                    }
-                });
-                let mut buffer = Vec::new();
-                loop {
-                    buffer.clear();
-                    stdout.read_until(b'\n', &mut buffer).await?;
-                    stdout.read_until(b'\n', &mut buffer).await?;
-                    let message_len: usize = std::str::from_utf8(&buffer)?
-                        .strip_prefix(CONTENT_LEN_HEADER)
-                        .ok_or_else(|| anyhow!("invalid header"))?
-                        .trim_end()
-                        .parse()?;
-
-                    buffer.resize(message_len, 0);
-                    stdout.read_exact(&mut buffer).await?;
-                    log::trace!("incoming message:{}", String::from_utf8_lossy(&buffer));
-
-                    if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                        if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
-                            handler(msg.id, msg.params.get(), cx.clone());
-                        } else {
-                            on_unhandled_notification(msg);
-                        }
-                    } else if let Ok(AnyResponse {
-                        id, error, result, ..
-                    }) = serde_json::from_slice(&buffer)
-                    {
-                        if let Some(handler) = response_handlers
-                            .lock()
-                            .as_mut()
-                            .and_then(|handlers| handlers.remove(&id))
-                        {
-                            if let Some(error) = error {
-                                handler(Err(error));
-                            } else if let Some(result) = result {
-                                handler(Ok(result.get()));
-                            } else {
-                                handler(Ok("null"));
-                            }
-                        }
-                    } else {
-                        warn!(
-                            "Failed to deserialize message:\n{}",
-                            std::str::from_utf8(&buffer)?
-                        );
-                    }
-
-                    // Don't starve the main thread when receiving lots of messages at once.
-                    smol::future::yield_now().await;
-                }
-            }
+            Self::handle_input(
+                stdout,
+                on_unhandled_notification,
+                notification_handlers,
+                response_handlers,
+                cx,
+            )
             .log_err()
         });
         let (output_done_tx, output_done_rx) = barrier::channel();
         let output_task = cx.background().spawn({
             let response_handlers = response_handlers.clone();
-            async move {
-                let _clear_response_handlers = util::defer({
-                    let response_handlers = response_handlers.clone();
-                    move || {
-                        response_handlers.lock().take();
-                    }
-                });
-                let mut content_len_buffer = Vec::new();
-                while let Ok(message) = outbound_rx.recv().await {
-                    log::trace!("outgoing message:{}", String::from_utf8_lossy(&message));
-                    content_len_buffer.clear();
-                    write!(content_len_buffer, "{}", message.len()).unwrap();
-                    stdin.write_all(CONTENT_LEN_HEADER.as_bytes()).await?;
-                    stdin.write_all(&content_len_buffer).await?;
-                    stdin.write_all("\r\n\r\n".as_bytes()).await?;
-                    stdin.write_all(&message).await?;
-                    stdin.flush().await?;
-                }
-                drop(output_done_tx);
-                Ok(())
-            }
-            .log_err()
+            Self::handle_output(stdin, outbound_rx, output_done_tx, response_handlers).log_err()
         });
 
         Self {
@@ -276,6 +204,105 @@ impl LanguageServer {
             root_path: root_path.to_path_buf(),
             _server: server,
         }
+    }
+
+    async fn handle_input<Stdout, F>(
+        stdout: Stdout,
+        mut on_unhandled_notification: F,
+        notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+        cx: AsyncAppContext,
+    ) -> anyhow::Result<()>
+    where
+        Stdout: AsyncRead + Unpin + Send + 'static,
+        F: FnMut(AnyNotification) + 'static + Send,
+    {
+        let mut stdout = BufReader::new(stdout);
+        let _clear_response_handlers = util::defer({
+            let response_handlers = response_handlers.clone();
+            move || {
+                response_handlers.lock().take();
+            }
+        });
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            stdout.read_until(b'\n', &mut buffer).await?;
+            stdout.read_until(b'\n', &mut buffer).await?;
+            let message_len: usize = std::str::from_utf8(&buffer)?
+                .strip_prefix(CONTENT_LEN_HEADER)
+                .ok_or_else(|| anyhow!("invalid header"))?
+                .trim_end()
+                .parse()?;
+
+            buffer.resize(message_len, 0);
+            stdout.read_exact(&mut buffer).await?;
+            log::trace!("incoming message:{}", String::from_utf8_lossy(&buffer));
+
+            if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
+                if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
+                    handler(msg.id, msg.params.get(), cx.clone());
+                } else {
+                    on_unhandled_notification(msg);
+                }
+            } else if let Ok(AnyResponse {
+                id, error, result, ..
+            }) = serde_json::from_slice(&buffer)
+            {
+                if let Some(handler) = response_handlers
+                    .lock()
+                    .as_mut()
+                    .and_then(|handlers| handlers.remove(&id))
+                {
+                    if let Some(error) = error {
+                        handler(Err(error));
+                    } else if let Some(result) = result {
+                        handler(Ok(result.get()));
+                    } else {
+                        handler(Ok("null"));
+                    }
+                }
+            } else {
+                warn!(
+                    "Failed to deserialize message:\n{}",
+                    std::str::from_utf8(&buffer)?
+                );
+            }
+
+            // Don't starve the main thread when receiving lots of messages at once.
+            smol::future::yield_now().await;
+        }
+    }
+
+    async fn handle_output<Stdin>(
+        stdin: Stdin,
+        outbound_rx: channel::Receiver<Vec<u8>>,
+        output_done_tx: barrier::Sender,
+        response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
+    ) -> anyhow::Result<()>
+    where
+        Stdin: AsyncWrite + Unpin + Send + 'static,
+    {
+        let mut stdin = BufWriter::new(stdin);
+        let _clear_response_handlers = util::defer({
+            let response_handlers = response_handlers.clone();
+            move || {
+                response_handlers.lock().take();
+            }
+        });
+        let mut content_len_buffer = Vec::new();
+        while let Ok(message) = outbound_rx.recv().await {
+            log::trace!("outgoing message:{}", String::from_utf8_lossy(&message));
+            content_len_buffer.clear();
+            write!(content_len_buffer, "{}", message.len()).unwrap();
+            stdin.write_all(CONTENT_LEN_HEADER.as_bytes()).await?;
+            stdin.write_all(&content_len_buffer).await?;
+            stdin.write_all("\r\n\r\n".as_bytes()).await?;
+            stdin.write_all(&message).await?;
+            stdin.flush().await?;
+        }
+        drop(output_done_tx);
+        Ok(())
     }
 
     /// Initializes a language server.
@@ -389,7 +416,7 @@ impl LanguageServer {
                     output_done.recv().await;
                     log::debug!("language server shutdown finished");
                     drop(tasks);
-                    Ok(())
+                    anyhow::Ok(())
                 }
                 .log_err(),
             )

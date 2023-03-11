@@ -13,7 +13,7 @@ use gpui::{
 use settings::{DockAnchor, Settings};
 use theme::Theme;
 
-use crate::{sidebar::SidebarSide, ItemHandle, Pane, Workspace};
+use crate::{sidebar::SidebarSide, BackgroundActions, ItemHandle, Pane, Workspace};
 pub use toggle_dock_button::ToggleDockButton;
 
 #[derive(PartialEq, Clone, Deserialize)]
@@ -39,20 +39,24 @@ impl_internal_actions!(dock, [MoveDock, AddDefaultItemToDock]);
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Dock::focus_dock);
     cx.add_action(Dock::hide_dock);
-    cx.add_action(Dock::move_dock);
+    cx.add_action(
+        |workspace: &mut Workspace, &MoveDock(dock_anchor), cx: &mut ViewContext<Workspace>| {
+            Dock::move_dock(workspace, dock_anchor, true, cx);
+        },
+    );
     cx.add_action(
         |workspace: &mut Workspace, _: &AnchorDockRight, cx: &mut ViewContext<Workspace>| {
-            Dock::move_dock(workspace, &MoveDock(DockAnchor::Right), cx)
+            Dock::move_dock(workspace, DockAnchor::Right, true, cx);
         },
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &AnchorDockBottom, cx: &mut ViewContext<Workspace>| {
-            Dock::move_dock(workspace, &MoveDock(DockAnchor::Bottom), cx)
+            Dock::move_dock(workspace, DockAnchor::Bottom, true, cx)
         },
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &ExpandDock, cx: &mut ViewContext<Workspace>| {
-            Dock::move_dock(workspace, &MoveDock(DockAnchor::Expanded), cx)
+            Dock::move_dock(workspace, DockAnchor::Expanded, true, cx)
         },
     );
     cx.add_action(
@@ -177,12 +181,21 @@ pub struct Dock {
 
 impl Dock {
     pub fn new(
+        workspace_id: usize,
         default_item_factory: DockDefaultItemFactory,
+        background_actions: BackgroundActions,
         cx: &mut ViewContext<Workspace>,
     ) -> Self {
         let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
 
-        let pane = cx.add_view(|cx| Pane::new(Some(position.anchor()), cx));
+        let pane = cx.add_view(|cx| {
+            Pane::new(
+                workspace_id,
+                Some(position.anchor()),
+                background_actions,
+                cx,
+            )
+        });
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
@@ -215,6 +228,7 @@ impl Dock {
     pub(crate) fn set_dock_position(
         workspace: &mut Workspace,
         new_position: DockPosition,
+        focus: bool,
         cx: &mut ViewContext<Workspace>,
     ) {
         workspace.dock.position = new_position;
@@ -235,19 +249,23 @@ impl Dock {
             let pane = workspace.dock.pane.clone();
             if pane.read(cx).items().next().is_none() {
                 if let Some(item_to_add) = (workspace.dock.default_item_factory)(workspace, cx) {
-                    Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+                    Pane::add_item(workspace, &pane, item_to_add, focus, focus, None, cx);
                 } else {
                     workspace.dock.position = workspace.dock.position.hide();
                 }
             } else {
-                cx.focus(pane);
+                if focus {
+                    cx.focus(pane);
+                }
             }
         } else if let Some(last_active_center_pane) = workspace
             .last_active_center_pane
             .as_ref()
             .and_then(|pane| pane.upgrade(cx))
         {
-            cx.focus(last_active_center_pane);
+            if focus {
+                cx.focus(last_active_center_pane);
+            }
         }
         cx.emit(crate::Event::DockAnchorChanged);
         workspace.serialize_workspace(cx);
@@ -255,11 +273,11 @@ impl Dock {
     }
 
     pub fn hide(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        Self::set_dock_position(workspace, workspace.dock.position.hide(), cx);
+        Self::set_dock_position(workspace, workspace.dock.position.hide(), true, cx);
     }
 
-    pub fn show(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        Self::set_dock_position(workspace, workspace.dock.position.show(), cx);
+    pub fn show(workspace: &mut Workspace, focus: bool, cx: &mut ViewContext<Workspace>) {
+        Self::set_dock_position(workspace, workspace.dock.position.show(), focus, cx);
     }
 
     pub fn hide_on_sidebar_shown(
@@ -275,19 +293,20 @@ impl Dock {
     }
 
     fn focus_dock(workspace: &mut Workspace, _: &FocusDock, cx: &mut ViewContext<Workspace>) {
-        Self::set_dock_position(workspace, workspace.dock.position.show(), cx);
+        Self::set_dock_position(workspace, workspace.dock.position.show(), true, cx);
     }
 
     fn hide_dock(workspace: &mut Workspace, _: &HideDock, cx: &mut ViewContext<Workspace>) {
-        Self::set_dock_position(workspace, workspace.dock.position.hide(), cx);
+        Self::set_dock_position(workspace, workspace.dock.position.hide(), true, cx);
     }
 
-    fn move_dock(
+    pub fn move_dock(
         workspace: &mut Workspace,
-        &MoveDock(new_anchor): &MoveDock,
+        new_anchor: DockAnchor,
+        focus: bool,
         cx: &mut ViewContext<Workspace>,
     ) {
-        Self::set_dock_position(workspace, DockPosition::Shown(new_anchor), cx);
+        Self::set_dock_position(workspace, DockPosition::Shown(new_anchor), focus, cx);
     }
 
     pub fn render(
@@ -482,6 +501,7 @@ mod tests {
                 0,
                 project.clone(),
                 default_item_factory,
+                || &[],
                 cx,
             )
         });
@@ -610,7 +630,14 @@ mod tests {
             cx.update(|cx| init(cx));
             let project = Project::test(fs, [], cx).await;
             let (window_id, workspace) = cx.add_window(|cx| {
-                Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+                Workspace::new(
+                    Default::default(),
+                    0,
+                    project,
+                    default_item_factory,
+                    || &[],
+                    cx,
+                )
             });
 
             workspace.update(cx, |workspace, cx| {

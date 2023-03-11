@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -1259,6 +1259,7 @@ dependencies = [
  "collections",
  "context_menu",
  "editor",
+ "feedback",
  "futures 0.3.25",
  "fuzzy",
  "gpui",
@@ -3019,6 +3020,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adab1eaa3408fb7f0c777a73e7465fd5656136fc93b670eb6df3c88c2c1344e3"
 
 [[package]]
+name = "install_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "instant"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3157,6 +3169,7 @@ dependencies = [
 name = "journal"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "dirs 4.0.0",
  "editor",
@@ -3283,6 +3296,22 @@ dependencies = [
  "unicase",
  "unindent",
  "util",
+]
+
+[[package]]
+name = "language_selector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "picker",
+ "project",
+ "settings",
+ "theme",
+ "workspace",
 ]
 
 [[package]]
@@ -8014,6 +8043,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9193164d4de03a926d909d3bc7c30543cecb35400c02114792c2cae20d5e2dbb"
 
 [[package]]
+name = "welcome"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "install_cli",
+ "log",
+ "picker",
+ "project",
+ "settings",
+ "theme",
+ "theme_selector",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "wepoll-ffi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8288,6 +8337,7 @@ dependencies = [
  "futures 0.3.25",
  "gpui",
  "indoc",
+ "install_cli",
  "language",
  "lazy_static",
  "log",
@@ -8359,7 +8409,7 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zed"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -8381,6 +8431,7 @@ dependencies = [
  "command_palette",
  "context_menu",
  "ctor",
+ "db",
  "diagnostics",
  "easy-parallel",
  "editor",
@@ -8396,9 +8447,11 @@ dependencies = [
  "ignore",
  "image",
  "indexmap",
+ "install_cli",
  "isahc",
  "journal",
  "language",
+ "language_selector",
  "lazy_static",
  "libc",
  "log",
@@ -8460,6 +8513,7 @@ dependencies = [
  "util",
  "uuid 1.2.2",
  "vim",
+ "welcome",
  "workspace",
 ]
 

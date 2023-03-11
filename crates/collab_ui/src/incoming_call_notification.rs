@@ -108,7 +108,7 @@ impl IncomingCallNotification {
             .unwrap_or(&default_project);
         Flex::row()
             .with_children(self.call.calling_user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.caller_avatar)
                     .aligned()
                     .boxed()

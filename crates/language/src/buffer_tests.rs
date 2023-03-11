@@ -80,31 +80,49 @@ fn test_select_language() {
 
     // matching file extension
     assert_eq!(
-        registry.language_for_path("zed/lib.rs").map(|l| l.name()),
+        registry
+            .language_for_path("zed/lib.rs")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         Some("Rust".into())
     );
     assert_eq!(
-        registry.language_for_path("zed/lib.mk").map(|l| l.name()),
+        registry
+            .language_for_path("zed/lib.mk")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
     );
 
     // matching filename
     assert_eq!(
-        registry.language_for_path("zed/Makefile").map(|l| l.name()),
+        registry
+            .language_for_path("zed/Makefile")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
     );
 
     // matching suffix that is not the full file extension or filename
     assert_eq!(
-        registry.language_for_path("zed/cars").map(|l| l.name()),
+        registry
+            .language_for_path("zed/cars")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
-        registry.language_for_path("zed/a.cars").map(|l| l.name()),
+        registry
+            .language_for_path("zed/a.cars")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
-        registry.language_for_path("zed/sumk").map(|l| l.name()),
+        registry
+            .language_for_path("zed/sumk")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         None
     );
 }
@@ -666,14 +684,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 moˇd y {
-                
+
                 }
             }
             let foo = 1;"},
         vec![indoc! {"
             mod x «{»
                 mod y {
-                
+
                 }
             «}»
             let foo = 1;"}],
@@ -683,7 +701,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y ˇ{
-                
+
                 }
             }
             let foo = 1;"},
@@ -691,14 +709,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
             indoc! {"
                 mod x «{»
                     mod y {
-                    
+
                     }
                 «}»
                 let foo = 1;"},
             indoc! {"
                 mod x {
                     mod y «{»
-                    
+
                     «}»
                 }
                 let foo = 1;"},
@@ -709,7 +727,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }ˇ
             }
             let foo = 1;"},
@@ -717,14 +735,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
             indoc! {"
                 mod x «{»
                     mod y {
-                    
+
                     }
                 «}»
                 let foo = 1;"},
             indoc! {"
                 mod x {
                     mod y «{»
-                    
+
                     «}»
                 }
                 let foo = 1;"},
@@ -735,14 +753,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }
             ˇ}
             let foo = 1;"},
         vec![indoc! {"
             mod x «{»
                 mod y {
-                
+
                 }
             «}»
             let foo = 1;"}],
@@ -752,7 +770,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }
             }
             let fˇoo = 1;"},
@@ -764,7 +782,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }
             }
             let foo = 1;ˇ"},
@@ -1804,25 +1822,31 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             }
             30..=39 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
-                    let mut selections = Vec::new();
-                    for id in 0..rng.gen_range(1..=5) {
-                        let range = buffer.random_byte_range(0, &mut rng);
-                        selections.push(Selection {
-                            id,
-                            start: buffer.anchor_before(range.start),
-                            end: buffer.anchor_before(range.end),
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        });
+                    if rng.gen_bool(0.2) {
+                        log::info!("peer {} clearing active selections", replica_id);
+                        active_selections.remove(&replica_id);
+                        buffer.remove_active_selections(cx);
+                    } else {
+                        let mut selections = Vec::new();
+                        for id in 0..rng.gen_range(1..=5) {
+                            let range = buffer.random_byte_range(0, &mut rng);
+                            selections.push(Selection {
+                                id,
+                                start: buffer.anchor_before(range.start),
+                                end: buffer.anchor_before(range.end),
+                                reversed: false,
+                                goal: SelectionGoal::None,
+                            });
+                        }
+                        let selections: Arc<[Selection<Anchor>]> = selections.into();
+                        log::info!(
+                            "peer {} setting active selections: {:?}",
+                            replica_id,
+                            selections
+                        );
+                        active_selections.insert(replica_id, selections.clone());
+                        buffer.set_active_selections(selections, false, Default::default(), cx);
                     }
-                    let selections: Arc<[Selection<Anchor>]> = selections.into();
-                    log::info!(
-                        "peer {} setting active selections: {:?}",
-                        replica_id,
-                        selections
-                    );
-                    active_selections.insert(replica_id, selections.clone());
-                    buffer.set_active_selections(selections, false, Default::default(), cx);
                 });
                 mutation_count -= 1;
             }

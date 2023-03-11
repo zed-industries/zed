@@ -22,6 +22,7 @@ pub struct Flex {
     axis: Axis,
     children: Vec<ElementBox>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
+    child_alignment: f32,
 }
 
 impl Flex {
@@ -30,6 +31,7 @@ impl Flex {
             axis,
             children: Default::default(),
             scroll_state: None,
+            child_alignment: -1.,
         }
     }
 
@@ -39,6 +41,15 @@ impl Flex {
 
     pub fn column() -> Self {
         Self::new(Axis::Vertical)
+    }
+
+    /// Render children centered relative to the cross-axis of the parent flex.
+    ///
+    /// If this is a flex row, children will be centered vertically. If this is a
+    /// flex column, children will be centered horizontally.
+    pub fn align_children_center(mut self) -> Self {
+        self.child_alignment = 0.;
+        self
     }
 
     pub fn scrollable<Tag, V>(
@@ -309,7 +320,30 @@ impl Element for Flex {
                 }
             }
 
-            child.paint(child_origin, visible_bounds, cx);
+            // We use the child_alignment f32 to determine a point along the cross axis of the
+            // overall flex element and each child. We then align these points. So 0 would center
+            // each child relative to the overall height/width of the flex. -1 puts children at
+            // the start. 1 puts children at the end.
+            let aligned_child_origin = {
+                let cross_axis = self.axis.invert();
+                let my_center = bounds.size().along(cross_axis) / 2.;
+                let my_target = my_center + my_center * self.child_alignment;
+
+                let child_center = child.size().along(cross_axis) / 2.;
+                let child_target = child_center + child_center * self.child_alignment;
+
+                let mut aligned_child_origin = child_origin;
+                match self.axis {
+                    Axis::Horizontal => aligned_child_origin
+                        .set_y(aligned_child_origin.y() - (child_target - my_target)),
+                    Axis::Vertical => aligned_child_origin
+                        .set_x(aligned_child_origin.x() - (child_target - my_target)),
+                }
+
+                aligned_child_origin
+            };
+
+            child.paint(aligned_child_origin, visible_bounds, cx);
 
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),

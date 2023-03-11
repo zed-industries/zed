@@ -294,6 +294,16 @@ impl ContactList {
         this
     }
 
+    pub fn editor_text(&self, cx: &AppContext) -> String {
+        self.filter_editor.read(cx).text(cx)
+    }
+
+    pub fn with_editor_text(self, editor_text: String, cx: &mut ViewContext<Self>) -> Self {
+        self.filter_editor
+            .update(cx, |picker, cx| picker.set_text(editor_text, cx));
+        self
+    }
+
     fn remove_contact(&mut self, request: &RemoveContact, cx: &mut ViewContext<Self>) {
         let user_id = request.0;
         let user_store = self.user_store.clone();
@@ -726,7 +736,7 @@ impl ContactList {
     ) -> ElementBox {
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.contact_avatar)
                     .aligned()
                     .left()
@@ -1080,7 +1090,7 @@ impl ContactList {
                         };
                         Stack::new()
                             .with_child(
-                                Image::new(avatar)
+                                Image::from_data(avatar)
                                     .with_style(theme.contact_avatar)
                                     .aligned()
                                     .left()
@@ -1173,7 +1183,7 @@ impl ContactList {
 
         let mut row = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.contact_avatar)
                     .aligned()
                     .left()

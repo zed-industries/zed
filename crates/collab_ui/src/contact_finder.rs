@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    elements::*, AnyViewHandle, Entity, ModelHandle, MouseState, MutableAppContext, RenderContext,
-    Task, View, ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -68,7 +68,7 @@ impl PickerDelegate for ContactFinder {
                     this.potential_contacts = potential_contacts.into();
                     cx.notify();
                 });
-                Ok(())
+                anyhow::Ok(())
             }
             .log_err()
             .await;
@@ -128,7 +128,7 @@ impl PickerDelegate for ContactFinder {
             .style_for(mouse_state, selected);
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.contact_finder.contact_avatar)
                     .aligned()
                     .left()
@@ -177,5 +177,15 @@ impl ContactFinder {
             user_store,
             selected_index: 0,
         }
+    }
+
+    pub fn editor_text(&self, cx: &AppContext) -> String {
+        self.picker.read(cx).query(cx)
+    }
+
+    pub fn with_editor_text(self, editor_text: String, cx: &mut ViewContext<Self>) -> Self {
+        self.picker
+            .update(cx, |picker, cx| picker.set_query(editor_text, cx));
+        self
     }
 }

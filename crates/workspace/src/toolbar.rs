@@ -42,6 +42,7 @@ pub enum ToolbarItemLocation {
 
 pub struct Toolbar {
     active_pane_item: Option<Box<dyn ItemHandle>>,
+    hidden: bool,
     pane: WeakViewHandle<Pane>,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
@@ -211,6 +212,7 @@ impl Toolbar {
             active_pane_item: None,
             pane,
             items: Default::default(),
+            hidden: false,
         }
     }
 
@@ -243,6 +245,12 @@ impl Toolbar {
         cx: &mut ViewContext<Self>,
     ) {
         self.active_pane_item = pane_item.map(|item| item.boxed_clone());
+        self.hidden = self
+            .active_pane_item
+            .as_ref()
+            .map(|item| !item.show_toolbar(cx))
+            .unwrap_or(false);
+
         for (toolbar_item, current_location) in self.items.iter_mut() {
             let new_location = toolbar_item.set_active_pane_item(pane_item, cx);
             if new_location != *current_location {
@@ -256,6 +264,10 @@ impl Toolbar {
         self.items
             .iter()
             .find_map(|(item, _)| item.to_any().downcast())
+    }
+
+    pub fn hidden(&self) -> bool {
+        self.hidden
     }
 }
 

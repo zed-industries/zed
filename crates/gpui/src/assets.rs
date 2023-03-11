@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
-use std::{borrow::Cow, cell::RefCell, collections::HashMap};
+use image::ImageFormat;
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
+
+use crate::ImageData;
 
 pub trait AssetSource: 'static + Send + Sync {
     fn load(&self, path: &str) -> Result<Cow<[u8]>>;
@@ -22,6 +25,7 @@ impl AssetSource for () {
 pub struct AssetCache {
     source: Box<dyn AssetSource>,
     svgs: RefCell<HashMap<String, usvg::Tree>>,
+    pngs: RefCell<HashMap<String, Arc<ImageData>>>,
 }
 
 impl AssetCache {
@@ -29,6 +33,7 @@ impl AssetCache {
         Self {
             source: Box::new(source),
             svgs: RefCell::new(HashMap::new()),
+            pngs: RefCell::new(HashMap::new()),
         }
     }
 
@@ -41,6 +46,20 @@ impl AssetCache {
             let svg = usvg::Tree::from_data(&bytes, &usvg::Options::default())?;
             svgs.insert(path.to_string(), svg.clone());
             Ok(svg)
+        }
+    }
+
+    pub fn png(&self, path: &str) -> Result<Arc<ImageData>> {
+        let mut pngs = self.pngs.borrow_mut();
+        if let Some(png) = pngs.get(path) {
+            Ok(png.clone())
+        } else {
+            let bytes = self.source.load(path)?;
+            let image = ImageData::new(
+                image::load_from_memory_with_format(&bytes, ImageFormat::Png)?.into_bgra8(),
+            );
+            pngs.insert(path.to_string(), image.clone());
+            Ok(image)
         }
     }
 }

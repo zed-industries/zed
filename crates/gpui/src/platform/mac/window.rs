@@ -604,12 +604,12 @@ impl Window {
         }
     }
 
-    pub fn key_window_id() -> Option<usize> {
+    pub fn main_window_id() -> Option<usize> {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
-            let key_window: id = msg_send![app, keyWindow];
-            if msg_send![key_window, isKindOfClass: WINDOW_CLASS] {
-                let id = get_window_state(&*key_window).borrow().id;
+            let main_window: id = msg_send![app, mainWindow];
+            if msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+                let id = get_window_state(&*main_window).borrow().id;
                 Some(id)
             } else {
                 None

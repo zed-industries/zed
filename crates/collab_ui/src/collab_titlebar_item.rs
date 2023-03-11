@@ -304,12 +304,22 @@ impl CollabTitlebarItem {
                         label: "Sign out".into(),
                         action: Box::new(SignOut),
                     },
+                    ContextMenuItem::Item {
+                        label: "Give Feedback".into(),
+                        action: Box::new(feedback::feedback_editor::GiveFeedback),
+                    },
                 ]
             } else {
-                vec![ContextMenuItem::Item {
-                    label: "Sign in".into(),
-                    action: Box::new(Authenticate),
-                }]
+                vec![
+                    ContextMenuItem::Item {
+                        label: "Sign in".into(),
+                        action: Box::new(Authenticate),
+                    },
+                    ContextMenuItem::Item {
+                        label: "Give Feedback".into(),
+                        action: Box::new(feedback::feedback_editor::GiveFeedback),
+                    },
+                ]
             };
 
             user_menu.show(
@@ -572,15 +582,13 @@ impl CollabTitlebarItem {
         room: &ModelHandle<Room>,
         cx: &mut RenderContext<Self>,
     ) -> Vec<ElementBox> {
-        let project = workspace.read(cx).project().read(cx);
-
         let mut participants = room
             .read(cx)
             .remote_participants()
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        participants.sort_by_key(|p| Some(project.collaborators().get(&p.peer_id)?.replica_id));
+        participants.sort_by_cached_key(|p| p.user.github_login.clone());
 
         participants
             .into_iter()
@@ -823,7 +831,7 @@ impl CollabTitlebarItem {
         avatar_style: AvatarStyle,
         background_color: Color,
     ) -> ElementBox {
-        Image::new(avatar)
+        Image::from_data(avatar)
             .with_style(avatar_style.image)
             .aligned()
             .contained()

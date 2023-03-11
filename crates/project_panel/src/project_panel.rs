@@ -1262,54 +1262,89 @@ impl View for ProjectPanel {
         let padding = std::mem::take(&mut container_style.padding);
         let last_worktree_root_id = self.last_worktree_root_id;
 
-        Stack::new()
-            .with_child(
-                MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
-                    UniformList::new(
-                        self.list.clone(),
-                        self.visible_entries
-                            .iter()
-                            .map(|(_, worktree_entries)| worktree_entries.len())
-                            .sum(),
-                        cx,
-                        move |this, range, items, cx| {
-                            let theme = cx.global::<Settings>().theme.clone();
-                            let mut dragged_entry_destination =
-                                this.dragged_entry_destination.clone();
-                            this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                items.push(Self::render_entry(
-                                    id,
-                                    details,
-                                    &this.filename_editor,
-                                    &mut dragged_entry_destination,
-                                    &theme.project_panel,
-                                    cx,
-                                ));
-                            });
-                            this.dragged_entry_destination = dragged_entry_destination;
-                        },
-                    )
-                    .with_padding_top(padding.top)
-                    .with_padding_bottom(padding.bottom)
-                    .contained()
-                    .with_style(container_style)
-                    .expanded()
-                    .boxed()
-                })
-                .on_down(MouseButton::Right, move |e, cx| {
-                    // When deploying the context menu anywhere below the last project entry,
-                    // act as if the user clicked the root of the last worktree.
-                    if let Some(entry_id) = last_worktree_root_id {
-                        cx.dispatch_action(DeployContextMenu {
-                            entry_id,
-                            position: e.position,
-                        })
-                    }
-                })
-                .boxed(),
-            )
-            .with_child(ChildView::new(&self.context_menu, cx).boxed())
-            .boxed()
+        let has_worktree = self.visible_entries.len() != 0;
+
+        if has_worktree {
+            Stack::new()
+                .with_child(
+                    MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
+                        UniformList::new(
+                            self.list.clone(),
+                            self.visible_entries
+                                .iter()
+                                .map(|(_, worktree_entries)| worktree_entries.len())
+                                .sum(),
+                            cx,
+                            move |this, range, items, cx| {
+                                let theme = cx.global::<Settings>().theme.clone();
+                                let mut dragged_entry_destination =
+                                    this.dragged_entry_destination.clone();
+                                this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                    items.push(Self::render_entry(
+                                        id,
+                                        details,
+                                        &this.filename_editor,
+                                        &mut dragged_entry_destination,
+                                        &theme.project_panel,
+                                        cx,
+                                    ));
+                                });
+                                this.dragged_entry_destination = dragged_entry_destination;
+                            },
+                        )
+                        .with_padding_top(padding.top)
+                        .with_padding_bottom(padding.bottom)
+                        .contained()
+                        .with_style(container_style)
+                        .expanded()
+                        .boxed()
+                    })
+                    .on_down(MouseButton::Right, move |e, cx| {
+                        // When deploying the context menu anywhere below the last project entry,
+                        // act as if the user clicked the root of the last worktree.
+                        if let Some(entry_id) = last_worktree_root_id {
+                            cx.dispatch_action(DeployContextMenu {
+                                entry_id,
+                                position: e.position,
+                            })
+                        }
+                    })
+                    .boxed(),
+                )
+                .with_child(ChildView::new(&self.context_menu, cx).boxed())
+                .boxed()
+        } else {
+            Flex::column()
+                .with_child(
+                    MouseEventHandler::<Self>::new(2, cx, {
+                        let button_style = theme.open_project_button.clone();
+                        let context_menu_item_style =
+                            cx.global::<Settings>().theme.context_menu.item.clone();
+                        move |state, cx| {
+                            let button_style = button_style.style_for(state, false).clone();
+                            let context_menu_item =
+                                context_menu_item_style.style_for(state, true).clone();
+
+                            theme::ui::keystroke_label(
+                                "Open a project",
+                                &button_style,
+                                &context_menu_item.keystroke,
+                                Box::new(workspace::Open),
+                                cx,
+                            )
+                            .boxed()
+                        }
+                    })
+                    .on_click(MouseButton::Left, move |_, cx| {
+                        cx.dispatch_action(workspace::Open)
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .boxed(),
+                )
+                .contained()
+                .with_style(container_style)
+                .boxed()
+        }
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
@@ -1404,15 +1439,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1504,15 +1531,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);
