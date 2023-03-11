@@ -47,6 +47,13 @@ impl View for TerminalButton {
             Some(workspace) => workspace.read(cx).project().read(cx),
             None => return Empty::new().boxed(),
         };
+
+        let focused_view = cx.focused_view_id(cx.window_id());
+        // FIXME: Don't hardcode "Terminal" in here
+        let active = focused_view
+            .map(|view| cx.view_ui_name(cx.window_id(), view) == Some("Terminal"))
+            .unwrap_or(false);
+
         let has_terminals = !project.local_terminal_handles().is_empty();
         let theme = cx.global::<Settings>().theme.clone();
 
@@ -60,7 +67,7 @@ impl View for TerminalButton {
                             .status_bar
                             .sidebar_buttons
                             .item
-                            .style_for(state, false);
+                            .style_for(state, active);
 
                         Svg::new("icons/terminal_12.svg")
                             .with_color(style.icon_color)
@@ -79,7 +86,9 @@ impl View for TerminalButton {
                             position: e.region.upper_right(),
                         });
                     } else {
-                        cx.dispatch_action(FocusDock);
+                        if !active {
+                            cx.dispatch_action(FocusDock);
+                        }
                     };
                 })
                 .with_tooltip::<Self, _>(
@@ -160,5 +169,7 @@ impl TerminalButton {
 }
 
 impl StatusItemView for TerminalButton {
-    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
+    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        cx.notify();
+    }
 }
