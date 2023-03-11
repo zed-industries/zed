@@ -1082,18 +1082,21 @@ impl MultiBuffer {
 
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         cursor.seek(&position, Bias::Right, &());
-        cursor.item().map(|excerpt| {
-            (
-                excerpt.id.clone(),
-                self.buffers
-                    .borrow()
-                    .get(&excerpt.buffer_id)
-                    .unwrap()
-                    .buffer
-                    .clone(),
-                excerpt.range.context.clone(),
-            )
-        })
+        cursor
+            .item()
+            .or_else(|| snapshot.excerpts.last())
+            .map(|excerpt| {
+                (
+                    excerpt.id.clone(),
+                    self.buffers
+                        .borrow()
+                        .get(&excerpt.buffer_id)
+                        .unwrap()
+                        .buffer
+                        .clone(),
+                    excerpt.range.context.clone(),
+                )
+            })
     }
 
     // If point is at the end of the buffer, the last excerpt is returned

@@ -29,6 +29,7 @@ clock = { path = "../clock" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 editor = { path = "../editor" }
+feedback = { path = "../feedback" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }

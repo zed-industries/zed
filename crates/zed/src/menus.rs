@@ -141,6 +141,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::separator(),
+                MenuItem::action("Give us feedback", feedback::feedback_editor::GiveFeedback),
                 MenuItem::action(
                     "Copy System Specs Into Clipboard",
                     feedback::CopySystemSpecsIntoClipboard,
