@@ -157,7 +157,7 @@ impl super::Platform for Platform {
         }))
     }
 
-    fn key_window_id(&self) -> Option<usize> {
+    fn main_window_id(&self) -> Option<usize> {
         None
     }
 

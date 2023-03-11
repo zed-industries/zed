@@ -619,8 +619,13 @@ fn open_telemetry_log_file(
     workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
         cx.spawn_weak(|workspace, mut cx| async move {
             let workspace = workspace.upgrade(&cx)?;
-            let path = app_state.client.telemetry_log_file_path()?;
-            let log = app_state.fs.load(&path).await.log_err()?;
+
+            async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
+                let path = app_state.client.telemetry_log_file_path()?;
+                app_state.fs.load(&path).await.log_err()
+            }
+
+            let log = fetch_log_string(&app_state).await.unwrap_or_else(|| "// No data has been collected yet".to_string());
 
             const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
             let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
