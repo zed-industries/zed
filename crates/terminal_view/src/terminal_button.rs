@@ -49,9 +49,8 @@ impl View for TerminalButton {
         };
 
         let focused_view = cx.focused_view_id(cx.window_id());
-        // FIXME: Don't hardcode "Terminal" in here
         let active = focused_view
-            .map(|view| cx.view_ui_name(cx.window_id(), view) == Some("Terminal"))
+            .map(|view| cx.view_ui_name(cx.window_id(), view) == Some(TerminalView::ui_name()))
             .unwrap_or(false);
 
         let has_terminals = !project.local_terminal_handles().is_empty();
