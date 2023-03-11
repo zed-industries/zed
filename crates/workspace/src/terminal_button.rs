@@ -11,7 +11,6 @@ pub struct TerminalButton {
     workspace: WeakViewHandle<Workspace>,
 }
 
-// TODO: Rename this to `DeployTerminalButton`
 impl TerminalButton {
     pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         // When terminal moves, redraw so that the icon and toggle status matches.
@@ -39,6 +38,13 @@ impl View for TerminalButton {
             return Empty::new().boxed();
         }
 
+        let focused_view = cx.focused_view_id(cx.window_id());
+
+        // FIXME: Don't hardcode "Terminal" in here
+        let active = focused_view
+            .map(|view| cx.view_ui_name(cx.window_id(), view) == Some("Terminal"))
+            .unwrap_or(false);
+
         // let workspace = workspace.unwrap();
         let theme = cx.global::<Settings>().theme.clone();
 
@@ -50,7 +56,7 @@ impl View for TerminalButton {
                     .status_bar
                     .sidebar_buttons
                     .item
-                    .style_for(state, true);
+                    .style_for(state, active);
 
                 Svg::new("icons/terminal_12.svg")
                     .with_color(style.icon_color)
@@ -63,14 +69,10 @@ impl View for TerminalButton {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_up(MouseButton::Left, move |_, _| {
-            // TODO: Do we need this stuff?
-            // let dock_pane = workspace.read(cx.app).dock_pane();
-            // let drop_index = dock_pane.read(cx.app).items_len() + 1;
-            // handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
-        })
-        .on_click(MouseButton::Left, |_, cx| {
-            cx.dispatch_action(FocusDock);
+        .on_click(MouseButton::Left, move |_, cx| {
+            if !active {
+                cx.dispatch_action(FocusDock);
+            }
         })
         .with_tooltip::<Self, _>(
             0,
@@ -84,5 +86,7 @@ impl View for TerminalButton {
 }
 
 impl StatusItemView for TerminalButton {
-    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
+    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        cx.notify();
+    }
 }
