@@ -141,9 +141,9 @@ impl PartialEq for ContactEntry {
 pub struct RequestContact(pub u64);
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct RemoveContact<'a> {
+pub struct RemoveContact {
     user_id: u64,
-    github_login: &'a str,
+    github_login: String,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -1074,7 +1074,7 @@ impl ContactList {
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
-        let github_login = &contact.user.github_login;
+        let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
         let mut element =
             MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, cx| {
@@ -1137,7 +1137,7 @@ impl ContactList {
                         .on_click(MouseButton::Left, move |_, cx| {
                             cx.dispatch_action(RemoveContact {
                                 user_id,
-                                github_login,
+                                github_login: github_login.clone(),
                             })
                         })
                         .flex_float()
@@ -1214,7 +1214,7 @@ impl ContactList {
             );
 
         let user_id = user.id;
-        let github_login = &user.github_login;
+        let github_login = user.github_login.clone();
         let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
         let button_spacing = theme.contact_button_spacing;
 
@@ -1278,7 +1278,7 @@ impl ContactList {
                 .on_click(MouseButton::Left, move |_, cx| {
                     cx.dispatch_action(RemoveContact {
                         user_id,
-                        github_login,
+                        github_login: github_login.clone(),
                     })
                 })
                 .flex_float()
