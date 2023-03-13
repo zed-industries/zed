@@ -269,6 +269,7 @@ request_messages!(
     (JoinChannel, JoinChannelResponse),
     (JoinProject, JoinProjectResponse),
     (JoinRoom, JoinRoomResponse),
+    (LeaveRoom, Ack),
     (RejoinRoom, RejoinRoomResponse),
     (IncomingCall, Ack),
     (OpenBufferById, OpenBufferResponse),

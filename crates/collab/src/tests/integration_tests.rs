@@ -274,10 +274,14 @@ async fn test_basic_calls(
     }
 
     // User A leaves the room.
-    active_call_a.update(cx_a, |call, cx| {
-        call.hang_up(cx).unwrap();
-        assert!(call.room().is_none());
-    });
+    active_call_a
+        .update(cx_a, |call, cx| {
+            let hang_up = call.hang_up(cx);
+            assert!(call.room().is_none());
+            hang_up
+        })
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -557,6 +561,7 @@ async fn test_room_uniqueness(
     // Client C can successfully call client B after client B leaves the room.
     active_call_b
         .update(cx_b, |call, cx| call.hang_up(cx))
+        .await
         .unwrap();
     deterministic.run_until_parked();
     active_call_c
@@ -936,6 +941,7 @@ async fn test_server_restarts(
     // User D hangs up.
     active_call_d
         .update(cx_d, |call, cx| call.hang_up(cx))
+        .await
         .unwrap();
     deterministic.run_until_parked();
     assert_eq!(
@@ -1099,7 +1105,10 @@ async fn test_calls_on_multiple_connections(
         .unwrap();
 
     // User B hangs up, and user A calls them again.
-    active_call_b2.update(cx_b2, |call, cx| call.hang_up(cx).unwrap());
+    active_call_b2
+        .update(cx_b2, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     active_call_a
         .update(cx_a, |call, cx| {
@@ -1134,7 +1143,10 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
     // User A hangs up, causing both connections to stop ringing.
-    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
@@ -1371,7 +1383,10 @@ async fn test_unshare_project(
         .unwrap();
 
     // When client B leaves the room, the project becomes read-only.
-    active_call_b.update(cx_b, |call, cx| call.hang_up(cx).unwrap());
+    active_call_b
+        .update(cx_b, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
 
@@ -1400,7 +1415,10 @@ async fn test_unshare_project(
         .unwrap();
 
     // When client A (the host) leaves the room, the project gets unshared and guests are notified.
-    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
     project_c2.read_with(cx_c, |project, _| {
@@ -5455,7 +5473,10 @@ async fn test_contacts(
         [("user_b".to_string(), "online", "busy")]
     );
 
-    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
