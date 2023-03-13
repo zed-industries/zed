@@ -8,12 +8,12 @@ open_result=false
 
 # If -o option is specified, the folder of the resulting dmg will be opened in finder
 # If -d is specified, Zed will be compiled in debug mode and the application's path printed
-# If -od or -do is specified Zed will be bundled in debug and the application will be run. 
+# If -od or -do is specified Zed will be bundled in debug and the application will be run.
 while getopts 'od' flag
 do
     case "${flag}" in
         o) open_result=true;;
-        d) 
+        d)
             build_flag="";
             target_dir="debug"
             ;;
@@ -119,10 +119,14 @@ hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZ
 # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
 rm ${dmg_source_directory}/Applications
 
+echo "Adding license agreement to DMG"
+npm install --global dmg-license minimist
+dmg-license script/terms/terms-of-use.json "${dmg_file_path}"
+
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Notarizing DMG with Apple"
     npm install -g notarize-cli
-    npx notarize-cli --file ${dmg_file_path} --bundle-id dev.zed.Zed --username "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD"
+    npx notarize-cli --file "${dmg_file_path}" --bundle-id dev.zed.Zed --username "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD"
 fi
 
 if [ "$open_result" = true ]; then
