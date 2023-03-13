@@ -249,7 +249,8 @@
             "alt-cmd-[": "editor::Fold",
             "alt-cmd-]": "editor::UnfoldLines",
             "ctrl-space": "editor::ShowCompletions",
-            "cmd-.": "editor::ToggleCodeActions"
+            "cmd-.": "editor::ToggleCodeActions",
+            "alt-cmd-r": "editor::RevealInFinder"
         }
     },
     {
@@ -474,7 +475,8 @@
             "cmd-v": "project_panel::Paste",
             "cmd-alt-c": "project_panel::CopyPath",
             "f2": "project_panel::Rename",
-            "backspace": "project_panel::Delete"
+            "backspace": "project_panel::Delete",
+            "alt-cmd-r": "project_panel::RevealInFinder"
         }
     },
     {
