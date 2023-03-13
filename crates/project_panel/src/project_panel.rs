@@ -115,8 +115,8 @@ actions!(
     [
         ExpandSelectedEntry,
         CollapseSelectedEntry,
-        AddDirectory,
-        AddFile,
+        NewDirectory,
+        NewFile,
         Copy,
         CopyPath,
         RevealInFinder,
@@ -140,8 +140,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
-    cx.add_action(ProjectPanel::add_file);
-    cx.add_action(ProjectPanel::add_directory);
+    cx.add_action(ProjectPanel::new_file);
+    cx.add_action(ProjectPanel::new_directory);
     cx.add_action(ProjectPanel::rename);
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
@@ -305,8 +305,8 @@ impl ProjectPanel {
                     ));
                 }
             }
-            menu_entries.push(ContextMenuItem::item("New File", AddFile));
-            menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
+            menu_entries.push(ContextMenuItem::item("New File", NewFile));
+            menu_entries.push(ContextMenuItem::item("New Folder", NewDirectory));
             menu_entries.push(ContextMenuItem::item("Reveal in Finder", RevealInFinder));
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::item("Copy", Copy));
@@ -531,11 +531,11 @@ impl ProjectPanel {
         });
     }
 
-    fn add_file(&mut self, _: &AddFile, cx: &mut ViewContext<Self>) {
+    fn new_file(&mut self, _: &NewFile, cx: &mut ViewContext<Self>) {
         self.add_entry(false, cx)
     }
 
-    fn add_directory(&mut self, _: &AddDirectory, cx: &mut ViewContext<Self>) {
+    fn new_directory(&mut self, _: &NewDirectory, cx: &mut ViewContext<Self>) {
         self.add_entry(true, cx)
     }
 
@@ -1552,7 +1552,7 @@ mod tests {
 
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
-        panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
         assert!(panel.read_with(cx, |panel, cx| panel.filename_editor.is_focused(cx)));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -1610,7 +1610,7 @@ mod tests {
         );
 
         select_path(&panel, "root1/b", cx);
-        panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -1709,7 +1709,7 @@ mod tests {
             ]
         );
 
-        panel.update(cx, |panel, cx| panel.add_directory(&AddDirectory, cx));
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
