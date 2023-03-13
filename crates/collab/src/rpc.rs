@@ -186,7 +186,7 @@ impl Server {
             .add_request_handler(create_room)
             .add_request_handler(join_room)
             .add_request_handler(rejoin_room)
-            .add_message_handler(leave_room)
+            .add_request_handler(leave_room)
             .add_request_handler(call)
             .add_request_handler(cancel_call)
             .add_message_handler(decline_call)
@@ -1093,8 +1093,14 @@ async fn rejoin_room(
     Ok(())
 }
 
-async fn leave_room(_message: proto::LeaveRoom, session: Session) -> Result<()> {
-    leave_room_for_session(&session).await
+async fn leave_room(
+    _: proto::LeaveRoom,
+    response: Response<proto::LeaveRoom>,
+    session: Session,
+) -> Result<()> {
+    leave_room_for_session(&session).await?;
+    response.send(proto::Ack {})?;
+    Ok(())
 }
 
 async fn call(

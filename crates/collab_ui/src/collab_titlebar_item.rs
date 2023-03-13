@@ -342,7 +342,7 @@ impl CollabTitlebarItem {
     fn leave_call(&mut self, _: &LeaveCall, cx: &mut ViewContext<Self>) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| call.hang_up(cx))
-            .log_err();
+            .detach_and_log_err(cx);
     }
 
     fn render_toggle_contacts_button(

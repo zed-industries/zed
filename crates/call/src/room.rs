@@ -17,7 +17,7 @@ use language::LanguageRegistry;
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
 use project::Project;
-use std::{mem, sync::Arc, time::Duration};
+use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -64,10 +64,27 @@ pub struct Room {
 impl Entity for Room {
     type Event = Event;
 
-    fn release(&mut self, _: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut MutableAppContext) {
         if self.status.is_online() {
-            log::info!("room was released, sending leave message");
-            let _ = self.client.send(proto::LeaveRoom {});
+            self.leave_internal(cx).detach_and_log_err(cx);
+        }
+    }
+
+    fn app_will_quit(
+        &mut self,
+        cx: &mut MutableAppContext,
+    ) -> Option<Pin<Box<dyn Future<Output = ()>>>> {
+        if self.status.is_online() {
+            let leave = self.leave_internal(cx);
+            Some(
+                cx.background()
+                    .spawn(async move {
+                        leave.await.log_err();
+                    })
+                    .boxed(),
+            )
+        } else {
+            None
         }
     }
 }
@@ -234,13 +251,17 @@ impl Room {
             && self.pending_call_count == 0
     }
 
-    pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
-        if self.status.is_offline() {
-            return Err(anyhow!("room is offline"));
-        }
-
+    pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
         cx.emit(Event::Left);
+        self.leave_internal(cx)
+    }
+
+    fn leave_internal(&mut self, cx: &mut MutableAppContext) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
         log::info!("leaving room");
 
         for project in self.shared_projects.drain() {
@@ -266,8 +287,12 @@ impl Room {
         self.live_kit.take();
         self.pending_room_update.take();
         self.maintain_connection.take();
-        self.client.send(proto::LeaveRoom {})?;
-        Ok(())
+
+        let leave_room = self.client.request(proto::LeaveRoom {});
+        cx.background().spawn(async move {
+            leave_room.await?;
+            anyhow::Ok(())
+        })
     }
 
     async fn maintain_connection(
@@ -758,10 +783,10 @@ impl Room {
             this.update(&mut cx, |this, cx| {
                 this.pending_call_count -= 1;
                 if this.should_leave() {
-                    this.leave(cx)?;
+                    this.leave(cx).detach_and_log_err(cx);
                 }
-                result
-            })?;
+            });
+            result?;
             Ok(())
         })
     }
