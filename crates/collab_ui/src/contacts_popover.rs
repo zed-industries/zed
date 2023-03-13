@@ -1,8 +1,8 @@
 use crate::{contact_finder::ContactFinder, contact_list::ContactList, ToggleContactsMenu};
 use client::UserStore;
 use gpui::{
-    actions, elements::*, ClipboardItem, CursorStyle, Entity, ModelHandle, MouseButton,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, View,
+    ViewContext, ViewHandle,
 };
 use project::Project;
 use settings::Settings;
@@ -98,61 +98,9 @@ impl View for ContactsPopover {
             Child::ContactFinder(child) => ChildView::new(child, cx),
         };
 
-        MouseEventHandler::<ContactsPopover>::new(0, cx, |_, cx| {
+        MouseEventHandler::<ContactsPopover>::new(0, cx, |_, _| {
             Flex::column()
                 .with_child(child.flex(1., true).boxed())
-                .with_children(
-                    self.user_store
-                        .read(cx)
-                        .invite_info()
-                        .cloned()
-                        .and_then(|info| {
-                            enum InviteLink {}
-
-                            if info.count > 0 {
-                                Some(
-                                    MouseEventHandler::<InviteLink>::new(0, cx, |state, cx| {
-                                        let style = theme
-                                            .contacts_popover
-                                            .invite_row
-                                            .style_for(state, false)
-                                            .clone();
-
-                                        let copied =
-                                            cx.read_from_clipboard().map_or(false, |item| {
-                                                item.text().as_str() == info.url.as_ref()
-                                            });
-
-                                        Label::new(
-                                            format!(
-                                                "{} invite link ({} left)",
-                                                if copied { "Copied" } else { "Copy" },
-                                                info.count
-                                            ),
-                                            style.label.clone(),
-                                        )
-                                        .aligned()
-                                        .left()
-                                        .constrained()
-                                        .with_height(theme.contacts_popover.invite_row_height)
-                                        .contained()
-                                        .with_style(style.container)
-                                        .boxed()
-                                    })
-                                    .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(MouseButton::Left, move |_, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new(
-                                            info.url.to_string(),
-                                        ));
-                                        cx.notify();
-                                    })
-                                    .boxed(),
-                                )
-                            } else {
-                                None
-                            }
-                        }),
-                )
                 .contained()
                 .with_style(theme.contacts_popover.container)
                 .constrained()
