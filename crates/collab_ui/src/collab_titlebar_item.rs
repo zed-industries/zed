@@ -379,7 +379,7 @@ impl CollabTitlebarItem {
                     let style = titlebar
                         .toggle_contacts_button
                         .style_for(state, self.contacts_popover.is_some());
-                    Svg::new("icons/plus_8.svg")
+                    Svg::new("icons/user_plus_16.svg")
                         .with_color(style.color)
                         .constrained()
                         .with_width(style.icon_width)

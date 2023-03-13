@@ -212,7 +212,7 @@ export default function workspace(colorScheme: ColorScheme) {
                 margin: { left: itemSpacing },
                 cornerRadius: 6,
                 color: foreground(layer, "variant"),
-                iconWidth: 8,
+                iconWidth: 14,
                 buttonWidth: 20,
                 active: {
                     background: background(layer, "variant", "active"),
