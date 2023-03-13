@@ -29,8 +29,8 @@ export default function statusBar(colorScheme: ColorScheme) {
             padding: { left: 6, right: 6 },
             ...text(layer, "sans", "variant"),
             hover: {
-                ...text(layer, "sans", "on")
-            }
+                ...text(layer, "sans", "on"),
+            },
         },
         autoUpdateProgressMessage: text(layer, "sans", "variant"),
         autoUpdateDoneMessage: text(layer, "sans", "variant"),

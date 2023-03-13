@@ -55,7 +55,12 @@ export default function workspace(colorScheme: ColorScheme) {
                 },
             },
             logoShadow: {
-                color: withOpacity(colorScheme.isLight ? "#FFFFFF" : colorScheme.lowest.base.default.background, colorScheme.isLight ? 1 : 0.6),
+                color: withOpacity(
+                    colorScheme.isLight
+                        ? "#FFFFFF"
+                        : colorScheme.lowest.base.default.background,
+                    colorScheme.isLight ? 1 : 0.6
+                ),
                 icon: "icons/logo_96.svg",
                 dimensions: {
                     width: 256,
@@ -74,12 +79,12 @@ export default function workspace(colorScheme: ColorScheme) {
                     top: 3,
                     left: 8,
                     right: 8,
-                    bottom: 3
+                    bottom: 3,
                 },
                 cornerRadius: 8,
                 hover: {
                     ...text(layer, "sans", "active", { size: "sm" }),
-                }
+                },
             },
             keyboardHintWidth: 320,
         },

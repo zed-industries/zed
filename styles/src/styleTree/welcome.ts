@@ -1,11 +1,15 @@
-
-import { ColorScheme } from "../themes/common/colorScheme";
-import { withOpacity } from "../utils/color";
-import { border, background, foreground, text, TextProperties } from "./components";
-
+import { ColorScheme } from "../themes/common/colorScheme"
+import { withOpacity } from "../utils/color"
+import {
+    border,
+    background,
+    foreground,
+    text,
+    TextProperties,
+} from "./components"
 
 export default function welcome(colorScheme: ColorScheme) {
-    let layer = colorScheme.highest;
+    let layer = colorScheme.highest
 
     let checkboxBase = {
         cornerRadius: 4,
@@ -20,9 +24,9 @@ export default function welcome(colorScheme: ColorScheme) {
         margin: {
             right: 8,
             top: 5,
-            bottom: 5
+            bottom: 5,
         },
-    };
+    }
 
     let interactive_text_size: TextProperties = { size: "sm" }
 
@@ -34,7 +38,7 @@ export default function welcome(colorScheme: ColorScheme) {
             dimensions: {
                 width: 64,
                 height: 64,
-            }
+            },
         },
         logoSubheading: {
             ...text(layer, "sans", "variant", { size: "md" }),
@@ -46,13 +50,13 @@ export default function welcome(colorScheme: ColorScheme) {
         buttonGroup: {
             margin: {
                 top: 8,
-                bottom: 16
+                bottom: 16,
             },
         },
         headingGroup: {
             margin: {
                 top: 8,
-                bottom: 12
+                bottom: 12,
             },
         },
         checkboxGroup: {
@@ -62,7 +66,7 @@ export default function welcome(colorScheme: ColorScheme) {
             padding: {
                 left: 12,
                 top: 2,
-                bottom: 2
+                bottom: 2,
             },
         },
         button: {
@@ -71,7 +75,7 @@ export default function welcome(colorScheme: ColorScheme) {
             cornerRadius: 4,
             margin: {
                 top: 4,
-                bottom: 4
+                bottom: 4,
             },
             padding: {
                 top: 3,
@@ -90,8 +94,7 @@ export default function welcome(colorScheme: ColorScheme) {
             ...text(layer, "sans", "variant", { size: "2xs" }),
             padding: {
                 top: -4,
-
-            }
+            },
         },
         checkboxContainer: {
             margin: {
@@ -99,7 +102,7 @@ export default function welcome(colorScheme: ColorScheme) {
             },
             padding: {
                 bottom: 8,
-            }
+            },
         },
         checkbox: {
             label: {
@@ -112,28 +115,28 @@ export default function welcome(colorScheme: ColorScheme) {
                 dimensions: {
                     width: 12,
                     height: 12,
-                }
+                },
             },
             default: {
                 ...checkboxBase,
                 background: background(layer, "default"),
-                border: border(layer, "active")
+                border: border(layer, "active"),
             },
             checked: {
                 ...checkboxBase,
                 background: background(layer, "hovered"),
-                border: border(layer, "active")
+                border: border(layer, "active"),
             },
             hovered: {
                 ...checkboxBase,
                 background: background(layer, "hovered"),
-                border: border(layer, "active")
+                border: border(layer, "active"),
             },
             hoveredAndChecked: {
                 ...checkboxBase,
                 background: background(layer, "hovered"),
-                border: border(layer, "active")
-            }
-        }
+                border: border(layer, "active"),
+            },
+        },
     }
 }
