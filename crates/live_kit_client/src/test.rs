@@ -104,6 +104,15 @@ impl TestServer {
                 room_name
             ))
         } else {
+            for track in &room.tracks {
+                client_room
+                    .0
+                    .lock()
+                    .video_track_updates
+                    .0
+                    .try_broadcast(RemoteVideoTrackUpdate::Subscribed(track.clone()))
+                    .unwrap();
+            }
             room.client_rooms.insert(identity, client_room);
             Ok(())
         }
@@ -167,11 +176,13 @@ impl TestServer {
             .get_mut(&*room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
 
-        let update = RemoteVideoTrackUpdate::Subscribed(Arc::new(RemoteVideoTrack {
+        let track = Arc::new(RemoteVideoTrack {
             sid: nanoid::nanoid!(17),
             publisher_id: identity.clone(),
             frames_rx: local_track.frames_rx.clone(),
-        }));
+        });
+
+        room.tracks.push(track.clone());
 
         for (id, client_room) in &room.client_rooms {
             if *id != identity {
@@ -180,18 +191,30 @@ impl TestServer {
                     .lock()
                     .video_track_updates
                     .0
-                    .try_broadcast(update.clone())
+                    .try_broadcast(RemoteVideoTrackUpdate::Subscribed(track.clone()))
                     .unwrap();
             }
         }
 
         Ok(())
     }
+
+    fn video_tracks(&self, token: String) -> Result<Vec<Arc<RemoteVideoTrack>>> {
+        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let room_name = claims.video.room.unwrap();
+
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&*room_name)
+            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+        Ok(room.tracks.clone())
+    }
 }
 
 #[derive(Default)]
 struct TestServerRoom {
     client_rooms: HashMap<Sid, Arc<Room>>,
+    tracks: Vec<Arc<RemoteVideoTrack>>,
 }
 
 impl TestServerRoom {}
@@ -307,8 +330,17 @@ impl Room {
 
     pub fn unpublish_track(&self, _: LocalTrackPublication) {}
 
-    pub fn remote_video_tracks(&self, _: &str) -> Vec<Arc<RemoteVideoTrack>> {
-        Default::default()
+    pub fn remote_video_tracks(&self, publisher_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
+        if !self.is_connected() {
+            return Vec::new();
+        }
+
+        self.test_server()
+            .video_tracks(self.token())
+            .unwrap()
+            .into_iter()
+            .filter(|track| track.publisher_id() == publisher_id)
+            .collect()
     }
 
     pub fn remote_video_track_updates(&self) -> impl Stream<Item = RemoteVideoTrackUpdate> {
@@ -330,6 +362,13 @@ impl Room {
         match self.0.lock().connection.1.borrow().clone() {
             ConnectionState::Disconnected => panic!("must be connected to call this method"),
             ConnectionState::Connected { token, .. } => token,
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        match *self.0.lock().connection.1.borrow() {
+            ConnectionState::Disconnected => false,
+            ConnectionState::Connected { .. } => true,
         }
     }
 }
