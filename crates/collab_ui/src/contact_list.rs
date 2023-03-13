@@ -141,7 +141,10 @@ impl PartialEq for ContactEntry {
 pub struct RequestContact(pub u64);
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct RemoveContact(pub u64);
+pub struct RemoveContact {
+    user_id: u64,
+    github_login: String,
+}
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct RespondToContactRequest {
@@ -305,10 +308,14 @@ impl ContactList {
     }
 
     fn remove_contact(&mut self, request: &RemoveContact, cx: &mut ViewContext<Self>) {
-        let user_id = request.0;
+        let user_id = request.user_id;
+        let github_login = &request.github_login;
         let user_store = self.user_store.clone();
-        let prompt_message = "Are you sure you want to remove this contact?";
-        let mut answer = cx.prompt(PromptLevel::Warning, prompt_message, &["Remove", "Cancel"]);
+        let prompt_message = format!(
+            "Are you sure you want to remove \"{}\" from your contacts?",
+            github_login
+        );
+        let mut answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
         cx.spawn(|_, mut cx| async move {
             if answer.next().await == Some(0) {
                 user_store
@@ -1067,6 +1074,7 @@ impl ContactList {
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
+        let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
         let mut element =
             MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, cx| {
@@ -1127,7 +1135,10 @@ impl ContactList {
                         .with_padding(Padding::uniform(2.))
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, move |_, cx| {
-                            cx.dispatch_action(RemoveContact(user_id))
+                            cx.dispatch_action(RemoveContact {
+                                user_id,
+                                github_login: github_login.clone(),
+                            })
                         })
                         .flex_float()
                         .boxed(),
@@ -1203,6 +1214,7 @@ impl ContactList {
             );
 
         let user_id = user.id;
+        let github_login = user.github_login.clone();
         let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
         let button_spacing = theme.contact_button_spacing;
 
@@ -1264,7 +1276,10 @@ impl ContactList {
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(RemoveContact(user_id))
+                    cx.dispatch_action(RemoveContact {
+                        user_id,
+                        github_login: github_login.clone(),
+                    })
                 })
                 .flex_float()
                 .boxed(),
