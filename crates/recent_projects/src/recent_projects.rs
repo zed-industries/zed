@@ -165,12 +165,13 @@ impl PickerDelegate for RecentProjectsView {
     }
 
     fn confirm(&mut self, cx: &mut ViewContext<Self>) {
-        let selected_match = &self.matches[self.selected_index()];
-        let workspace_location = &self.workspace_locations[selected_match.candidate_id];
-        cx.dispatch_global_action(OpenPaths {
-            paths: workspace_location.paths().as_ref().clone(),
-        });
-        cx.emit(Event::Dismissed);
+        if let Some(selected_match) = &self.matches.get(self.selected_index()) {
+            let workspace_location = &self.workspace_locations[selected_match.candidate_id];
+            cx.dispatch_global_action(OpenPaths {
+                paths: workspace_location.paths().as_ref().clone(),
+            });
+            cx.emit(Event::Dismissed);
+        }
     }
 
     fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
