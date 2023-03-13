@@ -754,7 +754,7 @@ impl Workspace {
             cx.defer(move |_, cx| {
                 Self::load_from_serialized_workspace(weak_handle, serialized_workspace, cx)
             });
-        } else {
+        } else if project.read(cx).is_local() {
             if cx.global::<Settings>().default_dock_anchor != DockAnchor::Expanded {
                 Dock::show(&mut this, false, cx);
             }
