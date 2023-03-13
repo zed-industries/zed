@@ -325,8 +325,6 @@ impl Column for DockAnchor {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
-    pub projects_online_by_default: Option<bool>,
-    #[serde(default)]
     pub buffer_font_family: Option<String>,
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
