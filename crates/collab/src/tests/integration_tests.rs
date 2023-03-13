@@ -6292,6 +6292,99 @@ async fn test_basic_following(
     );
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_join_call_after_screen_was_shared(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // Call users B and C from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: vec!["user_b".to_string()]
+        }
+    );
+
+    // User B receives the call.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    let call_b = incoming_call_b.next().await.unwrap().unwrap();
+    assert_eq!(call_b.calling_user.github_login, "user_a");
+
+    // User A shares their screen
+    let display = MacOSDisplay::new();
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_display_sources(vec![display.clone()]);
+                room.share_screen(cx)
+            })
+        })
+        .await
+        .unwrap();
+
+    client_b.user_store.update(cx_b, |user_store, _| {
+        user_store.clear_cache();
+    });
+
+    // User B joins the room
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    assert!(incoming_call_b.next().await.unwrap().is_none());
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec![],
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: vec![],
+        }
+    );
+
+    // Ensure User B sees User A's screenshare.
+    room_b.read_with(cx_b, |room, _| {
+        assert_eq!(
+            room.remote_participants()
+                .get(&client_a.user_id().unwrap())
+                .unwrap()
+                .tracks
+                .len(),
+            1
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_following_tab_order(
     deterministic: Arc<Deterministic>,

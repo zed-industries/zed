@@ -626,7 +626,7 @@ impl Room {
 
                             if let Some(live_kit) = this.live_kit.as_ref() {
                                 let tracks =
-                                    live_kit.room.remote_video_tracks(&peer_id.to_string());
+                                    live_kit.room.remote_video_tracks(&user.id.to_string());
                                 for track in tracks {
                                     this.remote_video_track_updated(
                                         RemoteVideoTrackUpdate::Subscribed(track),

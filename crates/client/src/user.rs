@@ -183,6 +183,11 @@ impl UserStore {
         }
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn clear_cache(&mut self) {
+        self.users.clear();
+    }
+
     async fn handle_update_invite_info(
         this: ModelHandle<Self>,
         message: TypedEnvelope<proto::UpdateInviteInfo>,
