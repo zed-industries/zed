@@ -1,4 +1,5 @@
 import { ColorScheme } from "../themes/common/colorScheme"
+import { withOpacity } from "../utils/color"
 import { background, border, text } from "./components"
 
 export default function picker(colorScheme: ColorScheme) {
@@ -53,14 +54,17 @@ export default function picker(colorScheme: ColorScheme) {
             text: text(layer, "sans", "variant"),
             highlightText: text(layer, "sans", "accent", { weight: "bold" }),
             active: {
-                background: background(layer, "base", "active"),
+                background: withOpacity(
+                    background(layer, "base", "active"),
+                    0.5
+                ),
                 text: text(layer, "sans", "base", "active"),
                 highlightText: text(layer, "sans", "accent", {
                     weight: "bold",
                 }),
             },
             hover: {
-                background: background(layer, "hovered"),
+                background: withOpacity(background(layer, "hovered"), 0.5),
             },
         },
         inputEditor,
