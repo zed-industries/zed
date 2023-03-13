@@ -1064,7 +1064,10 @@ impl Workspace {
                     if answer == Some(1) {
                         return anyhow::Ok(false);
                     } else {
-                        active_call.update(&mut cx, |call, cx| call.hang_up(cx))?;
+                        active_call
+                            .update(&mut cx, |call, cx| call.hang_up(cx))
+                            .await
+                            .log_err();
                     }
                 }
             }

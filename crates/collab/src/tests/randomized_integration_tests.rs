@@ -641,7 +641,7 @@ async fn randomly_mutate_active_call(
                 if can_hang_up && active_call.read_with(cx, |call, _| call.room().is_some()) =>
             {
                 log::info!("{}: hanging up", client.username);
-                active_call.update(cx, |call, cx| call.hang_up(cx))?;
+                active_call.update(cx, |call, cx| call.hang_up(cx)).await?;
             }
             _ => {}
         }

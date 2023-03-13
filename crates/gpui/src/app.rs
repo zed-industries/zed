@@ -588,17 +588,20 @@ impl MutableAppContext {
 
     pub fn quit(&mut self) {
         let mut futures = Vec::new();
-        for model_id in self.cx.models.keys().copied().collect::<Vec<_>>() {
-            let mut model = self.cx.models.remove(&model_id).unwrap();
-            futures.extend(model.app_will_quit(self));
-            self.cx.models.insert(model_id, model);
-        }
 
-        for view_id in self.cx.views.keys().copied().collect::<Vec<_>>() {
-            let mut view = self.cx.views.remove(&view_id).unwrap();
-            futures.extend(view.app_will_quit(self));
-            self.cx.views.insert(view_id, view);
-        }
+        self.update(|cx| {
+            for model_id in cx.models.keys().copied().collect::<Vec<_>>() {
+                let mut model = cx.cx.models.remove(&model_id).unwrap();
+                futures.extend(model.app_will_quit(cx));
+                cx.cx.models.insert(model_id, model);
+            }
+
+            for view_id in cx.views.keys().copied().collect::<Vec<_>>() {
+                let mut view = cx.cx.views.remove(&view_id).unwrap();
+                futures.extend(view.app_will_quit(cx));
+                cx.cx.views.insert(view_id, view);
+            }
+        });
 
         self.remove_all_windows();
 
