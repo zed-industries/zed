@@ -8349,6 +8349,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "terminal",
  "theme",
  "util",
  "uuid 1.2.2",

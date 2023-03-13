@@ -1,4 +1,5 @@
 mod persistence;
+pub mod terminal_button;
 pub mod terminal_element;
 
 use std::{
@@ -30,7 +31,7 @@ use terminal::{
     },
     Event, Terminal,
 };
-use util::{truncate_and_trailoff, ResultExt};
+use util::ResultExt;
 use workspace::{
     item::{Item, ItemEvent},
     notifications::NotifyResultExt,
@@ -177,8 +178,8 @@ impl TerminalView {
         }
     }
 
-    pub fn handle(&self) -> ModelHandle<Terminal> {
-        self.terminal.clone()
+    pub fn model(&self) -> &ModelHandle<Terminal> {
+        &self.terminal
     }
 
     pub fn has_new_content(&self) -> bool {
@@ -547,38 +548,7 @@ impl Item for TerminalView {
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> ElementBox {
-        let title = self
-            .terminal()
-            .read(cx)
-            .foreground_process_info
-            .as_ref()
-            .map(|fpi| {
-                format!(
-                    "{} — {}",
-                    truncate_and_trailoff(
-                        &fpi.cwd
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or_default(),
-                        25
-                    ),
-                    truncate_and_trailoff(
-                        &{
-                            format!(
-                                "{}{}",
-                                fpi.name,
-                                if fpi.argv.len() >= 1 {
-                                    format!(" {}", (&fpi.argv[1..]).join(" "))
-                                } else {
-                                    "".to_string()
-                                }
-                            )
-                        },
-                        25
-                    )
-                )
-            })
-            .unwrap_or_else(|| "Terminal".to_string());
+        let title = self.terminal().read(cx).title();
 
         Flex::row()
             .with_child(

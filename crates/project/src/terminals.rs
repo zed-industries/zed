@@ -58,6 +58,10 @@ impl Project {
             terminal
         }
     }
+
+    pub fn local_terminal_handles(&self) -> &Vec<WeakModelHandle<terminal::Terminal>> {
+        &self.terminals.local_handles
+    }
 }
 
 // TODO: Add a few tests for adding and removing terminal tabs
