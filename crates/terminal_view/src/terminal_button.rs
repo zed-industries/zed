@@ -5,6 +5,7 @@ use gpui::{
     ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use settings::Settings;
+use std::any::TypeId;
 use terminal::Terminal;
 use workspace::{dock::FocusDock, item::ItemHandle, NewTerminal, StatusItemView, Workspace};
 
@@ -50,7 +51,9 @@ impl View for TerminalButton {
 
         let focused_view = cx.focused_view_id(cx.window_id());
         let active = focused_view
-            .map(|view| cx.view_ui_name(cx.window_id(), view) == Some(TerminalView::ui_name()))
+            .map(|view_id| {
+                cx.view_type_id(cx.window_id(), view_id) == Some(TypeId::of::<TerminalView>())
+            })
             .unwrap_or(false);
 
         let has_terminals = !project.local_terminal_handles().is_empty();

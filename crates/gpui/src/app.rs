@@ -2757,6 +2757,12 @@ impl AppContext {
         Some(self.views.get(&(window_id, view_id))?.ui_name())
     }
 
+    pub fn view_type_id(&self, window_id: usize, view_id: usize) -> Option<TypeId> {
+        self.views
+            .get(&(window_id, view_id))
+            .map(|view| view.as_any().type_id())
+    }
+
     pub fn background(&self) -> &Arc<executor::Background> {
         &self.background
     }
