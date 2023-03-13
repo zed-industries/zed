@@ -63,23 +63,26 @@ pub enum BaseKeymap {
     #[default]
     VSCode,
     JetBrains,
-    Sublime,
+    SublimeText,
     Atom,
+    TextMate,
 }
 
 impl BaseKeymap {
-    pub const OPTIONS: [(&'static str, Self); 4] = [
+    pub const OPTIONS: [(&'static str, Self); 5] = [
         ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
-        ("Sublime", Self::Sublime),
+        ("Sublime Text", Self::SublimeText),
+        ("TextMate", Self::TextMate),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {
         match self {
             BaseKeymap::JetBrains => Some("keymaps/jetbrains.json"),
-            BaseKeymap::Sublime => Some("keymaps/sublime_text.json"),
+            BaseKeymap::SublimeText => Some("keymaps/sublime_text.json"),
             BaseKeymap::Atom => Some("keymaps/atom.json"),
+            BaseKeymap::TextMate => Some("keymaps/textmate.json"),
             BaseKeymap::VSCode => None,
         }
     }
