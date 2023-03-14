@@ -1875,7 +1875,7 @@ async fn fuzzy_search_users(
         1 | 2 => session
             .db()
             .await
-            .get_user_by_github_account(&query, None)
+            .get_user_by_github_login(&query)
             .await?
             .into_iter()
             .collect(),

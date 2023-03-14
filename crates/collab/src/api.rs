@@ -78,6 +78,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 struct AuthenticatedUserParams {
     github_user_id: Option<i32>,
     github_login: String,
+    github_email: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,7 +93,11 @@ async fn get_authenticated_user(
 ) -> Result<Json<AuthenticatedUserResponse>> {
     let user = app
         .db
-        .get_user_by_github_account(&params.github_login, params.github_user_id)
+        .get_or_create_user_by_github_account(
+            &params.github_login,
+            params.github_user_id,
+            params.github_email.as_deref(),
+        )
         .await?
         .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "user not found".into()))?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
@@ -297,11 +302,7 @@ async fn create_access_token(
     let mut user_id = user.id;
     if let Some(impersonate) = params.impersonate {
         if user.admin {
-            if let Some(impersonated_user) = app
-                .db
-                .get_user_by_github_account(&impersonate, None)
-                .await?
-            {
+            if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
                 user_id = impersonated_user.id;
             } else {
                 return Err(Error::Http(

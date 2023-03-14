@@ -295,10 +295,21 @@ impl Database {
         .await
     }
 
-    pub async fn get_user_by_github_account(
+    pub async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+        self.transaction(|tx| async move {
+            Ok(user::Entity::find()
+                .filter(user::Column::GithubLogin.eq(github_login))
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
+
+    pub async fn get_or_create_user_by_github_account(
         &self,
         github_login: &str,
         github_user_id: Option<i32>,
+        github_email: Option<&str>,
     ) -> Result<Option<User>> {
         self.transaction(|tx| async move {
             let tx = &*tx;
@@ -320,7 +331,19 @@ impl Database {
                     user_by_github_login.github_user_id = ActiveValue::set(Some(github_user_id));
                     Ok(Some(user_by_github_login.update(tx).await?))
                 } else {
-                    Ok(None)
+                    let user = user::Entity::insert(user::ActiveModel {
+                        email_address: ActiveValue::set(github_email.map(|email| email.into())),
+                        github_login: ActiveValue::set(github_login.into()),
+                        github_user_id: ActiveValue::set(Some(github_user_id)),
+                        admin: ActiveValue::set(false),
+                        invite_count: ActiveValue::set(0),
+                        invite_code: ActiveValue::set(None),
+                        metrics_id: ActiveValue::set(Uuid::new_v4()),
+                        ..Default::default()
+                    })
+                    .exec_with_returning(&*tx)
+                    .await?;
+                    Ok(Some(user))
                 }
             } else {
                 Ok(user::Entity::find()
