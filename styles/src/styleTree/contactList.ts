@@ -42,7 +42,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
 
     return {
         background: background(layer),
-        padding: { top: 12, bottom: 0 },
+        padding: { top: 12 },
         userQueryEditor: {
             background: background(layer, "on"),
             cornerRadius: 6,

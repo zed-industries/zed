@@ -1,8 +1,9 @@
 use crate::{update_settings_file, watched_json::WatchedJsonFile, SettingsFileContent};
 use anyhow::Result;
+use assets::Assets;
 use fs::Fs;
-use gpui::MutableAppContext;
-use std::{path::Path, sync::Arc};
+use gpui::{AssetSource, MutableAppContext};
+use std::{io::ErrorKind, path::Path, sync::Arc};
 
 // TODO: Switch SettingsFile to open a worktree and buffer for synchronization
 //       And instant updates in the Zed editor
@@ -26,6 +27,27 @@ impl SettingsFile {
         }
     }
 
+    async fn load_settings(path: &Path, fs: &Arc<dyn Fs>) -> Result<String> {
+        match fs.load(path).await {
+            result @ Ok(_) => result,
+            Err(err) => {
+                if let Some(e) = err.downcast_ref::<std::io::Error>() {
+                    if e.kind() == ErrorKind::NotFound {
+                        return Ok(std::str::from_utf8(
+                            Assets
+                                .load("settings/initial_user_settings.json")
+                                .unwrap()
+                                .as_ref(),
+                        )
+                        .unwrap()
+                        .to_string());
+                    }
+                }
+                return Err(err);
+            }
+        }
+    }
+
     pub fn update(
         cx: &mut MutableAppContext,
         update: impl 'static + Send + FnOnce(&mut SettingsFileContent),
@@ -39,7 +61,7 @@ impl SettingsFile {
 
         cx.background()
             .spawn(async move {
-                let old_text = fs.load(path).await?;
+                let old_text = SettingsFile::load_settings(path, &fs).await?;
 
                 let new_text = update_settings_file(old_text, current_file_content, update);
 

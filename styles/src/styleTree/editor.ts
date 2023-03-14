@@ -60,7 +60,7 @@ export default function editor(colorScheme: ColorScheme) {
             verticalScale: 0.55,
         },
         folds: {
-            iconWidth: 8,
+            iconMarginScale: 2.5,
             foldedIcon: "icons/chevron_right_8.svg",
             foldableIcon: "icons/chevron_down_8.svg",
             indicator: {
