@@ -14,6 +14,14 @@ use std::{cell::RefCell, os::unix, rc::Rc, task::Poll};
 use unindent::Unindent as _;
 use util::{assert_set_eq, test::temp_tree};
 
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
+}
+
 #[gpui::test]
 async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     let dir = temp_tree(json!({

@@ -380,6 +380,8 @@ struct FakeFsState {
     next_inode: u64,
     next_mtime: SystemTime,
     event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
+    events_paused: bool,
+    buffered_events: Vec<fsevent::Event>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -483,15 +485,21 @@ impl FakeFsState {
         I: IntoIterator<Item = T>,
         T: Into<PathBuf>,
     {
-        let events = paths
-            .into_iter()
-            .map(|path| fsevent::Event {
+        self.buffered_events
+            .extend(paths.into_iter().map(|path| fsevent::Event {
                 event_id: 0,
                 flags: fsevent::StreamFlags::empty(),
                 path: path.into(),
-            })
-            .collect::<Vec<_>>();
+            }));
 
+        if !self.events_paused {
+            self.flush_events(self.buffered_events.len());
+        }
+    }
+
+    fn flush_events(&mut self, mut count: usize) {
+        count = count.min(self.buffered_events.len());
+        let events = self.buffered_events.drain(0..count).collect::<Vec<_>>();
         self.event_txs.retain(|tx| {
             let _ = tx.try_send(events.clone());
             !tx.is_closed()
@@ -514,6 +522,8 @@ impl FakeFs {
                 next_mtime: SystemTime::UNIX_EPOCH,
                 next_inode: 1,
                 event_txs: Default::default(),
+                buffered_events: Vec::new(),
+                events_paused: false,
             }),
         })
     }
@@ -565,6 +575,18 @@ impl FakeFs {
             .await
             .unwrap();
         state.emit_event(&[path]);
+    }
+
+    pub async fn pause_events(&self) {
+        self.state.lock().await.events_paused = true;
+    }
+
+    pub async fn buffered_event_count(&self) -> usize {
+        self.state.lock().await.buffered_events.len()
+    }
+
+    pub async fn flush_events(&self, count: usize) {
+        self.state.lock().await.flush_events(count);
     }
 
     #[must_use]
@@ -868,7 +890,7 @@ impl Fs for FakeFs {
             .ok_or_else(|| anyhow!("cannot remove the root"))?;
         let base_name = path.file_name().unwrap();
 
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         let parent_entry = state.read_path(parent_path).await?;
         let mut parent_entry = parent_entry.lock().await;
         let entry = parent_entry
@@ -892,7 +914,7 @@ impl Fs for FakeFs {
                 e.remove();
             }
         }
-
+        state.emit_event(&[path]);
         Ok(())
     }
 

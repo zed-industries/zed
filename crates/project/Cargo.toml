@@ -58,6 +58,8 @@ thiserror = "1.0.29"
 toml = "0.5"
 
 [dev-dependencies]
+ctor = "0.1"
+env_logger = "0.9"
 pretty_assertions = "1.3.0"
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }

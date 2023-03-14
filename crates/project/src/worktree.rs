@@ -2257,10 +2257,6 @@ impl BackgroundScanner {
         self.snapshot.lock().abs_path.clone()
     }
 
-    fn snapshot(&self) -> LocalSnapshot {
-        self.snapshot.lock().clone()
-    }
-
     async fn run(mut self, events_rx: impl Stream<Item = Vec<fsevent::Event>>) {
         if self.notify.unbounded_send(ScanState::Initializing).is_err() {
             return;
@@ -2657,8 +2653,7 @@ impl BackgroundScanner {
     }
 
     async fn update_ignore_statuses(&self) {
-        let mut snapshot = self.snapshot();
-
+        let mut snapshot = self.snapshot.lock().clone();
         let mut ignores_to_update = Vec::new();
         let mut ignores_to_delete = Vec::new();
         for (parent_abs_path, (_, scan_id)) in &snapshot.ignores_by_parent_abs_path {
@@ -3115,19 +3110,13 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
     use client::test::FakeHttpClient;
     use fs::repository::FakeGitRepository;
     use fs::{FakeFs, RealFs};
     use gpui::{executor::Deterministic, TestAppContext};
     use rand::prelude::*;
     use serde_json::json;
-    use std::{
-        env,
-        fmt::Write,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
+    use std::{env, fmt::Write};
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -3572,7 +3561,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random(mut rng: StdRng) {
+    async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|o| o.parse().unwrap())
             .unwrap_or(40);
@@ -3580,90 +3569,80 @@ mod tests {
             .map(|o| o.parse().unwrap())
             .unwrap_or(20);
 
-        let root_dir = tempdir::TempDir::new("worktree-test").unwrap();
+        let root_dir = Path::new("/test");
+        let fs = FakeFs::new(cx.background()) as Arc<dyn Fs>;
+        fs.as_fake().insert_tree(root_dir, json!({})).await;
         for _ in 0..initial_entries {
-            randomly_mutate_tree(root_dir.path(), 1.0, &mut rng).unwrap();
+            randomly_mutate_tree(&fs, root_dir, 1.0, &mut rng).await;
         }
-        log::info!("Generated initial tree");
+        log::info!("generated initial tree");
 
-        let (notify_tx, _notify_rx) = mpsc::unbounded();
-        let fs = Arc::new(RealFs);
-        let next_entry_id = Arc::new(AtomicUsize::new(0));
-        let mut initial_snapshot = LocalSnapshot {
-            removed_entry_ids: Default::default(),
-            ignores_by_parent_abs_path: Default::default(),
-            git_repositories: Default::default(),
-            next_entry_id: next_entry_id.clone(),
-            snapshot: Snapshot {
-                id: WorktreeId::from_usize(0),
-                entries_by_path: Default::default(),
-                entries_by_id: Default::default(),
-                abs_path: root_dir.path().into(),
-                root_name: Default::default(),
-                root_char_bag: Default::default(),
-                scan_id: 0,
-                completed_scan_id: 0,
-            },
-        };
-        initial_snapshot.insert_entry(
-            Entry::new(
-                Path::new("").into(),
-                &smol::block_on(fs.metadata(root_dir.path()))
-                    .unwrap()
-                    .unwrap(),
-                &next_entry_id,
-                Default::default(),
-            ),
-            fs.as_ref(),
-        );
-        let mut scanner = BackgroundScanner::new(
-            Arc::new(Mutex::new(initial_snapshot.clone())),
-            Arc::new(Mutex::new(HashMap::default())),
-            notify_tx,
+        let next_entry_id = Arc::new(AtomicUsize::default());
+        let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let worktree = Worktree::local(
+            client.clone(),
+            root_dir,
+            true,
             fs.clone(),
-            Arc::new(gpui::executor::Background::new()),
-        );
-        smol::block_on(scanner.scan_dirs()).unwrap();
-        scanner.snapshot().check_invariants();
+            next_entry_id.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
 
-        let mut events = Vec::new();
+        worktree
+            .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+            .await;
+
         let mut snapshots = Vec::new();
         let mut mutations_len = operations;
         while mutations_len > 1 {
-            if !events.is_empty() && rng.gen_bool(0.4) {
-                let len = rng.gen_range(0..=events.len());
-                let to_deliver = events.drain(0..len).collect::<Vec<_>>();
-                log::info!("Delivering events: {:#?}", to_deliver);
-                smol::block_on(scanner.process_events(to_deliver, false));
-                scanner.snapshot().check_invariants();
+            randomly_mutate_tree(&fs, root_dir, 1.0, &mut rng).await;
+            let buffered_event_count = fs.as_fake().buffered_event_count().await;
+            if buffered_event_count > 0 && rng.gen_bool(0.3) {
+                let len = rng.gen_range(0..=buffered_event_count);
+                log::info!("flushing {} events", len);
+                fs.as_fake().flush_events(len).await;
             } else {
-                events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
+                randomly_mutate_tree(&fs, root_dir, 0.6, &mut rng).await;
                 mutations_len -= 1;
             }
 
+            cx.foreground().run_until_parked();
             if rng.gen_bool(0.2) {
-                snapshots.push(scanner.snapshot());
+                log::info!("storing snapshot {}", snapshots.len());
+                let snapshot =
+                    worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
+                snapshots.push(snapshot);
             }
         }
-        log::info!("Quiescing: {:#?}", events);
-        smol::block_on(scanner.process_events(events, false));
-        scanner.snapshot().check_invariants();
 
-        let (notify_tx, _notify_rx) = mpsc::unbounded();
-        let mut new_scanner = BackgroundScanner::new(
-            Arc::new(Mutex::new(initial_snapshot)),
-            Arc::new(Mutex::new(HashMap::default())),
-            notify_tx,
-            scanner.fs.clone(),
-            scanner.executor.clone(),
-        );
-        smol::block_on(new_scanner.scan_dirs()).unwrap();
-        assert_eq!(
-            scanner.snapshot().to_vec(true),
-            new_scanner.snapshot().to_vec(true)
-        );
+        log::info!("quiescing");
+        fs.as_fake().flush_events(usize::MAX).await;
+        cx.foreground().run_until_parked();
+        let snapshot = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
+        snapshot.check_invariants();
 
-        for mut prev_snapshot in snapshots {
+        {
+            let new_worktree = Worktree::local(
+                client.clone(),
+                root_dir,
+                true,
+                fs.clone(),
+                next_entry_id,
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+            new_worktree
+                .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+                .await;
+            let new_snapshot =
+                new_worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
+            assert_eq!(snapshot.to_vec(true), new_snapshot.to_vec(true));
+        }
+
+        for (i, mut prev_snapshot) in snapshots.into_iter().enumerate() {
             let include_ignored = rng.gen::<bool>();
             if !include_ignored {
                 let mut entries_by_path_edits = Vec::new();
@@ -3683,54 +3662,66 @@ mod tests {
                 prev_snapshot.entries_by_id.edit(entries_by_id_edits, &());
             }
 
-            let update = scanner
-                .snapshot()
-                .build_update(&prev_snapshot, 0, 0, include_ignored);
-            prev_snapshot.apply_remote_update(update).unwrap();
+            let update = snapshot.build_update(&prev_snapshot, 0, 0, include_ignored);
+            prev_snapshot.apply_remote_update(update.clone()).unwrap();
             assert_eq!(
-                prev_snapshot.to_vec(true),
-                scanner.snapshot().to_vec(include_ignored)
+                prev_snapshot.to_vec(include_ignored),
+                snapshot.to_vec(include_ignored),
+                "wrong update for snapshot {i}. update: {:?}",
+                update
             );
         }
     }
 
-    fn randomly_mutate_tree(
+    async fn randomly_mutate_tree(
+        fs: &Arc<dyn Fs>,
         root_path: &Path,
         insertion_probability: f64,
         rng: &mut impl Rng,
-    ) -> Result<Vec<fsevent::Event>> {
-        let root_path = root_path.canonicalize().unwrap();
-        let (dirs, files) = read_dir_recursive(root_path.clone());
-
-        let mut events = Vec::new();
-        let mut record_event = |path: PathBuf| {
-            events.push(fsevent::Event {
-                event_id: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-                flags: fsevent::StreamFlags::empty(),
-                path,
-            });
-        };
+    ) {
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+        for path in fs.as_fake().paths().await {
+            if path.starts_with(root_path) {
+                if fs.is_file(&path).await {
+                    files.push(path);
+                } else {
+                    dirs.push(path);
+                }
+            }
+        }
 
         if (files.is_empty() && dirs.len() == 1) || rng.gen_bool(insertion_probability) {
             let path = dirs.choose(rng).unwrap();
             let new_path = path.join(gen_name(rng));
 
             if rng.gen() {
-                log::info!("Creating dir {:?}", new_path.strip_prefix(root_path)?);
-                std::fs::create_dir(&new_path)?;
+                log::info!(
+                    "Creating dir {:?}",
+                    new_path.strip_prefix(root_path).unwrap()
+                );
+                fs.create_dir(&new_path).await.unwrap();
             } else {
-                log::info!("Creating file {:?}", new_path.strip_prefix(root_path)?);
-                std::fs::write(&new_path, "")?;
+                log::info!(
+                    "Creating file {:?}",
+                    new_path.strip_prefix(root_path).unwrap()
+                );
+                fs.create_file(&new_path, Default::default()).await.unwrap();
             }
-            record_event(new_path);
         } else if rng.gen_bool(0.05) {
             let ignore_dir_path = dirs.choose(rng).unwrap();
             let ignore_path = ignore_dir_path.join(&*GITIGNORE);
 
-            let (subdirs, subfiles) = read_dir_recursive(ignore_dir_path.clone());
+            let subdirs = dirs
+                .iter()
+                .filter(|d| d.starts_with(&ignore_dir_path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let subfiles = files
+                .iter()
+                .filter(|d| d.starts_with(&ignore_dir_path))
+                .cloned()
+                .collect::<Vec<_>>();
             let files_to_ignore = {
                 let len = rng.gen_range(0..=subfiles.len());
                 subfiles.choose_multiple(rng, len)
@@ -3746,7 +3737,8 @@ mod tests {
                     ignore_contents,
                     "{}",
                     path_to_ignore
-                        .strip_prefix(&ignore_dir_path)?
+                        .strip_prefix(&ignore_dir_path)
+                        .unwrap()
                         .to_str()
                         .unwrap()
                 )
@@ -3754,11 +3746,16 @@ mod tests {
             }
             log::info!(
                 "Creating {:?} with contents:\n{}",
-                ignore_path.strip_prefix(&root_path)?,
+                ignore_path.strip_prefix(&root_path).unwrap(),
                 ignore_contents
             );
-            std::fs::write(&ignore_path, ignore_contents).unwrap();
-            record_event(ignore_path);
+            fs.save(
+                &ignore_path,
+                &ignore_contents.as_str().into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
         } else {
             let old_path = {
                 let file_path = files.choose(rng);
@@ -3777,7 +3774,15 @@ mod tests {
                 let overwrite_existing_dir =
                     !old_path.starts_with(&new_path_parent) && rng.gen_bool(0.3);
                 let new_path = if overwrite_existing_dir {
-                    std::fs::remove_dir_all(&new_path_parent).ok();
+                    fs.remove_dir(
+                        &new_path_parent,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await
+                    .unwrap();
                     new_path_parent.to_path_buf()
                 } else {
                     new_path_parent.join(gen_name(rng))
@@ -3785,53 +3790,46 @@ mod tests {
 
                 log::info!(
                     "Renaming {:?} to {}{:?}",
-                    old_path.strip_prefix(&root_path)?,
+                    old_path.strip_prefix(&root_path).unwrap(),
                     if overwrite_existing_dir {
                         "overwrite "
                     } else {
                         ""
                     },
-                    new_path.strip_prefix(&root_path)?
+                    new_path.strip_prefix(&root_path).unwrap()
                 );
-                std::fs::rename(&old_path, &new_path)?;
-                record_event(old_path.clone());
-                record_event(new_path);
-            } else if old_path.is_dir() {
-                let (dirs, files) = read_dir_recursive(old_path.clone());
-
-                log::info!("Deleting dir {:?}", old_path.strip_prefix(&root_path)?);
-                std::fs::remove_dir_all(&old_path).unwrap();
-                for file in files {
-                    record_event(file);
-                }
-                for dir in dirs {
-                    record_event(dir);
-                }
+                fs.rename(
+                    &old_path,
+                    &new_path,
+                    fs::RenameOptions {
+                        overwrite: true,
+                        ignore_if_exists: true,
+                    },
+                )
+                .await
+                .unwrap();
+            } else if fs.is_file(&old_path).await {
+                log::info!(
+                    "Deleting file {:?}",
+                    old_path.strip_prefix(&root_path).unwrap()
+                );
+                fs.remove_file(old_path, Default::default()).await.unwrap();
             } else {
-                log::info!("Deleting file {:?}", old_path.strip_prefix(&root_path)?);
-                std::fs::remove_file(old_path).unwrap();
-                record_event(old_path.clone());
+                log::info!(
+                    "Deleting dir {:?}",
+                    old_path.strip_prefix(&root_path).unwrap()
+                );
+                fs.remove_dir(
+                    &old_path,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await
+                .unwrap();
             }
         }
-
-        Ok(events)
-    }
-
-    fn read_dir_recursive(path: PathBuf) -> (Vec<PathBuf>, Vec<PathBuf>) {
-        let child_entries = std::fs::read_dir(&path).unwrap();
-        let mut dirs = vec![path];
-        let mut files = Vec::new();
-        for child_entry in child_entries {
-            let child_path = child_entry.unwrap().path();
-            if child_path.is_dir() {
-                let (child_dirs, child_files) = read_dir_recursive(child_path);
-                dirs.extend(child_dirs);
-                files.extend(child_files);
-            } else {
-                files.push(child_path);
-            }
-        }
-        (dirs, files)
     }
 
     fn gen_name(rng: &mut impl Rng) -> String {
