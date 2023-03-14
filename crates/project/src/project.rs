@@ -4604,7 +4604,10 @@ impl Project {
                                             typ: match change {
                                                 PathChange::Added => lsp::FileChangeType::CREATED,
                                                 PathChange::Removed => lsp::FileChangeType::DELETED,
-                                                PathChange::Updated => lsp::FileChangeType::CHANGED,
+                                                PathChange::Updated
+                                                | PathChange::AddedOrUpdated => {
+                                                    lsp::FileChangeType::CHANGED
+                                                }
                                             },
                                         })
                                         .collect(),
