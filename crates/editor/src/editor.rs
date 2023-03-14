@@ -2746,7 +2746,7 @@ impl Editor {
                                             .color,
                                     )
                                     .constrained()
-                                    .with_width(style.icon_width)
+                                    .with_width(gutter_margin * style.icon_margin_scale)
                                     .aligned()
                                     .constrained()
                                     .with_height(line_height)
