@@ -4,7 +4,7 @@ use crate::{
     ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Authenticate, ContactEventKind, SignOut, User, UserStore};
+use client::{proto::PeerId, ContactEventKind, SignIn, SignOut, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -313,7 +313,7 @@ impl CollabTitlebarItem {
                 vec![
                     ContextMenuItem::Item {
                         label: "Sign in".into(),
-                        action: Box::new(Authenticate),
+                        action: Box::new(SignIn),
                     },
                     ContextMenuItem::Item {
                         label: "Give Feedback".into(),
@@ -556,7 +556,7 @@ impl CollabTitlebarItem {
 
     fn render_sign_in_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
         let titlebar = &theme.workspace.titlebar;
-        MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
+        MouseEventHandler::<SignIn>::new(0, cx, |state, _| {
             let style = titlebar.sign_in_prompt.style_for(state, false);
             Label::new("Sign In", style.text.clone())
                 .contained()
@@ -565,7 +565,7 @@ impl CollabTitlebarItem {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_action(Authenticate);
+            cx.dispatch_action(SignIn);
         })
         .boxed()
     }
