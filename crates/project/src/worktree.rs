@@ -610,8 +610,6 @@ impl LocalWorktree {
                     }
                 }));
 
-                cx.emit(Event::UpdatedEntries(Default::default()));
-
                 if !updated_repos.is_empty() {
                     cx.emit(Event::UpdatedGitRepositories(updated_repos));
                 }
@@ -2072,6 +2070,7 @@ pub enum PathChange {
     Added,
     Removed,
     Updated,
+    AddedOrUpdated,
 }
 
 impl Entry {
@@ -2283,21 +2282,37 @@ impl BackgroundScanner {
 
         futures::pin_mut!(events_rx);
 
+        // Process any events that occurred while performing the initial scan. These
+        // events can't be reported as precisely, because there is no snapshot of the
+        // worktree before they occurred.
+        if let Some(mut events) = events_rx.next().await {
+            while let Poll::Ready(Some(additional_events)) = futures::poll!(events_rx.next()) {
+                events.extend(additional_events);
+            }
+            if self.notify.unbounded_send(ScanState::Updating).is_err() {
+                return;
+            }
+            if !self.process_events(events, true).await {
+                return;
+            }
+            if self.notify.unbounded_send(ScanState::Idle).is_err() {
+                return;
+            }
+        }
+
+        // Continue processing events until the worktree is dropped.
         while let Some(mut events) = events_rx.next().await {
             while let Poll::Ready(Some(additional_events)) = futures::poll!(events_rx.next()) {
                 events.extend(additional_events);
             }
-
             if self.notify.unbounded_send(ScanState::Updating).is_err() {
-                break;
+                return;
             }
-
-            if !self.process_events(events).await {
-                break;
+            if !self.process_events(events, false).await {
+                return;
             }
-
             if self.notify.unbounded_send(ScanState::Idle).is_err() {
-                break;
+                return;
             }
         }
     }
@@ -2508,7 +2523,11 @@ impl BackgroundScanner {
         Ok(())
     }
 
-    async fn process_events(&mut self, mut events: Vec<fsevent::Event>) -> bool {
+    async fn process_events(
+        &mut self,
+        mut events: Vec<fsevent::Event>,
+        received_before_initialized: bool,
+    ) -> bool {
         events.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         events.dedup_by(|a, b| a.path.starts_with(&b.path));
 
@@ -2632,7 +2651,7 @@ impl BackgroundScanner {
 
         self.update_ignore_statuses().await;
         self.update_git_repositories();
-        self.build_change_set(prev_snapshot, event_paths);
+        self.build_change_set(prev_snapshot, event_paths, received_before_initialized);
         self.snapshot.lock().scan_completed();
         true
     }
@@ -2749,7 +2768,12 @@ impl BackgroundScanner {
         snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
 
-    fn build_change_set(&self, old_snapshot: Snapshot, event_paths: Vec<Arc<Path>>) {
+    fn build_change_set(
+        &self,
+        old_snapshot: Snapshot,
+        event_paths: Vec<Arc<Path>>,
+        received_before_initialized: bool,
+    ) {
         let new_snapshot = self.snapshot.lock();
         let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>();
         let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>();
@@ -2777,7 +2801,13 @@ impl BackgroundScanner {
                                 old_paths.next(&());
                             }
                             Ordering::Equal => {
-                                if old_entry.mtime != new_entry.mtime {
+                                if received_before_initialized {
+                                    // If the worktree was not fully initialized when this event was generated,
+                                    // we can't know whether this entry was added during the scan or whether
+                                    // it was merely updated.
+                                    change_set
+                                        .insert(old_entry.path.clone(), PathChange::AddedOrUpdated);
+                                } else if old_entry.mtime != new_entry.mtime {
                                     change_set.insert(old_entry.path.clone(), PathChange::Updated);
                                 }
                                 old_paths.next(&());
@@ -3604,7 +3634,7 @@ mod tests {
                 let len = rng.gen_range(0..=events.len());
                 let to_deliver = events.drain(0..len).collect::<Vec<_>>();
                 log::info!("Delivering events: {:#?}", to_deliver);
-                smol::block_on(scanner.process_events(to_deliver));
+                smol::block_on(scanner.process_events(to_deliver, false));
                 scanner.snapshot().check_invariants();
             } else {
                 events.extend(randomly_mutate_tree(root_dir.path(), 0.6, &mut rng).unwrap());
@@ -3616,7 +3646,7 @@ mod tests {
             }
         }
         log::info!("Quiescing: {:#?}", events);
-        smol::block_on(scanner.process_events(events));
+        smol::block_on(scanner.process_events(events, false));
         scanner.snapshot().check_invariants();
 
         let (notify_tx, _notify_rx) = mpsc::unbounded();
