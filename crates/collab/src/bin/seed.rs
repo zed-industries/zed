@@ -59,7 +59,7 @@ async fn main() {
 
     for (github_user, admin) in zed_users {
         if db
-            .get_user_by_github_account(&github_user.login, Some(github_user.id))
+            .get_user_by_github_login(&github_user.login)
             .await
             .expect("failed to fetch user")
             .is_none()
