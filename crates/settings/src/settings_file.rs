@@ -27,6 +27,27 @@ impl SettingsFile {
         }
     }
 
+    async fn load_settings(path: &Path, fs: &Arc<dyn Fs>) -> Result<String> {
+        match fs.load(path).await {
+            result @ Ok(_) => result,
+            Err(err) => {
+                if let Some(e) = err.downcast_ref::<std::io::Error>() {
+                    if e.kind() == ErrorKind::NotFound {
+                        return Ok(std::str::from_utf8(
+                            Assets
+                                .load("settings/initial_user_settings.json")
+                                .unwrap()
+                                .as_ref(),
+                        )
+                        .unwrap()
+                        .to_string());
+                    }
+                }
+                return Err(err);
+            }
+        }
+    }
+
     pub fn update(
         cx: &mut MutableAppContext,
         update: impl 'static + Send + FnOnce(&mut SettingsFileContent),
@@ -40,27 +61,7 @@ impl SettingsFile {
 
         cx.background()
             .spawn(async move {
-                let old_text = match fs.load(path).await {
-                    Ok(settings) => settings,
-                    Err(err) => {
-                        if let Ok(e) = err.downcast::<std::io::Error>() {
-                            if e.kind() == ErrorKind::NotFound {
-                                std::str::from_utf8(
-                                    Assets
-                                        .load("settings/initial_user_settings.json")
-                                        .unwrap()
-                                        .as_ref(),
-                                )
-                                .unwrap()
-                                .to_string()
-                            } else {
-                                anyhow::bail!("Failed to load settings");
-                            }
-                        } else {
-                            anyhow::bail!("Failed to load settings")
-                        }
-                    }
-                };
+                let old_text = SettingsFile::load_settings(path, &fs).await?;
 
                 let new_text = update_settings_file(old_text, current_file_content, update);
 
