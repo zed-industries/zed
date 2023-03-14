@@ -40,6 +40,7 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
     serde_json::json,
+    text_layout::Line,
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
     ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -2707,6 +2708,7 @@ impl Editor {
         &self,
         fold_data: Option<Vec<(u32, FoldStatus)>>,
         active_rows: &BTreeMap<u32, bool>,
+        line_layouts: &Vec<Option<Line>>,
         style: &EditorStyle,
         gutter_hovered: bool,
         line_height: f32,
@@ -2722,9 +2724,11 @@ impl Editor {
                 .iter()
                 .copied()
                 .filter_map(|(fold_location, fold_status)| {
-                    (gutter_hovered
-                        || fold_status == FoldStatus::Folded
-                        || !*active_rows.get(&fold_location).unwrap_or(&true))
+                    let has_line_number = line_layouts[fold_location as usize].is_some();
+                    (has_line_number
+                        && (gutter_hovered
+                            || fold_status == FoldStatus::Folded
+                            || !*active_rows.get(&fold_location).unwrap_or(&true)))
                     .then(|| {
                         (
                             fold_location,
@@ -5759,18 +5763,16 @@ impl Editor {
 
         let selections = self.selections.all::<Point>(cx);
         for selection in selections {
-            let range = selection.display_range(&display_map).sorted();
-            let buffer_start_row = range.start.to_point(&display_map).row;
+            let range = selection.range().sorted();
+            let buffer_start_row = range.start.row;
 
-            for row in (0..=range.end.row()).rev() {
-                let fold_range = display_map.foldable_range(row).map(|range| {
-                    range.start.to_point(&display_map)..range.end.to_point(&display_map)
-                });
+            for row in (0..=range.end.row).rev() {
+                let fold_range = display_map.foldable_range(row);
 
                 if let Some(fold_range) = fold_range {
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
-                        if row <= range.start.row() {
+                        if row <= range.start.row {
                             break;
                         }
                     }
@@ -5791,10 +5793,7 @@ impl Editor {
                 .selections
                 .all::<Point>(cx)
                 .iter()
-                .any(|selection| fold_range.overlaps(&selection.display_range(&display_map)));
-
-            let fold_range =
-                fold_range.start.to_point(&display_map)..fold_range.end.to_point(&display_map);
+                .any(|selection| fold_range.overlaps(&selection.range()));
 
             self.fold_ranges(std::iter::once(fold_range), autoscroll, cx);
         }

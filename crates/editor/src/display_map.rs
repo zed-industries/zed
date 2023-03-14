@@ -4,7 +4,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
-use block_map::{BlockMap, BlockPoint};
+pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
@@ -249,7 +249,7 @@ pub struct DisplaySnapshot {
     folds_snapshot: fold_map::FoldSnapshot,
     tabs_snapshot: tab_map::TabSnapshot,
     wraps_snapshot: wrap_map::WrapSnapshot,
-    blocks_snapshot: block_map::BlockSnapshot,
+    pub blocks_snapshot: block_map::BlockSnapshot,
     text_highlights: TextHighlights,
     clip_at_line_ends: bool,
 }
@@ -544,11 +544,8 @@ impl DisplaySnapshot {
         self.folds_snapshot.intersects_fold(offset)
     }
 
-    pub fn is_line_folded(&self, display_row: u32) -> bool {
-        let block_point = BlockPoint(Point::new(display_row, 0));
-        let wrap_point = self.blocks_snapshot.to_wrap_point(block_point);
-        let tab_point = self.wraps_snapshot.to_tab_point(wrap_point);
-        self.folds_snapshot.is_line_folded(tab_point.row())
+    pub fn is_line_folded(&self, buffer_row: u32) -> bool {
+        self.folds_snapshot.is_line_folded(buffer_row)
     }
 
     pub fn is_block_line(&self, display_row: u32) -> bool {
@@ -594,6 +591,27 @@ impl DisplaySnapshot {
         (indent, is_blank)
     }
 
+    pub fn line_indent_for_buffer_row(&self, buffer_row: u32) -> (u32, bool) {
+        let (buffer, range) = self
+            .buffer_snapshot
+            .buffer_line_for_row(buffer_row)
+            .unwrap();
+        let chars = buffer.chars_at(Point::new(range.start.row, 0));
+
+        let mut is_blank = false;
+        let mut indent_size = 0;
+        for c in chars {
+            // TODO: Handle tab expansion here
+            if c == ' ' {
+                indent_size += 1;
+            } else {
+                is_blank = c == '\n';
+                break;
+            }
+        }
+        (indent_size, is_blank)
+    }
+
     pub fn line_len(&self, row: u32) -> u32 {
         self.blocks_snapshot.line_len(row)
     }
@@ -602,49 +620,55 @@ impl DisplaySnapshot {
         self.blocks_snapshot.longest_row()
     }
 
-    pub fn fold_for_line(self: &Self, display_row: u32) -> Option<FoldStatus> {
-        if self.is_foldable(display_row) {
+    pub fn fold_for_line(self: &Self, buffer_row: u32) -> Option<FoldStatus> {
+        if self.is_foldable(buffer_row) {
             Some(FoldStatus::Foldable)
-        } else if self.is_line_folded(display_row) {
+        } else if self.is_line_folded(buffer_row) {
             Some(FoldStatus::Folded)
         } else {
             None
         }
     }
 
-    pub fn is_foldable(self: &Self, row: u32) -> bool {
-        let max_point = self.max_point();
-        if row >= max_point.row() {
+    pub fn is_foldable(self: &Self, buffer_row: u32) -> bool {
+        let max_row = self.buffer_snapshot.max_buffer_row();
+        if buffer_row >= max_row {
             return false;
         }
 
-        let (start_indent, is_blank) = self.line_indent(row);
+        let (indent_size, is_blank) = self.line_indent_for_buffer_row(buffer_row);
         if is_blank {
             return false;
         }
 
-        for display_row in next_rows(row, self) {
-            let (indent, is_blank) = self.line_indent(display_row);
-            if !is_blank {
-                return indent > start_indent;
+        for next_row in (buffer_row + 1)..max_row {
+            let (next_indent_size, next_line_is_blank) = self.line_indent_for_buffer_row(next_row);
+            if next_indent_size > indent_size {
+                return true;
+            } else if !next_line_is_blank {
+                break;
             }
         }
 
-        return false;
+        false
     }
 
-    pub fn foldable_range(self: &Self, row: u32) -> Option<Range<DisplayPoint>> {
-        let start = DisplayPoint::new(row, self.line_len(row));
+    pub fn foldable_range(self: &Self, buffer_row: u32) -> Option<Range<Point>> {
+        let start = Point::new(buffer_row, self.buffer_snapshot.line_len(buffer_row));
 
-        if self.is_foldable(row) && !self.is_line_folded(start.row()) {
-            let (start_indent, _) = self.line_indent(row);
-            let max_point = self.max_point();
+        if self.is_foldable(start.row) && !self.is_line_folded(start.row) {
+            let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
+            let max_point = self.buffer_snapshot.max_point();
             let mut end = None;
 
-            for row in next_rows(row, self) {
+            for row in (buffer_row + 1)..=max_point.row {
                 let (indent, is_blank) = self.line_indent(row);
                 if !is_blank && indent <= start_indent {
-                    end = Some(DisplayPoint::new(row - 1, self.line_len(row - 1)));
+                    let prev_row = row - 1;
+                    end = Some(Point::new(
+                        prev_row,
+                        self.buffer_snapshot.line_len(prev_row),
+                    ));
                     break;
                 }
             }

@@ -639,14 +639,14 @@ impl FoldSnapshot {
         cursor.item().map_or(false, |t| t.output_text.is_some())
     }
 
-    pub fn is_line_folded(&self, output_row: u32) -> bool {
-        let mut cursor = self.transforms.cursor::<FoldPoint>();
-        cursor.seek(&FoldPoint::new(output_row, 0), Bias::Right, &());
+    pub fn is_line_folded(&self, buffer_row: u32) -> bool {
+        let mut cursor = self.transforms.cursor::<Point>();
+        cursor.seek(&Point::new(buffer_row, 0), Bias::Right, &());
         while let Some(transform) = cursor.item() {
             if transform.output_text.is_some() {
                 return true;
             }
-            if cursor.end(&()).row() == output_row {
+            if cursor.end(&()).row == buffer_row {
                 cursor.next(&())
             } else {
                 break;
@@ -1214,6 +1214,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 mod tests {
     use super::*;
     use crate::{MultiBuffer, ToPoint};
+    use collections::HashSet;
     use rand::prelude::*;
     use settings::Settings;
     use std::{cmp::Reverse, env, mem, sync::Arc};
@@ -1593,10 +1594,13 @@ mod tests {
                 fold_row += 1;
             }
 
-            for fold_range in map.merged_fold_ranges() {
-                let fold_point =
-                    snapshot.to_fold_point(fold_range.start.to_point(&buffer_snapshot), Right);
-                assert!(snapshot.is_line_folded(fold_point.row()));
+            let fold_start_rows = map
+                .merged_fold_ranges()
+                .iter()
+                .map(|range| range.start.to_point(&buffer_snapshot).row)
+                .collect::<HashSet<_>>();
+            for row in 0..=buffer_snapshot.max_buffer_row() {
+                assert_eq!(snapshot.is_line_folded(row), fold_start_rows.contains(&row));
             }
 
             for _ in 0..5 {

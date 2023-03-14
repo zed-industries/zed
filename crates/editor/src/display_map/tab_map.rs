@@ -262,7 +262,7 @@ impl TabSnapshot {
             .to_buffer_point(&self.fold_snapshot)
     }
 
-    fn expand_tabs(
+    pub fn expand_tabs(
         chars: impl Iterator<Item = char>,
         column: usize,
         tab_size: NonZeroU32,
