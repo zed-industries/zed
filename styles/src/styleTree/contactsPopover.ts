@@ -8,7 +8,6 @@ export default function contactsPopover(colorScheme: ColorScheme) {
         background: background(layer),
         cornerRadius: 6,
         padding: { top: 6, bottom: 6 },
-        margin: { top: -6 },
         shadow: colorScheme.popoverShadow,
         border: border(layer),
         width: 300,

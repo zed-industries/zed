@@ -322,20 +322,7 @@ impl CollabTitlebarItem {
                 ]
             };
 
-            user_menu.show(
-                vec2f(
-                    theme
-                        .workspace
-                        .titlebar
-                        .user_menu_button
-                        .default
-                        .button_width,
-                    theme.workspace.titlebar.height,
-                ),
-                AnchorCorner::TopRight,
-                items,
-                cx,
-            );
+            user_menu.show(Default::default(), AnchorCorner::TopRight, items, cx);
         });
     }
 
@@ -402,7 +389,6 @@ impl CollabTitlebarItem {
                     theme.tooltip.clone(),
                     cx,
                 )
-                .aligned()
                 .boxed(),
             )
             .with_children(badge)
@@ -547,10 +533,15 @@ impl CollabTitlebarItem {
                 )
                 .contained()
                 .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .aligned()
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.user_menu, cx).boxed())
+            .with_child(
+                ChildView::new(&self.user_menu, cx)
+                    .aligned()
+                    .bottom()
+                    .right()
+                    .boxed(),
+            )
             .boxed()
     }
 
@@ -572,22 +563,18 @@ impl CollabTitlebarItem {
 
     fn render_contacts_popover_host<'a>(
         &'a self,
-        theme: &'a theme::Titlebar,
+        _theme: &'a theme::Titlebar,
         cx: &'a RenderContext<Self>,
     ) -> Option<ElementBox> {
         self.contacts_popover.as_ref().map(|popover| {
-            Overlay::new(
-                ChildView::new(popover, cx)
-                    .contained()
-                    .with_margin_top(theme.height)
-                    .with_margin_left(theme.toggle_contacts_button.default.button_width)
-                    .with_margin_right(-theme.toggle_contacts_button.default.button_width)
-                    .boxed(),
-            )
-            .with_fit_mode(OverlayFitMode::SwitchAnchor)
-            .with_anchor_corner(AnchorCorner::BottomLeft)
-            .with_z_index(999)
-            .boxed()
+            Overlay::new(ChildView::new(popover, cx).boxed())
+                .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                .with_anchor_corner(AnchorCorner::TopRight)
+                .with_z_index(999)
+                .aligned()
+                .bottom()
+                .right()
+                .boxed()
         })
     }
 
