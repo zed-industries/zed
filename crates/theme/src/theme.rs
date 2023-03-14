@@ -664,7 +664,7 @@ pub struct Folds {
     pub indicator: Interactive<InteractiveColor>,
     pub ellipses: FoldEllipses,
     pub fold_background: Color,
-    pub icon_width: f32,
+    pub icon_margin_scale: f32,
     pub folded_icon: String,
     pub foldable_icon: String,
 }
