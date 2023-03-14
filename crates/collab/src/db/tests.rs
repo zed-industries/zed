@@ -92,8 +92,8 @@ test_both_dbs!(
 );
 
 test_both_dbs!(
-    test_get_user_by_github_account_postgres,
-    test_get_user_by_github_account_sqlite,
+    test_get_or_create_user_by_github_account_postgres,
+    test_get_or_create_user_by_github_account_sqlite,
     db,
     {
         let user_id1 = db
@@ -124,7 +124,7 @@ test_both_dbs!(
             .user_id;
 
         let user = db
-            .get_user_by_github_account("login1", None)
+            .get_or_create_user_by_github_account("login1", None, None)
             .await
             .unwrap()
             .unwrap();
@@ -133,19 +133,28 @@ test_both_dbs!(
         assert_eq!(user.github_user_id, Some(101));
 
         assert!(db
-            .get_user_by_github_account("non-existent-login", None)
+            .get_or_create_user_by_github_account("non-existent-login", None, None)
             .await
             .unwrap()
             .is_none());
 
         let user = db
-            .get_user_by_github_account("the-new-login2", Some(102))
+            .get_or_create_user_by_github_account("the-new-login2", Some(102), None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(user.id, user_id2);
         assert_eq!(&user.github_login, "the-new-login2");
         assert_eq!(user.github_user_id, Some(102));
+
+        let user = db
+            .get_or_create_user_by_github_account("login3", Some(103), Some("user3@example.com"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&user.github_login, "login3");
+        assert_eq!(user.github_user_id, Some(103));
+        assert_eq!(user.email_address, Some("user3@example.com".into()));
     }
 );
 
