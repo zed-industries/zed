@@ -119,11 +119,11 @@ impl View for CollabTitlebarItem {
         let status = &*status.borrow();
         if matches!(status, client::Status::Connected { .. }) {
             right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
+            right_container.add_child(self.render_user_menu_button(&theme, cx));
         } else {
             right_container.add_children(self.render_connection_status(status, cx));
+            right_container.add_child(self.render_sign_in_button(&theme, cx));
         }
-
-        right_container.add_child(self.render_user_menu_button(&theme, cx));
 
         Stack::new()
             .with_child(left_container.boxed())
@@ -552,6 +552,22 @@ impl CollabTitlebarItem {
             )
             .with_child(ChildView::new(&self.user_menu, cx).boxed())
             .boxed()
+    }
+
+    fn render_sign_in_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        let titlebar = &theme.workspace.titlebar;
+        MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
+            let style = titlebar.sign_in_prompt.style_for(state, false);
+            Label::new("Sign In", style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_action(Authenticate);
+        })
+        .boxed()
     }
 
     fn render_contacts_popover_host<'a>(
