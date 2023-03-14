@@ -350,9 +350,7 @@ pub fn initialize_workspace(
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
-        if **cx.default_global::<StaffMode>() {
-            status_bar.add_right_item(toggle_terminal, cx);
-        }
+        status_bar.add_right_item(toggle_terminal, cx);
         status_bar.add_right_item(feedback_button, cx);
         status_bar.add_right_item(active_buffer_language, cx);
         status_bar.add_right_item(cursor_position, cx);
