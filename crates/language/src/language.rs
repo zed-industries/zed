@@ -537,7 +537,7 @@ impl LanguageRegistry {
                     .map(|l| l.config.name.to_string()),
             )
             .collect::<Vec<_>>();
-        result.sort_unstable();
+        result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
         result
     }
 
