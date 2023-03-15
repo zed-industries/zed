@@ -83,6 +83,24 @@ where
     }
 }
 
+pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match (source, target) {
+        (Value::Object(source), Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_value_into(value, target);
+                } else {
+                    target.insert(key.clone(), value);
+                }
+            }
+        }
+
+        (source, target) => *target = source,
+    }
+}
+
 pub trait ResultExt {
     type Ok;
 

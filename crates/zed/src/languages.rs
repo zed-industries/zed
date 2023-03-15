@@ -2,6 +2,7 @@ use anyhow::Context;
 pub use language::*;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
+use theme::ThemeRegistry;
 
 mod c;
 mod elixir;
@@ -31,7 +32,7 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>) {
+pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
     for (name, grammar, lsp_adapter) in [
         (
             "c",
@@ -61,7 +62,10 @@ pub fn init(languages: Arc<LanguageRegistry>) {
         (
             "json",
             tree_sitter_json::language(),
-            Some(Box::new(json::JsonLspAdapter)),
+            Some(Box::new(json::JsonLspAdapter::new(
+                languages.clone(),
+                themes.clone(),
+            ))),
         ),
         (
             "markdown",

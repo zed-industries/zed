@@ -64,7 +64,7 @@ use std::{
 };
 use terminals::Terminals;
 
-use util::{debug_panic, defer, post_inc, ResultExt, TryFutureExt as _};
+use util::{debug_panic, defer, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
 pub use worktree::*;
@@ -125,6 +125,7 @@ pub struct Project {
     buffers_being_formatted: HashSet<usize>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
+    _maintain_workspace_config: Task<()>,
     terminals: Terminals,
 }
 
@@ -428,6 +429,7 @@ impl Project {
             client_subscriptions: Vec::new(),
             _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
             _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
+            _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
             active_entry: None,
             languages,
             client,
@@ -486,6 +488,7 @@ impl Project {
                 active_entry: None,
                 collaborators: Default::default(),
                 _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
+                _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 languages,
                 user_store: user_store.clone(),
                 fs,
@@ -1836,6 +1839,46 @@ impl Project {
         })
     }
 
+    fn maintain_workspace_config(
+        languages: Arc<LanguageRegistry>,
+        cx: &mut ModelContext<Project>,
+    ) -> Task<()> {
+        let mut languages_changed = languages.subscribe();
+        let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
+        let settings_observation = cx.observe_global::<Settings, _>(move |_, _| {
+            *settings_changed_tx.borrow_mut() = ();
+        });
+        cx.spawn_weak(|this, mut cx| async move {
+            loop {
+                futures::select_biased! {
+                    _ = languages_changed.next().fuse() => {},
+                    _ = settings_changed_rx.next().fuse() => {}
+                }
+
+                let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.read_with(&cx, |this, _| {
+                        for server_state in this.language_servers.values() {
+                            if let LanguageServerState::Running { server, .. } = server_state {
+                                server
+                                    .notify::<lsp::notification::DidChangeConfiguration>(
+                                        lsp::DidChangeConfigurationParams {
+                                            settings: workspace_config.clone(),
+                                        },
+                                    )
+                                    .ok();
+                            }
+                        }
+                    })
+                } else {
+                    break;
+                }
+            }
+
+            drop(settings_observation);
+        })
+    }
+
     fn detect_language_for_buffer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
@@ -1875,24 +1918,6 @@ impl Project {
         }
     }
 
-    fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
-        use serde_json::Value;
-
-        match (source, target) {
-            (Value::Object(source), Value::Object(target)) => {
-                for (key, value) in source {
-                    if let Some(target) = target.get_mut(&key) {
-                        Self::merge_json_value_into(value, target);
-                    } else {
-                        target.insert(key.clone(), value);
-                    }
-                }
-            }
-
-            (source, target) => *target = source,
-        }
-    }
-
     fn start_language_server(
         &mut self,
         worktree_id: WorktreeId,
@@ -1920,17 +1945,16 @@ impl Project {
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
-                Self::merge_json_value_into(override_options, initialization_options);
+                merge_json_value_into(override_options, initialization_options);
             }
-
             (None, override_options) => initialization_options = override_options,
-
             _ => {}
         }
 
         self.language_server_ids
             .entry(key.clone())
             .or_insert_with(|| {
+                let languages = self.languages.clone();
                 let server_id = post_inc(&mut self.next_language_server_id);
                 let language_server = self.languages.start_language_server(
                     server_id,
@@ -1977,23 +2001,24 @@ impl Project {
 
                         language_server
                             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
-                                let settings = this.read_with(&cx, |this, _| {
-                                    this.language_server_settings.clone()
-                                });
-                                move |params, _| {
-                                    let settings = settings.lock().clone();
+                                move |params, mut cx| {
+                                    let languages = languages.clone();
                                     async move {
+                                        let workspace_config = cx
+                                            .update(|cx| languages.workspace_configuration(cx))
+                                            .await;
+
                                         Ok(params
                                             .items
                                             .into_iter()
                                             .map(|item| {
                                                 if let Some(section) = &item.section {
-                                                    settings
+                                                    workspace_config
                                                         .get(section)
                                                         .cloned()
                                                         .unwrap_or(serde_json::Value::Null)
                                                 } else {
-                                                    settings.clone()
+                                                    workspace_config.clone()
                                                 }
                                             })
                                             .collect())
@@ -2537,21 +2562,6 @@ impl Project {
                 })
                 .log_err();
         }
-    }
-
-    pub fn set_language_server_settings(&mut self, settings: serde_json::Value) {
-        for server_state in self.language_servers.values() {
-            if let LanguageServerState::Running { server, .. } = server_state {
-                server
-                    .notify::<lsp::notification::DidChangeConfiguration>(
-                        lsp::DidChangeConfigurationParams {
-                            settings: settings.clone(),
-                        },
-                    )
-                    .ok();
-            }
-        }
-        *self.language_server_settings.lock() = settings;
     }
 
     pub fn language_server_statuses(

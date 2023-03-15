@@ -44,7 +44,7 @@ use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
-use util::{ResultExt, TryFutureExt as _, UnwrapFuture};
+use util::{merge_json_value_into, ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]
 use futures::channel::mpsc;
@@ -205,6 +205,13 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     async fn initialization_options(&self) -> Option<Value> {
+        None
+    }
+
+    fn workspace_configuration(
+        &self,
+        _: &mut MutableAppContext,
+    ) -> Option<BoxFuture<'static, Value>> {
         None
     }
 
@@ -539,6 +546,26 @@ impl LanguageRegistry {
             .collect::<Vec<_>>();
         result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
         result
+    }
+
+    pub fn workspace_configuration(&self, cx: &mut MutableAppContext) -> Task<serde_json::Value> {
+        let mut language_configs = Vec::new();
+        for language in self.available_languages.read().iter() {
+            if let Some(adapter) = language.lsp_adapter.as_ref() {
+                if let Some(language_config) = adapter.workspace_configuration(cx) {
+                    language_configs.push(language_config);
+                }
+            }
+        }
+
+        cx.background().spawn(async move {
+            let mut config = serde_json::json!({});
+            let language_configs = futures::future::join_all(language_configs).await;
+            for language_config in language_configs {
+                merge_json_value_into(language_config, &mut config);
+            }
+            config
+        })
     }
 
     pub fn add(&self, language: Arc<Language>) {
