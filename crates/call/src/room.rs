@@ -275,6 +275,7 @@ impl Room {
             if let Some(project) = project.upgrade(cx) {
                 project.update(cx, |project, cx| {
                     project.disconnected_from_host(cx);
+                    project.close(cx);
                 });
             }
         }

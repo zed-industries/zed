@@ -598,6 +598,11 @@ impl Workspace {
                     cx.blur();
                 }
 
+                project::Event::Closed => {
+                    let window_id = cx.window_id();
+                    cx.remove_window(window_id);
+                }
+
                 _ => {}
             }
             cx.notify()
