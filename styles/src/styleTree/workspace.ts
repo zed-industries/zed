@@ -126,9 +126,9 @@ export default function workspace(colorScheme: ColorScheme) {
         titlebar: {
             itemSpacing,
             facePileSpacing: 2,
-            height: 33, // 32px + 1px for overlaid border
+            height: 33, // 32px + 1px border. It's important the content area of the titlebar is evenly sized to vertically center avatar images.
             background: background(layer),
-            border: border(layer, { bottom: true, overlay: true }),
+            border: border(layer, { bottom: true }),
             padding: {
                 left: 80,
                 right: itemSpacing,
@@ -160,8 +160,8 @@ export default function workspace(colorScheme: ColorScheme) {
                 padding: {
                     left: 2,
                     right: 2,
-                    top: 4,
-                    bottom: 4,
+                    top: 2,
+                    bottom: 2,
                 },
                 cornerRadius: 6,
             },
