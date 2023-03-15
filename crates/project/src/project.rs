@@ -175,6 +175,7 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
+    Closed,
     CollaboratorUpdated {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
@@ -1170,6 +1171,10 @@ impl Project {
             // to give them a chance to fail now that we've disconnected.
             *self.opened_buffer.0.borrow_mut() = ();
         }
+    }
+
+    pub fn close(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Closed);
     }
 
     pub fn is_read_only(&self) -> bool {
