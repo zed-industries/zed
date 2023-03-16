@@ -1502,3 +1502,76 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     }
     start..end
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test(iterations = 10)]
+    async fn test_language_loading(cx: &mut TestAppContext) {
+        let mut languages = LanguageRegistry::new(Task::ready(()));
+        languages.set_executor(cx.background());
+        let languages = Arc::new(languages);
+        languages.register(
+            "/JSON",
+            LanguageConfig {
+                name: "JSON".into(),
+                path_suffixes: vec!["json".into()],
+                ..Default::default()
+            },
+            tree_sitter_json::language(),
+            None,
+            |_| Default::default(),
+        );
+        languages.register(
+            "/rust",
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+            None,
+            |_| Default::default(),
+        );
+        assert_eq!(
+            languages.language_names(),
+            &[
+                "JSON".to_string(),
+                "Plain Text".to_string(),
+                "Rust".to_string(),
+            ]
+        );
+
+        let rust1 = languages.language_for_name("Rust");
+        let rust2 = languages.language_for_name("Rust");
+
+        // Ensure language is still listed even if it's being loaded.
+        assert_eq!(
+            languages.language_names(),
+            &[
+                "JSON".to_string(),
+                "Plain Text".to_string(),
+                "Rust".to_string(),
+            ]
+        );
+
+        let (rust1, rust2) = futures::join!(rust1, rust2);
+        assert!(Arc::ptr_eq(&rust1.unwrap(), &rust2.unwrap()));
+
+        // Ensure language is still listed even after loading it.
+        assert_eq!(
+            languages.language_names(),
+            &[
+                "JSON".to_string(),
+                "Plain Text".to_string(),
+                "Rust".to_string(),
+            ]
+        );
+
+        // Loading an unknown language returns an error.
+        assert!(languages.language_for_name("Unknown").await.is_err());
+    }
+}
