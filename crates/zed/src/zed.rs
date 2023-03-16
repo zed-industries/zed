@@ -29,10 +29,10 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
+use settings::Settings;
 use std::{borrow::Cow, env, path::Path, str, sync::Arc};
 use terminal_view::terminal_button::{self, TerminalButton};
-use util::{channel::ReleaseChannel, paths, ResultExt, StaffMode};
+use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
 use workspace::{sidebar::SidebarSide, AppState, Restart, Workspace};
@@ -295,34 +295,6 @@ pub fn initialize_workspace(
 
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
     cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
-
-    let theme_names = app_state
-        .themes
-        .list(**cx.default_global::<StaffMode>())
-        .map(|meta| meta.name)
-        .collect();
-    let language_names = app_state.languages.language_names();
-
-    workspace.project().update(cx, |project, cx| {
-        let action_names = cx.all_action_names().collect::<Vec<_>>();
-        project.set_language_server_settings(serde_json::json!({
-            "json": {
-                "format": {
-                    "enable": true,
-                },
-                "schemas": [
-                    {
-                        "fileMatch": [schema_file_match(&paths::SETTINGS)],
-                        "schema": settings_file_json_schema(theme_names, &language_names),
-                    },
-                    {
-                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
-                        "schema": keymap_file_json_schema(&action_names),
-                    }
-                ]
-            }
-        }));
-    });
 
     let collab_titlebar_item =
         cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, &app_state.user_store, cx));
@@ -674,11 +646,6 @@ fn open_bundled_file(
             .await;
     })
     .detach();
-}
-
-fn schema_file_match(path: &Path) -> &Path {
-    path.strip_prefix(path.parent().unwrap().parent().unwrap())
-        .unwrap()
 }
 
 #[cfg(test)]
@@ -1882,7 +1849,8 @@ mod tests {
         let mut languages = LanguageRegistry::new(Task::ready(()));
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
-        languages::init(languages.clone());
+        let themes = ThemeRegistry::new((), cx.font_cache().clone());
+        languages::init(languages.clone(), themes);
         for name in languages.language_names() {
             languages.language_for_name(&name);
         }

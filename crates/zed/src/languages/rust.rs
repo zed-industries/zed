@@ -306,7 +306,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(Box::new(RustLspAdapter)),
+            Some(Arc::new(RustLspAdapter)),
         )
         .await;
         let grammar = language.grammar().unwrap();
@@ -392,7 +392,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(Box::new(RustLspAdapter)),
+            Some(Arc::new(RustLspAdapter)),
         )
         .await;
         let grammar = language.grammar().unwrap();
