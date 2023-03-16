@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
             let config = envy::from_env::<MigrateConfig>().expect("error loading config");
             let mut db_options = db::ConnectOptions::new(config.database_url.clone());
             db_options.max_connections(5);
-            let db = Database::new(db_options).await?;
+            let db = Database::new(db_options, Executor::Production).await?;
 
             let migrations_path = config
                 .migrations_path

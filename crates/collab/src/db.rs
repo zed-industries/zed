@@ -15,6 +15,7 @@ mod worktree;
 mod worktree_diagnostic_summary;
 mod worktree_entry;
 
+use crate::executor::Executor;
 use crate::{Error, Result};
 use anyhow::anyhow;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -22,6 +23,8 @@ pub use contact::Contact;
 use dashmap::DashMap;
 use futures::StreamExt;
 use hyper::StatusCode;
+use rand::prelude::StdRng;
+use rand::{Rng, SeedableRng};
 use rpc::{proto, ConnectionId};
 use sea_orm::Condition;
 pub use sea_orm::ConnectOptions;
@@ -46,20 +49,20 @@ pub struct Database {
     options: ConnectOptions,
     pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
-    #[cfg(test)]
-    background: Option<std::sync::Arc<gpui::executor::Background>>,
+    rng: Mutex<StdRng>,
+    executor: Executor,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl Database {
-    pub async fn new(options: ConnectOptions) -> Result<Self> {
+    pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
         Ok(Self {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
             rooms: DashMap::with_capacity(16384),
-            #[cfg(test)]
-            background: None,
+            rng: Mutex::new(StdRng::seed_from_u64(0)),
+            executor,
             #[cfg(test)]
             runtime: None,
         })
@@ -2805,30 +2808,26 @@ impl Database {
         Fut: Send + Future<Output = Result<T>>,
     {
         let body = async {
+            let mut i = 0;
             loop {
                 let (tx, result) = self.with_transaction(&f).await?;
                 match result {
-                    Ok(result) => {
-                        match tx.commit().await.map_err(Into::into) {
-                            Ok(()) => return Ok(result),
-                            Err(error) => {
-                                if is_serialization_error(&error) {
-                                    // Retry (don't break the loop)
-                                } else {
-                                    return Err(error);
-                                }
+                    Ok(result) => match tx.commit().await.map_err(Into::into) {
+                        Ok(()) => return Ok(result),
+                        Err(error) => {
+                            if !self.retry_on_serialization_error(&error, i).await {
+                                return Err(error);
                             }
                         }
-                    }
+                    },
                     Err(error) => {
                         tx.rollback().await?;
-                        if is_serialization_error(&error) {
-                            // Retry (don't break the loop)
-                        } else {
+                        if !self.retry_on_serialization_error(&error, i).await {
                             return Err(error);
                         }
                     }
                 }
+                i += 1;
             }
         };
 
@@ -2841,6 +2840,7 @@ impl Database {
         Fut: Send + Future<Output = Result<Option<(RoomId, T)>>>,
     {
         let body = async {
+            let mut i = 0;
             loop {
                 let (tx, result) = self.with_transaction(&f).await?;
                 match result {
@@ -2856,35 +2856,28 @@ impl Database {
                                 }));
                             }
                             Err(error) => {
-                                if is_serialization_error(&error) {
-                                    // Retry (don't break the loop)
-                                } else {
+                                if !self.retry_on_serialization_error(&error, i).await {
                                     return Err(error);
                                 }
                             }
                         }
                     }
-                    Ok(None) => {
-                        match tx.commit().await.map_err(Into::into) {
-                            Ok(()) => return Ok(None),
-                            Err(error) => {
-                                if is_serialization_error(&error) {
-                                    // Retry (don't break the loop)
-                                } else {
-                                    return Err(error);
-                                }
+                    Ok(None) => match tx.commit().await.map_err(Into::into) {
+                        Ok(()) => return Ok(None),
+                        Err(error) => {
+                            if !self.retry_on_serialization_error(&error, i).await {
+                                return Err(error);
                             }
                         }
-                    }
+                    },
                     Err(error) => {
                         tx.rollback().await?;
-                        if is_serialization_error(&error) {
-                            // Retry (don't break the loop)
-                        } else {
+                        if !self.retry_on_serialization_error(&error, i).await {
                             return Err(error);
                         }
                     }
                 }
+                i += 1;
             }
         };
 
@@ -2897,38 +2890,34 @@ impl Database {
         Fut: Send + Future<Output = Result<T>>,
     {
         let body = async {
+            let mut i = 0;
             loop {
                 let lock = self.rooms.entry(room_id).or_default().clone();
                 let _guard = lock.lock_owned().await;
                 let (tx, result) = self.with_transaction(&f).await?;
                 match result {
-                    Ok(data) => {
-                        match tx.commit().await.map_err(Into::into) {
-                            Ok(()) => {
-                                return Ok(RoomGuard {
-                                    data,
-                                    _guard,
-                                    _not_send: PhantomData,
-                                });
-                            }
-                            Err(error) => {
-                                if is_serialization_error(&error) {
-                                    // Retry (don't break the loop)
-                                } else {
-                                    return Err(error);
-                                }
+                    Ok(data) => match tx.commit().await.map_err(Into::into) {
+                        Ok(()) => {
+                            return Ok(RoomGuard {
+                                data,
+                                _guard,
+                                _not_send: PhantomData,
+                            });
+                        }
+                        Err(error) => {
+                            if !self.retry_on_serialization_error(&error, i).await {
+                                return Err(error);
                             }
                         }
-                    }
+                    },
                     Err(error) => {
                         tx.rollback().await?;
-                        if is_serialization_error(&error) {
-                            // Retry (don't break the loop)
-                        } else {
+                        if !self.retry_on_serialization_error(&error, i).await {
                             return Err(error);
                         }
                     }
                 }
+                i += 1;
             }
         };
 
@@ -2954,14 +2943,14 @@ impl Database {
         Ok((tx, result))
     }
 
-    async fn run<F, T>(&self, future: F) -> T
+    async fn run<F, T>(&self, future: F) -> Result<T>
     where
-        F: Future<Output = T>,
+        F: Future<Output = Result<T>>,
     {
         #[cfg(test)]
         {
-            if let Some(background) = self.background.as_ref() {
-                background.simulate_random_delay().await;
+            if let Executor::Deterministic(executor) = &self.executor {
+                executor.simulate_random_delay().await;
             }
 
             self.runtime.as_ref().unwrap().block_on(future)
@@ -2970,6 +2959,23 @@ impl Database {
         #[cfg(not(test))]
         {
             future.await
+        }
+    }
+
+    async fn retry_on_serialization_error(&self, error: &Error, prev_attempt_count: u32) -> bool {
+        // If the error is due to a failure to serialize concurrent transactions, then retry
+        // this transaction after a delay. With each subsequent retry, double the delay duration.
+        // Also vary the delay randomly in order to ensure different database connections retry
+        // at different times.
+        if is_serialization_error(error) {
+            let base_delay = 4_u64 << prev_attempt_count.min(16);
+            let randomized_delay = base_delay as f32 * self.rng.lock().await.gen_range(0.5..=2.0);
+            self.executor
+                .sleep(Duration::from_millis(randomized_delay as u64))
+                .await;
+            true
+        } else {
+            false
         }
     }
 }
@@ -3273,7 +3279,6 @@ mod test {
     use gpui::executor::Background;
     use lazy_static::lazy_static;
     use parking_lot::Mutex;
-    use rand::prelude::*;
     use sea_orm::ConnectionTrait;
     use sqlx::migrate::MigrateDatabase;
     use std::sync::Arc;
@@ -3295,7 +3300,9 @@ mod test {
             let mut db = runtime.block_on(async {
                 let mut options = ConnectOptions::new(url);
                 options.max_connections(5);
-                let db = Database::new(options).await.unwrap();
+                let db = Database::new(options, Executor::Deterministic(background))
+                    .await
+                    .unwrap();
                 let sql = include_str!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/migrations.sqlite/20221109000000_test_schema.sql"
@@ -3310,7 +3317,6 @@ mod test {
                 db
             });
 
-            db.background = Some(background);
             db.runtime = Some(runtime);
 
             Self {
@@ -3344,13 +3350,14 @@ mod test {
                 options
                     .max_connections(5)
                     .idle_timeout(Duration::from_secs(0));
-                let db = Database::new(options).await.unwrap();
+                let db = Database::new(options, Executor::Deterministic(background))
+                    .await
+                    .unwrap();
                 let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
                 db.migrate(Path::new(migrations_path), false).await.unwrap();
                 db
             });
 
-            db.background = Some(background);
             db.runtime = Some(runtime);
 
             Self {
