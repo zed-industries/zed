@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
@@ -27,7 +27,11 @@ impl GitRepository for LibGitRepository {
         fn logic(repo: &LibGitRepository, relative_file_path: &Path) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
             let index = repo.index()?;
-            let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
+
+            // This check is required because index.get_path() unwraps internally :(
+            check_path_to_repo_path_errors(relative_file_path)?;
+
+            let oid = match index.get_path(&relative_file_path, STAGE_NORMAL) {
                 Some(entry) => entry.id,
                 None => return Ok(None),
             };
@@ -67,5 +71,34 @@ impl GitRepository for FakeGitRepository {
     fn load_index_text(&self, path: &Path) -> Option<String> {
         let state = self.state.lock();
         state.index_contents.get(path).cloned()
+    }
+}
+
+fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
+    match relative_file_path.components().next() {
+        None => anyhow::bail!("repo path should not be empty"),
+        Some(Component::Prefix(_)) => anyhow::bail!(
+            "repo path `{}` should be relative, not a windows prefix",
+            relative_file_path.to_string_lossy()
+        ),
+        Some(Component::RootDir) => {
+            anyhow::bail!(
+                "repo path `{}` should be relative",
+                relative_file_path.to_string_lossy()
+            )
+        }
+        Some(Component::CurDir) => {
+            anyhow::bail!(
+                "repo path `{}` should not start with `.`",
+                relative_file_path.to_string_lossy()
+            )
+        }
+        Some(Component::ParentDir) => {
+            anyhow::bail!(
+                "repo path `{}` should not start with `..`",
+                relative_file_path.to_string_lossy()
+            )
+        }
+        _ => Ok(()),
     }
 }
