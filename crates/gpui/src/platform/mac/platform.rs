@@ -867,25 +867,38 @@ impl platform::Platform for MacPlatform {
     }
 
     fn restart(&self) {
-        #[cfg(debug_assertions)]
-        let path = std::env::current_exe().unwrap();
+        use std::os::unix::process::CommandExt as _;
 
-        #[cfg(not(debug_assertions))]
-        let path = self
+        let app_pid = std::process::id().to_string();
+        let app_path = self
             .app_path()
-            .unwrap_or_else(|_| std::env::current_exe().unwrap());
+            .ok()
+            // When the app is not bundled, `app_path` returns the
+            // directory containing the executable. Disregard this
+            // and get the path to the executable itself.
+            .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+            .unwrap_or_else(|| std::env::current_exe().unwrap());
 
-        let script = r#"lsof -p "$0" +r 1 &>/dev/null && open "$1""#;
+        // Wait until this process has exited and then re-open this path.
+        let script = r#"
+            while kill -0 $0 2> /dev/null; do
+                sleep 0.1
+            done
+            open "$1"
+        "#;
 
-        Command::new("/bin/bash")
+        let restart_process = Command::new("/bin/bash")
             .arg("-c")
             .arg(script)
-            .arg(std::process::id().to_string())
-            .arg(path)
-            .spawn()
-            .ok();
+            .arg(app_pid)
+            .arg(app_path)
+            .process_group(0)
+            .spawn();
 
-        self.quit();
+        match restart_process {
+            Ok(_) => self.quit(),
+            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
+        }
     }
 }
 
