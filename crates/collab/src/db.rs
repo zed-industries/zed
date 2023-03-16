@@ -2970,6 +2970,10 @@ impl Database {
         if is_serialization_error(error) {
             let base_delay = 4_u64 << prev_attempt_count.min(16);
             let randomized_delay = base_delay as f32 * self.rng.lock().await.gen_range(0.5..=2.0);
+            log::info!(
+                "retrying transaction after serialization error. delay: {} ms.",
+                randomized_delay
+            );
             self.executor
                 .sleep(Duration::from_millis(randomized_delay as u64))
                 .await;
