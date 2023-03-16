@@ -55,7 +55,7 @@
     "bindings": {
       "ctrl-[": "project_panel::CollapseSelectedEntry",
       "ctrl-b": "project_panel::CollapseSelectedEntry",
-      "h": "project_panel::CollapseSelectedEntry",
+      "alt-b": "project_panel::CollapseSelectedEntry",
       "ctrl-]": "project_panel::ExpandSelectedEntry",
       "ctrl-f": "project_panel::ExpandSelectedEntry",
       "ctrl-shift-c": "project_panel::CopyPath"
