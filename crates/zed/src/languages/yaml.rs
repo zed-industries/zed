@@ -1,12 +1,13 @@
-use std::{any::Any, path::PathBuf, sync::Arc};
-
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
-use futures::StreamExt;
-use smol::fs;
-
+use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gpui::MutableAppContext;
 use language::{LanguageServerName, LspAdapter};
+use serde_json::Value;
+use settings::Settings;
+use smol::fs;
+use std::{any::Any, future, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
 use super::installation::{npm_install_packages, npm_package_latest_version};
@@ -89,5 +90,20 @@ impl LspAdapter for YamlLspAdapter {
         })()
         .await
         .log_err()
+    }
+
+    fn workspace_configuration(
+        &self,
+        cx: &mut MutableAppContext,
+    ) -> Option<BoxFuture<'static, Value>> {
+        let settings = cx.global::<Settings>();
+        Some(
+            future::ready(serde_json::json!({
+                "[yaml]": {
+                    "editor.tabSize": settings.tab_size(Some("YAML"))
+                }
+            }))
+            .boxed(),
+        )
     }
 }
