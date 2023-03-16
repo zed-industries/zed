@@ -37,7 +37,6 @@ use lsp::{
     MarkedString,
 };
 use lsp_command::*;
-use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
@@ -95,7 +94,6 @@ pub struct Project {
     language_servers: HashMap<usize, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), usize>,
     language_server_statuses: BTreeMap<usize, LanguageServerStatus>,
-    language_server_settings: Arc<Mutex<serde_json::Value>>,
     last_workspace_edits_by_language_server: HashMap<usize, ProjectTransaction>,
     next_language_server_id: usize,
     client: Arc<client::Client>,
@@ -441,7 +439,6 @@ impl Project {
             language_server_ids: Default::default(),
             language_server_statuses: Default::default(),
             last_workspace_edits_by_language_server: Default::default(),
-            language_server_settings: Default::default(),
             buffers_being_formatted: Default::default(),
             next_language_server_id: 0,
             nonce: StdRng::from_entropy().gen(),
@@ -504,7 +501,6 @@ impl Project {
                 }),
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
-                language_server_settings: Default::default(),
                 language_server_statuses: response
                     .language_servers
                     .into_iter()
@@ -1843,18 +1839,14 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Project>,
     ) -> Task<()> {
-        let mut languages_changed = languages.subscribe();
         let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
+        let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
+
         let settings_observation = cx.observe_global::<Settings, _>(move |_, _| {
             *settings_changed_tx.borrow_mut() = ();
         });
         cx.spawn_weak(|this, mut cx| async move {
-            loop {
-                futures::select_biased! {
-                    _ = languages_changed.next().fuse() => {},
-                    _ = settings_changed_rx.next().fuse() => {}
-                }
-
+            while let Some(_) = settings_changed_rx.next().await {
                 let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
                 if let Some(this) = this.upgrade(&cx) {
                     this.read_with(&cx, |this, _| {
@@ -2001,13 +1993,13 @@ impl Project {
 
                         language_server
                             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
+                                let languages = languages.clone();
                                 move |params, mut cx| {
                                     let languages = languages.clone();
                                     async move {
                                         let workspace_config = cx
                                             .update(|cx| languages.workspace_configuration(cx))
                                             .await;
-
                                         Ok(params
                                             .items
                                             .into_iter()
@@ -2096,6 +2088,16 @@ impl Project {
                             })
                             .detach();
 
+                        let workspace_config =
+                            cx.update(|cx| languages.workspace_configuration(cx)).await;
+                        language_server
+                            .notify::<lsp::notification::DidChangeConfiguration>(
+                                lsp::DidChangeConfigurationParams {
+                                    settings: workspace_config,
+                                },
+                            )
+                            .ok();
+
                         this.update(&mut cx, |this, cx| {
                             // If the language server for this key doesn't match the server id, don't store the
                             // server. Which will cause it to be dropped, killing the process
@@ -2128,13 +2130,6 @@ impl Project {
                                     progress_tokens: Default::default(),
                                 },
                             );
-                            language_server
-                                .notify::<lsp::notification::DidChangeConfiguration>(
-                                    lsp::DidChangeConfigurationParams {
-                                        settings: this.language_server_settings.lock().clone(),
-                                    },
-                                )
-                                .ok();
 
                             if let Some(project_id) = this.remote_id() {
                                 this.client
