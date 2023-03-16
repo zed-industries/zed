@@ -5762,14 +5762,24 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         let selections = self.selections.all::<Point>(cx);
+        dbg!(&selections);
         for selection in selections {
             let range = selection.range().sorted();
             let buffer_start_row = range.start.row;
 
             for row in (0..=range.end.row).rev() {
-                let fold_range = display_map.foldable_range(row);
+                dbg!(row);
+                let fold_range = dbg!(display_map.foldable_range(row));
 
                 if let Some(fold_range) = fold_range {
+                    let display_point = fold_range.end.to_display_point(&display_map);
+                    let line = display_map
+                        .chars_at(DisplayPoint::new(display_point.row(), 0))
+                        .map(|(ccharr, _)| ccharr)
+                        .take_while(|charr| charr != &'\n')
+                        .collect::<String>();
+                    dbg!(line);
+
                     if fold_range.end.row >= buffer_start_row {
                         fold_ranges.push(fold_range);
                         if row <= range.start.row {
