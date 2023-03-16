@@ -39,7 +39,6 @@ pub async fn npm_package_latest_version(name: &str) -> Result<String> {
     let output = smol::process::Command::new("npm")
         .args(["-fetch-retry-mintimeout", "2000"])
         .args(["-fetch-retry-maxtimeout", "5000"])
-        .args(["-fetch-timeout", "5000"])
         .args(["info", name, "--json"])
         .output()
         .await
