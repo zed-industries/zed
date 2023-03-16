@@ -567,20 +567,25 @@ impl LanguageRegistry {
     }
 
     pub fn workspace_configuration(&self, cx: &mut MutableAppContext) -> Task<serde_json::Value> {
-        let state = self.state.read();
+        let lsp_adapters = {
+            let state = self.state.read();
+            state
+                .available_languages
+                .iter()
+                .filter_map(|l| l.lsp_adapter.clone())
+                .chain(
+                    state
+                        .languages
+                        .iter()
+                        .filter_map(|l| l.adapter.as_ref().map(|a| a.adapter.clone())),
+                )
+                .collect::<Vec<_>>()
+        };
+
         let mut language_configs = Vec::new();
-        for language in &state.available_languages {
-            if let Some(adapter) = language.lsp_adapter.as_ref() {
-                if let Some(language_config) = adapter.workspace_configuration(cx) {
-                    language_configs.push(language_config);
-                }
-            }
-        }
-        for language in &state.languages {
-            if let Some(adapter) = language.lsp_adapter() {
-                if let Some(language_config) = adapter.workspace_configuration(cx) {
-                    language_configs.push(language_config);
-                }
+        for adapter in &lsp_adapters {
+            if let Some(language_config) = adapter.workspace_configuration(cx) {
+                language_configs.push(language_config);
             }
         }
 
