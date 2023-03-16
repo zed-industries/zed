@@ -133,6 +133,13 @@ impl CachedLspAdapter {
         self.adapter.cached_server_binary(container_dir).await
     }
 
+    pub fn workspace_configuration(
+        &self,
+        cx: &mut MutableAppContext,
+    ) -> Option<BoxFuture<'static, Value>> {
+        self.adapter.workspace_configuration(cx)
+    }
+
     pub async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         self.adapter.process_diagnostics(params).await
     }
@@ -552,6 +559,13 @@ impl LanguageRegistry {
         let mut language_configs = Vec::new();
         for language in self.available_languages.read().iter() {
             if let Some(adapter) = language.lsp_adapter.as_ref() {
+                if let Some(language_config) = adapter.workspace_configuration(cx) {
+                    language_configs.push(language_config);
+                }
+            }
+        }
+        for language in self.languages.read().iter() {
+            if let Some(adapter) = language.lsp_adapter() {
                 if let Some(language_config) = adapter.workspace_configuration(cx) {
                     language_configs.push(language_config);
                 }
