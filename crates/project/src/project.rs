@@ -1958,6 +1958,8 @@ impl Project {
                 self.language_servers.insert(
                     server_id,
                     LanguageServerState::Starting(cx.spawn_weak(|this, mut cx| async move {
+                        let workspace_config =
+                            cx.update(|cx| languages.workspace_configuration(cx)).await;
                         let language_server = language_server?.await.log_err()?;
                         let language_server = language_server
                             .initialize(initialization_options)
@@ -2088,8 +2090,6 @@ impl Project {
                             })
                             .detach();
 
-                        let workspace_config =
-                            cx.update(|cx| languages.workspace_configuration(cx)).await;
                         language_server
                             .notify::<lsp::notification::DidChangeConfiguration>(
                                 lsp::DidChangeConfigurationParams {
