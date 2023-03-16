@@ -475,8 +475,7 @@ struct AvailableLanguage {
 }
 
 pub struct LanguageRegistry {
-    languages: RwLock<Vec<Arc<Language>>>,
-    available_languages: RwLock<Vec<AvailableLanguage>>,
+    state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
@@ -488,26 +487,33 @@ pub struct LanguageRegistry {
             Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>,
         >,
     >,
-    subscription: RwLock<(watch::Sender<()>, watch::Receiver<()>)>,
-    theme: RwLock<Option<Arc<Theme>>>,
     executor: Option<Arc<Background>>,
-    version: AtomicUsize,
+}
+
+struct LanguageRegistryState {
+    languages: Vec<Arc<Language>>,
+    available_languages: Vec<AvailableLanguage>,
+    subscription: (watch::Sender<()>, watch::Receiver<()>),
+    theme: Option<Arc<Theme>>,
+    version: usize,
 }
 
 impl LanguageRegistry {
     pub fn new(login_shell_env_loaded: Task<()>) -> Self {
         let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
+            state: RwLock::new(LanguageRegistryState {
+                languages: vec![PLAIN_TEXT.clone()],
+                available_languages: Default::default(),
+                subscription: watch::channel(),
+                theme: Default::default(),
+                version: 0,
+            }),
             language_server_download_dir: None,
-            languages: RwLock::new(vec![PLAIN_TEXT.clone()]),
-            available_languages: Default::default(),
             lsp_binary_statuses_tx,
             lsp_binary_statuses_rx,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_paths: Default::default(),
-            subscription: RwLock::new(watch::channel()),
-            theme: Default::default(),
-            version: Default::default(),
             executor: None,
         }
     }
@@ -529,42 +535,41 @@ impl LanguageRegistry {
         lsp_adapter: Option<Box<dyn LspAdapter>>,
         get_queries: fn(&str) -> LanguageQueries,
     ) {
-        self.available_languages.write().push(AvailableLanguage {
-            path,
-            config,
-            grammar,
-            lsp_adapter,
-            get_queries,
-        });
+        self.state
+            .write()
+            .available_languages
+            .push(AvailableLanguage {
+                path,
+                config,
+                grammar,
+                lsp_adapter,
+                get_queries,
+            });
     }
 
     pub fn language_names(&self) -> Vec<String> {
-        let mut result = self
+        let state = self.state.read();
+        let mut result = state
             .available_languages
-            .read()
             .iter()
             .map(|l| l.config.name.to_string())
-            .chain(
-                self.languages
-                    .read()
-                    .iter()
-                    .map(|l| l.config.name.to_string()),
-            )
+            .chain(state.languages.iter().map(|l| l.config.name.to_string()))
             .collect::<Vec<_>>();
         result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
         result
     }
 
     pub fn workspace_configuration(&self, cx: &mut MutableAppContext) -> Task<serde_json::Value> {
+        let state = self.state.read();
         let mut language_configs = Vec::new();
-        for language in self.available_languages.read().iter() {
+        for language in &state.available_languages {
             if let Some(adapter) = language.lsp_adapter.as_ref() {
                 if let Some(language_config) = adapter.workspace_configuration(cx) {
                     language_configs.push(language_config);
                 }
             }
         }
-        for language in self.languages.read().iter() {
+        for language in &state.languages {
             if let Some(adapter) = language.lsp_adapter() {
                 if let Some(language_config) = adapter.workspace_configuration(cx) {
                     language_configs.push(language_config);
@@ -583,25 +588,27 @@ impl LanguageRegistry {
     }
 
     pub fn add(&self, language: Arc<Language>) {
-        if let Some(theme) = self.theme.read().clone() {
+        let mut state = self.state.write();
+        if let Some(theme) = state.theme.as_ref() {
             language.set_theme(&theme.editor.syntax);
         }
-        self.languages.write().push(language);
-        self.version.fetch_add(1, SeqCst);
-        *self.subscription.write().0.borrow_mut() = ();
+        state.languages.push(language);
+        state.version += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     pub fn subscribe(&self) -> watch::Receiver<()> {
-        self.subscription.read().1.clone()
+        self.state.read().subscription.1.clone()
     }
 
     pub fn version(&self) -> usize {
-        self.version.load(SeqCst)
+        self.state.read().version
     }
 
     pub fn set_theme(&self, theme: Arc<Theme>) {
-        *self.theme.write() = Some(theme.clone());
-        for language in self.languages.read().iter() {
+        let mut state = self.state.write();
+        state.theme = Some(theme.clone());
+        for language in &state.languages {
             language.set_theme(&theme.editor.syntax);
         }
     }
@@ -654,19 +661,21 @@ impl LanguageRegistry {
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let (tx, rx) = oneshot::channel();
 
-        if let Some(language) = self
+        let mut state = self.state.write();
+        if let Some(language) = state
             .languages
-            .read()
             .iter()
             .find(|language| callback(&language.config))
         {
             let _ = tx.send(Ok(language.clone()));
         } else if let Some(executor) = self.executor.clone() {
-            let mut available_languages = self.available_languages.write();
-
-            if let Some(ix) = available_languages.iter().position(|l| callback(&l.config)) {
-                let language = available_languages.remove(ix);
-                drop(available_languages);
+            if let Some(ix) = state
+                .available_languages
+                .iter()
+                .position(|l| callback(&l.config))
+            {
+                let language = state.available_languages.remove(ix);
+                drop(state);
                 let name = language.config.name.clone();
                 let this = self.clone();
                 executor
@@ -702,7 +711,7 @@ impl LanguageRegistry {
     }
 
     pub fn to_vec(&self) -> Vec<Arc<Language>> {
-        self.languages.read().iter().cloned().collect()
+        self.state.read().languages.iter().cloned().collect()
     }
 
     pub fn start_language_server(
