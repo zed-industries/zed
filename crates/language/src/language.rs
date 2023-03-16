@@ -44,7 +44,7 @@ use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
-use util::{merge_json_value_into, ResultExt, TryFutureExt as _, UnwrapFuture};
+use util::{merge_json_value_into, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]
 use futures::channel::mpsc;
@@ -87,11 +87,11 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
-    pub adapter: Box<dyn LspAdapter>,
+    pub adapter: Arc<dyn LspAdapter>,
 }
 
 impl CachedLspAdapter {
-    pub async fn new(adapter: Box<dyn LspAdapter>) -> Arc<Self> {
+    pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name().await;
         let server_args = adapter.server_args().await;
         let initialization_options = adapter.initialization_options().await;
@@ -242,7 +242,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
@@ -279,7 +279,7 @@ pub struct LanguageScope {
     override_id: Option<u32>,
 }
 
-#[derive(Deserialize, Default, Debug)]
+#[derive(Clone, Deserialize, Default, Debug)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comment: Override<Arc<str>>,
@@ -289,7 +289,7 @@ pub struct LanguageConfigOverride {
     pub disabled_bracket_ixs: Vec<u16>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum Override<T> {
     Remove { remove: bool },
@@ -466,11 +466,15 @@ pub enum LanguageServerBinaryStatus {
     Failed { error: String },
 }
 
+type AvailableLanguageId = usize;
+
+#[derive(Clone)]
 struct AvailableLanguage {
+    id: AvailableLanguageId,
     path: &'static str,
     config: LanguageConfig,
     grammar: tree_sitter::Language,
-    lsp_adapter: Option<Box<dyn LspAdapter>>,
+    lsp_adapter: Option<Arc<dyn LspAdapter>>,
     get_queries: fn(&str) -> LanguageQueries,
 }
 
@@ -493,6 +497,8 @@ pub struct LanguageRegistry {
 struct LanguageRegistryState {
     languages: Vec<Arc<Language>>,
     available_languages: Vec<AvailableLanguage>,
+    next_available_language_id: AvailableLanguageId,
+    loading_languages: HashMap<AvailableLanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
     theme: Option<Arc<Theme>>,
     version: usize,
@@ -505,6 +511,8 @@ impl LanguageRegistry {
             state: RwLock::new(LanguageRegistryState {
                 languages: vec![PLAIN_TEXT.clone()],
                 available_languages: Default::default(),
+                next_available_language_id: 0,
+                loading_languages: Default::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
                 version: 0,
@@ -532,19 +540,18 @@ impl LanguageRegistry {
         path: &'static str,
         config: LanguageConfig,
         grammar: tree_sitter::Language,
-        lsp_adapter: Option<Box<dyn LspAdapter>>,
+        lsp_adapter: Option<Arc<dyn LspAdapter>>,
         get_queries: fn(&str) -> LanguageQueries,
     ) {
-        self.state
-            .write()
-            .available_languages
-            .push(AvailableLanguage {
-                path,
-                config,
-                grammar,
-                lsp_adapter,
-                get_queries,
-            });
+        let state = &mut *self.state.write();
+        state.available_languages.push(AvailableLanguage {
+            id: post_inc(&mut state.next_available_language_id),
+            path,
+            config,
+            grammar,
+            lsp_adapter,
+            get_queries,
+        });
     }
 
     pub fn language_names(&self) -> Vec<String> {
@@ -588,13 +595,7 @@ impl LanguageRegistry {
     }
 
     pub fn add(&self, language: Arc<Language>) {
-        let mut state = self.state.write();
-        if let Some(theme) = state.theme.as_ref() {
-            language.set_theme(&theme.editor.syntax);
-        }
-        state.languages.push(language);
-        state.version += 1;
-        *state.subscription.0.borrow_mut() = ();
+        self.state.write().add(language);
     }
 
     pub fn subscribe(&self) -> watch::Receiver<()> {
@@ -669,37 +670,62 @@ impl LanguageRegistry {
         {
             let _ = tx.send(Ok(language.clone()));
         } else if let Some(executor) = self.executor.clone() {
-            if let Some(ix) = state
+            if let Some(language) = state
                 .available_languages
                 .iter()
-                .position(|l| callback(&l.config))
+                .find(|l| callback(&l.config))
+                .cloned()
             {
-                let language = state.available_languages.remove(ix);
-                drop(state);
-                let name = language.config.name.clone();
-                let this = self.clone();
-                executor
-                    .spawn(async move {
-                        let queries = (language.get_queries)(&language.path);
-                        let language = Language::new(language.config, Some(language.grammar))
-                            .with_lsp_adapter(language.lsp_adapter)
-                            .await;
-                        match language.with_queries(queries) {
-                            Ok(language) => {
-                                let language = Arc::new(language);
-                                this.add(language.clone());
-                                let _ = tx.send(Ok(language));
-                            }
-                            Err(err) => {
-                                let _ = tx.send(Err(anyhow!(
-                                    "failed to load language {}: {}",
-                                    name,
-                                    err
-                                )));
-                            }
-                        };
-                    })
-                    .detach();
+                let txs = state
+                    .loading_languages
+                    .entry(language.id)
+                    .or_insert_with(|| {
+                        let this = self.clone();
+                        executor
+                            .spawn(async move {
+                                let id = language.id;
+                                let queries = (language.get_queries)(&language.path);
+                                let language =
+                                    Language::new(language.config, Some(language.grammar))
+                                        .with_lsp_adapter(language.lsp_adapter)
+                                        .await;
+                                let name = language.name();
+                                match language.with_queries(queries) {
+                                    Ok(language) => {
+                                        let language = Arc::new(language);
+                                        let mut state = this.state.write();
+                                        state.add(language.clone());
+                                        state
+                                            .available_languages
+                                            .retain(|language| language.id != id);
+                                        if let Some(mut txs) = state.loading_languages.remove(&id) {
+                                            for tx in txs.drain(..) {
+                                                let _ = tx.send(Ok(language.clone()));
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let mut state = this.state.write();
+                                        state
+                                            .available_languages
+                                            .retain(|language| language.id != id);
+                                        if let Some(mut txs) = state.loading_languages.remove(&id) {
+                                            for tx in txs.drain(..) {
+                                                let _ = tx.send(Err(anyhow!(
+                                                    "failed to load language {}: {}",
+                                                    name,
+                                                    err
+                                                )));
+                                            }
+                                        }
+                                    }
+                                };
+                            })
+                            .detach();
+
+                        Vec::new()
+                    });
+                txs.push(tx);
             } else {
                 let _ = tx.send(Err(anyhow!("language not found")));
             }
@@ -801,6 +827,17 @@ impl LanguageRegistry {
         &self,
     ) -> async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)> {
         self.lsp_binary_statuses_rx.clone()
+    }
+}
+
+impl LanguageRegistryState {
+    fn add(&mut self, language: Arc<Language>) {
+        if let Some(theme) = self.theme.as_ref() {
+            language.set_theme(&theme.editor.syntax);
+        }
+        self.languages.push(language);
+        self.version += 1;
+        *self.subscription.0.borrow_mut() = ();
     }
 }
 
@@ -1135,7 +1172,7 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
-    pub async fn with_lsp_adapter(mut self, lsp_adapter: Option<Box<dyn LspAdapter>>) -> Self {
+    pub async fn with_lsp_adapter(mut self, lsp_adapter: Option<Arc<dyn LspAdapter>>) -> Self {
         if let Some(adapter) = lsp_adapter {
             self.adapter = Some(CachedLspAdapter::new(adapter).await);
         }
@@ -1149,7 +1186,7 @@ impl Language {
     ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = mpsc::unbounded();
         self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
-        let adapter = CachedLspAdapter::new(Box::new(fake_lsp_adapter)).await;
+        let adapter = CachedLspAdapter::new(Arc::new(fake_lsp_adapter)).await;
         self.adapter = Some(adapter);
         servers_rx
     }

@@ -314,7 +314,7 @@ mod tests {
         let language = language(
             "go",
             tree_sitter_go::language(),
-            Some(Box::new(GoLspAdapter)),
+            Some(Arc::new(GoLspAdapter)),
         )
         .await;
 

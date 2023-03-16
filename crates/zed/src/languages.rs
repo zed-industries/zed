@@ -37,12 +37,12 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "c",
             tree_sitter_c::language(),
-            Some(Box::new(c::CLspAdapter) as Box<dyn LspAdapter>),
+            Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
         ),
         (
             "cpp",
             tree_sitter_cpp::language(),
-            Some(Box::new(c::CLspAdapter)),
+            Some(Arc::new(c::CLspAdapter)),
         ),
         (
             "css",
@@ -52,17 +52,17 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "elixir",
             tree_sitter_elixir::language(),
-            Some(Box::new(elixir::ElixirLspAdapter)),
+            Some(Arc::new(elixir::ElixirLspAdapter)),
         ),
         (
             "go",
             tree_sitter_go::language(),
-            Some(Box::new(go::GoLspAdapter)),
+            Some(Arc::new(go::GoLspAdapter)),
         ),
         (
             "json",
             tree_sitter_json::language(),
-            Some(Box::new(json::JsonLspAdapter::new(
+            Some(Arc::new(json::JsonLspAdapter::new(
                 languages.clone(),
                 themes.clone(),
             ))),
@@ -75,12 +75,12 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "python",
             tree_sitter_python::language(),
-            Some(Box::new(python::PythonLspAdapter)),
+            Some(Arc::new(python::PythonLspAdapter)),
         ),
         (
             "rust",
             tree_sitter_rust::language(),
-            Some(Box::new(rust::RustLspAdapter)),
+            Some(Arc::new(rust::RustLspAdapter)),
         ),
         (
             "toml",
@@ -90,32 +90,32 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            Some(Box::new(typescript::TypeScriptLspAdapter)),
+            Some(Arc::new(typescript::TypeScriptLspAdapter)),
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            Some(Box::new(typescript::TypeScriptLspAdapter)),
+            Some(Arc::new(typescript::TypeScriptLspAdapter)),
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            Some(Box::new(typescript::TypeScriptLspAdapter)),
+            Some(Arc::new(typescript::TypeScriptLspAdapter)),
         ),
         (
             "html",
             tree_sitter_html::language(),
-            Some(Box::new(html::HtmlLspAdapter)),
+            Some(Arc::new(html::HtmlLspAdapter)),
         ),
         (
             "ruby",
             tree_sitter_ruby::language(),
-            Some(Box::new(ruby::RubyLanguageServer)),
+            Some(Arc::new(ruby::RubyLanguageServer)),
         ),
         (
             "erb",
             tree_sitter_embedded_template::language(),
-            Some(Box::new(ruby::RubyLanguageServer)),
+            Some(Arc::new(ruby::RubyLanguageServer)),
         ),
         (
             "scheme",
@@ -130,12 +130,12 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "lua",
             tree_sitter_lua::language(),
-            Some(Box::new(lua::LuaLspAdapter)),
+            Some(Arc::new(lua::LuaLspAdapter)),
         ),
         (
             "yaml",
             tree_sitter_yaml::language(),
-            Some(Box::new(yaml::YamlLspAdapter)),
+            Some(Arc::new(yaml::YamlLspAdapter)),
         ),
     ] {
         languages.register(name, load_config(name), grammar, lsp_adapter, load_queries);
@@ -146,7 +146,7 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
 pub async fn language(
     name: &str,
     grammar: tree_sitter::Language,
-    lsp_adapter: Option<Box<dyn LspAdapter>>,
+    lsp_adapter: Option<Arc<dyn LspAdapter>>,
 ) -> Arc<Language> {
     Arc::new(
         Language::new(load_config(name), Some(grammar))
