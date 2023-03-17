@@ -39,6 +39,7 @@ pathfinder_geometry = "0.5"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
 resvg = "0.14"
+schemars = "0.8"
 seahash = "4.1"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"

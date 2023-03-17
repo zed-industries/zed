@@ -1053,7 +1053,9 @@ mod tests {
             Some(rng.gen_range(0.0..=1000.0))
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();

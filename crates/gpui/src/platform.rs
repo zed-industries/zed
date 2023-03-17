@@ -9,7 +9,10 @@ pub mod current {
 
 use crate::{
     executor,
-    fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
+    fonts::{
+        Features as FontFeatures, FontId, GlyphId, Metrics as FontMetrics,
+        Properties as FontProperties,
+    },
     geometry::{
         rect::{RectF, RectI},
         vector::Vector2F,
@@ -335,7 +338,7 @@ pub enum RasterizationOptions {
 
 pub trait FontSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()>;
-    fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>>;
+    fn load_family(&self, name: &str, features: &FontFeatures) -> anyhow::Result<Vec<FontId>>;
     fn select_font(
         &self,
         font_ids: &[FontId],

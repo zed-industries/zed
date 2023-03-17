@@ -3,6 +3,10 @@
     "theme": "One Dark",
     // The name of a font to use for rendering text in the editor
     "buffer_font_family": "Zed Mono",
+    // The OpenType features to enable for text in the editor.
+    "buffer_font_features": {
+        "calt": true
+    },
     // The default font size for text in the editor
     "buffer_font_size": 15,
     // The factor to grow the active pane by. Defaults to 1.0

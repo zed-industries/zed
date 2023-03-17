@@ -587,7 +587,10 @@ mod tests {
     #[gpui::test]
     fn test_move_up_and_down_with_excerpts(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())

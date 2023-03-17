@@ -2664,6 +2664,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "resvg",
+ "schemars",
  "seahash",
  "serde",
  "serde_json",

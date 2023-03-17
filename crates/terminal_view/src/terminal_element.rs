@@ -505,13 +505,18 @@ impl TerminalElement {
 
     ///Configures a text style from the current settings.
     pub fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
+        // TODO allow font features
         // Pull the font family from settings properly overriding
         let family_id = settings
             .terminal_overrides
             .font_family
             .as_ref()
             .or(settings.terminal_defaults.font_family.as_ref())
-            .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
+            .and_then(|family_name| {
+                font_cache
+                    .load_family(&[family_name], Default::default())
+                    .log_err()
+            })
             .unwrap_or(settings.buffer_font_family);
 
         let font_size = settings

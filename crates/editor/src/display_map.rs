@@ -785,7 +785,9 @@ pub mod tests {
         let mut tab_size = rng.gen_range(1..=4);
         let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -1042,7 +1044,9 @@ pub mod tests {
 
         let font_cache = cx.font_cache();
 
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -1131,7 +1135,10 @@ pub mod tests {
         cx.set_global(Settings::test(cx));
         let text = sample_text(6, 6, 'a');
         let buffer = MultiBuffer::build_simple(&text, cx);
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())
@@ -1214,7 +1221,9 @@ pub mod tests {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_cache = cx.font_cache();
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -1302,7 +1311,9 @@ pub mod tests {
 
         let font_cache = cx.font_cache();
 
-        let family_id = font_cache.load_family(&["Courier"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Courier"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -1374,7 +1385,9 @@ pub mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let font_cache = cx.font_cache();
-        let family_id = font_cache.load_family(&["Courier"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Courier"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -1490,7 +1503,9 @@ pub mod tests {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_cache = cx.font_cache();
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -1548,7 +1563,9 @@ pub mod tests {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_cache = cx.font_cache();
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();

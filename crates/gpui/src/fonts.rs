@@ -11,7 +11,8 @@ pub use font_kit::{
     properties::{Properties, Stretch, Style, Weight},
 };
 use ordered_float::OrderedFloat;
-use serde::{de, Deserialize};
+use schemars::JsonSchema;
+use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
 use std::{cell::RefCell, sync::Arc};
 
@@ -19,6 +20,11 @@ use std::{cell::RefCell, sync::Arc};
 pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Features {
+    pub calt: Option<bool>,
+}
 
 #[derive(Clone, Debug)]
 pub struct TextStyle {
@@ -107,12 +113,13 @@ impl TextStyle {
         font_family_name: impl Into<Arc<str>>,
         font_size: f32,
         font_properties: Properties,
+        font_features: Features,
         underline: Underline,
         color: Color,
         font_cache: &FontCache,
     ) -> Result<Self> {
         let font_family_name = font_family_name.into();
-        let font_family_id = font_cache.load_family(&[&font_family_name])?;
+        let font_family_id = font_cache.load_family(&[&font_family_name], font_features)?;
         let font_id = font_cache.select_font(font_family_id, &font_properties)?;
         Ok(Self {
             color,
@@ -175,6 +182,7 @@ impl TextStyle {
                     json.family,
                     json.size,
                     font_properties,
+                    Default::default(),
                     underline_from_json(json.underline),
                     json.color,
                     font_cache,
@@ -253,7 +261,9 @@ impl Default for TextStyle {
                 .expect("TextStyle::default can only be called within a call to with_font_cache");
 
             let font_family_name = Arc::from("Courier");
-            let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
+            let font_family_id = font_cache
+                .load_family(&[&font_family_name], Default::default())
+                .unwrap();
             let font_id = font_cache
                 .select_font(font_family_id, &Default::default())
                 .unwrap();

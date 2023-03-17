@@ -1,5 +1,5 @@
 use crate::{
-    fonts::{FontId, Metrics, Properties},
+    fonts::{Features, FontId, Metrics, Properties},
     geometry::vector::{vec2f, Vector2F},
     platform,
     text_layout::LineWrapper,
@@ -18,6 +18,7 @@ pub struct FamilyId(usize);
 
 struct Family {
     name: Arc<str>,
+    font_features: Features,
     font_ids: Vec<FontId>,
 }
 
@@ -58,17 +59,21 @@ impl FontCache {
             .map(|family| family.name.clone())
     }
 
-    pub fn load_family(&self, names: &[&str]) -> Result<FamilyId> {
+    pub fn load_family(&self, names: &[&str], features: Features) -> Result<FamilyId> {
         for name in names {
             let state = self.0.upgradable_read();
 
-            if let Some(ix) = state.families.iter().position(|f| f.name.as_ref() == *name) {
+            if let Some(ix) = state
+                .families
+                .iter()
+                .position(|f| f.name.as_ref() == *name && f.font_features == features)
+            {
                 return Ok(FamilyId(ix));
             }
 
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
 
-            if let Ok(font_ids) = state.fonts.load_family(name) {
+            if let Ok(font_ids) = state.fonts.load_family(name, &features) {
                 if font_ids.is_empty() {
                     continue;
                 }
@@ -82,6 +87,7 @@ impl FontCache {
 
                 state.families.push(Family {
                     name: Arc::from(*name),
+                    font_features: features,
                     font_ids,
                 });
                 return Ok(family_id);
@@ -254,7 +260,15 @@ mod tests {
     fn test_select_font() {
         let platform = test::platform();
         let fonts = FontCache::new(platform.fonts());
-        let arial = fonts.load_family(&["Arial"]).unwrap();
+        let arial = fonts
+            .load_family(
+                &["Arial"],
+                Features {
+                    calt: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         let arial_regular = fonts.select_font(arial, &Properties::new()).unwrap();
         let arial_italic = fonts
             .select_font(arial, Properties::new().style(Style::Italic))
@@ -265,5 +279,16 @@ mod tests {
         assert_ne!(arial_regular, arial_italic);
         assert_ne!(arial_regular, arial_bold);
         assert_ne!(arial_italic, arial_bold);
+
+        let arial_with_calt = fonts
+            .load_family(
+                &["Arial"],
+                Features {
+                    calt: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_ne!(arial_with_calt, arial);
     }
 }

@@ -5,7 +5,7 @@ pub mod watched_json;
 use anyhow::{bail, Result};
 use gpui::{
     font_cache::{FamilyId, FontCache},
-    AssetSource,
+    fonts, AssetSource,
 };
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
@@ -28,6 +28,8 @@ pub use watched_json::watch_files;
 
 #[derive(Clone)]
 pub struct Settings {
+    pub buffer_font_family_name: String,
+    pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
@@ -332,6 +334,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
+    pub buffer_font_features: Option<fonts::Features>,
+    #[serde(default)]
     pub active_pane_magnification: Option<f32>,
     #[serde(default)]
     pub cursor_blink: Option<bool>,
@@ -396,10 +400,16 @@ impl Settings {
         )
         .unwrap();
 
+        let buffer_font_features = defaults.buffer_font_features.unwrap();
         Self {
             buffer_font_family: font_cache
-                .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
+                .load_family(
+                    &[defaults.buffer_font_family.as_ref().unwrap()],
+                    buffer_font_features,
+                )
                 .unwrap(),
+            buffer_font_family_name: defaults.buffer_font_family.unwrap(),
+            buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
@@ -451,11 +461,24 @@ impl Settings {
         theme_registry: &ThemeRegistry,
         font_cache: &FontCache,
     ) {
-        if let Some(value) = &data.buffer_font_family {
-            if let Some(id) = font_cache.load_family(&[value]).log_err() {
+        let mut family_changed = false;
+        if let Some(value) = data.buffer_font_family {
+            self.buffer_font_family_name = value;
+            family_changed = true;
+        }
+        if let Some(value) = data.buffer_font_features {
+            self.buffer_font_features = value;
+            family_changed = true;
+        }
+        if family_changed {
+            if let Some(id) = font_cache
+                .load_family(&[&self.buffer_font_family_name], self.buffer_font_features)
+                .log_err()
+            {
                 self.buffer_font_family = id;
             }
         }
+
         if let Some(value) = &data.theme {
             if let Some(theme) = theme_registry.get(value).log_err() {
                 self.theme = theme;
@@ -482,7 +505,10 @@ impl Settings {
 
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
-            font_cache.load_family(&[terminal_font]).log_err();
+            // TODO: enable font features for the terminal as well.
+            font_cache
+                .load_family(&[terminal_font], Default::default())
+                .log_err();
         }
 
         self.editor_overrides = data.editor;
@@ -616,7 +642,12 @@ impl Settings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
-            buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
+            buffer_font_family_name: "Monaco".to_string(),
+            buffer_font_features: Default::default(),
+            buffer_font_family: cx
+                .font_cache()
+                .load_family(&["Monaco"], Default::default())
+                .unwrap(),
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
             default_buffer_font_size: 14.,

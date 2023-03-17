@@ -1015,7 +1015,10 @@ mod tests {
     fn test_basic_blocks(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
 
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())
@@ -1185,7 +1188,10 @@ mod tests {
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
 
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())
@@ -1241,7 +1247,10 @@ mod tests {
             Some(rng.gen_range(0.0..=100.0))
         };
         let tab_size = 1.try_into().unwrap();
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())

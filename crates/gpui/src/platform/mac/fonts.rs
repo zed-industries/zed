@@ -1,5 +1,5 @@
 use crate::{
-    fonts::{FontId, GlyphId, Metrics, Properties},
+    fonts::{Features, FontId, GlyphId, Metrics, Properties},
     geometry::{
         rect::{RectF, RectI},
         transform2d::Transform2F,
@@ -64,8 +64,8 @@ impl platform::FontSystem for FontSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>> {
-        self.0.write().load_family(name)
+    fn load_family(&self, name: &str, features: &Features) -> anyhow::Result<Vec<FontId>> {
+        self.0.write().load_family(name, features)
     }
 
     fn select_font(&self, font_ids: &[FontId], properties: &Properties) -> anyhow::Result<FontId> {
@@ -126,7 +126,7 @@ impl FontSystemState {
         Ok(())
     }
 
-    fn load_family(&mut self, name: &str) -> anyhow::Result<Vec<FontId>> {
+    fn load_family(&mut self, name: &str, features: &Features) -> anyhow::Result<Vec<FontId>> {
         let mut font_ids = Vec::new();
 
         let family = self
@@ -503,7 +503,7 @@ mod tests {
     fn test_layout_str(_: &mut MutableAppContext) {
         // This is failing intermittently on CI and we don't have time to figure it out
         let fonts = FontSystem::new();
-        let menlo = fonts.load_family("Menlo").unwrap();
+        let menlo = fonts.load_family("Menlo", &Default::default()).unwrap();
         let menlo_regular = RunStyle {
             font_id: fonts.select_font(&menlo, &Properties::new()).unwrap(),
             color: Default::default(),
@@ -544,13 +544,13 @@ mod tests {
     #[test]
     fn test_glyph_offsets() -> anyhow::Result<()> {
         let fonts = FontSystem::new();
-        let zapfino = fonts.load_family("Zapfino")?;
+        let zapfino = fonts.load_family("Zapfino", &Default::default())?;
         let zapfino_regular = RunStyle {
             font_id: fonts.select_font(&zapfino, &Properties::new())?,
             color: Default::default(),
             underline: Default::default(),
         };
-        let menlo = fonts.load_family("Menlo")?;
+        let menlo = fonts.load_family("Menlo", &Default::default())?;
         let menlo_regular = RunStyle {
             font_id: fonts.select_font(&menlo, &Properties::new())?,
             color: Default::default(),
@@ -584,7 +584,7 @@ mod tests {
         use std::{fs::File, io::BufWriter, path::Path};
 
         let fonts = FontSystem::new();
-        let font_ids = fonts.load_family("Fira Code").unwrap();
+        let font_ids = fonts.load_family("Fira Code", &Default::default()).unwrap();
         let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
         let glyph_id = fonts.glyph_for_char(font_id, 'G').unwrap();
 
@@ -618,7 +618,7 @@ mod tests {
     #[test]
     fn test_wrap_line() {
         let fonts = FontSystem::new();
-        let font_ids = fonts.load_family("Helvetica").unwrap();
+        let font_ids = fonts.load_family("Helvetica", &Default::default()).unwrap();
         let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
 
         let line = "one two three four five\n";
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn test_layout_line_bom_char() {
         let fonts = FontSystem::new();
-        let font_ids = fonts.load_family("Helvetica").unwrap();
+        let font_ids = fonts.load_family("Helvetica", &Default::default()).unwrap();
         let style = RunStyle {
             font_id: fonts.select_font(&font_ids, &Default::default()).unwrap(),
             color: Default::default(),
