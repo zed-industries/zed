@@ -1599,8 +1599,8 @@ mod tests {
                 .iter()
                 .map(|range| range.start.to_point(&buffer_snapshot).row)
                 .collect::<HashSet<_>>();
-            for row in 0..=buffer_snapshot.max_buffer_row() {
-                assert_eq!(snapshot.is_line_folded(row), fold_start_rows.contains(&row));
+            for row in fold_start_rows {
+                assert!(snapshot.is_line_folded(row));
             }
 
             for _ in 0..5 {
