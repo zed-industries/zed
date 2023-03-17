@@ -1479,15 +1479,11 @@ impl MutableAppContext {
         if let Some(focused_view_id) = self.focused_view_id(window_id) {
             let dispatch_path = self
                 .ancestors(window_id, focused_view_id)
-                .map(|view_id| {
-                    (
-                        view_id,
-                        self.cx
-                            .views
-                            .get(&(window_id, view_id))
-                            .unwrap()
-                            .keymap_context(self.as_ref()),
-                    )
+                .filter_map(|view_id| {
+                    self.cx
+                        .views
+                        .get(&(window_id, view_id))
+                        .map(|view| (view_id, view.keymap_context(self.as_ref())))
                 })
                 .collect();
 
