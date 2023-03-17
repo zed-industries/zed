@@ -5,7 +5,8 @@
     "buffer_font_family": "Zed Mono",
     // The OpenType features to enable for text in the editor.
     "buffer_font_features": {
-        "calt": true
+        // Disable ligatures:
+        // "calt": false
     },
     // The default font size for text in the editor
     "buffer_font_size": 15,
