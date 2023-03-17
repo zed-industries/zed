@@ -20,7 +20,7 @@
     // Whether to pop the completions menu while typing in an editor without
     // explicitly requesting it.
     "show_completions_on_input": true,
-    // Whether the screen sharing icon is showed in the os status bar.
+    // Whether the screen sharing icon is shown in the os status bar.
     "show_call_status_icon": true,
     // Whether to use language servers to provide code intelligence.
     "enable_language_server": true,
