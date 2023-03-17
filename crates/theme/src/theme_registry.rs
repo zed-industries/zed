@@ -2,6 +2,7 @@ use crate::{Theme, ThemeMeta};
 use anyhow::{Context, Result};
 use gpui::{fonts, AssetSource, FontCache};
 use parking_lot::Mutex;
+use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
@@ -56,12 +57,16 @@ impl ThemeRegistry {
             .with_context(|| format!("failed to load theme file {}", asset_path))?;
 
         // Allocate into the heap directly, the Theme struct is too large to fit in the stack.
-        let mut theme: Arc<Theme> = fonts::with_font_cache(self.font_cache.clone(), || {
-            serde_path_to_error::deserialize(&mut serde_json::Deserializer::from_slice(&theme_json))
+        let mut theme = fonts::with_font_cache(self.font_cache.clone(), || {
+            let mut theme = Box::new(Theme::default());
+            let mut deserializer = serde_json::Deserializer::from_slice(&theme_json);
+            let result = Theme::deserialize_in_place(&mut deserializer, &mut theme);
+            result.map(|_| theme)
         })?;
 
         // Reset name to be the file path, so that we can use it to access the stored themes
-        Arc::get_mut(&mut theme).unwrap().meta.name = name.into();
+        theme.meta.name = name.into();
+        let theme: Arc<Theme> = theme.into();
         self.themes.lock().insert(name.to_string(), theme.clone());
         Ok(theme)
     }

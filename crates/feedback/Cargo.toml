@@ -25,6 +25,7 @@ postage = { version = "0.4", features = ["futures-traits"] }
 project = { path = "../project" }
 search = { path = "../search" }
 serde = { version = "1.0", features = ["derive", "rc"] }
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 settings = { path = "../settings" }
 sysinfo = "0.27.1"
 theme = { path = "../theme" }

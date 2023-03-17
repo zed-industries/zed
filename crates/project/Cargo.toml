@@ -49,6 +49,7 @@ pulldown-cmark = { version = "0.9.1", default-features = false }
 rand = "0.8.3"
 regex = "1.5"
 serde = { version = "1.0", features = ["derive", "rc"] }
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.10"
 similar = "1.3"
