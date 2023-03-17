@@ -6779,7 +6779,6 @@ fn build_style(
             text: TextStyle {
                 color: settings.theme.editor.text_color,
                 font_family_name,
-                font_features: settings.buffer_font_features.clone(),
                 font_family_id,
                 font_id,
                 font_size,

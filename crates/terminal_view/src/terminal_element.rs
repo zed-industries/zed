@@ -537,7 +537,6 @@ impl TerminalElement {
             color: settings.theme.editor.text_color,
             font_family_id: family_id,
             font_family_name: font_cache.family_name(family_id).unwrap(),
-            font_features: font_features.clone(),
             font_id,
             font_size,
             font_properties: Default::default(),
