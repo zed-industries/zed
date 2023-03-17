@@ -1,3 +1,5 @@
+mod open_type;
+
 use crate::{
     fonts::{Features, FontId, GlyphId, Metrics, Properties},
     geometry::{
@@ -14,19 +16,29 @@ use core_foundation::{
     array::CFIndex,
     attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
     base::{CFRange, TCFType},
+    number::CFNumber,
     string::CFString,
 };
 use core_graphics::{
     base::{kCGImageAlphaPremultipliedLast, CGGlyph},
     color_space::CGColorSpace,
     context::CGContext,
+    geometry::CGAffineTransform,
 };
-use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
+use core_text::{
+    font::{CTFont, CTFontRef},
+    font_descriptor::{
+        CTFontDescriptor, CTFontDescriptorCreateCopyWithFeature, CTFontDescriptorRef,
+    },
+    line::CTLine,
+    string_attributes::kCTFontAttributeName,
+};
 use font_kit::{
-    handle::Handle, hinting::HintingOptions, source::SystemSource, sources::mem::MemSource,
+    font::Font, handle::Handle, hinting::HintingOptions, source::SystemSource,
+    sources::mem::MemSource,
 };
 use parking_lot::RwLock;
-use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
+use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, ptr, sync::Arc};
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -134,7 +146,17 @@ impl FontSystemState {
             .select_family_by_name(name)
             .or_else(|_| self.system_source.select_family_by_name(name))?;
         for font in family.fonts() {
-            let font = font.load()?;
+            let mut font = font.load()?;
+
+            if let Some(calt) = features.calt {
+                let value = if calt {
+                    open_type::kContextualAlternatesOnSelector
+                } else {
+                    open_type::kContextualAlternatesOffSelector
+                };
+                font = toggle_open_type_feature(&font, open_type::kContextualAlternatesType, value);
+            }
+
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
             let postscript_name = font.postscript_name().unwrap();
@@ -490,6 +512,33 @@ extern "C" {
         start_index: CFIndex,
         width: f64,
     ) -> CFIndex;
+
+    fn CTFontCreateCopyWithAttributes(
+        font: CTFontRef,
+        size: CGFloat,
+        matrix: *const CGAffineTransform,
+        attributes: CTFontDescriptorRef,
+    ) -> CTFontRef;
+}
+
+fn toggle_open_type_feature(font: &Font, type_identifier: i32, selector_identifier: i32) -> Font {
+    let native_font = font.native_font();
+    unsafe {
+        let new_descriptor = CTFontDescriptorCreateCopyWithFeature(
+            native_font.copy_descriptor().as_concrete_TypeRef(),
+            CFNumber::from(type_identifier).as_concrete_TypeRef(),
+            CFNumber::from(selector_identifier).as_concrete_TypeRef(),
+        );
+        let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
+        let new_font = CTFontCreateCopyWithAttributes(
+            font.native_font().as_concrete_TypeRef(),
+            0.0,
+            ptr::null(),
+            new_descriptor.as_concrete_TypeRef(),
+        );
+        let new_font = CTFont::wrap_under_create_rule(new_font);
+        Font::from_native_font(new_font)
+    }
 }
 
 #[cfg(test)]
