@@ -437,7 +437,7 @@ async fn load_login_shell_environment() -> Result<()> {
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
     let output = Command::new(&shell)
-        .args(["-lic", &format!("echo {marker} && /usr/bin/env")])
+        .args(["-lic", &format!("echo {marker} && /usr/bin/env -0")])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
@@ -449,7 +449,7 @@ async fn load_login_shell_environment() -> Result<()> {
 
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
-        for line in env_output.lines() {
+        for line in env_output.split_terminator('\0') {
             if let Some(separator_index) = line.find('=') {
                 let key = &line[..separator_index];
                 let value = &line[separator_index + 1..];
