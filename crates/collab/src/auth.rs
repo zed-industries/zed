@@ -97,7 +97,7 @@ fn hash_access_token(token: &str) -> Result<String> {
     let params = if cfg!(debug_assertions) {
         scrypt::Params::new(1, 1, 1).unwrap()
     } else {
-        scrypt::Params::recommended()
+        scrypt::Params::new(14, 8, 1).unwrap()
     };
 
     Ok(Scrypt
