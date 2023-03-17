@@ -8,13 +8,24 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
+use lazy_static::lazy_static;
+use prometheus::{exponential_buckets, register_histogram, Histogram};
 use rand::thread_rng;
 use scrypt::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Scrypt,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
+
+lazy_static! {
+    static ref METRIC_ACCESS_TOKEN_HASHING_TIME: Histogram = register_histogram!(
+        "access_token_hashing_time",
+        "time spent hashing access tokens",
+        exponential_buckets(10.0, 2.0, 10).unwrap(),
+    )
+    .unwrap();
+}
 
 pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
     let mut auth_header = req
@@ -129,7 +140,12 @@ pub async fn verify_access_token(token: &str, user_id: UserId, db: &Arc<Database
     }
 
     let db_hash = PasswordHash::new(&db_token.hash).map_err(anyhow::Error::new)?;
-    Ok(Scrypt
+    let t0 = Instant::now();
+    let is_valid = Scrypt
         .verify_password(token.token.as_bytes(), &db_hash)
-        .is_ok())
+        .is_ok();
+    let duration = t0.elapsed();
+    log::info!("hashed access token in {:?}", duration);
+    METRIC_ACCESS_TOKEN_HASHING_TIME.observe(duration.as_millis() as f64);
+    Ok(is_valid)
 }
