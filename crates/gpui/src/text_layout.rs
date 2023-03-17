@@ -663,7 +663,9 @@ mod tests {
     fn test_wrap_line(cx: &mut crate::MutableAppContext) {
         let font_cache = cx.font_cache().clone();
         let font_system = cx.platform().fonts();
-        let family = font_cache.load_family(&["Courier"]).unwrap();
+        let family = font_cache
+            .load_family(&["Courier"], &Default::default())
+            .unwrap();
         let font_id = font_cache.select_font(family, &Default::default()).unwrap();
 
         let mut wrapper = LineWrapper::new(font_id, 16., font_system);
@@ -725,7 +727,9 @@ mod tests {
         let font_system = cx.platform().fonts();
         let text_layout_cache = TextLayoutCache::new(font_system.clone());
 
-        let family = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family = font_cache
+            .load_family(&["Helvetica"], &Default::default())
+            .unwrap();
         let font_id = font_cache.select_font(family, &Default::default()).unwrap();
         let normal = RunStyle {
             font_id,

@@ -25,7 +25,10 @@ pub fn marked_display_snapshot(
 ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
     let (unmarked_text, markers) = marked_text_offsets(text);
 
-    let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+    let family_id = cx
+        .font_cache()
+        .load_family(&["Helvetica"], &Default::default())
+        .unwrap();
     let font_id = cx
         .font_cache()
         .select_font(family_id, &Default::default())

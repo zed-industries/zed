@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 plugin = { path = "../../crates/plugin" }
 serde = { version = "1.0", features = ["derive"] }
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = "1.0"
 
 [lib]

@@ -47,6 +47,7 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = { version = "0.8.3", optional = true }
 regex = "1.5"
 serde = { version = "1.0", features = ["derive", "rc"] }
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }

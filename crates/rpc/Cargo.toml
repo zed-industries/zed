@@ -27,6 +27,7 @@ prost = "0.8"
 rand = "0.8"
 rsa = "0.4"
 serde = { version = "1.0", features = ["derive", "rc"] }
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 smol-timeout = "0.6"
 tracing = { version = "0.1.34", features = ["log"] }
 zstd = "0.11"

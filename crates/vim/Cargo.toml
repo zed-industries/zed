@@ -13,6 +13,7 @@ neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 itertools = "0.10"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 

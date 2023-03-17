@@ -25,6 +25,7 @@ json_comments = "0.2"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 schemars = "0.8"
 serde = { workspace = true }
+serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { workspace = true }
 serde_path_to_error = "0.1.4"
 toml = "0.5"
