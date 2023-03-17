@@ -5772,7 +5772,6 @@ impl Editor {
 
     pub fn fold_at(&mut self, fold_at: &FoldAt, cx: &mut ViewContext<Self>) {
         let buffer_row = fold_at.buffer_row;
-
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(fold_range) = display_map.foldable_range(buffer_row) {

@@ -2194,7 +2194,11 @@ impl MultiBufferSnapshot {
 
     pub fn buffer_line_for_row(&self, row: u32) -> Option<(&BufferSnapshot, Range<Point>)> {
         let mut cursor = self.excerpts.cursor::<Point>();
-        cursor.seek(&Point::new(row, 0), Bias::Right, &());
+        let point = Point::new(row, 0);
+        cursor.seek(&point, Bias::Right, &());
+        if cursor.item().is_none() && *cursor.start() == point {
+            cursor.prev(&());
+        }
         if let Some(excerpt) = cursor.item() {
             let overshoot = row - cursor.start().row;
             let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);

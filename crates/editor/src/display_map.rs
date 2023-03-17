@@ -641,7 +641,7 @@ impl DisplaySnapshot {
             return false;
         }
 
-        for next_row in (buffer_row + 1)..max_row {
+        for next_row in (buffer_row + 1)..=max_row {
             let (next_indent_size, next_line_is_blank) = self.line_indent_for_buffer_row(next_row);
             if next_indent_size > indent_size {
                 return true;
