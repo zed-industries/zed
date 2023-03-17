@@ -30,6 +30,7 @@ pub struct Features {
 pub struct TextStyle {
     pub color: Color,
     pub font_family_name: Arc<str>,
+    pub font_features: Features,
     pub font_family_id: FamilyId,
     pub font_id: FontId,
     pub font_size: f32,
@@ -124,6 +125,7 @@ impl TextStyle {
         Ok(Self {
             color,
             font_family_name,
+            font_features,
             font_family_id,
             font_id,
             font_size,
@@ -270,6 +272,7 @@ impl Default for TextStyle {
             Self {
                 color: Default::default(),
                 font_family_name,
+                font_features: Default::default(),
                 font_family_id,
                 font_id,
                 font_size: 14.,
@@ -351,6 +354,7 @@ impl ToJson for TextStyle {
         json!({
             "color": self.color.to_json(),
             "font_family": self.font_family_name.as_ref(),
+            "font_features": serde_json::to_value(&self.font_features).unwrap(),
             "font_properties": self.font_properties.to_json(),
         })
     }

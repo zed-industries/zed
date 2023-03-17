@@ -505,18 +505,21 @@ impl TerminalElement {
 
     ///Configures a text style from the current settings.
     pub fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
-        // TODO allow font features
-        // Pull the font family from settings properly overriding
-        let family_id = settings
+        let font_family_name = settings
             .terminal_overrides
             .font_family
             .as_ref()
             .or(settings.terminal_defaults.font_family.as_ref())
-            .and_then(|family_name| {
-                font_cache
-                    .load_family(&[family_name], Default::default())
-                    .log_err()
-            })
+            .unwrap_or(&settings.buffer_font_family_name);
+        let font_features = settings
+            .terminal_overrides
+            .font_features
+            .or(settings.terminal_defaults.font_features)
+            .unwrap_or(settings.buffer_font_features);
+
+        let family_id = font_cache
+            .load_family(&[font_family_name], font_features)
+            .log_err()
             .unwrap_or(settings.buffer_font_family);
 
         let font_size = settings
@@ -533,6 +536,7 @@ impl TerminalElement {
             color: settings.theme.editor.text_color,
             font_family_id: family_id,
             font_family_name: font_cache.family_name(family_id).unwrap(),
+            font_features,
             font_id,
             font_size,
             font_properties: Default::default(),

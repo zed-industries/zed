@@ -227,6 +227,7 @@ pub struct TerminalSettings {
     pub working_directory: Option<WorkingDirectory>,
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
+    pub font_features: Option<fonts::Features>,
     pub env: Option<HashMap<String, String>>,
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,

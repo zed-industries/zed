@@ -6769,6 +6769,7 @@ fn build_style(
         }
     } else {
         let font_family_id = settings.buffer_font_family;
+        let font_features = settings.buffer_font_features;
         let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
         let font_properties = Default::default();
         let font_id = font_cache
@@ -6779,6 +6780,7 @@ fn build_style(
             text: TextStyle {
                 color: settings.theme.editor.text_color,
                 font_family_name,
+                font_features,
                 font_family_id,
                 font_id,
                 font_size,
