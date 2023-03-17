@@ -58,7 +58,7 @@ impl gpui::Element for TextElement {
         let font_size = 12.;
         let family = cx
             .font_cache
-            .load_family(&["SF Pro Display"], Default::default())
+            .load_family(&["SF Pro Display"], &Default::default())
             .unwrap();
         let normal = RunStyle {
             font_id: cx

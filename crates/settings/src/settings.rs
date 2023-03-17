@@ -406,7 +406,7 @@ impl Settings {
             buffer_font_family: font_cache
                 .load_family(
                     &[defaults.buffer_font_family.as_ref().unwrap()],
-                    buffer_font_features,
+                    &buffer_font_features,
                 )
                 .unwrap(),
             buffer_font_family_name: defaults.buffer_font_family.unwrap(),
@@ -473,7 +473,7 @@ impl Settings {
         }
         if family_changed {
             if let Some(id) = font_cache
-                .load_family(&[&self.buffer_font_family_name], self.buffer_font_features)
+                .load_family(&[&self.buffer_font_family_name], &self.buffer_font_features)
                 .log_err()
             {
                 self.buffer_font_family = id;
@@ -503,14 +503,6 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
-
-        // Ensure terminal font is loaded, so we can request it in terminal_element layout
-        if let Some(terminal_font) = &data.terminal.font_family {
-            // TODO: enable font features for the terminal as well.
-            font_cache
-                .load_family(&[terminal_font], Default::default())
-                .log_err();
-        }
 
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
@@ -647,7 +639,7 @@ impl Settings {
             buffer_font_features: Default::default(),
             buffer_font_family: cx
                 .font_cache()
-                .load_family(&["Monaco"], Default::default())
+                .load_family(&["Monaco"], &Default::default())
                 .unwrap(),
             buffer_font_size: 14.,
             active_pane_magnification: 1.,

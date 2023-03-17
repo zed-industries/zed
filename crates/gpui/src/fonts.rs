@@ -21,7 +21,7 @@ pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Features {
     pub calt: Option<bool>,
     pub case: Option<bool>,
@@ -155,7 +155,7 @@ impl TextStyle {
         font_cache: &FontCache,
     ) -> Result<Self> {
         let font_family_name = font_family_name.into();
-        let font_family_id = font_cache.load_family(&[&font_family_name], font_features)?;
+        let font_family_id = font_cache.load_family(&[&font_family_name], &font_features)?;
         let font_id = font_cache.select_font(font_family_id, &font_properties)?;
         Ok(Self {
             color,
@@ -299,7 +299,7 @@ impl Default for TextStyle {
 
             let font_family_name = Arc::from("Courier");
             let font_family_id = font_cache
-                .load_family(&[&font_family_name], Default::default())
+                .load_family(&[&font_family_name], &Default::default())
                 .unwrap();
             let font_id = font_cache
                 .select_font(font_family_id, &Default::default())

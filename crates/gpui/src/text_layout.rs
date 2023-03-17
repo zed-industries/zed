@@ -664,7 +664,7 @@ mod tests {
         let font_cache = cx.font_cache().clone();
         let font_system = cx.platform().fonts();
         let family = font_cache
-            .load_family(&["Courier"], Default::default())
+            .load_family(&["Courier"], &Default::default())
             .unwrap();
         let font_id = font_cache.select_font(family, &Default::default()).unwrap();
 
@@ -728,7 +728,7 @@ mod tests {
         let text_layout_cache = TextLayoutCache::new(font_system.clone());
 
         let family = font_cache
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = font_cache.select_font(family, &Default::default()).unwrap();
         let normal = RunStyle {

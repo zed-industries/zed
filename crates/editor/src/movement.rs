@@ -589,7 +589,7 @@ mod tests {
         cx.set_global(Settings::test(cx));
         let family_id = cx
             .font_cache()
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = cx
             .font_cache()

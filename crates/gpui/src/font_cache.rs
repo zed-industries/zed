@@ -59,21 +59,21 @@ impl FontCache {
             .map(|family| family.name.clone())
     }
 
-    pub fn load_family(&self, names: &[&str], features: Features) -> Result<FamilyId> {
+    pub fn load_family(&self, names: &[&str], features: &Features) -> Result<FamilyId> {
         for name in names {
             let state = self.0.upgradable_read();
 
             if let Some(ix) = state
                 .families
                 .iter()
-                .position(|f| f.name.as_ref() == *name && f.font_features == features)
+                .position(|f| f.name.as_ref() == *name && f.font_features == *features)
             {
                 return Ok(FamilyId(ix));
             }
 
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
 
-            if let Ok(font_ids) = state.fonts.load_family(name, &features) {
+            if let Ok(font_ids) = state.fonts.load_family(name, features) {
                 if font_ids.is_empty() {
                     continue;
                 }
@@ -87,7 +87,7 @@ impl FontCache {
 
                 state.families.push(Family {
                     name: Arc::from(*name),
-                    font_features: features,
+                    font_features: features.clone(),
                     font_ids,
                 });
                 return Ok(family_id);
@@ -263,7 +263,7 @@ mod tests {
         let arial = fonts
             .load_family(
                 &["Arial"],
-                Features {
+                &Features {
                     calt: Some(false),
                     ..Default::default()
                 },
@@ -283,7 +283,7 @@ mod tests {
         let arial_with_calt = fonts
             .load_family(
                 &["Arial"],
-                Features {
+                &Features {
                     calt: Some(true),
                     ..Default::default()
                 },

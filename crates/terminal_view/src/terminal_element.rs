@@ -514,11 +514,12 @@ impl TerminalElement {
         let font_features = settings
             .terminal_overrides
             .font_features
-            .or(settings.terminal_defaults.font_features)
-            .unwrap_or(settings.buffer_font_features);
+            .as_ref()
+            .or(settings.terminal_defaults.font_features.as_ref())
+            .unwrap_or(&settings.buffer_font_features);
 
         let family_id = font_cache
-            .load_family(&[font_family_name], font_features)
+            .load_family(&[font_family_name], &font_features)
             .log_err()
             .unwrap_or(settings.buffer_font_family);
 
@@ -536,7 +537,7 @@ impl TerminalElement {
             color: settings.theme.editor.text_color,
             font_family_id: family_id,
             font_family_name: font_cache.family_name(family_id).unwrap(),
-            font_features,
+            font_features: font_features.clone(),
             font_id,
             font_size,
             font_properties: Default::default(),

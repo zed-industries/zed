@@ -1017,7 +1017,7 @@ mod tests {
 
         let family_id = cx
             .font_cache()
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = cx
             .font_cache()
@@ -1190,7 +1190,7 @@ mod tests {
 
         let family_id = cx
             .font_cache()
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = cx
             .font_cache()
@@ -1249,7 +1249,7 @@ mod tests {
         let tab_size = 1.try_into().unwrap();
         let family_id = cx
             .font_cache()
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = cx
             .font_cache()

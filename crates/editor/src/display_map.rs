@@ -786,7 +786,7 @@ pub mod tests {
         let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
         let family_id = font_cache
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -1045,7 +1045,7 @@ pub mod tests {
         let font_cache = cx.font_cache();
 
         let family_id = font_cache
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -1137,7 +1137,7 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple(&text, cx);
         let family_id = cx
             .font_cache()
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = cx
             .font_cache()
@@ -1222,7 +1222,7 @@ pub mod tests {
 
         let font_cache = cx.font_cache();
         let family_id = font_cache
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -1312,7 +1312,7 @@ pub mod tests {
         let font_cache = cx.font_cache();
 
         let family_id = font_cache
-            .load_family(&["Courier"], Default::default())
+            .load_family(&["Courier"], &Default::default())
             .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -1386,7 +1386,7 @@ pub mod tests {
 
         let font_cache = cx.font_cache();
         let family_id = font_cache
-            .load_family(&["Courier"], Default::default())
+            .load_family(&["Courier"], &Default::default())
             .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -1504,7 +1504,7 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_cache = cx.font_cache();
         let family_id = font_cache
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -1564,7 +1564,7 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_cache = cx.font_cache();
         let family_id = font_cache
-            .load_family(&["Helvetica"], Default::default())
+            .load_family(&["Helvetica"], &Default::default())
             .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
