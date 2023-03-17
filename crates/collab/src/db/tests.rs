@@ -177,30 +177,63 @@ test_both_dbs!(
             .unwrap()
             .user_id;
 
-        db.create_access_token_hash(user, "h1", 3).await.unwrap();
-        db.create_access_token_hash(user, "h2", 3).await.unwrap();
+        let token_1 = db.create_access_token(user, "h1", 2).await.unwrap();
+        let token_2 = db.create_access_token(user, "h2", 2).await.unwrap();
         assert_eq!(
-            db.get_access_token_hashes(user).await.unwrap(),
-            &["h2".to_string(), "h1".to_string()]
+            db.get_access_token(token_1).await.unwrap(),
+            access_token::Model {
+                id: token_1,
+                user_id: user,
+                hash: "h1".into(),
+            }
+        );
+        assert_eq!(
+            db.get_access_token(token_2).await.unwrap(),
+            access_token::Model {
+                id: token_2,
+                user_id: user,
+                hash: "h2".into()
+            }
         );
 
-        db.create_access_token_hash(user, "h3", 3).await.unwrap();
+        let token_3 = db.create_access_token(user, "h3", 2).await.unwrap();
         assert_eq!(
-            db.get_access_token_hashes(user).await.unwrap(),
-            &["h3".to_string(), "h2".to_string(), "h1".to_string(),]
+            db.get_access_token(token_3).await.unwrap(),
+            access_token::Model {
+                id: token_3,
+                user_id: user,
+                hash: "h3".into()
+            }
         );
+        assert_eq!(
+            db.get_access_token(token_2).await.unwrap(),
+            access_token::Model {
+                id: token_2,
+                user_id: user,
+                hash: "h2".into()
+            }
+        );
+        assert!(db.get_access_token(token_1).await.is_err());
 
-        db.create_access_token_hash(user, "h4", 3).await.unwrap();
+        let token_4 = db.create_access_token(user, "h4", 2).await.unwrap();
         assert_eq!(
-            db.get_access_token_hashes(user).await.unwrap(),
-            &["h4".to_string(), "h3".to_string(), "h2".to_string(),]
+            db.get_access_token(token_4).await.unwrap(),
+            access_token::Model {
+                id: token_4,
+                user_id: user,
+                hash: "h4".into()
+            }
         );
-
-        db.create_access_token_hash(user, "h5", 3).await.unwrap();
         assert_eq!(
-            db.get_access_token_hashes(user).await.unwrap(),
-            &["h5".to_string(), "h4".to_string(), "h3".to_string()]
+            db.get_access_token(token_3).await.unwrap(),
+            access_token::Model {
+                id: token_3,
+                user_id: user,
+                hash: "h3".into()
+            }
         );
+        assert!(db.get_access_token(token_2).await.is_err());
+        assert!(db.get_access_token(token_1).await.is_err());
     }
 );
 

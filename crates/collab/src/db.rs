@@ -2746,16 +2746,16 @@ impl Database {
 
     // access tokens
 
-    pub async fn create_access_token_hash(
+    pub async fn create_access_token(
         &self,
         user_id: UserId,
         access_token_hash: &str,
         max_access_token_count: usize,
-    ) -> Result<()> {
+    ) -> Result<AccessTokenId> {
         self.transaction(|tx| async {
             let tx = tx;
 
-            access_token::ActiveModel {
+            let token = access_token::ActiveModel {
                 user_id: ActiveValue::set(user_id),
                 hash: ActiveValue::set(access_token_hash.into()),
                 ..Default::default()
@@ -2778,26 +2778,20 @@ impl Database {
                 )
                 .exec(&*tx)
                 .await?;
-            Ok(())
+            Ok(token.id)
         })
         .await
     }
 
-    pub async fn get_access_token_hashes(&self, user_id: UserId) -> Result<Vec<String>> {
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-        enum QueryAs {
-            Hash,
-        }
-
+    pub async fn get_access_token(
+        &self,
+        access_token_id: AccessTokenId,
+    ) -> Result<access_token::Model> {
         self.transaction(|tx| async move {
-            Ok(access_token::Entity::find()
-                .select_only()
-                .column(access_token::Column::Hash)
-                .filter(access_token::Column::UserId.eq(user_id))
-                .order_by_desc(access_token::Column::Id)
-                .into_values::<_, QueryAs>()
-                .all(&*tx)
-                .await?)
+            Ok(access_token::Entity::find_by_id(access_token_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such access token"))?)
         })
         .await
     }
