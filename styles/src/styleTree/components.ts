@@ -97,7 +97,12 @@ export interface TextProperties {
     size?: keyof typeof fontSizes
     weight?: FontWeight
     underline?: boolean
-    color?: string
+    color?: string,
+    features?: TextFeatures,
+}
+
+interface TextFeatures {
+    calt?: boolean
 }
 
 export function text(

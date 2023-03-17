@@ -78,6 +78,8 @@ thread_local! {
 struct TextStyleJson {
     color: Color,
     family: String,
+    #[serde(default)]
+    features: Features,
     weight: Option<WeightJson>,
     size: f32,
     #[serde(default)]
@@ -184,7 +186,7 @@ impl TextStyle {
                     json.family,
                     json.size,
                     font_properties,
-                    Default::default(),
+                    json.features,
                     underline_from_json(json.underline),
                     json.color,
                     font_cache,
