@@ -50,21 +50,23 @@ impl View for ActiveBufferLanguage {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        if let Some(active_language) = self.active_language.as_ref() {
-            MouseEventHandler::<Self>::new(0, cx, |state, cx| {
-                let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-                let style = theme.active_language.style_for(state, false);
-                Label::new(active_language.to_string(), style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-                    .boxed()
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Toggle))
-            .boxed()
+        let active_language = if let Some(active_language) = self.active_language.as_ref() {
+            active_language.to_string()
         } else {
-            Empty::new().boxed()
-        }
+            "Unkown".to_string()
+        };
+
+        MouseEventHandler::<Self>::new(0, cx, |state, cx| {
+            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
+            let style = theme.active_language.style_for(state, false);
+            Label::new(active_language, style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Toggle))
+        .boxed()
     }
 }
 
