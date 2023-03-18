@@ -24,6 +24,8 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+use self::tab_map::TabSnapshot;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
     Folded,
@@ -249,7 +251,7 @@ pub struct DisplaySnapshot {
     folds_snapshot: fold_map::FoldSnapshot,
     tabs_snapshot: tab_map::TabSnapshot,
     wraps_snapshot: wrap_map::WrapSnapshot,
-    pub blocks_snapshot: block_map::BlockSnapshot,
+    blocks_snapshot: block_map::BlockSnapshot,
     text_highlights: TextHighlights,
     clip_at_line_ends: bool,
 }
@@ -599,17 +601,22 @@ impl DisplaySnapshot {
         let chars = buffer.chars_at(Point::new(range.start.row, 0));
 
         let mut is_blank = false;
-        let mut indent_size = 0;
-        for c in chars {
-            // TODO: Handle tab expansion here
-            if c == ' ' {
-                indent_size += 1;
-            } else {
-                is_blank = c == '\n';
-                break;
-            }
-        }
-        (indent_size, is_blank)
+        let indent_size = TabSnapshot::expand_tabs(
+            chars.take_while(|c| {
+                if *c == ' ' || *c == '\t' {
+                    true
+                } else {
+                    if *c == '\n' {
+                        is_blank = true;
+                    }
+                    false
+                }
+            }),
+            buffer.line_len(buffer_row) as usize, // Never collapse
+            self.tabs_snapshot.tab_size,
+        );
+
+        (indent_size as u32, is_blank)
     }
 
     pub fn line_len(&self, row: u32) -> u32 {

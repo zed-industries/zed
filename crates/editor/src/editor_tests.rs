@@ -679,7 +679,7 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
             "
             .unindent(),
         );
-        dbg!("SECOND FOLD");
+
         view.fold(&Fold, cx);
         assert_eq!(
             view.display_text(cx),
