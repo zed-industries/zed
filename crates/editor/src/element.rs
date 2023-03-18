@@ -574,6 +574,20 @@ impl EditorElement {
             }
         }
 
+        for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
+            if let Some(indicator) = fold_indicator.as_mut() {
+                let mut x = bounds.width() - layout.gutter_padding;
+                let mut y = ix as f32 * line_height - scroll_top;
+
+                x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
+                y += (line_height - indicator.size().y()) / 2.;
+
+                let indicator_origin = bounds.origin() + vec2f(x, y);
+
+                indicator.paint(indicator_origin, visible_bounds, cx);
+            }
+        }
+
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
             let mut x = 0.;
             let mut y = *row as f32 * line_height - scroll_top;
@@ -581,19 +595,6 @@ impl EditorElement {
             y += (line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
-
-        layout.fold_indicators.as_mut().map(|fold_indicators| {
-            for (line, fold_indicator) in fold_indicators.iter_mut() {
-                let mut x = bounds.width() - layout.gutter_padding;
-                let mut y = *line as f32 * line_height - scroll_top;
-
-                x += ((layout.gutter_padding + layout.gutter_margin) - fold_indicator.size().x())
-                    / 2.;
-                y += (line_height - fold_indicator.size().y()) / 2.;
-
-                fold_indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
-            }
-        });
     }
 
     fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
@@ -739,10 +740,15 @@ impl EditorElement {
                 });
 
                 let display_row = range.start.row();
+
+                let buffer_row = DisplayPoint::new(display_row, 0)
+                    .to_point(&layout.position_map.snapshot.display_snapshot)
+                    .row;
+
                 cx.scene.push_mouse_region(
                     MouseRegion::new::<FoldMarkers>(self.view.id(), *id as usize, bound)
                         .on_click(MouseButton::Left, move |_, cx| {
-                            cx.dispatch_action(UnfoldAt { display_row })
+                            cx.dispatch_action(UnfoldAt { buffer_row })
                         })
                         .with_notify_on_hover(true)
                         .with_notify_on_click(true),
@@ -1181,24 +1187,6 @@ impl EditorElement {
             .width()
     }
 
-    fn get_fold_indicators(
-        &self,
-        is_singleton: bool,
-        display_rows: Range<u32>,
-        snapshot: &EditorSnapshot,
-    ) -> Option<Vec<(u32, FoldStatus)>> {
-        is_singleton.then(|| {
-            display_rows
-                .into_iter()
-                .filter_map(|display_row| {
-                    snapshot
-                        .fold_for_line(display_row)
-                        .map(|fold_status| (display_row, fold_status))
-                })
-                .collect()
-        })
-    }
-
     //Folds contained in a hunk are ignored apart from shrinking visual size
     //If a fold contains any hunks then that fold line is marked as modified
     fn layout_git_gutters(
@@ -1226,12 +1214,17 @@ impl EditorElement {
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
+        is_singleton: bool,
         snapshot: &EditorSnapshot,
         cx: &LayoutContext,
-    ) -> Vec<Option<text_layout::Line>> {
+    ) -> (
+        Vec<Option<text_layout::Line>>,
+        Vec<Option<(FoldStatus, BufferRow, bool)>>,
+    ) {
         let style = &self.style;
         let include_line_numbers = snapshot.mode == EditorMode::Full;
         let mut line_number_layouts = Vec::with_capacity(rows.len());
+        let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
         for (ix, row) in snapshot
             .buffer_rows(rows.start)
@@ -1239,10 +1232,10 @@ impl EditorElement {
             .enumerate()
         {
             let display_row = rows.start + ix as u32;
-            let color = if active_rows.contains_key(&display_row) {
-                style.line_number_active
+            let (active, color) = if active_rows.contains_key(&display_row) {
+                (true, style.line_number_active)
             } else {
-                style.line_number
+                (false, style.line_number)
             };
             if let Some(buffer_row) = row {
                 if include_line_numbers {
@@ -1260,13 +1253,23 @@ impl EditorElement {
                             },
                         )],
                     )));
+                    fold_statuses.push(
+                        is_singleton
+                            .then(|| {
+                                snapshot
+                                    .fold_for_line(buffer_row)
+                                    .map(|fold_status| (fold_status, buffer_row, active))
+                            })
+                            .flatten(),
+                    )
                 }
             } else {
+                fold_statuses.push(None);
                 line_number_layouts.push(None);
             }
         }
 
-        line_number_layouts
+        (line_number_layouts, fold_statuses)
     }
 
     fn layout_lines(
@@ -1797,12 +1800,15 @@ impl Element for EditorElement {
             })
             .collect();
 
-        let line_number_layouts =
-            self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
+        let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
+            start_row..end_row,
+            &active_rows,
+            is_singleton,
+            &snapshot,
+            cx,
+        );
 
         let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
-
-        let folds = self.get_fold_indicators(is_singleton, start_row..end_row, &snapshot);
 
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
@@ -1896,8 +1902,7 @@ impl Element for EditorElement {
             mode = view.mode;
 
             view.render_fold_indicators(
-                folds,
-                &active_rows,
+                fold_statuses,
                 &style,
                 view.gutter_hovered,
                 line_height,
@@ -1929,8 +1934,8 @@ impl Element for EditorElement {
             );
         }
 
-        fold_indicators.as_mut().map(|fold_indicators| {
-            for (_, indicator) in fold_indicators.iter_mut() {
+        for fold_indicator in fold_indicators.iter_mut() {
+            if let Some(indicator) = fold_indicator.as_mut() {
                 indicator.layout(
                     SizeConstraint::strict_along(
                         Axis::Vertical,
@@ -1939,7 +1944,7 @@ impl Element for EditorElement {
                     cx,
                 );
             }
-        });
+        }
 
         if let Some((_, hover_popovers)) = hover.as_mut() {
             for hover_popover in hover_popovers.iter_mut() {
@@ -2123,7 +2128,7 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
-    fold_indicators: Option<Vec<(u32, ElementBox)>>,
+    fold_indicators: Vec<Option<ElementBox>>,
 }
 
 pub struct PositionMap {
@@ -2524,7 +2529,9 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             let mut presenter = cx.build_presenter(window_id, 30., Default::default());
             let layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
-            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &layout_cx)
+            element
+                .layout_line_numbers(0..6, &Default::default(), false, &snapshot, &layout_cx)
+                .0
         });
         assert_eq!(layouts.len(), 6);
     }
