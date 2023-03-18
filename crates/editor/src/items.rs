@@ -538,11 +538,7 @@ impl Item for Editor {
                 let description = path.to_string_lossy();
                 Some(
                     Label::new(
-                        if description.len() > MAX_TAB_TITLE_LEN {
-                            description[..MAX_TAB_TITLE_LEN].to_string() + "…"
-                        } else {
-                            description.into()
-                        },
+                        util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN),
                         style.description.text.clone(),
                     )
                     .contained()
