@@ -3697,13 +3697,13 @@ mod tests {
 
             if rng.gen() {
                 log::info!(
-                    "Creating dir {:?}",
+                    "creating dir {:?}",
                     new_path.strip_prefix(root_path).unwrap()
                 );
                 fs.create_dir(&new_path).await.unwrap();
             } else {
                 log::info!(
-                    "Creating file {:?}",
+                    "creating file {:?}",
                     new_path.strip_prefix(root_path).unwrap()
                 );
                 fs.create_file(&new_path, Default::default()).await.unwrap();
@@ -3745,7 +3745,7 @@ mod tests {
                 .unwrap();
             }
             log::info!(
-                "Creating {:?} with contents:\n{}",
+                "creating gitignore {:?} with contents:\n{}",
                 ignore_path.strip_prefix(&root_path).unwrap(),
                 ignore_contents
             );
@@ -3789,7 +3789,7 @@ mod tests {
                 };
 
                 log::info!(
-                    "Renaming {:?} to {}{:?}",
+                    "renaming {:?} to {}{:?}",
                     old_path.strip_prefix(&root_path).unwrap(),
                     if overwrite_existing_dir {
                         "overwrite "
@@ -3810,13 +3810,13 @@ mod tests {
                 .unwrap();
             } else if fs.is_file(&old_path).await {
                 log::info!(
-                    "Deleting file {:?}",
+                    "deleting file {:?}",
                     old_path.strip_prefix(&root_path).unwrap()
                 );
                 fs.remove_file(old_path, Default::default()).await.unwrap();
             } else {
                 log::info!(
-                    "Deleting dir {:?}",
+                    "deleting dir {:?}",
                     old_path.strip_prefix(&root_path).unwrap()
                 );
                 fs.remove_dir(
