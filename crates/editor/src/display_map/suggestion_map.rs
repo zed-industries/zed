@@ -41,7 +41,7 @@ impl AddAssign for SuggestionOffset {
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct SuggestionPoint(pub Point);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Suggestion<T> {
     position: T,
     text: Rope,
@@ -84,23 +84,25 @@ impl SuggestionMap {
         let (_, edits) = self.sync(fold_snapshot, fold_edits);
         let mut snapshot = self.0.lock();
 
-        let old = if let Some(suggestion) = snapshot.suggestion.take() {
-            SuggestionOffset(suggestion.position.0)
-                ..SuggestionOffset(suggestion.position.0 + suggestion.text.len())
-        } else if let Some(new_suggestion) = new_suggestion.as_ref() {
-            SuggestionOffset(new_suggestion.position.0)..SuggestionOffset(new_suggestion.position.0)
-        } else {
-            return (snapshot.clone(), edits);
-        };
+        let mut patch = Patch::new(edits);
+        if let Some(suggestion) = snapshot.suggestion.take() {
+            patch = patch.compose([SuggestionEdit {
+                old: SuggestionOffset(suggestion.position.0)
+                    ..SuggestionOffset(suggestion.position.0 + suggestion.text.len()),
+                new: SuggestionOffset(suggestion.position.0)
+                    ..SuggestionOffset(suggestion.position.0),
+            }]);
+        }
 
-        let new = if let Some(suggestion) = new_suggestion.as_ref() {
-            SuggestionOffset(suggestion.position.0)
-                ..SuggestionOffset(suggestion.position.0 + suggestion.text.len())
-        } else {
-            old.start..old.start
-        };
+        if let Some(suggestion) = new_suggestion.as_ref() {
+            patch = patch.compose([SuggestionEdit {
+                old: SuggestionOffset(suggestion.position.0)
+                    ..SuggestionOffset(suggestion.position.0),
+                new: SuggestionOffset(suggestion.position.0)
+                    ..SuggestionOffset(suggestion.position.0 + suggestion.text.len()),
+            }]);
+        }
 
-        let patch = Patch::new(edits).compose([SuggestionEdit { old, new }]);
         snapshot.suggestion = new_suggestion;
         (snapshot.clone(), patch.into_inner())
     }
@@ -328,9 +330,11 @@ mod tests {
 
         let (mut fold_map, mut fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (suggestion_map, mut suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
-        let mut suggestion_edits = Vec::new();
 
         for _ in 0..operations {
+            let mut suggestion_edits = Patch::default();
+
+            let mut prev_suggestion_text = suggestion_snapshot.text();
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=29 => {
@@ -349,18 +353,17 @@ mod tests {
                             highlight_style: Default::default(),
                         })
                     };
-                    let (new_suggestion_snapshot, edits) =
+
+                    log::info!("replacing suggestion with {:?}", new_suggestion);
+                    let (_, edits) =
                         suggestion_map.replace(new_suggestion, fold_snapshot, Default::default());
-                    suggestion_snapshot = new_suggestion_snapshot;
-                    suggestion_edits.push(edits);
+                    suggestion_edits = suggestion_edits.compose(edits);
                 }
                 30..=59 => {
                     for (new_fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
                         fold_snapshot = new_fold_snapshot;
-                        let (new_suggestion_snapshot, edits) =
-                            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-                        suggestion_snapshot = new_suggestion_snapshot;
-                        suggestion_edits.push(edits);
+                        let (_, edits) = suggestion_map.sync(fold_snapshot.clone(), fold_edits);
+                        suggestion_edits = suggestion_edits.compose(edits);
                     }
                 }
                 _ => buffer.update(cx, |buffer, cx| {
@@ -380,11 +383,47 @@ mod tests {
             let (new_suggestion_snapshot, edits) =
                 suggestion_map.sync(fold_snapshot.clone(), fold_edits);
             suggestion_snapshot = new_suggestion_snapshot;
-            suggestion_edits.push(edits);
+            suggestion_edits = suggestion_edits.compose(edits);
 
             log::info!("buffer text: {:?}", buffer_snapshot.text());
             log::info!("folds text: {:?}", fold_snapshot.text());
             log::info!("suggestions text: {:?}", suggestion_snapshot.text());
+
+            let mut expected_text = fold_snapshot.text();
+            if let Some(suggestion) = suggestion_snapshot.suggestion.as_ref() {
+                expected_text.insert_str(suggestion.position.0, &suggestion.text.to_string());
+            }
+            assert_eq!(suggestion_snapshot.text(), expected_text);
+
+            for _ in 0..3 {
+                let mut end = rng.gen_range(0..=suggestion_snapshot.len().0);
+                while !expected_text.is_char_boundary(end) {
+                    end += 1;
+                }
+                let mut start = rng.gen_range(0..=end);
+                while !expected_text.is_char_boundary(start) {
+                    start += 1;
+                }
+
+                let actual_text = suggestion_snapshot
+                    .chunks(SuggestionOffset(start)..SuggestionOffset(end), false, None)
+                    .map(|chunk| chunk.text)
+                    .collect::<String>();
+                assert_eq!(
+                    actual_text,
+                    &expected_text[start..end],
+                    "incorrect text in range {:?}",
+                    start..end
+                );
+            }
+
+            for edit in suggestion_edits.into_inner() {
+                prev_suggestion_text.replace_range(
+                    edit.new.start.0..edit.new.start.0 + edit.old_len().0,
+                    &suggestion_snapshot.text()[edit.new.start.0..edit.new.end.0],
+                );
+            }
+            assert_eq!(prev_suggestion_text, suggestion_snapshot.text());
         }
     }
 }
