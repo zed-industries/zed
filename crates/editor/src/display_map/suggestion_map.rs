@@ -51,15 +51,16 @@ pub struct Suggestion<T> {
 pub struct SuggestionMap(Mutex<SuggestionSnapshot>);
 
 impl SuggestionMap {
-    pub fn new(fold_snapshot: FoldSnapshot) -> Self {
-        Self(Mutex::new(SuggestionSnapshot {
+    pub fn new(fold_snapshot: FoldSnapshot) -> (Self, SuggestionSnapshot) {
+        let snapshot = SuggestionSnapshot {
             fold_snapshot,
             suggestion: None,
-        }))
+        };
+        (Self(Mutex::new(snapshot.clone())), snapshot)
     }
 
     pub fn replace<T>(
-        &mut self,
+        &self,
         new_suggestion: Option<Suggestion<T>>,
         fold_snapshot: FoldSnapshot,
         fold_edits: Vec<FoldEdit>,
@@ -303,6 +304,8 @@ mod tests {
     use crate::{display_map::fold_map::FoldMap, MultiBuffer};
     use gpui::MutableAppContext;
     use rand::{prelude::StdRng, Rng};
+    use settings::Settings;
+    use std::env;
 
     #[gpui::test(iterations = 100)]
     fn test_random_suggestions(cx: &mut MutableAppContext, mut rng: StdRng) {
@@ -320,19 +323,44 @@ mod tests {
         } else {
             MultiBuffer::build_random(&mut rng, cx)
         };
-        let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        log::info!("Buffer text: {:?}", buffer_snapshot.text());
+        let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
+        log::info!("buffer text: {:?}", buffer_snapshot.text());
 
-        let (mut fold_map, _) = FoldMap::new(buffer_snapshot.clone());
-        let (fold_snapshot, _) = fold_map.read(buffer_snapshot, vec![]);
-        let suggestion_map = SuggestionMap::new(fold_snapshot.clone());
+        let (mut fold_map, mut fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (suggestion_map, mut suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
+        let mut suggestion_edits = Vec::new();
 
         for _ in 0..operations {
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
-                0..=59 => {
-                    for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
-                        suggestion_map.sync(fold_snapshot, fold_edits);
+                0..=29 => {
+                    let new_suggestion = if rng.gen_bool(0.3) {
+                        None
+                    } else {
+                        let index = rng.gen_range(0..=buffer_snapshot.len());
+                        let len = rng.gen_range(0..30);
+                        Some(Suggestion {
+                            position: index,
+                            text: util::RandomCharIter::new(&mut rng)
+                                .take(len)
+                                .collect::<String>()
+                                .as_str()
+                                .into(),
+                            highlight_style: Default::default(),
+                        })
+                    };
+                    let (new_suggestion_snapshot, edits) =
+                        suggestion_map.replace(new_suggestion, fold_snapshot, Default::default());
+                    suggestion_snapshot = new_suggestion_snapshot;
+                    suggestion_edits.push(edits);
+                }
+                30..=59 => {
+                    for (new_fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
+                        fold_snapshot = new_fold_snapshot;
+                        let (new_suggestion_snapshot, edits) =
+                            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
+                        suggestion_snapshot = new_suggestion_snapshot;
+                        suggestion_edits.push(edits);
                     }
                 }
                 _ => buffer.update(cx, |buffer, cx| {
@@ -346,8 +374,17 @@ mod tests {
                 }),
             };
 
+            let (new_fold_snapshot, fold_edits) =
+                fold_map.read(buffer_snapshot.clone(), buffer_edits);
+            fold_snapshot = new_fold_snapshot;
+            let (new_suggestion_snapshot, edits) =
+                suggestion_map.sync(fold_snapshot.clone(), fold_edits);
+            suggestion_snapshot = new_suggestion_snapshot;
+            suggestion_edits.push(edits);
+
             log::info!("buffer text: {:?}", buffer_snapshot.text());
-            log::info!("folds text: {:?}", buffer_snapshot.text());
+            log::info!("folds text: {:?}", fold_snapshot.text());
+            log::info!("suggestions text: {:?}", suggestion_snapshot.text());
         }
     }
 }
