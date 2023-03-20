@@ -1744,10 +1744,6 @@ async fn test_project_reconnect(
             vec![
                 "a.txt",
                 "b.txt",
-                "subdir1",
-                "subdir1/c.txt",
-                "subdir1/d.txt",
-                "subdir1/e.txt",
                 "subdir2",
                 "subdir2/f.txt",
                 "subdir2/g.txt",
@@ -1780,10 +1776,6 @@ async fn test_project_reconnect(
             vec![
                 "a.txt",
                 "b.txt",
-                "subdir1",
-                "subdir1/c.txt",
-                "subdir1/d.txt",
-                "subdir1/e.txt",
                 "subdir2",
                 "subdir2/f.txt",
                 "subdir2/g.txt",
@@ -1875,10 +1867,6 @@ async fn test_project_reconnect(
             vec![
                 "a.txt",
                 "b.txt",
-                "subdir1",
-                "subdir1/c.txt",
-                "subdir1/d.txt",
-                "subdir1/e.txt",
                 "subdir2",
                 "subdir2/f.txt",
                 "subdir2/g.txt",
