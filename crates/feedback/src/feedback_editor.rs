@@ -10,7 +10,7 @@ use editor::{Anchor, Editor};
 use futures::AsyncReadExt;
 use gpui::{
     actions,
-    elements::{ChildView, Flex, Label, ParentElement},
+    elements::{ChildView, Flex, Label, ParentElement, Svg},
     serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
 };
@@ -250,7 +250,17 @@ impl Item for FeedbackEditor {
     fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
         Flex::row()
             .with_child(
-                Label::new("Feedback", style.label.clone())
+                Svg::new("icons/feedback_16.svg")
+                    .with_color(style.label.text.color)
+                    .constrained()
+                    .with_width(style.type_icon_width)
+                    .aligned()
+                    .contained()
+                    .with_margin_right(style.spacing)
+                    .boxed(),
+            )
+            .with_child(
+                Label::new("Send Feedback", style.label.clone())
                     .aligned()
                     .contained()
                     .boxed(),
