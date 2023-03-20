@@ -35,45 +35,56 @@ impl AddAssign for SuggestionOffset {
 }
 
 #[derive(Clone)]
-pub struct Suggestion {
-    offset: FoldOffset,
+pub struct Suggestion<T> {
+    position: T,
     text: Rope,
 }
 
 pub struct SuggestionMap(Mutex<SuggestionSnapshot>);
 
 impl SuggestionMap {
-    pub fn replace<P, T>(
+    pub fn replace<T>(
         &mut self,
-        position: P,
-        text: T,
+        new_suggestion: Option<Suggestion<T>>,
         fold_snapshot: FoldSnapshot,
         fold_edits: Vec<FoldEdit>,
     ) -> (SuggestionSnapshot, Vec<SuggestionEdit>)
     where
-        P: ToPoint,
-        T: Into<Rope>,
+        T: ToPoint,
     {
-        let buffer_point = position.to_point(fold_snapshot.buffer_snapshot());
-        let fold_point = fold_snapshot.to_fold_point(buffer_point, Bias::Left);
-        let fold_offset = fold_point.to_offset(&fold_snapshot);
-        let new_suggestion = Suggestion {
-            offset: fold_offset,
-            text: text.into(),
-        };
+        let new_suggestion = new_suggestion.map(|new_suggestion| {
+            let buffer_point = new_suggestion
+                .position
+                .to_point(fold_snapshot.buffer_snapshot());
+            let fold_point = fold_snapshot.to_fold_point(buffer_point, Bias::Left);
+            let fold_offset = fold_point.to_offset(&fold_snapshot);
+            Suggestion {
+                position: fold_offset,
+                text: new_suggestion.text,
+            }
+        });
 
         let (_, edits) = self.sync(fold_snapshot, fold_edits);
         let mut snapshot = self.0.lock();
+
         let old = if let Some(suggestion) = snapshot.suggestion.take() {
-            SuggestionOffset(suggestion.offset.0)
-                ..SuggestionOffset(suggestion.offset.0 + suggestion.text.len())
+            SuggestionOffset(suggestion.position.0)
+                ..SuggestionOffset(suggestion.position.0 + suggestion.text.len())
+        } else if let Some(new_suggestion) = new_suggestion.as_ref() {
+            SuggestionOffset(new_suggestion.position.0)..SuggestionOffset(new_suggestion.position.0)
         } else {
-            SuggestionOffset(new_suggestion.offset.0)..SuggestionOffset(new_suggestion.offset.0)
+            return (snapshot.clone(), edits);
         };
-        let new = SuggestionOffset(new_suggestion.offset.0)
-            ..SuggestionOffset(new_suggestion.offset.0 + new_suggestion.text.len());
+
+        let new = if let Some(suggestion) = new_suggestion.as_ref() {
+            SuggestionOffset(suggestion.position.0)
+                ..SuggestionOffset(suggestion.position.0 + suggestion.text.len())
+        } else {
+            old.start..old.start
+        };
+
         let patch = Patch::new(edits).compose([SuggestionEdit { old, new }]);
-        snapshot.suggestion = Some(new_suggestion);
+        snapshot.suggestion = new_suggestion;
         (snapshot.clone(), patch.into_inner())
     }
 
@@ -91,10 +102,10 @@ impl SuggestionMap {
             let start = fold_edit.new.start;
             let end = FoldOffset(start.0 + fold_edit.old_len().0);
             if let Some(suggestion) = snapshot.suggestion.as_mut() {
-                if end < suggestion.offset {
-                    suggestion.offset.0 += fold_edit.new_len().0;
-                    suggestion.offset.0 -= fold_edit.old_len().0;
-                } else if start > suggestion.offset {
+                if end < suggestion.position {
+                    suggestion.position.0 += fold_edit.new_len().0;
+                    suggestion.position.0 -= fold_edit.old_len().0;
+                } else if start > suggestion.position {
                     suggestion_old_len = suggestion.text.len();
                     suggestion_new_len = suggestion_old_len;
                 } else {
@@ -126,5 +137,5 @@ impl SuggestionMap {
 #[derive(Clone)]
 pub struct SuggestionSnapshot {
     folds_snapshot: FoldSnapshot,
-    suggestion: Option<Suggestion>,
+    suggestion: Option<Suggestion<FoldOffset>>,
 }
