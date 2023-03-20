@@ -82,19 +82,13 @@ pub struct GoForward {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct DeploySplitMenu {
-    position: Vector2F,
-}
+pub struct DeploySplitMenu;
 
 #[derive(Clone, PartialEq)]
-pub struct DeployDockMenu {
-    position: Vector2F,
-}
+pub struct DeployDockMenu;
 
 #[derive(Clone, PartialEq)]
-pub struct DeployNewMenu {
-    position: Vector2F,
-}
+pub struct DeployNewMenu;
 
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
 impl_internal_actions!(
@@ -215,7 +209,7 @@ pub struct Pane {
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
-    tab_bar_context_menu: ViewHandle<ContextMenu>,
+    tab_bar_context_menu: TabBarContextMenu,
     docked: Option<DockAnchor>,
     _background_actions: BackgroundActions,
     _workspace_id: usize,
@@ -274,6 +268,27 @@ enum ItemType {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabBarContextMenuKind {
+    New,
+    Split,
+    Dock,
+}
+
+struct TabBarContextMenu {
+    kind: TabBarContextMenuKind,
+    handle: ViewHandle<ContextMenu>,
+}
+
+impl TabBarContextMenu {
+    fn handle_if_kind(&self, kind: TabBarContextMenuKind) -> Option<ViewHandle<ContextMenu>> {
+        if self.kind == kind {
+            return Some(self.handle.clone());
+        }
+        None
+    }
+}
+
 impl Pane {
     pub fn new(
         workspace_id: usize,
@@ -283,6 +298,10 @@ impl Pane {
     ) -> Self {
         let handle = cx.weak_handle();
         let context_menu = cx.add_view(ContextMenu::new);
+        context_menu.update(cx, |menu, _| {
+            menu.set_position_mode(OverlayPositionMode::Local)
+        });
+
         Self {
             items: Vec::new(),
             activation_history: Vec::new(),
@@ -299,7 +318,10 @@ impl Pane {
                 pane: handle.clone(),
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
-            tab_bar_context_menu: context_menu,
+            tab_bar_context_menu: TabBarContextMenu {
+                kind: TabBarContextMenuKind::New,
+                handle: context_menu,
+            },
             docked,
             _background_actions: background_actions,
             _workspace_id: workspace_id,
@@ -1076,10 +1098,10 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
-    fn deploy_split_menu(&mut self, action: &DeploySplitMenu, cx: &mut ViewContext<Self>) {
-        self.tab_bar_context_menu.update(cx, |menu, cx| {
+    fn deploy_split_menu(&mut self, _: &DeploySplitMenu, cx: &mut ViewContext<Self>) {
+        self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
-                action.position,
+                Default::default(),
                 AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::item("Split Right", SplitRight),
@@ -1090,12 +1112,14 @@ impl Pane {
                 cx,
             );
         });
+
+        self.tab_bar_context_menu.kind = TabBarContextMenuKind::Split;
     }
 
-    fn deploy_dock_menu(&mut self, action: &DeployDockMenu, cx: &mut ViewContext<Self>) {
-        self.tab_bar_context_menu.update(cx, |menu, cx| {
+    fn deploy_dock_menu(&mut self, _: &DeployDockMenu, cx: &mut ViewContext<Self>) {
+        self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
-                action.position,
+                Default::default(),
                 AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::item("Anchor Dock Right", AnchorDockRight),
@@ -1105,12 +1129,14 @@ impl Pane {
                 cx,
             );
         });
+
+        self.tab_bar_context_menu.kind = TabBarContextMenuKind::Dock;
     }
 
-    fn deploy_new_menu(&mut self, action: &DeployNewMenu, cx: &mut ViewContext<Self>) {
-        self.tab_bar_context_menu.update(cx, |menu, cx| {
+    fn deploy_new_menu(&mut self, _: &DeployNewMenu, cx: &mut ViewContext<Self>) {
+        self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
-                action.position,
+                Default::default(),
                 AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::item("New File", NewFile),
@@ -1120,6 +1146,8 @@ impl Pane {
                 cx,
             );
         });
+
+        self.tab_bar_context_menu.kind = TabBarContextMenuKind::New;
     }
 
     pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
@@ -1398,28 +1426,45 @@ impl Pane {
     ) -> ElementBox {
         Flex::row()
             // New menu
-            .with_child(tab_bar_button(0, "icons/plus_12.svg", cx, |position| {
-                DeployNewMenu { position }
-            }))
+            .with_child(render_tab_bar_button(
+                0,
+                "icons/plus_12.svg",
+                cx,
+                DeployNewMenu,
+                self.tab_bar_context_menu
+                    .handle_if_kind(TabBarContextMenuKind::New),
+            ))
             .with_child(
                 self.docked
                     .map(|anchor| {
                         // Add the dock menu button if this pane is a dock
                         let dock_icon = icon_for_dock_anchor(anchor);
 
-                        tab_bar_button(1, dock_icon, cx, |position| DeployDockMenu { position })
+                        render_tab_bar_button(
+                            1,
+                            dock_icon,
+                            cx,
+                            DeployDockMenu,
+                            self.tab_bar_context_menu
+                                .handle_if_kind(TabBarContextMenuKind::Dock),
+                        )
                     })
                     .unwrap_or_else(|| {
                         // Add the split menu if this pane is not a dock
-                        tab_bar_button(2, "icons/split_12.svg", cx, |position| DeploySplitMenu {
-                            position,
-                        })
+                        render_tab_bar_button(
+                            2,
+                            "icons/split_12.svg",
+                            cx,
+                            DeploySplitMenu,
+                            self.tab_bar_context_menu
+                                .handle_if_kind(TabBarContextMenuKind::Split),
+                        )
                     }),
             )
             // Add the close dock button if this pane is a dock
             .with_children(
                 self.docked
-                    .map(|_| tab_bar_button(3, "icons/x_mark_8.svg", cx, |_| HideDock)),
+                    .map(|_| render_tab_bar_button(3, "icons/x_mark_8.svg", cx, HideDock, None)),
             )
             .contained()
             .with_style(theme.workspace.tab_bar.pane_button_container)
@@ -1554,7 +1599,6 @@ impl View for Pane {
                 })
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.tab_bar_context_menu, cx).boxed())
             .named("pane")
     }
 
@@ -1575,7 +1619,7 @@ impl View for Pane {
                 }
 
                 cx.focus(active_item);
-            } else if focused != self.tab_bar_context_menu {
+            } else if focused != self.tab_bar_context_menu.handle {
                 self.last_focused_view_by_item
                     .insert(active_item.id(), focused.downgrade());
             }
@@ -1591,34 +1635,41 @@ impl View for Pane {
     }
 }
 
-fn tab_bar_button<A: Action>(
+fn render_tab_bar_button<A: Action + Clone>(
     index: usize,
     icon: &'static str,
     cx: &mut RenderContext<Pane>,
-    action_builder: impl 'static + Fn(Vector2F) -> A,
+    action: A,
+    context_menu: Option<ViewHandle<ContextMenu>>,
 ) -> ElementBox {
     enum TabBarButton {}
 
-    MouseEventHandler::<TabBarButton>::new(index, cx, |mouse_state, cx| {
-        let theme = &cx.global::<Settings>().theme.workspace.tab_bar;
-        let style = theme.pane_button.style_for(mouse_state, false);
-        Svg::new(icon)
-            .with_color(style.color)
-            .constrained()
-            .with_width(style.icon_width)
-            .aligned()
-            .constrained()
-            .with_width(style.button_width)
-            .with_height(style.button_width)
-            // .aligned()
-            .boxed()
-    })
-    .with_cursor_style(CursorStyle::PointingHand)
-    .on_click(MouseButton::Left, move |e, cx| {
-        cx.dispatch_action(action_builder(e.region.lower_right()));
-    })
-    .flex(1., false)
-    .boxed()
+    Stack::new()
+        .with_child(
+            MouseEventHandler::<TabBarButton>::new(index, cx, |mouse_state, cx| {
+                let theme = &cx.global::<Settings>().theme.workspace.tab_bar;
+                let style = theme.pane_button.style_for(mouse_state, false);
+                Svg::new(icon)
+                    .with_color(style.color)
+                    .constrained()
+                    .with_width(style.icon_width)
+                    .aligned()
+                    .constrained()
+                    .with_width(style.button_width)
+                    .with_height(style.button_width)
+                    .boxed()
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, move |_, cx| {
+                cx.dispatch_action(action.clone());
+            })
+            .boxed(),
+        )
+        .with_children(
+            context_menu.map(|menu| ChildView::new(menu, cx).aligned().bottom().right().boxed()),
+        )
+        .flex(1., false)
+        .boxed()
 }
 
 impl ItemNavHistory {
