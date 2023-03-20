@@ -8,6 +8,7 @@ use language::{
     OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
+use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::{cell::RefCell, os::unix, rc::Rc, task::Poll};
