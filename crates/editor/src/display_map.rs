@@ -1,5 +1,6 @@
 mod block_map;
 mod fold_map;
+mod suggestion_map;
 mod tab_map;
 mod wrap_map;
 
