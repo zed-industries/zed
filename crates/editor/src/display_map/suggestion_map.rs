@@ -41,6 +41,16 @@ impl AddAssign for SuggestionOffset {
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct SuggestionPoint(pub Point);
 
+impl SuggestionPoint {
+    pub fn row(self) -> u32 {
+        self.0.row
+    }
+
+    pub fn column(self) -> u32 {
+        self.0.column
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Suggestion<T> {
     position: T,
@@ -180,6 +190,32 @@ impl SuggestionSnapshot {
             SuggestionOffset(len)
         } else {
             SuggestionOffset(self.fold_snapshot.len().0)
+        }
+    }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        if let Some(suggestion) = self.suggestion.as_ref() {
+            let suggestion_lines = suggestion.text.max_point();
+            let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
+            let suggestion_end = suggestion_start + suggestion_lines;
+
+            if row < suggestion_start.row {
+                self.fold_snapshot.line_len(row)
+            } else if row > suggestion_end.row {
+                self.fold_snapshot.line_len(row - suggestion_lines.row)
+            } else {
+                let mut len = suggestion.text.line_len(row - suggestion_start.row);
+                if row == suggestion_start.row {
+                    len += suggestion_start.column;
+                }
+                if row == suggestion_end.row {
+                    len +=
+                        self.fold_snapshot.line_len(suggestion_start.row) - suggestion_start.column;
+                }
+                len
+            }
+        } else {
+            self.fold_snapshot.line_len(row)
         }
     }
 
@@ -389,21 +425,20 @@ mod tests {
             log::info!("folds text: {:?}", fold_snapshot.text());
             log::info!("suggestions text: {:?}", suggestion_snapshot.text());
 
-            let mut expected_text = fold_snapshot.text();
+            let mut expected_text = Rope::from(fold_snapshot.text().as_str());
             if let Some(suggestion) = suggestion_snapshot.suggestion.as_ref() {
-                expected_text.insert_str(suggestion.position.0, &suggestion.text.to_string());
+                expected_text.replace(
+                    suggestion.position.0..suggestion.position.0,
+                    &suggestion.text.to_string(),
+                );
             }
-            assert_eq!(suggestion_snapshot.text(), expected_text);
+            assert_eq!(suggestion_snapshot.text(), expected_text.to_string());
 
-            for _ in 0..3 {
+            for _ in 0..5 {
                 let mut end = rng.gen_range(0..=suggestion_snapshot.len().0);
-                while !expected_text.is_char_boundary(end) {
-                    end += 1;
-                }
+                end = expected_text.clip_offset(end, Bias::Right);
                 let mut start = rng.gen_range(0..=end);
-                while !expected_text.is_char_boundary(start) {
-                    start += 1;
-                }
+                start = expected_text.clip_offset(start, Bias::Right);
 
                 let actual_text = suggestion_snapshot
                     .chunks(SuggestionOffset(start)..SuggestionOffset(end), false, None)
@@ -411,7 +446,7 @@ mod tests {
                     .collect::<String>();
                 assert_eq!(
                     actual_text,
-                    &expected_text[start..end],
+                    expected_text.slice(start..end).to_string(),
                     "incorrect text in range {:?}",
                     start..end
                 );
@@ -424,6 +459,17 @@ mod tests {
                 );
             }
             assert_eq!(prev_suggestion_text, suggestion_snapshot.text());
+
+            assert_eq!(expected_text.max_point(), suggestion_snapshot.max_point().0);
+            assert_eq!(expected_text.len(), suggestion_snapshot.len().0);
+            for row in 0..=suggestion_snapshot.max_point().row() {
+                assert_eq!(
+                    suggestion_snapshot.line_len(row),
+                    expected_text.line_len(row),
+                    "incorrect line len for row {}",
+                    row
+                );
+            }
         }
     }
 }
