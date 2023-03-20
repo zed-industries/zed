@@ -305,7 +305,7 @@ impl CollabTitlebarItem {
                         action: Box::new(SignOut),
                     },
                     ContextMenuItem::Item {
-                        label: "Give Feedback".into(),
+                        label: "Send Feedback".into(),
                         action: Box::new(feedback::feedback_editor::GiveFeedback),
                     },
                 ]
@@ -316,7 +316,7 @@ impl CollabTitlebarItem {
                         action: Box::new(SignIn),
                     },
                     ContextMenuItem::Item {
-                        label: "Give Feedback".into(),
+                        label: "Send Feedback".into(),
                         action: Box::new(feedback::feedback_editor::GiveFeedback),
                     },
                 ]

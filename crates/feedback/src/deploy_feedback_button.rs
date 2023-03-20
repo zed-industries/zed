@@ -36,7 +36,7 @@ impl View for DeployFeedbackButton {
                         .item
                         .style_for(state, active);
 
-                    Svg::new("icons/speech_bubble_12.svg")
+                    Svg::new("icons/feedback_16.svg")
                         .with_color(style.icon_color)
                         .constrained()
                         .with_width(style.icon_size)
@@ -56,7 +56,7 @@ impl View for DeployFeedbackButton {
                 })
                 .with_tooltip::<Self, _>(
                     0,
-                    "Give Feedback".into(),
+                    "Send Feedback".into(),
                     Some(Box::new(GiveFeedback)),
                     theme.tooltip.clone(),
                     cx,
