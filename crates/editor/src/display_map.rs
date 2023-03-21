@@ -16,6 +16,7 @@ use gpui::{
 use language::{OffsetUtf16, Point, Subscription as BufferSubscription};
 use settings::Settings;
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
+pub use suggestion_map::Suggestion;
 use suggestion_map::SuggestionMap;
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
@@ -227,6 +228,25 @@ impl DisplayMap {
         type_id: TypeId,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         self.text_highlights.remove(&Some(type_id))
+    }
+
+    pub fn replace_suggestion<T>(
+        &self,
+        new_suggestion: Option<Suggestion<T>>,
+        cx: &mut ModelContext<Self>,
+    ) where
+        T: ToPoint,
+    {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.suggestion_map.replace(new_suggestion, snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
     }
 
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) -> bool {
