@@ -1,5 +1,5 @@
 use super::{
-    fold_map::{FoldBufferRows, FoldChunks, FoldEdit, FoldOffset, FoldSnapshot},
+    fold_map::{FoldBufferRows, FoldChunks, FoldEdit, FoldOffset, FoldPoint, FoldSnapshot},
     TextHighlights,
 };
 use crate::ToPoint;
@@ -191,6 +191,41 @@ impl SuggestionSnapshot {
             SuggestionOffset(len)
         } else {
             SuggestionOffset(self.fold_snapshot.len().0)
+        }
+    }
+
+    pub fn clip_point(&self, point: SuggestionPoint, bias: Bias) -> SuggestionPoint {
+        if let Some(suggestion) = self.suggestion.as_ref() {
+            let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
+            let suggestion_end = suggestion_start + suggestion.text.max_point();
+            if point.0 <= suggestion_start {
+                SuggestionPoint(self.fold_snapshot.clip_point(FoldPoint(point.0), bias).0)
+            } else if point.0 > suggestion_end {
+                let fold_point = self.fold_snapshot.clip_point(
+                    FoldPoint(suggestion_start + (point.0 - suggestion_end)),
+                    bias,
+                );
+                let suggestion_point = suggestion_end + (fold_point.0 - suggestion_start);
+                if bias == Bias::Left && suggestion_point == suggestion_end {
+                    SuggestionPoint(suggestion_start)
+                } else {
+                    SuggestionPoint(suggestion_point)
+                }
+            } else if bias == Bias::Left || suggestion_start == self.fold_snapshot.max_point().0 {
+                SuggestionPoint(suggestion_start)
+            } else {
+                let fold_point = if self.fold_snapshot.line_len(suggestion_start.row)
+                    > suggestion_start.column
+                {
+                    FoldPoint(suggestion_start + Point::new(0, 1))
+                } else {
+                    FoldPoint(suggestion_start + Point::new(1, 0))
+                };
+                let clipped_fold_point = self.fold_snapshot.clip_point(fold_point, bias);
+                SuggestionPoint(suggestion_end + (clipped_fold_point.0 - suggestion_start))
+            }
+        } else {
+            SuggestionPoint(self.fold_snapshot.clip_point(FoldPoint(point.0), bias).0)
         }
     }
 
@@ -392,7 +427,10 @@ mod tests {
     use gpui::MutableAppContext;
     use rand::{prelude::StdRng, Rng};
     use settings::Settings;
-    use std::env;
+    use std::{
+        env,
+        ops::{Bound, RangeBounds},
+    };
 
     #[gpui::test]
     fn test_basic(cx: &mut MutableAppContext) {
@@ -581,6 +619,60 @@ mod tests {
                     "incorrect line len for row {}",
                     row
                 );
+            }
+
+            let mut suggestion_point = SuggestionPoint::default();
+            for ch in expected_text.chars() {
+                let mut bytes = [0; 4];
+                for byte in ch.encode_utf8(&mut bytes).as_bytes() {
+                    if *byte == b'\n' {
+                        suggestion_point.0 += Point::new(1, 0);
+                    } else {
+                        suggestion_point.0 += Point::new(0, 1);
+                    }
+
+                    let clipped_left_point =
+                        suggestion_snapshot.clip_point(suggestion_point, Bias::Left);
+                    let clipped_right_point =
+                        suggestion_snapshot.clip_point(suggestion_point, Bias::Right);
+                    assert!(
+                        clipped_left_point <= clipped_right_point,
+                        "clipped left point {:?} is greater than clipped right point {:?}",
+                        clipped_left_point,
+                        clipped_right_point
+                    );
+                    assert_eq!(
+                        clipped_left_point.0,
+                        expected_text.clip_point(clipped_left_point.0, Bias::Left)
+                    );
+                    assert_eq!(
+                        clipped_right_point.0,
+                        expected_text.clip_point(clipped_right_point.0, Bias::Right)
+                    );
+                    assert!(clipped_left_point <= suggestion_snapshot.max_point());
+                    assert!(clipped_right_point <= suggestion_snapshot.max_point());
+
+                    if let Some(suggestion) = suggestion_snapshot.suggestion.as_ref() {
+                        let suggestion_start = suggestion.position.to_point(&fold_snapshot).0;
+                        let suggestion_end = suggestion_start + suggestion.text.max_point();
+                        let invalid_range = (
+                            Bound::Excluded(suggestion_start),
+                            Bound::Included(suggestion_end),
+                        );
+                        assert!(
+                            !invalid_range.contains(&clipped_left_point.0),
+                            "clipped left point {:?} is inside invalid suggestion range {:?}",
+                            clipped_left_point,
+                            invalid_range
+                        );
+                        assert!(
+                            !invalid_range.contains(&clipped_right_point.0),
+                            "clipped right point {:?} is inside invalid suggestion range {:?}",
+                            clipped_right_point,
+                            invalid_range
+                        );
+                    }
+                }
             }
         }
     }
