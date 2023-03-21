@@ -809,31 +809,32 @@ impl LocalWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
-        let path = entry.path.clone();
-        let abs_path = self.absolutize(&path);
-        let (tx, mut rx) = barrier::channel();
+        let abs_path = self.abs_path.clone();
+        let fs = self.fs.clone();
 
-        let delete = cx.background().spawn({
-            let abs_path = abs_path.clone();
-            let fs = self.fs.clone();
-            async move {
-                if entry.is_file() {
-                    fs.remove_file(&abs_path, Default::default()).await
-                } else {
-                    fs.remove_dir(
-                        &abs_path,
-                        RemoveOptions {
-                            recursive: true,
-                            ignore_if_not_exists: false,
-                        },
-                    )
-                    .await
-                }
+        let delete = cx.background().spawn(async move {
+            let mut abs_path = fs.canonicalize(&abs_path).await?;
+            if entry.path.file_name().is_some() {
+                abs_path = abs_path.join(&entry.path);
             }
+            if entry.is_file() {
+                fs.remove_file(&abs_path, Default::default()).await?;
+            } else {
+                fs.remove_dir(
+                    &abs_path,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: false,
+                    },
+                )
+                .await?;
+            }
+            anyhow::Ok(abs_path)
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            delete.await?;
+            let abs_path = delete.await?;
+            let (tx, mut rx) = barrier::channel();
             this.update(&mut cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
@@ -912,15 +913,23 @@ impl LocalWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
         let fs = self.fs.clone();
-        let abs_path = self.abs_path.clone();
+        let abs_root_path = self.abs_path.clone();
         let path_changes_tx = self.path_changes_tx.clone();
         cx.spawn_weak(move |this, mut cx| async move {
-            let abs_path = fs.canonicalize(&abs_path).await?;
-            let paths = if let Some(old_path) = old_path {
-                vec![abs_path.join(&path), abs_path.join(&old_path)]
+            let abs_path = fs.canonicalize(&abs_root_path).await?;
+            let mut paths = Vec::with_capacity(2);
+            paths.push(if path.file_name().is_some() {
+                abs_path.join(&path)
             } else {
-                vec![abs_path.join(&path)]
-            };
+                abs_path.clone()
+            });
+            if let Some(old_path) = old_path {
+                paths.push(if old_path.file_name().is_some() {
+                    abs_path.join(&old_path)
+                } else {
+                    abs_path.clone()
+                });
+            }
 
             let (tx, mut rx) = barrier::channel();
             path_changes_tx.unbounded_send((paths, tx)).unwrap();
