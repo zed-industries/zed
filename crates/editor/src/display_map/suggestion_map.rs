@@ -43,6 +43,10 @@ impl AddAssign for SuggestionOffset {
 pub struct SuggestionPoint(pub Point);
 
 impl SuggestionPoint {
+    pub fn new(row: u32, column: u32) -> Self {
+        Self(Point::new(row, column))
+    }
+
     pub fn row(self) -> u32 {
         self.0.row
     }
@@ -173,8 +177,8 @@ impl SuggestionMap {
 
 #[derive(Clone)]
 pub struct SuggestionSnapshot {
-    fold_snapshot: FoldSnapshot,
-    suggestion: Option<Suggestion<FoldOffset>>,
+    pub fold_snapshot: FoldSnapshot,
+    pub suggestion: Option<Suggestion<FoldOffset>>,
     pub version: usize,
 }
 
@@ -320,32 +324,6 @@ impl SuggestionSnapshot {
         }
     }
 
-    pub fn line_len(&self, row: u32) -> u32 {
-        if let Some(suggestion) = self.suggestion.as_ref() {
-            let suggestion_lines = suggestion.text.max_point();
-            let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
-            let suggestion_end = suggestion_start + suggestion_lines;
-
-            if row < suggestion_start.row {
-                self.fold_snapshot.line_len(row)
-            } else if row > suggestion_end.row {
-                self.fold_snapshot.line_len(row - suggestion_lines.row)
-            } else {
-                let mut len = suggestion.text.line_len(row - suggestion_start.row);
-                if row == suggestion_start.row {
-                    len += suggestion_start.column;
-                }
-                if row == suggestion_end.row {
-                    len +=
-                        self.fold_snapshot.line_len(suggestion_start.row) - suggestion_start.column;
-                }
-                len
-            }
-        } else {
-            self.fold_snapshot.line_len(row)
-        }
-    }
-
     pub fn text_summary_for_range(&self, range: Range<SuggestionPoint>) -> TextSummary {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
@@ -400,7 +378,7 @@ impl SuggestionSnapshot {
         range: Range<SuggestionOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-    ) -> Chunks<'a> {
+    ) -> SuggestionChunks<'a> {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_range =
                 suggestion.position.0..suggestion.position.0 + suggestion.text.len();
@@ -439,14 +417,14 @@ impl SuggestionSnapshot {
                 None
             };
 
-            Chunks {
+            SuggestionChunks {
                 prefix_chunks,
                 suggestion_chunks,
                 suffix_chunks,
                 highlight_style: suggestion.highlight_style,
             }
         } else {
-            Chunks {
+            SuggestionChunks {
                 prefix_chunks: Some(self.fold_snapshot.chunks(
                     FoldOffset(range.start.0)..FoldOffset(range.end.0),
                     language_aware,
@@ -495,14 +473,14 @@ impl SuggestionSnapshot {
     }
 }
 
-pub struct Chunks<'a> {
+pub struct SuggestionChunks<'a> {
     prefix_chunks: Option<FoldChunks<'a>>,
     suggestion_chunks: Option<text::Chunks<'a>>,
     suffix_chunks: Option<FoldChunks<'a>>,
     highlight_style: HighlightStyle,
 }
 
-impl<'a> Iterator for Chunks<'a> {
+impl<'a> Iterator for SuggestionChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -540,6 +518,7 @@ impl<'a> Iterator for Chunks<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct SuggestionBufferRows<'a> {
     current_row: u32,
     suggestion_row_start: u32,
@@ -741,14 +720,6 @@ mod tests {
 
             assert_eq!(expected_text.max_point(), suggestion_snapshot.max_point().0);
             assert_eq!(expected_text.len(), suggestion_snapshot.len().0);
-            for row in 0..=suggestion_snapshot.max_point().row() {
-                assert_eq!(
-                    suggestion_snapshot.line_len(row),
-                    expected_text.line_len(row),
-                    "incorrect line len for row {}",
-                    row
-                );
-            }
 
             let mut suggestion_point = SuggestionPoint::default();
             let mut suggestion_offset = SuggestionOffset::default();
@@ -827,7 +798,10 @@ mod tests {
     }
 
     impl SuggestionMap {
-        fn randomly_mutate(&self, rng: &mut impl Rng) -> (SuggestionSnapshot, Vec<SuggestionEdit>) {
+        pub fn randomly_mutate(
+            &self,
+            rng: &mut impl Rng,
+        ) -> (SuggestionSnapshot, Vec<SuggestionEdit>) {
             let fold_snapshot = self.0.lock().fold_snapshot.clone();
             let new_suggestion = if rng.gen_bool(0.3) {
                 None
@@ -838,6 +812,7 @@ mod tests {
                     position: index,
                     text: util::RandomCharIter::new(rng)
                         .take(len)
+                        .filter(|ch| *ch != '\r')
                         .collect::<String>()
                         .as_str()
                         .into(),
