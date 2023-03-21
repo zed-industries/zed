@@ -250,6 +250,32 @@ impl SuggestionSnapshot {
         }
     }
 
+    pub fn to_point(&self, offset: SuggestionOffset) -> SuggestionPoint {
+        if let Some(suggestion) = self.suggestion.as_ref() {
+            let suggestion_point_start = suggestion.position.to_point(&self.fold_snapshot).0;
+            if offset.0 <= suggestion.position.0 {
+                SuggestionPoint(FoldOffset(offset.0).to_point(&self.fold_snapshot).0)
+            } else if offset.0 > (suggestion.position.0 + suggestion.text.len()) {
+                let fold_point = FoldOffset(offset.0 - suggestion.text.len())
+                    .to_point(&self.fold_snapshot)
+                    .0;
+
+                SuggestionPoint(
+                    suggestion_point_start
+                        + suggestion.text.max_point()
+                        + (fold_point - suggestion_point_start),
+                )
+            } else {
+                let point_in_suggestion = suggestion
+                    .text
+                    .offset_to_point(offset.0 - suggestion.position.0);
+                SuggestionPoint(suggestion_point_start + point_in_suggestion)
+            }
+        } else {
+            SuggestionPoint(FoldOffset(offset.0).to_point(&self.fold_snapshot).0)
+        }
+    }
+
     pub fn line_len(&self, row: u32) -> u32 {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_lines = suggestion.text.max_point();
@@ -706,6 +732,12 @@ mod tests {
                     suggestion_offset,
                     "invalid to_offset({:?})",
                     suggestion_point
+                );
+                assert_eq!(
+                    suggestion_snapshot.to_point(suggestion_offset),
+                    suggestion_point,
+                    "invalid to_point({:?})",
+                    suggestion_offset
                 );
 
                 let mut bytes = [0; 4];
