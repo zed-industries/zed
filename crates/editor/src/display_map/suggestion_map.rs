@@ -131,7 +131,7 @@ impl SuggestionMap {
             let start = fold_edit.new.start;
             let end = FoldOffset(start.0 + fold_edit.old_len().0);
             if let Some(suggestion) = snapshot.suggestion.as_mut() {
-                if end < suggestion.position {
+                if end <= suggestion.position {
                     suggestion.position.0 += fold_edit.new_len().0;
                     suggestion.position.0 -= fold_edit.old_len().0;
                 } else if start > suggestion.position {
@@ -344,6 +344,52 @@ mod tests {
     use rand::{prelude::StdRng, Rng};
     use settings::Settings;
     use std::env;
+
+    #[gpui::test]
+    fn test_basic(cx: &mut MutableAppContext) {
+        let buffer = MultiBuffer::build_simple("abcdefghi", cx);
+        let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
+        let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
+        assert_eq!(suggestion_snapshot.text(), "abcdefghi");
+
+        let (suggestion_snapshot, _) = suggestion_map.replace(
+            Some(Suggestion {
+                position: 3,
+                text: "123\n456".into(),
+                highlight_style: Default::default(),
+            }),
+            fold_snapshot,
+            Default::default(),
+        );
+        assert_eq!(suggestion_snapshot.text(), "abc123\n456defghi");
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(0..0, "ABC"), (3..3, "DEF"), (4..4, "GHI"), (9..9, "JKL")],
+                None,
+                cx,
+            )
+        });
+        let (fold_snapshot, fold_edits) = fold_map.read(
+            buffer.read(cx).snapshot(cx),
+            buffer_edits.consume().into_inner(),
+        );
+        let (suggestion_snapshot, _) = suggestion_map.sync(fold_snapshot.clone(), fold_edits);
+        assert_eq!(suggestion_snapshot.text(), "ABCabcDEF123\n456dGHIefghiJKL");
+
+        let (mut fold_map_writer, _, _) =
+            fold_map.write(buffer.read(cx).snapshot(cx), Default::default());
+        let (fold_snapshot, fold_edits) = fold_map_writer.fold([0..3]);
+        let (suggestion_snapshot, _) = suggestion_map.sync(fold_snapshot, fold_edits);
+        assert_eq!(suggestion_snapshot.text(), "⋯abcDEF123\n456dGHIefghiJKL");
+
+        let (mut fold_map_writer, _, _) =
+            fold_map.write(buffer.read(cx).snapshot(cx), Default::default());
+        let (fold_snapshot, fold_edits) = fold_map_writer.fold([6..10]);
+        let (suggestion_snapshot, _) = suggestion_map.sync(fold_snapshot, fold_edits);
+        assert_eq!(suggestion_snapshot.text(), "⋯abc⋯GHIefghiJKL");
+    }
 
     #[gpui::test(iterations = 100)]
     fn test_random_suggestions(cx: &mut MutableAppContext, mut rng: StdRng) {
