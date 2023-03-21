@@ -2,7 +2,7 @@ use super::{
     fold_map::{FoldBufferRows, FoldChunks, FoldEdit, FoldOffset, FoldPoint, FoldSnapshot},
     TextHighlights,
 };
-use crate::ToPoint;
+use crate::{MultiBufferSnapshot, ToPoint};
 use gpui::fonts::HighlightStyle;
 use language::{Bias, Chunk, Edit, Patch, Point, Rope, TextSummary};
 use parking_lot::Mutex;
@@ -66,6 +66,7 @@ impl SuggestionMap {
         let snapshot = SuggestionSnapshot {
             fold_snapshot,
             suggestion: None,
+            version: 0,
         };
         (Self(Mutex::new(snapshot.clone())), snapshot)
     }
@@ -115,6 +116,7 @@ impl SuggestionMap {
         }
 
         snapshot.suggestion = new_suggestion;
+        snapshot.version += 1;
         (snapshot.clone(), patch.into_inner())
     }
 
@@ -124,6 +126,11 @@ impl SuggestionMap {
         fold_edits: Vec<FoldEdit>,
     ) -> (SuggestionSnapshot, Vec<SuggestionEdit>) {
         let mut snapshot = self.0.lock();
+
+        if snapshot.fold_snapshot.version != fold_snapshot.version {
+            snapshot.version += 1;
+        }
+
         let mut suggestion_edits = Vec::new();
 
         let mut suggestion_old_len = 0;
@@ -168,9 +175,14 @@ impl SuggestionMap {
 pub struct SuggestionSnapshot {
     fold_snapshot: FoldSnapshot,
     suggestion: Option<Suggestion<FoldOffset>>,
+    pub version: usize,
 }
 
 impl SuggestionSnapshot {
+    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+        self.fold_snapshot.buffer_snapshot()
+    }
+
     pub fn max_point(&self) -> SuggestionPoint {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_point = suggestion.position.to_point(&self.fold_snapshot);
