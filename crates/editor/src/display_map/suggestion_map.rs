@@ -229,6 +229,27 @@ impl SuggestionSnapshot {
         }
     }
 
+    pub fn to_offset(&self, point: SuggestionPoint) -> SuggestionOffset {
+        if let Some(suggestion) = self.suggestion.as_ref() {
+            let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
+            let suggestion_end = suggestion_start + suggestion.text.max_point();
+
+            if point.0 <= suggestion_start {
+                SuggestionOffset(FoldPoint(point.0).to_offset(&self.fold_snapshot).0)
+            } else if point.0 > suggestion_end {
+                let fold_offset = FoldPoint(suggestion_start + (point.0 - suggestion_end))
+                    .to_offset(&self.fold_snapshot);
+                SuggestionOffset(fold_offset.0 + suggestion.text.len())
+            } else {
+                let offset_in_suggestion =
+                    suggestion.text.point_to_offset(point.0 - suggestion_start);
+                SuggestionOffset(suggestion.position.0 + offset_in_suggestion)
+            }
+        } else {
+            SuggestionOffset(FoldPoint(point.0).to_offset(&self.fold_snapshot).0)
+        }
+    }
+
     pub fn line_len(&self, row: u32) -> u32 {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_lines = suggestion.text.max_point();
@@ -257,9 +278,8 @@ impl SuggestionSnapshot {
 
     pub fn text_summary_for_range(&self, range: Range<SuggestionPoint>) -> TextSummary {
         if let Some(suggestion) = self.suggestion.as_ref() {
-            let suggestion_lines = suggestion.text.max_point();
             let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
-            let suggestion_end = suggestion_start + suggestion_lines;
+            let suggestion_end = suggestion_start + suggestion.text.max_point();
             let mut summary = TextSummary::default();
 
             let prefix_range =
@@ -297,6 +317,12 @@ impl SuggestionSnapshot {
             self.fold_snapshot
                 .text_summary_for_range(FoldPoint(range.start.0)..FoldPoint(range.end.0))
         }
+    }
+
+    pub fn chars_at(&self, start: SuggestionPoint) -> impl '_ + Iterator<Item = char> {
+        let start = self.to_offset(start);
+        self.chunks(start..self.len(), false, None)
+            .flat_map(|chunk| chunk.text.chars())
     }
 
     pub fn chunks<'a>(
@@ -673,9 +699,18 @@ mod tests {
             }
 
             let mut suggestion_point = SuggestionPoint::default();
+            let mut suggestion_offset = SuggestionOffset::default();
             for ch in expected_text.chars() {
+                assert_eq!(
+                    suggestion_snapshot.to_offset(suggestion_point),
+                    suggestion_offset,
+                    "invalid to_offset({:?})",
+                    suggestion_point
+                );
+
                 let mut bytes = [0; 4];
                 for byte in ch.encode_utf8(&mut bytes).as_bytes() {
+                    suggestion_offset.0 += 1;
                     if *byte == b'\n' {
                         suggestion_point.0 += Point::new(1, 0);
                     } else {
