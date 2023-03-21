@@ -1,5 +1,5 @@
 use super::{
-    fold_map::{FoldChunks, FoldEdit, FoldOffset, FoldSnapshot},
+    fold_map::{FoldBufferRows, FoldChunks, FoldEdit, FoldOffset, FoldSnapshot},
     TextHighlights,
 };
 use crate::ToPoint;
@@ -10,6 +10,7 @@ use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub},
 };
+use util::post_inc;
 
 pub type SuggestionEdit = Edit<SuggestionOffset>;
 
@@ -283,6 +284,34 @@ impl SuggestionSnapshot {
         }
     }
 
+    pub fn buffer_rows<'a>(&'a self, row: u32) -> SuggestionBufferRows<'a> {
+        let suggestion_range = if let Some(suggestion) = self.suggestion.as_ref() {
+            let start = suggestion.position.to_point(&self.fold_snapshot).0;
+            let end = start + suggestion.text.max_point();
+            start.row..end.row
+        } else {
+            u32::MAX..u32::MAX
+        };
+
+        let fold_buffer_rows = if row <= suggestion_range.start {
+            self.fold_snapshot.buffer_rows(row)
+        } else if row > suggestion_range.end {
+            self.fold_snapshot
+                .buffer_rows(row - (suggestion_range.end - suggestion_range.start))
+        } else {
+            let mut rows = self.fold_snapshot.buffer_rows(suggestion_range.start);
+            rows.next();
+            rows
+        };
+
+        SuggestionBufferRows {
+            current_row: row,
+            suggestion_row_start: suggestion_range.start,
+            suggestion_row_end: suggestion_range.end,
+            fold_buffer_rows,
+        }
+    }
+
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(Default::default()..self.len(), false, None)
@@ -333,6 +362,26 @@ impl<'a> Iterator for Chunks<'a> {
         }
 
         None
+    }
+}
+
+pub struct SuggestionBufferRows<'a> {
+    current_row: u32,
+    suggestion_row_start: u32,
+    suggestion_row_end: u32,
+    fold_buffer_rows: FoldBufferRows<'a>,
+}
+
+impl<'a> Iterator for SuggestionBufferRows<'a> {
+    type Item = Option<u32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let row = post_inc(&mut self.current_row);
+        if row <= self.suggestion_row_start || row > self.suggestion_row_end {
+            self.fold_buffer_rows.next()
+        } else {
+            Some(None)
+        }
     }
 }
 
@@ -472,13 +521,30 @@ mod tests {
             log::info!("suggestions text: {:?}", suggestion_snapshot.text());
 
             let mut expected_text = Rope::from(fold_snapshot.text().as_str());
+            let mut expected_buffer_rows = fold_snapshot.buffer_rows(0).collect::<Vec<_>>();
             if let Some(suggestion) = suggestion_snapshot.suggestion.as_ref() {
                 expected_text.replace(
                     suggestion.position.0..suggestion.position.0,
                     &suggestion.text.to_string(),
                 );
+                let suggestion_start = suggestion.position.to_point(&fold_snapshot).0;
+                let suggestion_end = suggestion_start + suggestion.text.max_point();
+                expected_buffer_rows.splice(
+                    (suggestion_start.row + 1) as usize..(suggestion_start.row + 1) as usize,
+                    (0..suggestion_end.row - suggestion_start.row).map(|_| None),
+                );
             }
             assert_eq!(suggestion_snapshot.text(), expected_text.to_string());
+            for row_start in 0..expected_buffer_rows.len() {
+                assert_eq!(
+                    suggestion_snapshot
+                        .buffer_rows(row_start as u32)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[row_start..],
+                    "incorrect buffer rows starting at {}",
+                    row_start
+                );
+            }
 
             for _ in 0..5 {
                 let mut end = rng.gen_range(0..=suggestion_snapshot.len().0);
