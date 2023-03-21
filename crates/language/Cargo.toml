@@ -43,7 +43,7 @@ futures = "0.3"
 lazy_static = "1.4"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-postage = { version = "0.4.1", features = ["futures-traits"] }
+postage = { workspace = true }
 rand = { version = "0.8.3", optional = true }
 regex = "1.5"
 serde = { version = "1.0", features = ["derive", "rc"] }

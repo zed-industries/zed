@@ -18,5 +18,5 @@ settings = { path = "../settings" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
 ordered-float = "2.1.1"
-postage = { version = "0.4", features = ["futures-traits"] }
+postage = { workspace = true }
 smol = "1.2"

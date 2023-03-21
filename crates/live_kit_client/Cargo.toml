@@ -35,7 +35,7 @@ core-graphics = "0.22.3"
 futures = "0.3"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-postage = { version = "0.4.1", features = ["futures-traits"] }
+postage = { workspace = true }
 
 async-trait = { version = "0.1", optional = true }
 lazy_static = { version = "1.4", optional = true }
