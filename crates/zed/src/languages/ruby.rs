@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
 use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
@@ -10,6 +10,10 @@ pub struct RubyLanguageServer;
 impl LspAdapter for RubyLanguageServer {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("solargraph".into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Launch
     }
 
     async fn server_args(&self) -> Vec<String> {

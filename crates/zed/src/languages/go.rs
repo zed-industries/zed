@@ -23,6 +23,10 @@ impl super::LspAdapter for GoLspAdapter {
         LanguageServerName("gopls".into())
     }
 
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Launch
+    }
+
     async fn server_args(&self) -> Vec<String> {
         vec!["-mode=stdio".into()]
     }

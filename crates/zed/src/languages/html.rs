@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
 use serde_json::json;
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
@@ -20,6 +20,10 @@ impl HtmlLspAdapter {
 impl LspAdapter for HtmlLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-html-language-server".into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Node
     }
 
     async fn server_args(&self) -> Vec<String> {

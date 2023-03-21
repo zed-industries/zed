@@ -6,7 +6,7 @@ use client::http::HttpClient;
 use collections::HashMap;
 use futures::{future::BoxFuture, io::BufReader, FutureExt, StreamExt};
 use gpui::MutableAppContext;
-use language::{LanguageRegistry, LanguageServerName, LspAdapter};
+use language::{LanguageRegistry, LanguageServerName, LspAdapter, ServerExecutionKind};
 use serde_json::json;
 use settings::{keymap_file_json_schema, settings_file_json_schema};
 use smol::fs::{self, File};
@@ -35,6 +35,10 @@ impl JsonLspAdapter {
 impl LspAdapter for JsonLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("json-language-server".into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Node
     }
 
     async fn server_args(&self) -> Vec<String> {
