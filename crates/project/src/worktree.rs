@@ -2140,7 +2140,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 
 struct BackgroundScanner {
     fs: Arc<dyn Fs>,
-    snapshot: Arc<Mutex<LocalSnapshot>>,
+    snapshot: Mutex<LocalSnapshot>,
     changes: HashMap<Arc<Path>, PathChange>,
     notify: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
@@ -2155,7 +2155,7 @@ impl BackgroundScanner {
     ) -> Self {
         Self {
             fs,
-            snapshot: Arc::new(Mutex::new(snapshot)),
+            snapshot: Mutex::new(snapshot),
             notify,
             executor,
             changes: Default::default(),
