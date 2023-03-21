@@ -29,10 +29,6 @@ impl FoldPoint {
         self.0.row
     }
 
-    pub fn column(self) -> u32 {
-        self.0.column
-    }
-
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
@@ -653,12 +649,6 @@ impl FoldSnapshot {
             }
         }
         false
-    }
-
-    pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
-        let start = start.to_offset(self);
-        self.chunks(start..self.len(), false, None)
-            .flat_map(|chunk| chunk.text.chars())
     }
 
     pub fn chunks<'a>(

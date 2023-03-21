@@ -31,7 +31,7 @@ const CHUNK_BASE: usize = 16;
 /// hash being equivalent to hashing all the text contained in the [Rope] at once.
 pub type RopeFingerprint = HashMatrix;
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
 pub struct Rope {
     chunks: SumTree<Chunk>,
 }
@@ -385,6 +385,22 @@ impl fmt::Display for Rope {
         for chunk in self.chunks() {
             write!(f, "{}", chunk)?;
         }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for Rope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::fmt::Write as _;
+
+        write!(f, "\"")?;
+        let mut format_string = String::new();
+        for chunk in self.chunks() {
+            write!(&mut format_string, "{:?}", chunk)?;
+            write!(f, "{}", &format_string[1..format_string.len() - 1])?;
+            format_string.clear();
+        }
+        write!(f, "\"")?;
         Ok(())
     }
 }

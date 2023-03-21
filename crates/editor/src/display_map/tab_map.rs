@@ -1,5 +1,5 @@
 use super::{
-    fold_map::{self, FoldEdit, FoldPoint, FoldSnapshot},
+    suggestion_map::{self, SuggestionChunks, SuggestionEdit, SuggestionPoint, SuggestionSnapshot},
     TextHighlights,
 };
 use crate::MultiBufferSnapshot;
@@ -11,9 +11,9 @@ use sum_tree::Bias;
 pub struct TabMap(Mutex<TabSnapshot>);
 
 impl TabMap {
-    pub fn new(input: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
+    pub fn new(input: SuggestionSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
         let snapshot = TabSnapshot {
-            fold_snapshot: input,
+            suggestion_snapshot: input,
             tab_size,
             version: 0,
         };
@@ -22,37 +22,37 @@ impl TabMap {
 
     pub fn sync(
         &self,
-        fold_snapshot: FoldSnapshot,
-        mut fold_edits: Vec<FoldEdit>,
+        suggestion_snapshot: SuggestionSnapshot,
+        mut suggestion_edits: Vec<SuggestionEdit>,
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
         let mut new_snapshot = TabSnapshot {
-            fold_snapshot,
+            suggestion_snapshot,
             tab_size,
             version: old_snapshot.version,
         };
 
-        if old_snapshot.fold_snapshot.version != new_snapshot.fold_snapshot.version {
+        if old_snapshot.suggestion_snapshot.version != new_snapshot.suggestion_snapshot.version {
             new_snapshot.version += 1;
         }
 
-        let old_max_offset = old_snapshot.fold_snapshot.len();
-        let mut tab_edits = Vec::with_capacity(fold_edits.len());
+        let old_max_offset = old_snapshot.suggestion_snapshot.len();
+        let mut tab_edits = Vec::with_capacity(suggestion_edits.len());
 
         if old_snapshot.tab_size == new_snapshot.tab_size {
-            for fold_edit in &mut fold_edits {
+            for suggestion_edit in &mut suggestion_edits {
                 let mut delta = 0;
-                for chunk in old_snapshot.fold_snapshot.chunks(
-                    fold_edit.old.end..old_max_offset,
+                for chunk in old_snapshot.suggestion_snapshot.chunks(
+                    suggestion_edit.old.end..old_max_offset,
                     false,
                     None,
                 ) {
                     let patterns: &[_] = &['\t', '\n'];
                     if let Some(ix) = chunk.text.find(patterns) {
                         if &chunk.text[ix..ix + 1] == "\t" {
-                            fold_edit.old.end.0 += delta + ix + 1;
-                            fold_edit.new.end.0 += delta + ix + 1;
+                            suggestion_edit.old.end.0 += delta + ix + 1;
+                            suggestion_edit.new.end.0 += delta + ix + 1;
                         }
 
                         break;
@@ -63,24 +63,32 @@ impl TabMap {
             }
 
             let mut ix = 1;
-            while ix < fold_edits.len() {
-                let (prev_edits, next_edits) = fold_edits.split_at_mut(ix);
+            while ix < suggestion_edits.len() {
+                let (prev_edits, next_edits) = suggestion_edits.split_at_mut(ix);
                 let prev_edit = prev_edits.last_mut().unwrap();
                 let edit = &next_edits[0];
                 if prev_edit.old.end >= edit.old.start {
                     prev_edit.old.end = edit.old.end;
                     prev_edit.new.end = edit.new.end;
-                    fold_edits.remove(ix);
+                    suggestion_edits.remove(ix);
                 } else {
                     ix += 1;
                 }
             }
 
-            for fold_edit in fold_edits {
-                let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
-                let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-                let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
-                let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+            for suggestion_edit in suggestion_edits {
+                let old_start = old_snapshot
+                    .suggestion_snapshot
+                    .to_point(suggestion_edit.old.start);
+                let old_end = old_snapshot
+                    .suggestion_snapshot
+                    .to_point(suggestion_edit.old.end);
+                let new_start = new_snapshot
+                    .suggestion_snapshot
+                    .to_point(suggestion_edit.new.start);
+                let new_end = new_snapshot
+                    .suggestion_snapshot
+                    .to_point(suggestion_edit.new.end);
                 tab_edits.push(TabEdit {
                     old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
                     new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
@@ -101,14 +109,14 @@ impl TabMap {
 
 #[derive(Clone)]
 pub struct TabSnapshot {
-    pub fold_snapshot: FoldSnapshot,
+    pub suggestion_snapshot: SuggestionSnapshot,
     pub tab_size: NonZeroU32,
     pub version: usize,
 }
 
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        self.fold_snapshot.buffer_snapshot()
+        self.suggestion_snapshot.buffer_snapshot()
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -132,10 +140,10 @@ impl TabSnapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
-        let input_start = self.to_fold_point(range.start, Bias::Left).0;
-        let input_end = self.to_fold_point(range.end, Bias::Right).0;
+        let input_start = self.to_suggestion_point(range.start, Bias::Left).0;
+        let input_end = self.to_suggestion_point(range.end, Bias::Right).0;
         let input_summary = self
-            .fold_snapshot
+            .suggestion_snapshot
             .text_summary_for_range(input_start..input_end);
 
         let mut first_line_chars = 0;
@@ -182,12 +190,11 @@ impl TabSnapshot {
         text_highlights: Option<&'a TextHighlights>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
-            self.to_fold_point(range.start, Bias::Left);
-        let input_start = input_start.to_offset(&self.fold_snapshot);
+            self.to_suggestion_point(range.start, Bias::Left);
+        let input_start = self.suggestion_snapshot.to_offset(input_start);
         let input_end = self
-            .to_fold_point(range.end, Bias::Right)
-            .0
-            .to_offset(&self.fold_snapshot);
+            .suggestion_snapshot
+            .to_offset(self.to_suggestion_point(range.end, Bias::Right).0);
         let to_next_stop = if range.start.0 + Point::new(0, to_next_stop as u32) > range.end.0 {
             (range.end.column() - range.start.column()) as usize
         } else {
@@ -195,7 +202,7 @@ impl TabSnapshot {
         };
 
         TabChunks {
-            fold_chunks: self.fold_snapshot.chunks(
+            suggestion_chunks: self.suggestion_snapshot.chunks(
                 input_start..input_end,
                 language_aware,
                 text_highlights,
@@ -212,8 +219,8 @@ impl TabSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, row: u32) -> fold_map::FoldBufferRows {
-        self.fold_snapshot.buffer_rows(row)
+    pub fn buffer_rows(&self, row: u32) -> suggestion_map::SuggestionBufferRows {
+        self.suggestion_snapshot.buffer_rows(row)
     }
 
     #[cfg(test)]
@@ -224,42 +231,55 @@ impl TabSnapshot {
     }
 
     pub fn max_point(&self) -> TabPoint {
-        self.to_tab_point(self.fold_snapshot.max_point())
+        self.to_tab_point(self.suggestion_snapshot.max_point())
     }
 
     pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
         self.to_tab_point(
-            self.fold_snapshot
-                .clip_point(self.to_fold_point(point, bias).0, bias),
+            self.suggestion_snapshot
+                .clip_point(self.to_suggestion_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
-        let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
+    pub fn to_tab_point(&self, input: SuggestionPoint) -> TabPoint {
+        let chars = self
+            .suggestion_snapshot
+            .chars_at(SuggestionPoint::new(input.row(), 0));
         let expanded = Self::expand_tabs(chars, input.column() as usize, self.tab_size);
         TabPoint::new(input.row(), expanded as u32)
     }
 
-    pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, usize, usize) {
-        let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
+    pub fn to_suggestion_point(
+        &self,
+        output: TabPoint,
+        bias: Bias,
+    ) -> (SuggestionPoint, usize, usize) {
+        let chars = self
+            .suggestion_snapshot
+            .chars_at(SuggestionPoint::new(output.row(), 0));
         let expanded = output.column() as usize;
         let (collapsed, expanded_char_column, to_next_stop) =
             Self::collapse_tabs(chars, expanded, bias, self.tab_size);
         (
-            FoldPoint::new(output.row(), collapsed as u32),
+            SuggestionPoint::new(output.row(), collapsed as u32),
             expanded_char_column,
             to_next_stop,
         )
     }
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
-        self.to_tab_point(self.fold_snapshot.to_fold_point(point, bias))
+        let fold_point = self
+            .suggestion_snapshot
+            .fold_snapshot
+            .to_fold_point(point, bias);
+        let suggestion_point = self.suggestion_snapshot.to_suggestion_point(fold_point);
+        self.to_tab_point(suggestion_point)
     }
 
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
-        self.to_fold_point(point, bias)
-            .0
-            .to_buffer_point(&self.fold_snapshot)
+        let suggestion_point = self.to_suggestion_point(point, bias).0;
+        let fold_point = self.suggestion_snapshot.to_fold_point(suggestion_point);
+        fold_point.to_buffer_point(&self.suggestion_snapshot.fold_snapshot)
     }
 
     pub fn expand_tabs(
@@ -412,7 +432,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 const SPACES: &str = "                ";
 
 pub struct TabChunks<'a> {
-    fold_chunks: fold_map::FoldChunks<'a>,
+    suggestion_chunks: SuggestionChunks<'a>,
     chunk: Chunk<'a>,
     column: usize,
     output_position: Point,
@@ -426,7 +446,7 @@ impl<'a> Iterator for TabChunks<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.text.is_empty() {
-            if let Some(chunk) = self.fold_chunks.next() {
+            if let Some(chunk) = self.suggestion_chunks.next() {
                 self.chunk = chunk;
                 if self.skip_leading_tab {
                     self.chunk.text = &self.chunk.text[1..];
@@ -482,7 +502,10 @@ impl<'a> Iterator for TabChunks<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{display_map::fold_map::FoldMap, MultiBuffer};
+    use crate::{
+        display_map::{fold_map::FoldMap, suggestion_map::SuggestionMap},
+        MultiBuffer,
+    };
     use rand::{prelude::StdRng, Rng};
 
     #[test]
@@ -518,10 +541,13 @@ mod tests {
 
         let (mut fold_map, _) = FoldMap::new(buffer_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);
-        let (folds_snapshot, _) = fold_map.read(buffer_snapshot, vec![]);
-        log::info!("FoldMap text: {:?}", folds_snapshot.text());
+        let (fold_snapshot, _) = fold_map.read(buffer_snapshot, vec![]);
+        log::info!("FoldMap text: {:?}", fold_snapshot.text());
+        let (suggestion_map, _) = SuggestionMap::new(fold_snapshot);
+        let (suggestion_snapshot, _) = suggestion_map.randomly_mutate(&mut rng);
+        log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
 
-        let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
+        let (_, tabs_snapshot) = TabMap::new(suggestion_snapshot.clone(), tab_size);
         let text = text::Rope::from(tabs_snapshot.text().as_str());
         log::info!(
             "TabMap text (tab size: {}): {:?}",
@@ -557,7 +583,7 @@ mod tests {
             );
 
             let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
-            if tab_size.get() > 1 && folds_snapshot.text().contains('\t') {
+            if tab_size.get() > 1 && suggestion_snapshot.text().contains('\t') {
                 actual_summary.longest_row = expected_summary.longest_row;
                 actual_summary.longest_row_chars = expected_summary.longest_row_chars;
             }
