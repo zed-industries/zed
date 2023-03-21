@@ -58,9 +58,9 @@ impl SuggestionPoint {
 
 #[derive(Clone, Debug)]
 pub struct Suggestion<T> {
-    position: T,
-    text: Rope,
-    highlight_style: HighlightStyle,
+    pub position: T,
+    pub text: Rope,
+    pub highlight_style: HighlightStyle,
 }
 
 pub struct SuggestionMap(Mutex<SuggestionSnapshot>);
