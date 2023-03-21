@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -18,6 +18,10 @@ impl PythonLspAdapter {
 impl LspAdapter for PythonLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Node
     }
 
     async fn server_args(&self) -> Vec<String> {

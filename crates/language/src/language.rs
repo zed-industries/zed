@@ -77,6 +77,12 @@ pub trait ToLspPosition {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum ServerExecutionKind {
+    Launch,
+    Node,
+}
+
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -171,6 +177,8 @@ impl CachedLspAdapter {
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind;
 
     async fn fetch_latest_server_version(
         &self,
@@ -1440,6 +1448,10 @@ impl Default for FakeLspAdapter {
 impl LspAdapter for Arc<FakeLspAdapter> {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Launch
     }
 
     async fn fetch_latest_server_version(

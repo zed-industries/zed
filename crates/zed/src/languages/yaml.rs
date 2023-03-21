@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::MutableAppContext;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
 use serde_json::Value;
 use settings::Settings;
 use smol::fs;
@@ -22,6 +22,10 @@ impl YamlLspAdapter {
 impl LspAdapter for YamlLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("yaml-language-server".into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Node
     }
 
     async fn server_args(&self) -> Vec<String> {

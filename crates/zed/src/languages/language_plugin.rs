@@ -4,7 +4,7 @@ use client::http::HttpClient;
 use collections::HashMap;
 use futures::lock::Mutex;
 use gpui::executor::Background;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
 use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -32,6 +32,7 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
 
 pub struct PluginLspAdapter {
     name: WasiFn<(), String>,
+    server_execution_kind: WasiFn<(), ServerExecutionKind>,
     server_args: WasiFn<(), Vec<String>>,
     fetch_latest_server_version: WasiFn<(), Option<String>>,
     fetch_server_binary: WasiFn<(PathBuf, String), Result<PathBuf, String>>,
@@ -47,6 +48,7 @@ impl PluginLspAdapter {
     pub async fn new(mut plugin: Plugin, executor: Arc<Background>) -> Result<Self> {
         Ok(Self {
             name: plugin.function("name")?,
+            server_execution_kind: plugin.function("server_execution_kind")?,
             server_args: plugin.function("server_args")?,
             fetch_latest_server_version: plugin.function("fetch_latest_server_version")?,
             fetch_server_binary: plugin.function("fetch_server_binary")?,
@@ -70,6 +72,15 @@ impl LspAdapter for PluginLspAdapter {
             .await
             .unwrap();
         LanguageServerName(name.into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        self.runtime
+            .lock()
+            .await
+            .call(&self.server_execution_kind, ())
+            .await
+            .unwrap()
     }
 
     async fn server_args<'a>(&'a self) -> Vec<String> {

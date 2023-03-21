@@ -6,7 +6,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{io::BufReader, StreamExt};
-use language::LanguageServerName;
+use language::{LanguageServerName, ServerExecutionKind};
 use smol::fs;
 use util::{async_iife, ResultExt};
 
@@ -19,6 +19,10 @@ pub struct LuaLspAdapter;
 impl super::LspAdapter for LuaLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("lua-language-server".into())
+    }
+
+    async fn server_execution_kind(&self) -> ServerExecutionKind {
+        ServerExecutionKind::Launch
     }
 
     async fn server_args(&self) -> Vec<String> {
