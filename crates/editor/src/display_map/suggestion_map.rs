@@ -635,25 +635,7 @@ mod tests {
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=29 => {
-                    let new_suggestion = if rng.gen_bool(0.3) {
-                        None
-                    } else {
-                        let index = rng.gen_range(0..=buffer_snapshot.len());
-                        let len = rng.gen_range(0..30);
-                        Some(Suggestion {
-                            position: index,
-                            text: util::RandomCharIter::new(&mut rng)
-                                .take(len)
-                                .collect::<String>()
-                                .as_str()
-                                .into(),
-                            highlight_style: Default::default(),
-                        })
-                    };
-
-                    log::info!("replacing suggestion with {:?}", new_suggestion);
-                    let (_, edits) =
-                        suggestion_map.replace(new_suggestion, fold_snapshot, Default::default());
+                    let (_, edits) = suggestion_map.randomly_mutate(&mut rng);
                     suggestion_edits = suggestion_edits.compose(edits);
                 }
                 30..=59 => {
@@ -829,6 +811,30 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    impl SuggestionMap {
+        fn randomly_mutate(&self, rng: &mut impl Rng) -> (SuggestionSnapshot, Vec<SuggestionEdit>) {
+            let fold_snapshot = self.0.lock().fold_snapshot.clone();
+            let new_suggestion = if rng.gen_bool(0.3) {
+                None
+            } else {
+                let index = rng.gen_range(0..=fold_snapshot.buffer_snapshot().len());
+                let len = rng.gen_range(0..30);
+                Some(Suggestion {
+                    position: index,
+                    text: util::RandomCharIter::new(rng)
+                        .take(len)
+                        .collect::<String>()
+                        .as_str()
+                        .into(),
+                    highlight_style: Default::default(),
+                })
+            };
+
+            log::info!("replacing suggestion with {:?}", new_suggestion);
+            self.replace(new_suggestion, fold_snapshot, Default::default())
         }
     }
 }
