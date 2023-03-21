@@ -22,7 +22,7 @@ futures = "0.3"
 theme = { path = "../theme" }
 util = { path = "../util" }
 json_comments = "0.2"
-postage = { version = "0.4.1", features = ["futures-traits"] }
+postage = { workspace = true }
 schemars = "0.8"
 serde = { workspace = true }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }

@@ -21,7 +21,7 @@ gpui = { path = "../gpui" }
 human_bytes = "0.4.1"
 isahc = "1.7"
 lazy_static = "1.4.0"
-postage = { version = "0.4", features = ["futures-traits"] }
+postage = { workspace = true }
 project = { path = "../project" }
 search = { path = "../search" }
 serde = { version = "1.0", features = ["derive", "rc"] }

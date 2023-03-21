@@ -82,7 +82,7 @@ libc = "0.2"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 num_cpus = "1.13.0"
 parking_lot = "0.11.1"
-postage = { version = "0.4.1", features = ["futures-traits"] }
+postage = { workspace = true }
 rand = "0.8.3"
 regex = "1.5"
 rsa = "0.4"
