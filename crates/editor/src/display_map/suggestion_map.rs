@@ -4,7 +4,7 @@ use super::{
 };
 use crate::ToPoint;
 use gpui::fonts::HighlightStyle;
-use language::{Bias, Chunk, Edit, Patch, Point, Rope};
+use language::{Bias, Chunk, Edit, Patch, Point, Rope, TextSummary};
 use parking_lot::Mutex;
 use std::{
     cmp,
@@ -252,6 +252,50 @@ impl SuggestionSnapshot {
             }
         } else {
             self.fold_snapshot.line_len(row)
+        }
+    }
+
+    pub fn text_summary_for_range(&self, range: Range<SuggestionPoint>) -> TextSummary {
+        if let Some(suggestion) = self.suggestion.as_ref() {
+            let suggestion_lines = suggestion.text.max_point();
+            let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
+            let suggestion_end = suggestion_start + suggestion_lines;
+            let mut summary = TextSummary::default();
+
+            let prefix_range =
+                cmp::min(range.start.0, suggestion_start)..cmp::min(range.end.0, suggestion_start);
+            if prefix_range.start < prefix_range.end {
+                summary += self.fold_snapshot.text_summary_for_range(
+                    FoldPoint(prefix_range.start)..FoldPoint(prefix_range.end),
+                );
+            }
+
+            let suggestion_range =
+                cmp::max(range.start.0, suggestion_start)..cmp::min(range.end.0, suggestion_end);
+            if suggestion_range.start < suggestion_range.end {
+                let point_range = suggestion_range.start - suggestion_start
+                    ..suggestion_range.end - suggestion_start;
+                let offset_range = suggestion.text.point_to_offset(point_range.start)
+                    ..suggestion.text.point_to_offset(point_range.end);
+                summary += suggestion
+                    .text
+                    .cursor(offset_range.start)
+                    .summary::<TextSummary>(offset_range.end);
+            }
+
+            let suffix_range = cmp::max(range.start.0, suggestion_end)..range.end.0;
+            if suffix_range.start < suffix_range.end {
+                let start = suggestion_start + (suffix_range.start - suggestion_end);
+                let end = suggestion_start + (suffix_range.end - suggestion_end);
+                summary += self
+                    .fold_snapshot
+                    .text_summary_for_range(FoldPoint(start)..FoldPoint(end));
+            }
+
+            summary
+        } else {
+            self.fold_snapshot
+                .text_summary_for_range(FoldPoint(range.start.0)..FoldPoint(range.end.0))
         }
     }
 
@@ -599,6 +643,13 @@ mod tests {
                     expected_text.slice(start..end).to_string(),
                     "incorrect text in range {:?}",
                     start..end
+                );
+
+                let start_point = SuggestionPoint(expected_text.offset_to_point(start));
+                let end_point = SuggestionPoint(expected_text.offset_to_point(end));
+                assert_eq!(
+                    suggestion_snapshot.text_summary_for_range(start_point..end_point),
+                    expected_text.slice(start..end).summary()
                 );
             }
 
