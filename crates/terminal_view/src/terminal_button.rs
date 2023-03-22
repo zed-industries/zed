@@ -19,7 +19,6 @@ pub struct FocusTerminal {
     terminal_handle: WeakModelHandle<Terminal>,
 }
 
-//actions!(terminal, [DeployTerminalMenu]);
 impl_internal_actions!(terminal, [FocusTerminal, DeployTerminalMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
