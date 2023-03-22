@@ -1366,6 +1366,7 @@ impl Buffer {
     where
         T: Into<Arc<str>>,
     {
+        self.autoindent_requests.clear();
         self.edit([(0..self.len(), text)], None, cx)
     }
 
