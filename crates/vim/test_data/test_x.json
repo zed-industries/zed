@@ -1,1 +1,12 @@
-[{"Text":"est"},{"Mode":"Normal"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Normal"},{"Text":"Tet"},{"Mode":"Normal"},{"Selection":{"start":[0,2],"end":[0,2]}},{"Mode":"Normal"},{"Text":"Tes"},{"Mode":"Normal"},{"Selection":{"start":[0,2],"end":[0,2]}},{"Mode":"Normal"},{"Text":"Tes\ntest"},{"Mode":"Normal"},{"Selection":{"start":[0,2],"end":[0,2]}},{"Mode":"Normal"}]
+{"Put":{"state":"ˇTest"}}
+{"Key":"x"}
+{"Get":{"state":"ˇest","mode":"Normal"}}
+{"Put":{"state":"Teˇst"}}
+{"Key":"x"}
+{"Get":{"state":"Teˇt","mode":"Normal"}}
+{"Put":{"state":"Tesˇt"}}
+{"Key":"x"}
+{"Get":{"state":"Teˇs","mode":"Normal"}}
+{"Put":{"state":"Tesˇt\ntest"}}
+{"Key":"x"}
+{"Get":{"state":"Teˇs\ntest","mode":"Normal"}}

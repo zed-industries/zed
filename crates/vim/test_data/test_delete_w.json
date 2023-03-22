@@ -1,1 +1,20 @@
-[{"Text":"Te"},{"Mode":"Normal"},{"Selection":{"start":[0,1],"end":[0,1]}},{"Mode":"Normal"},{"Text":"Ttest"},{"Mode":"Normal"},{"Selection":{"start":[0,1],"end":[0,1]}},{"Mode":"Normal"},{"Text":"Test te\ntest"},{"Mode":"Normal"},{"Selection":{"start":[0,6],"end":[0,6]}},{"Mode":"Normal"},{"Text":"Test tes\ntest"},{"Mode":"Normal"},{"Selection":{"start":[0,7],"end":[0,7]}},{"Mode":"Normal"},{"Text":"Test tetest"},{"Mode":"Normal"},{"Selection":{"start":[0,7],"end":[0,7]}},{"Mode":"Normal"}]
+{"Put":{"state":"Teˇst"}}
+{"Key":"d"}
+{"Key":"w"}
+{"Get":{"state":"Tˇe","mode":"Normal"}}
+{"Put":{"state":"Tˇest test"}}
+{"Key":"d"}
+{"Key":"w"}
+{"Get":{"state":"Tˇtest","mode":"Normal"}}
+{"Put":{"state":"Test teˇst\ntest"}}
+{"Key":"d"}
+{"Key":"w"}
+{"Get":{"state":"Test tˇe\ntest","mode":"Normal"}}
+{"Put":{"state":"Test tesˇt\ntest"}}
+{"Key":"d"}
+{"Key":"w"}
+{"Get":{"state":"Test teˇs\ntest","mode":"Normal"}}
+{"Put":{"state":"Test teˇst-test test"}}
+{"Key":"d"}
+{"Key":"shift-w"}
+{"Get":{"state":"Test teˇtest","mode":"Normal"}}

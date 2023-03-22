@@ -1,1 +1,16 @@
-[{"Text":"The quick"},{"Mode":"Normal"},{"Selection":{"start":[0,5],"end":[0,5]}},{"Mode":"Normal"},{"Text":"The quick"},{"Mode":"Normal"},{"Selection":{"start":[0,5],"end":[0,5]}},{"Mode":"Normal"},{"Text":"The quick\nbrown fox\njumps over"},{"Mode":"Normal"},{"Selection":{"start":[2,5],"end":[2,5]}},{"Mode":"Normal"},{"Text":"The quick\nbrown fox\njumps over"},{"Mode":"Normal"},{"Selection":{"start":[2,0],"end":[2,0]}},{"Mode":"Normal"}]
+{"Put":{"state":"The quick\nbrownˇ fox\njumps over\nthe lazy"}}
+{"Key":"d"}
+{"Key":"shift-g"}
+{"Get":{"state":"The qˇuick","mode":"Normal"}}
+{"Put":{"state":"The quick\nbrownˇ fox\njumps over\nthe lazy"}}
+{"Key":"d"}
+{"Key":"shift-g"}
+{"Get":{"state":"The qˇuick","mode":"Normal"}}
+{"Put":{"state":"The quick\nbrown fox\njumps over\nthe lˇazy"}}
+{"Key":"d"}
+{"Key":"shift-g"}
+{"Get":{"state":"The quick\nbrown fox\njumpsˇ over","mode":"Normal"}}
+{"Put":{"state":"The quick\nbrown fox\njumps over\nˇ"}}
+{"Key":"d"}
+{"Key":"shift-g"}
+{"Get":{"state":"The quick\nbrown fox\nˇjumps over","mode":"Normal"}}

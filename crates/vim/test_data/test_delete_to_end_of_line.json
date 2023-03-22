@@ -1,1 +1,6 @@
-[{"Text":"The q\nbrown fox"},{"Mode":"Normal"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Normal"},{"Text":"The quick\n\nbrown fox"},{"Mode":"Normal"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Normal"}]
+{"Put":{"state":"The qˇuick\nbrown fox"}}
+{"Key":"shift-d"}
+{"Get":{"state":"The ˇq\nbrown fox","mode":"Normal"}}
+{"Put":{"state":"The quick\nˇ\nbrown fox"}}
+{"Key":"shift-d"}
+{"Get":{"state":"The quick\nˇ\nbrown fox","mode":"Normal"}}

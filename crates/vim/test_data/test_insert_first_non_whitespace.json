@@ -1,1 +1,15 @@
-[{"Text":"The quick"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":" The quick"},{"Mode":"Insert"},{"Selection":{"start":[0,1],"end":[0,1]}},{"Mode":"Insert"},{"Text":""},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"The quick\nbrown fox"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"\nThe quick"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"}]
+{"Put":{"state":"The qˇuick"}}
+{"Key":"shift-i"}
+{"Get":{"state":"ˇThe quick","mode":"Insert"}}
+{"Put":{"state":" The qˇuick"}}
+{"Key":"shift-i"}
+{"Get":{"state":" ˇThe quick","mode":"Insert"}}
+{"Put":{"state":"ˇ"}}
+{"Key":"shift-i"}
+{"Get":{"state":"ˇ","mode":"Insert"}}
+{"Put":{"state":"The qˇuick\nbrown fox"}}
+{"Key":"shift-i"}
+{"Get":{"state":"ˇThe quick\nbrown fox","mode":"Insert"}}
+{"Put":{"state":"ˇ\nThe quick"}}
+{"Key":"shift-i"}
+{"Get":{"state":"ˇ\nThe quick","mode":"Insert"}}

@@ -1,1 +1,32 @@
-[{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[0,8],"end":[0,8]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[0,9],"end":[0,9]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[0,14],"end":[0,14]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[3,8],"end":[3,8]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[3,13],"end":[3,13]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[4,2],"end":[4,2]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[4,2],"end":[4,2]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[0,14],"end":[0,14]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[0,14],"end":[0,14]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[0,14],"end":[0,14]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[3,8],"end":[3,8]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[3,13],"end":[3,13]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[4,2],"end":[4,2]}},{"Mode":"Normal"},{"Text":"The quick-brown\n\n\nfox_jumps over\nthe"},{"Mode":"Normal"},{"Selection":{"start":[4,2],"end":[4,2]}},{"Mode":"Normal"}]
+{"Put":{"state":"Thˇe quick-brown\n\n\nfox_jumps over\nthe"}}
+{"Key":"e"}
+{"Get":{"state":"The quicˇk-brown\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Key":"e"}
+{"Get":{"state":"The quickˇ-brown\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Key":"e"}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Key":"e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumpˇs over\nthe","mode":"Normal"}}
+{"Key":"e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps oveˇr\nthe","mode":"Normal"}}
+{"Key":"e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}
+{"Key":"e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}
+{"Put":{"state":"Thˇe quick-brown\n\n\nfox_jumps over\nthe"}}
+{"Key":"shift-e"}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Put":{"state":"The quicˇk-brown\n\n\nfox_jumps over\nthe"}}
+{"Key":"shift-e"}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Put":{"state":"The quickˇ-brown\n\n\nfox_jumps over\nthe"}}
+{"Key":"shift-e"}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Key":"shift-e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumpˇs over\nthe","mode":"Normal"}}
+{"Key":"shift-e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps oveˇr\nthe","mode":"Normal"}}
+{"Key":"shift-e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}
+{"Key":"shift-e"}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}

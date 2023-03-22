@@ -1,1 +1,16 @@
-[{"Text":""},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"test"},{"Mode":"Normal"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Normal"}]
+{"Key":"i"}
+{"Get":{"state":"ˇ","mode":"Insert"}}
+{"Key":"shift-T"}
+{"Key":"e"}
+{"Key":"s"}
+{"Key":"t"}
+{"Key":" "}
+{"Key":"t"}
+{"Key":"e"}
+{"Key":"s"}
+{"Key":"t"}
+{"Key":"escape"}
+{"Key":"0"}
+{"Key":"d"}
+{"Key":"w"}
+{"Get":{"state":"ˇtest","mode":"Normal"}}

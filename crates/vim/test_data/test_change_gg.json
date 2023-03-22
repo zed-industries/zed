@@ -1,1 +1,20 @@
-[{"Text":"\njumps over\nthe lazy"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":""},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"\nbrown fox\njumps over\nthe lazy"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"\nbrown fox\njumps over\nthe lazy"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"}]
+{"Put":{"state":"The quick\nbrownˇ fox\njumps over\nthe lazy"}}
+{"Key":"c"}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"ˇ\njumps over\nthe lazy","mode":"Insert"}}
+{"Put":{"state":"The quick\nbrown fox\njumps over\nthe lˇazy"}}
+{"Key":"c"}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"ˇ","mode":"Insert"}}
+{"Put":{"state":"The qˇuick\nbrown fox\njumps over\nthe lazy"}}
+{"Key":"c"}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"ˇ\nbrown fox\njumps over\nthe lazy","mode":"Insert"}}
+{"Put":{"state":"ˇ\nbrown fox\njumps over\nthe lazy"}}
+{"Key":"c"}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"ˇ\nbrown fox\njumps over\nthe lazy","mode":"Insert"}}
