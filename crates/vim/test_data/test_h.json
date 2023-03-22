@@ -1,1 +1,9 @@
-[{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Normal"},{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Normal"},{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Normal"}]
+{"Put":{"state":"ˇThe quick\nbrown"}}
+{"Key":"h"}
+{"Get":{"state":"ˇThe quick\nbrown","mode":"Normal"}}
+{"Put":{"state":"The qˇuick\nbrown"}}
+{"Key":"h"}
+{"Get":{"state":"The ˇquick\nbrown","mode":"Normal"}}
+{"Put":{"state":"The quick\nˇbrown"}}
+{"Key":"h"}
+{"Get":{"state":"The quick\nˇbrown","mode":"Normal"}}

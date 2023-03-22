@@ -1,1 +1,16 @@
-[{"Text":"Tst"},{"Mode":"Insert"},{"Selection":{"start":[0,1],"end":[0,1]}},{"Mode":"Insert"},{"Text":"est"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"Test"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"Testtest"},{"Mode":"Insert"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Insert"}]
+{"Put":{"state":"Teˇst"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"Tˇst","mode":"Insert"}}
+{"Put":{"state":"Tˇest"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"ˇest","mode":"Insert"}}
+{"Put":{"state":"ˇTest"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"ˇTest","mode":"Insert"}}
+{"Put":{"state":"Test\nˇtest"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"Testˇtest","mode":"Insert"}}

@@ -1,1 +1,15 @@
-[{"Text":"The quick\n\nbrown fox jumps\nover the lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[3,5],"end":[3,5]}},{"Mode":"Normal"},{"Text":"The quick\n\nbrown fox jumps\nover the lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[3,5],"end":[3,5]}},{"Mode":"Normal"},{"Text":"The quick\n\nbrown fox jumps\nover the lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[3,11],"end":[3,11]}},{"Mode":"Normal"},{"Text":"\n\nbrown fox jumps\nover the lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[3,11],"end":[3,11]}},{"Mode":"Normal"},{"Text":"\n\nbrown fox jumps\nover the lazydog"},{"Mode":"Normal"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Normal"}]
+{"Put":{"state":"The qˇuick\n\nbrown fox jumps\nover the lazy dog"}}
+{"Key":"shift-g"}
+{"Get":{"state":"The quick\n\nbrown fox jumps\nover ˇthe lazy dog","mode":"Normal"}}
+{"Key":"shift-g"}
+{"Get":{"state":"The quick\n\nbrown fox jumps\nover ˇthe lazy dog","mode":"Normal"}}
+{"Put":{"state":"The quick\n\nbrown fox jumps\nover the laˇzy dog"}}
+{"Key":"shift-g"}
+{"Get":{"state":"The quick\n\nbrown fox jumps\nover the laˇzy dog","mode":"Normal"}}
+{"Put":{"state":"\n\nbrown fox jumps\nover the laˇzy dog"}}
+{"Key":"shift-g"}
+{"Get":{"state":"\n\nbrown fox jumps\nover the laˇzy dog","mode":"Normal"}}
+{"Put":{"state":"ˇ\n\nbrown fox jumps\nover the lazydog"}}
+{"Key":"2"}
+{"Key":"shift-g"}
+{"Get":{"state":"\nˇ\nbrown fox jumps\nover the lazydog","mode":"Normal"}}

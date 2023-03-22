@@ -1,1 +1,24 @@
-[{"Text":""},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":""},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"\nbrown fox\njumps over"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"The quick\n\njumps over"},{"Mode":"Insert"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Insert"},{"Text":"The quick\nbrown fox\n"},{"Mode":"Insert"},{"Selection":{"start":[2,0],"end":[2,0]}},{"Mode":"Insert"},{"Text":"The quick\n\nbrown fox"},{"Mode":"Insert"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Insert"}]
+{"Put":{"state":"ˇ"}}
+{"Key":"c"}
+{"Key":"c"}
+{"Get":{"state":"ˇ","mode":"Insert"}}
+{"Put":{"state":"The ˇquick"}}
+{"Key":"c"}
+{"Key":"c"}
+{"Get":{"state":"ˇ","mode":"Insert"}}
+{"Put":{"state":"The quˇick\nbrown fox\njumps over"}}
+{"Key":"c"}
+{"Key":"c"}
+{"Get":{"state":"ˇ\nbrown fox\njumps over","mode":"Insert"}}
+{"Put":{"state":"The quick\nbrown ˇfox\njumps over"}}
+{"Key":"c"}
+{"Key":"c"}
+{"Get":{"state":"The quick\nˇ\njumps over","mode":"Insert"}}
+{"Put":{"state":"The quick\nbrown fox\njumps ˇover"}}
+{"Key":"c"}
+{"Key":"c"}
+{"Get":{"state":"The quick\nbrown fox\nˇ","mode":"Insert"}}
+{"Put":{"state":"The quick\nˇ\nbrown fox"}}
+{"Key":"c"}
+{"Key":"c"}
+{"Get":{"state":"The quick\nˇ\nbrown fox","mode":"Insert"}}
