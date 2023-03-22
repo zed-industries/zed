@@ -56,13 +56,14 @@ impl View for TerminalButton {
             .unwrap_or(false);
 
         let has_terminals = !project.local_terminal_handles().is_empty();
+        let terminal_count = project.local_terminal_handles().len() as i32;
         let theme = cx.global::<Settings>().theme.clone();
 
         Stack::new()
             .with_child(
                 MouseEventHandler::<Self>::new(0, cx, {
                     let theme = theme.clone();
-                    move |state, _| {
+                    move |state, _cx| {
                         let style = theme
                             .workspace
                             .status_bar
@@ -70,10 +71,23 @@ impl View for TerminalButton {
                             .item
                             .style_for(state, active);
 
-                        Svg::new("icons/terminal_12.svg")
-                            .with_color(style.icon_color)
+                        Flex::row()
+                            .with_child(
+                                Svg::new("icons/terminal_12.svg")
+                                    .with_color(style.icon_color)
+                                    .constrained()
+                                    .with_width(style.icon_size)
+                                    .aligned()
+                                    .named("terminals-icon"),
+                            )
+                            .with_child(
+                                Label::new(terminal_count.to_string(), style.label.text.clone())
+                                    .contained()
+                                    .with_style(style.label.container)
+                                    .aligned()
+                                    .boxed(),
+                            )
                             .constrained()
-                            .with_width(style.icon_size)
                             .with_height(style.icon_size)
                             .contained()
                             .with_style(style.container)
@@ -112,8 +126,7 @@ impl View for TerminalButton {
 
 impl TerminalButton {
     pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
-        // When terminal moves, redraw so that the icon and toggle status matches.
-        cx.subscribe(&workspace, |_, _, _, cx| cx.notify()).detach();
+        cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         Self {
             workspace: workspace.downgrade(),
             popup_menu: cx.add_view(|cx| {
