@@ -64,7 +64,6 @@ pub async fn npm_install_packages(
     let output = smol::process::Command::new("npm")
         .args(["-fetch-retry-mintimeout", "2000"])
         .args(["-fetch-retry-maxtimeout", "5000"])
-        .args(["-fetch-timeout", "5000"])
         .arg("install")
         .arg("--prefix")
         .arg(directory)
