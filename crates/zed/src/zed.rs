@@ -74,6 +74,7 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
+    assistant::init(cx);
     terminal_button::init(cx);
     cx.add_action(about);
     cx.add_global_action(|_: &Hide, cx: &mut gpui::MutableAppContext| {
@@ -312,7 +313,7 @@ pub fn initialize_workspace(
     });
 
     let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
-    let toggle_assistant = cx.add_view(|_| AssistantButton::new());
+    let toggle_assistant = cx.add_view(|_| AssistantButton::new(workspace_handle.clone()));
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
     let activity_indicator =
@@ -323,9 +324,9 @@ pub fn initialize_workspace(
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
+        status_bar.add_left_item(toggle_assistant, cx);
         status_bar.add_left_item(activity_indicator, cx);
         status_bar.add_right_item(toggle_terminal, cx);
-        status_bar.add_right_item(toggle_assistant, cx);
         status_bar.add_right_item(feedback_button, cx);
         status_bar.add_right_item(active_buffer_language, cx);
         status_bar.add_right_item(cursor_position, cx);
