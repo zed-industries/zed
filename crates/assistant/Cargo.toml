@@ -1,0 +1,14 @@
+[package]
+name = "assistant"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/assistant.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+settings = { path = "../settings" }
+workspace = { path = "../workspace" }

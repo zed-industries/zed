@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 activity_indicator = { path = "../activity_indicator" }
 assets = { path = "../assets" }
+assistant = { path = "../assistant" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }

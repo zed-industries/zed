@@ -2,6 +2,7 @@
 members = [
     "crates/activity_indicator",
     "crates/assets",
+    "crates/assistant",
     "crates/auto_update",
     "crates/breadcrumbs",
     "crates/call",

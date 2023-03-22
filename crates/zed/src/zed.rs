@@ -4,6 +4,7 @@ pub mod menus;
 pub mod test;
 use anyhow::Context;
 use assets::Assets;
+use assistant::AssistantButton;
 use breadcrumbs::Breadcrumbs;
 pub use client;
 use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
@@ -311,6 +312,7 @@ pub fn initialize_workspace(
     });
 
     let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
+    let toggle_assistant = cx.add_view(|_| AssistantButton::new());
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
     let activity_indicator =
@@ -323,6 +325,7 @@ pub fn initialize_workspace(
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
         status_bar.add_right_item(toggle_terminal, cx);
+        status_bar.add_right_item(toggle_assistant, cx);
         status_bar.add_right_item(feedback_button, cx);
         status_bar.add_right_item(active_buffer_language, cx);
         status_bar.add_right_item(cursor_position, cx);

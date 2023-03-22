@@ -186,6 +186,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "workspace",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8445,6 +8454,7 @@ dependencies = [
  "activity_indicator",
  "anyhow",
  "assets",
+ "assistant",
  "async-compression",
  "async-recursion 0.3.2",
  "async-tar",
