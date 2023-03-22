@@ -79,13 +79,13 @@ impl View for TerminalButton {
                                     .aligned()
                                     .named("terminals-icon"),
                             )
-                            .with_child(
+                            .with_children(has_terminals.then(|| {
                                 Label::new(terminal_count.to_string(), style.label.text.clone())
                                     .contained()
                                     .with_style(style.label.container)
                                     .aligned()
-                                    .boxed(),
-                            )
+                                    .boxed()
+                            }))
                             .constrained()
                             .with_height(style.icon_size)
                             .contained()
