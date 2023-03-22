@@ -150,7 +150,7 @@ mod tests {
 
         // Test loading the keymap base at all
         cx.update(|cx| {
-            assert_keybindings_for(
+            assert_key_bindings_for(
                 cx,
                 vec![("backspace", &A), ("k", &ActivatePreviousPane)],
                 line!(),
@@ -178,7 +178,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         cx.update(|cx| {
-            assert_keybindings_for(
+            assert_key_bindings_for(
                 cx,
                 vec![("backspace", &B), ("k", &ActivatePreviousPane)],
                 line!(),
@@ -202,7 +202,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         cx.update(|cx| {
-            assert_keybindings_for(
+            assert_key_bindings_for(
                 cx,
                 vec![("backspace", &B), ("[", &ActivatePrevItem)],
                 line!(),
@@ -210,7 +210,7 @@ mod tests {
         });
     }
 
-    fn assert_keybindings_for<'a>(
+    fn assert_key_bindings_for<'a>(
         cx: &mut MutableAppContext,
         actions: Vec<(&'static str, &'a dyn Action)>,
         line: u32,
@@ -226,7 +226,7 @@ mod tests {
                     && b.iter()
                         .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
                 }),
-                "On {} Failed to find {} with keybinding {}",
+                "On {} Failed to find {} with key binding {}",
                 line,
                 action.name(),
                 key
