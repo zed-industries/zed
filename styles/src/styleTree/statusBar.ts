@@ -100,6 +100,10 @@ export default function statusBar(colorScheme: ColorScheme) {
                 ...statusContainer,
                 iconSize: 16,
                 iconColor: foreground(layer, "variant"),
+                label: {
+                    margin: { left: 6 },
+                    ...text(layer, "sans", { size: "sm" }),
+                },
                 hover: {
                     iconColor: foreground(layer, "hovered"),
                     background: background(layer, "variant"),

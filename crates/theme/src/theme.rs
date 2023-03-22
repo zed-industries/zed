@@ -300,6 +300,15 @@ pub struct StatusBar {
 }
 
 #[derive(Deserialize, Default)]
+pub struct TerminalButton {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub icon_color: Color,
+    pub icon_size: f32,
+    pub text: TextStyle,
+}
+
+#[derive(Deserialize, Default)]
 pub struct StatusBarSidebarButtons {
     pub group_left: ContainerStyle,
     pub group_right: ContainerStyle,
@@ -340,12 +349,13 @@ pub struct Sidebar {
     pub container: ContainerStyle,
 }
 
-#[derive(Clone, Copy, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct SidebarItem {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub icon_color: Color,
     pub icon_size: f32,
+    pub label: ContainedText,
 }
 
 #[derive(Deserialize, Default)]

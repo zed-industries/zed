@@ -230,7 +230,7 @@ impl View for SidebarButtons {
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.sidebar_buttons;
         let sidebar = self.sidebar.read(cx);
-        let item_style = theme.item;
+        let item_style = theme.item.clone();
         let badge_style = theme.badge;
         let active_ix = sidebar.active_item_ix;
         let is_open = sidebar.is_open;
@@ -254,7 +254,7 @@ impl View for SidebarButtons {
                         sidebar_side,
                         item_index: ix,
                     };
-                    MouseEventHandler::<Self>::new(ix, cx, move |state, cx| {
+                    MouseEventHandler::<Self>::new(ix, cx, |state, cx| {
                         let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
                         Stack::new()

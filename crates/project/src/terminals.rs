@@ -43,11 +43,12 @@ impl Project {
                     .push(terminal_handle.downgrade());
 
                 let id = terminal_handle.id();
-                cx.observe_release(&terminal_handle, move |project, _terminal, _cx| {
+                cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
                     let handles = &mut project.terminals.local_handles;
 
                     if let Some(index) = handles.iter().position(|terminal| terminal.id() == id) {
                         handles.remove(index);
+                        cx.notify();
                     }
                 })
                 .detach();
