@@ -6834,7 +6834,7 @@ mod tests {
             None
         );
 
-        // Produces a list of actions and keybindings
+        // Produces a list of actions and key bindings
         fn available_actions(
             window_id: usize,
             view_id: usize,
