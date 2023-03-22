@@ -53,7 +53,7 @@ impl View for ActiveBufferLanguage {
         let active_language = if let Some(active_language) = self.active_language.as_ref() {
             active_language.to_string()
         } else {
-            "Unkown".to_string()
+            "Unknown".to_string()
         };
 
         MouseEventHandler::<Self>::new(0, cx, |state, cx| {
