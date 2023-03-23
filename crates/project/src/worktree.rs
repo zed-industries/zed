@@ -2225,39 +2225,42 @@ impl BackgroundScanner {
                 .unwrap();
             drop(tx);
 
-            // Spawn a worker thread per logical CPU.
             self.executor
                 .scoped(|scope| {
-                    // One the first worker thread, listen for change requests from the worktree.
-                    // For each change request, after refreshing the given paths, report
-                    // a progress update for the snapshot.
+                    // While the scan is running, listen for path update requests from the worktree,
+                    // and report updates to the worktree based on a timer.
                     scope.spawn(async {
-                        let reporting_timer = self.delay().fuse();
+                        let reporting_timer = self.pause_between_initializing_updates().fuse();
                         futures::pin_mut!(reporting_timer);
-
                         loop {
                             select_biased! {
                                 job = changed_paths.next().fuse() => {
                                     let Some((abs_paths, barrier)) = job else { break };
                                     self.update_entries_for_paths(abs_paths, None).await;
-                                    if self.notify.unbounded_send(ScanState::Initializing {
-                                        snapshot: self.snapshot.lock().clone(),
-                                        barrier: Some(barrier),
-                                    }).is_err() {
+                                    if self
+                                        .notify
+                                        .unbounded_send(ScanState::Initializing {
+                                            snapshot: self.snapshot.lock().clone(),
+                                            barrier: Some(barrier),
+                                        })
+                                        .is_err()
+                                    {
                                         break;
                                     }
                                 }
-
                                 _ = reporting_timer => {
-                                    reporting_timer.set(self.delay().fuse());
-                                    if self.notify.unbounded_send(ScanState::Initializing {
-                                        snapshot: self.snapshot.lock().clone(),
-                                        barrier: None,
-                                    }).is_err() {
+                                    if self
+                                        .notify
+                                        .unbounded_send(ScanState::Initializing {
+                                            snapshot: self.snapshot.lock().clone(),
+                                            barrier: None,
+                                        })
+                                        .is_err()
+                                    {
                                         break;
                                     }
+                                    reporting_timer.set(self.pause_between_initializing_updates().fuse());
                                 }
-
                                 job = rx.recv().fuse() => {
                                     let Ok(job) = job else { break };
                                     if let Err(err) = self
@@ -2271,7 +2274,7 @@ impl BackgroundScanner {
                         }
                     });
 
-                    // On all of the remaining worker threads, just scan directories.
+                    // Spawn worker threads to scan the directory recursively.
                     for _ in 1..self.executor.num_cpus() {
                         scope.spawn(async {
                             while let Ok(job) = rx.recv().await {
@@ -2367,7 +2370,7 @@ impl BackgroundScanner {
         }
     }
 
-    async fn delay(&self) {
+    async fn pause_between_initializing_updates(&self) {
         #[cfg(any(test, feature = "test-support"))]
         if self.fs.is_fake() {
             return self.executor.simulate_random_delay().await;
