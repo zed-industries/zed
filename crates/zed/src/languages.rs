@@ -1,11 +1,11 @@
 use anyhow::Context;
-use client::http::HttpClient;
 use gpui::executor::Background;
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 use theme::ThemeRegistry;
+use util::http::HttpClient;
 
 mod c;
 mod elixir;

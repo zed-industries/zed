@@ -28,6 +28,7 @@ command_palette = { path = "../command_palette" }
 context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
+copilot = { path = "../copilot" }
 diagnostics = { path = "../diagnostics" }
 db = { path = "../db" }
 editor = { path = "../editor" }

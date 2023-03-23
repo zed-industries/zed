@@ -1,27 +1,22 @@
+use crate::http::HttpClient;
 use anyhow::{Context, Result};
+use futures::AsyncReadExt;
 use serde::Deserialize;
-use smol::io::AsyncReadExt;
 use std::sync::Arc;
-use util::http::HttpClient;
-
-pub struct GitHubLspBinaryVersion {
-    pub name: String,
-    pub url: String,
-}
 
 #[derive(Deserialize)]
-pub(crate) struct GithubRelease {
+pub struct GithubRelease {
     pub name: String,
     pub assets: Vec<GithubReleaseAsset>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GithubReleaseAsset {
+pub struct GithubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
 }
 
-pub(crate) async fn latest_github_release(
+pub async fn latest_github_release(
     repo_name_with_owner: &str,
     http: Arc<dyn HttpClient>,
 ) -> Result<GithubRelease, anyhow::Error> {

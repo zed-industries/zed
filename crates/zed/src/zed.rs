@@ -652,7 +652,6 @@ fn open_bundled_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use client::test::FakeHttpClient;
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
@@ -665,6 +664,7 @@ mod tests {
         path::{Path, PathBuf},
     };
     use theme::ThemeRegistry;
+    use util::http::FakeHttpClient;
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, Pane, SplitDirection, WorkspaceHandle,

@@ -1,11 +1,9 @@
-use crate::http::HttpClient;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     executor::Background,
     serde_json::{self, value::Map, Value},
     AppContext, Task,
 };
-use isahc::Request;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -19,6 +17,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tempfile::NamedTempFile;
+use util::http::HttpClient;
 use util::{channel::ReleaseChannel, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
@@ -220,10 +219,10 @@ impl Telemetry {
                                 "App": true
                             }),
                         }])?;
-                        let request = Request::post(MIXPANEL_ENGAGE_URL)
-                            .header("Content-Type", "application/json")
-                            .body(json_bytes.into())?;
-                        this.http_client.send(request).await?;
+
+                        this.http_client
+                            .post_json(MIXPANEL_ENGAGE_URL, json_bytes.into())
+                            .await?;
                         anyhow::Ok(())
                     }
                     .log_err(),
@@ -316,10 +315,9 @@ impl Telemetry {
 
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &events)?;
-                        let request = Request::post(MIXPANEL_EVENTS_URL)
-                            .header("Content-Type", "application/json")
-                            .body(json_bytes.into())?;
-                        this.http_client.send(request).await?;
+                        this.http_client
+                            .post_json(MIXPANEL_EVENTS_URL, json_bytes.into())
+                            .await?;
                         anyhow::Ok(())
                     }
                     .log_err(),

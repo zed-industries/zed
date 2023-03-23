@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use collections::HashMap;
 use futures::lock::Mutex;
 use gpui::executor::Background;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
+use util::http::HttpClient;
 use util::ResultExt;
 
 #[allow(dead_code)]

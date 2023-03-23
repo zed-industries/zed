@@ -1,4 +1,7 @@
 pub mod channel;
+pub mod fs;
+pub mod github;
+pub mod http;
 pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;

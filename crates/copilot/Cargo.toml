@@ -1,0 +1,21 @@
+[package]
+name = "copilot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/copilot.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+settings = { path = "../settings" }
+lsp = { path = "../lsp" }
+util = { path = "../util" }
+client = { path = "../client" }
+workspace = { path = "../workspace" }
+async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+anyhow = "1.0"
+smol = "1.2.5"
+futures = "0.3"

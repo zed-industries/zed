@@ -8,11 +8,7 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake,
 };
-use client::{
-    self,
-    http::{self, HttpClient},
-    UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
-};
+use client::{self, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use futures::{
     channel::{mpsc, oneshot},
@@ -36,6 +32,7 @@ use std::{
     path::PathBuf, sync::Arc, thread, time::Duration,
 };
 use terminal_view::{get_working_directory, TerminalView};
+use util::http::{self, HttpClient};
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
@@ -165,6 +162,7 @@ fn main() {
         terminal_view::init(cx);
         theme_testbench::init(cx);
         recent_projects::init(cx);
+        copilot::init(client.clone(), cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();

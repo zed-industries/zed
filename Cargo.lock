@@ -1113,7 +1113,6 @@ dependencies = [
  "futures 0.3.25",
  "gpui",
  "image",
- "isahc",
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
@@ -1330,6 +1329,22 @@ dependencies = [
  "settings",
  "smallvec",
  "theme",
+]
+
+[[package]]
+name = "copilot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "client",
+ "futures 0.3.25",
+ "gpui",
+ "lsp",
+ "settings",
+ "smol",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -7500,11 +7515,15 @@ dependencies = [
  "dirs 3.0.2",
  "futures 0.3.25",
  "git2",
+ "isahc",
  "lazy_static",
  "log",
  "rand 0.8.5",
+ "serde",
  "serde_json",
+ "smol",
  "tempdir",
+ "url",
 ]
 
 [[package]]
@@ -8460,6 +8479,7 @@ dependencies = [
  "collections",
  "command_palette",
  "context_menu",
+ "copilot",
  "ctor",
  "db",
  "diagnostics",

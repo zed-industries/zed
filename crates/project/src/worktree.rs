@@ -3114,13 +3114,14 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::test::FakeHttpClient;
     use fs::repository::FakeGitRepository;
     use fs::{FakeFs, RealFs};
     use gpui::{executor::Deterministic, TestAppContext};
     use rand::prelude::*;
     use serde_json::json;
     use std::{env, fmt::Write};
+    use util::http::FakeHttpClient;
+
     use util::test::temp_tree;
 
     #[gpui::test]
