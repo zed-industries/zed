@@ -3,7 +3,7 @@ mod request;
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use client::Client;
-use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext};
+use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use lsp::LanguageServer;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
@@ -15,11 +15,32 @@ use util::{
     fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
 };
 
-actions!(copilot, [SignIn]);
+actions!(copilot, [SignIn, SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
-    let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
+    let (copilot, task) = Copilot::start(client.http_client(), cx);
     cx.set_global(copilot);
+    cx.spawn(|mut cx| async move {
+        task.await?;
+        cx.update(|cx| {
+            cx.add_global_action(|_: &SignIn, cx: &mut MutableAppContext| {
+                if let Some(copilot) = Copilot::global(cx) {
+                    copilot
+                        .update(cx, |copilot, cx| copilot.sign_in(cx))
+                        .detach_and_log_err(cx);
+                }
+            });
+            cx.add_global_action(|_: &SignOut, cx: &mut MutableAppContext| {
+                if let Some(copilot) = Copilot::global(cx) {
+                    copilot
+                        .update(cx, |copilot, cx| copilot.sign_out(cx))
+                        .detach_and_log_err(cx);
+                }
+            });
+        });
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 enum CopilotServer {
@@ -31,10 +52,18 @@ enum CopilotServer {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum SignInStatus {
-    Authorized,
-    Unauthorized,
+    Authorized { user: String },
+    Unauthorized { user: String },
     SignedOut,
+}
+
+pub enum Event {
+    PromptUserDeviceFlow {
+        user_code: String,
+        verification_uri: String,
+    },
 }
 
 struct Copilot {
@@ -42,7 +71,7 @@ struct Copilot {
 }
 
 impl Entity for Copilot {
-    type Event = ();
+    type Event = Event;
 }
 
 impl Copilot {
@@ -54,46 +83,123 @@ impl Copilot {
         }
     }
 
-    fn start(http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
-        let copilot = Self {
+    fn start(
+        http: Arc<dyn HttpClient>,
+        cx: &mut MutableAppContext,
+    ) -> (ModelHandle<Self>, Task<Result<()>>) {
+        let this = cx.add_model(|_| Self {
             server: CopilotServer::Downloading,
-        };
-        cx.spawn(|this, mut cx| async move {
-            let start_language_server = async {
-                let server_path = get_lsp_binary(http).await?;
-                let server =
-                    LanguageServer::new(0, &server_path, &["--stdio"], Path::new("/"), cx.clone())?;
-                let server = server.initialize(Default::default()).await?;
-                let status = server
-                    .request::<request::CheckStatus>(request::CheckStatusParams {
-                        local_checks_only: false,
-                    })
-                    .await?;
-                let status = match status.status.as_str() {
-                    "OK" | "MaybeOk" => SignInStatus::Authorized,
-                    "NotAuthorized" => SignInStatus::Unauthorized,
-                    _ => SignInStatus::SignedOut,
+        });
+        let task = cx.spawn({
+            let this = this.clone();
+            |mut cx| async move {
+                let start_language_server = async {
+                    let server_path = get_lsp_binary(http).await?;
+                    let server = LanguageServer::new(
+                        0,
+                        &server_path,
+                        &["--stdio"],
+                        Path::new("/"),
+                        cx.clone(),
+                    )?;
+                    let server = server.initialize(Default::default()).await?;
+                    let status = server
+                        .request::<request::CheckStatus>(request::CheckStatusParams {
+                            local_checks_only: false,
+                        })
+                        .await?;
+                    anyhow::Ok((server, status))
                 };
-                anyhow::Ok((server, status))
-            };
 
-            let server = start_language_server.await;
-            this.update(&mut cx, |this, cx| {
-                cx.notify();
-                match server {
-                    Ok((server, status)) => {
-                        this.server = CopilotServer::Started { server, status };
-                        Ok(())
+                let server = start_language_server.await;
+                this.update(&mut cx, |this, cx| {
+                    cx.notify();
+                    match server {
+                        Ok((server, status)) => {
+                            this.server = CopilotServer::Started {
+                                server,
+                                status: SignInStatus::SignedOut,
+                            };
+                            this.update_sign_in_status(status, cx);
+                            Ok(())
+                        }
+                        Err(error) => {
+                            this.server = CopilotServer::Error(error.to_string());
+                            Err(error)
+                        }
                     }
-                    Err(error) => {
-                        this.server = CopilotServer::Error(error.to_string());
-                        Err(error)
-                    }
+                })
+            }
+        });
+        (this, task)
+    }
+
+    fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if let CopilotServer::Started { server, .. } = &self.server {
+            let server = server.clone();
+            cx.spawn(|this, mut cx| async move {
+                let sign_in = server
+                    .request::<request::SignInInitiate>(request::SignInInitiateParams {})
+                    .await?;
+                if let request::SignInInitiateResult::PromptUserDeviceFlow(flow) = sign_in {
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::PromptUserDeviceFlow {
+                            user_code: flow.user_code.clone(),
+                            verification_uri: flow.verification_uri,
+                        });
+                    });
+                    let response = server
+                        .request::<request::SignInConfirm>(request::SignInConfirmParams {
+                            user_code: flow.user_code,
+                        })
+                        .await?;
+                    this.update(&mut cx, |this, cx| this.update_sign_in_status(response, cx));
                 }
+                anyhow::Ok(())
             })
-        })
-        .detach_and_log_err(cx);
-        copilot
+        } else {
+            Task::ready(Err(anyhow!("copilot hasn't started yet")))
+        }
+    }
+
+    fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if let CopilotServer::Started { server, .. } = &self.server {
+            let server = server.clone();
+            cx.spawn(|this, mut cx| async move {
+                server
+                    .request::<request::SignOut>(request::SignOutParams {})
+                    .await?;
+                this.update(&mut cx, |this, cx| {
+                    if let CopilotServer::Started { status, .. } = &mut this.server {
+                        *status = SignInStatus::SignedOut;
+                        cx.notify();
+                    }
+                });
+
+                anyhow::Ok(())
+            })
+        } else {
+            Task::ready(Err(anyhow!("copilot hasn't started yet")))
+        }
+    }
+
+    fn update_sign_in_status(
+        &mut self,
+        lsp_status: request::SignInStatus,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let CopilotServer::Started { status, .. } = &mut self.server {
+            *status = match lsp_status {
+                request::SignInStatus::Ok { user } | request::SignInStatus::MaybeOk { user } => {
+                    SignInStatus::Authorized { user }
+                }
+                request::SignInStatus::NotAuthorized { user } => {
+                    SignInStatus::Unauthorized { user }
+                }
+                _ => SignInStatus::SignedOut,
+            };
+            cx.notify();
+        }
     }
 }
 
