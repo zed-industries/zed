@@ -114,21 +114,29 @@ pub struct GetCompletionsDocument {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetCompletionsResult {
-    completions: Vec<Completion>,
+    pub completions: Vec<Completion>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Completion {
-    text: String,
-    position: lsp::Position,
-    uuid: String,
-    range: lsp::Range,
-    display_text: String,
+    pub text: String,
+    pub position: lsp::Position,
+    pub uuid: String,
+    pub range: lsp::Range,
+    pub display_text: String,
 }
 
 impl lsp::request::Request for GetCompletions {
     type Params = GetCompletionsParams;
     type Result = GetCompletionsResult;
     const METHOD: &'static str = "getCompletions";
+}
+
+pub enum GetCompletionsCycling {}
+
+impl lsp::request::Request for GetCompletionsCycling {
+    type Params = GetCompletionsParams;
+    type Result = GetCompletionsResult;
+    const METHOD: &'static str = "getCompletionsCycling";
 }
