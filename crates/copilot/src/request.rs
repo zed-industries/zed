@@ -87,3 +87,48 @@ impl lsp::request::Request for SignOut {
     type Result = SignOutResult;
     const METHOD: &'static str = "signOut";
 }
+
+pub enum GetCompletions {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetCompletionsParams {
+    pub doc: GetCompletionsDocument,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetCompletionsDocument {
+    pub source: String,
+    pub tab_size: u32,
+    pub indent_size: u32,
+    pub insert_spaces: bool,
+    pub uri: lsp::Url,
+    pub path: String,
+    pub relative_path: String,
+    pub language_id: String,
+    pub position: lsp::Position,
+    pub version: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetCompletionsResult {
+    completions: Vec<Completion>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Completion {
+    text: String,
+    position: lsp::Position,
+    uuid: String,
+    range: lsp::Range,
+    display_text: String,
+}
+
+impl lsp::request::Request for GetCompletions {
+    type Params = GetCompletionsParams;
+    type Result = GetCompletionsResult;
+    const METHOD: &'static str = "getCompletions";
+}

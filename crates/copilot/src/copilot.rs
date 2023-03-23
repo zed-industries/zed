@@ -4,8 +4,9 @@ use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use client::Client;
 use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use language::{Buffer, ToPointUtf16};
+use language::{point_to_lsp, Buffer, ToPointUtf16};
 use lsp::LanguageServer;
+use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     env::consts,
@@ -53,6 +54,7 @@ enum SignInStatus {
     SignedOut,
 }
 
+#[derive(Debug)]
 pub enum Event {
     PromptUserDeviceFlow {
         user_code: String,
@@ -198,7 +200,45 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
 
-        cx.spawn(|this, cx| async move { anyhow::Ok(()) })
+        let buffer = buffer.read(cx).snapshot();
+        let position = position.to_point_utf16(&buffer);
+        let language_name = buffer.language_at(position).map(|language| language.name());
+        let language_name = language_name.as_deref();
+
+        let path;
+        let relative_path;
+        if let Some(file) = buffer.file() {
+            if let Some(file) = file.as_local() {
+                path = file.abs_path(cx);
+            } else {
+                path = file.full_path(cx);
+            }
+            relative_path = file.path().to_path_buf();
+        } else {
+            path = PathBuf::from("/untitled");
+            relative_path = PathBuf::from("untitled");
+        }
+
+        let settings = cx.global::<Settings>();
+        let request = server.request::<request::GetCompletions>(request::GetCompletionsParams {
+            doc: request::GetCompletionsDocument {
+                source: buffer.text(),
+                tab_size: settings.tab_size(language_name).into(),
+                indent_size: 1,
+                insert_spaces: !settings.hard_tabs(language_name),
+                uri: lsp::Url::from_file_path(&path).unwrap(),
+                path: path.to_string_lossy().into(),
+                relative_path: relative_path.to_string_lossy().into(),
+                language_id: "csharp".into(),
+                position: point_to_lsp(position),
+                version: 0,
+            },
+        });
+        cx.spawn(|this, cx| async move {
+            dbg!(request.await?);
+
+            anyhow::Ok(())
+        })
     }
 
     pub fn status(&self) -> Status {
@@ -300,5 +340,31 @@ async fn get_lsp_binary(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
             })()
             .await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use util::http;
+
+    #[gpui::test]
+    async fn test_smoke(cx: &mut TestAppContext) {
+        Settings::test_async(cx);
+        let http = http::client();
+        let copilot = cx.add_model(|cx| Copilot::start(http, cx));
+        smol::Timer::after(std::time::Duration::from_secs(5)).await;
+        copilot
+            .update(cx, |copilot, cx| copilot.sign_in(cx))
+            .await
+            .unwrap();
+        dbg!(copilot.read_with(cx, |copilot, _| copilot.status()));
+
+        let buffer = cx.add_model(|cx| language::Buffer::new(0, "Lorem ipsum dol", cx));
+        copilot
+            .update(cx, |copilot, cx| copilot.completions(&buffer, 15, cx))
+            .await
+            .unwrap();
     }
 }

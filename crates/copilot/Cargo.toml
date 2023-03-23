@@ -23,3 +23,12 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 smol = "1.2.5"
 futures = "0.3"
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
+lsp = { path = "../lsp", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+client = { path = "../client", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
