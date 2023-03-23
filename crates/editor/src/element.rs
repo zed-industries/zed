@@ -576,13 +576,16 @@ impl EditorElement {
 
         for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
             if let Some(indicator) = fold_indicator.as_mut() {
-                let mut x = bounds.width() - layout.gutter_padding;
-                let mut y = ix as f32 * line_height - scroll_top;
+                let position = vec2f(
+                    bounds.width() - layout.gutter_padding,
+                    ix as f32 * line_height - (scroll_top % line_height),
+                );
+                let centering_offset = vec2f(
+                    (layout.gutter_padding + layout.gutter_margin - indicator.size().x()) / 2.,
+                    (line_height - indicator.size().y()) / 2.,
+                );
 
-                x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
-                y += (line_height - indicator.size().y()) / 2.;
-
-                let indicator_origin = bounds.origin() + vec2f(x, y);
+                let indicator_origin = bounds.origin() + position + centering_offset;
 
                 indicator.paint(indicator_origin, visible_bounds, cx);
             }
