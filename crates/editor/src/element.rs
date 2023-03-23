@@ -581,7 +581,7 @@ impl EditorElement {
                     ix as f32 * line_height - (scroll_top % line_height),
                 );
                 let centering_offset = vec2f(
-                    ((layout.gutter_padding + layout.gutter_margin - indicator.size().x()) / 2.),
+                    (layout.gutter_padding + layout.gutter_margin - indicator.size().x()) / 2.,
                     (line_height - indicator.size().y()) / 2.,
                 );
 
