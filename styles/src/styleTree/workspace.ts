@@ -174,6 +174,9 @@ export default function workspace(colorScheme: ColorScheme) {
             // Sign in buttom
             // FlatButton, Variant
             signInPrompt: {
+                margin: {
+                    left: itemSpacing
+                },
                 ...titlebarButton,
             },
 
