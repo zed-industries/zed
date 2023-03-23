@@ -34,8 +34,8 @@ time = { version = "0.3", features = ["serde", "serde-well-known"] }
 tiny_http = "0.8"
 uuid = { version = "1.1.2", features = ["v4"] }
 url = "2.2"
-serde = { version = "*", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
 settings = { path = "../settings" }
 tempfile = "3"
 

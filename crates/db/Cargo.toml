@@ -23,8 +23,8 @@ async-trait = "0.1"
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
 smol = "1.2"
 
 [dev-dependencies]

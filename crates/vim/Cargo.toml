@@ -12,8 +12,8 @@ doctest = false
 neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
 
 [dependencies]
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
 itertools = "0.10"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 
@@ -21,7 +21,7 @@ async-compat = { version = "0.2.1", "optional" = true }
 async-trait = { version = "0.1", "optional" = true }
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
 tokio = { version = "1.15", "optional" = true }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde_json = { workspace = true }
 
 assets = { path = "../assets" }
 collections = { path = "../collections" }

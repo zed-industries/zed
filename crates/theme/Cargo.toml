@@ -13,8 +13,8 @@ gpui = { path = "../gpui" }
 anyhow = "1.0.38"
 indexmap = "1.6.2"
 parking_lot = "0.11.1"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
 serde_path_to_error = "0.1.4"
 toml = "0.5"
