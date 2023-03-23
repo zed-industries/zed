@@ -18,6 +18,8 @@ mod rust;
 mod typescript;
 mod yaml;
 
+pub use installation::ensure_node_installation_dir;
+
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
 // 3. Add config.toml to the newly created language directory using existing languages as a template

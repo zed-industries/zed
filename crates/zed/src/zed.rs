@@ -1846,7 +1846,7 @@ mod tests {
 
     #[gpui::test]
     fn test_bundled_languages(cx: &mut MutableAppContext) {
-        let mut languages = LanguageRegistry::new(Task::ready(()));
+        let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
