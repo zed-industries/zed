@@ -13,9 +13,7 @@ use client::{
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{
-    executor::Deterministic, test::EmptyView, ModelHandle, Task, TestAppContext, ViewHandle,
-};
+use gpui::{executor::Deterministic, test::EmptyView, ModelHandle, TestAppContext, ViewHandle};
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};

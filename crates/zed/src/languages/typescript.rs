@@ -40,18 +40,18 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(Versions {
-            typescript_version: npm_package_latest_version("typescript").await?,
-            server_version: npm_package_latest_version("typescript-language-server").await?,
+            typescript_version: npm_package_latest_version(http.clone(), "typescript").await?,
+            server_version: npm_package_latest_version(http, "typescript-language-server").await?,
         }) as Box<_>)
     }
 
     async fn fetch_server_binary(
         &self,
         versions: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
+        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<PathBuf> {
         let versions = versions.downcast::<Versions>().unwrap();
@@ -66,6 +66,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
         if fs::metadata(&binary_path).await.is_err() {
             npm_install_packages(
+                http,
                 [
                     ("typescript", versions.typescript_version.as_str()),
                     (

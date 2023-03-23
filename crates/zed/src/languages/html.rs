@@ -32,15 +32,18 @@ impl LspAdapter for HtmlLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(npm_package_latest_version("vscode-langservers-extracted").await?) as Box<_>)
+        Ok(
+            Box::new(npm_package_latest_version(http, "vscode-langservers-extracted").await?)
+                as Box<_>,
+        )
     }
 
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
+        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<PathBuf> {
         let version = version.downcast::<String>().unwrap();
@@ -52,6 +55,7 @@ impl LspAdapter for HtmlLspAdapter {
 
         if fs::metadata(&binary_path).await.is_err() {
             npm_install_packages(
+                http,
                 [("vscode-langservers-extracted", version.as_str())],
                 &version_dir,
             )
