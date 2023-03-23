@@ -23,6 +23,7 @@ pub struct Theme {
     pub context_menu: ContextMenu,
     pub contacts_popover: ContactsPopover,
     pub contact_list: ContactList,
+    pub copilot: Copilot,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
@@ -113,6 +114,11 @@ pub struct AvatarStyle {
     pub image: ImageStyle,
     pub outer_width: f32,
     pub outer_corner_radius: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct Copilot {
+    pub auth_modal: TextStyle,
 }
 
 #[derive(Deserialize, Default)]

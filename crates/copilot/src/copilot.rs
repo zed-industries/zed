@@ -1,7 +1,9 @@
+mod auth_modal;
 mod request;
 
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
+use auth_modal::AuthModal;
 use client::Client;
 use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, ToPointUtf16};
@@ -16,26 +18,36 @@ use std::{
 use util::{
     fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
 };
+use workspace::Workspace;
 
-actions!(copilot, [SignIn, SignOut]);
+actions!(copilot, [SignIn, SignOut, ToggleAuthStatus]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
-    cx.set_global(copilot);
-    cx.add_global_action(|_: &SignIn, cx: &mut MutableAppContext| {
+    cx.set_global(copilot.clone());
+    cx.add_action(|workspace: &mut Workspace, _: &SignIn, cx| {
         if let Some(copilot) = Copilot::global(cx) {
+            if copilot.read(cx).status() == Status::Authorized {
+                return;
+            }
+
             copilot
                 .update(cx, |copilot, cx| copilot.sign_in(cx))
                 .detach_and_log_err(cx);
+
+            workspace.toggle_modal(cx, |_workspace, cx| cx.add_view(|_cx| AuthModal {}));
         }
     });
-    cx.add_global_action(|_: &SignOut, cx: &mut MutableAppContext| {
+    cx.add_action(|_: &mut Workspace, _: &SignOut, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
                 .update(cx, |copilot, cx| copilot.sign_out(cx))
                 .detach_and_log_err(cx);
         }
     });
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleAuthStatus, cx| {
+        workspace.toggle_modal(cx, |_workspace, cx| cx.add_view(|_cx| AuthModal {}))
+    })
 }
 
 enum CopilotServer {
@@ -62,7 +74,7 @@ pub enum Event {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Status {
     Downloading,
     Error(Arc<str>),
@@ -138,6 +150,7 @@ impl Copilot {
             })
         })
         .detach();
+
         Self {
             server: CopilotServer::Downloading,
         }

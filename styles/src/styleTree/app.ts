@@ -21,6 +21,7 @@ import incomingCallNotification from "./incomingCallNotification"
 import { ColorScheme } from "../themes/common/colorScheme"
 import feedback from "./feedback"
 import welcome from "./welcome"
+import copilot from "./copilot"
 
 export default function app(colorScheme: ColorScheme): Object {
     return {
@@ -34,6 +35,7 @@ export default function app(colorScheme: ColorScheme): Object {
         incomingCallNotification: incomingCallNotification(colorScheme),
         picker: picker(colorScheme),
         workspace: workspace(colorScheme),
+        copilot: copilot(colorScheme),
         welcome: welcome(colorScheme),
         contextMenu: contextMenu(colorScheme),
         editor: editor(colorScheme),
