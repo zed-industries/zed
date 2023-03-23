@@ -8,7 +8,7 @@ use std::sync::Arc;
 use workspace::{item::ItemHandle, StatusItemView};
 
 pub struct ActiveBufferLanguage {
-    active_language: Option<Arc<str>>,
+    active_language: Option<Option<Arc<str>>>,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -27,12 +27,12 @@ impl ActiveBufferLanguage {
     }
 
     fn update_language(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
-        self.active_language.take();
+        self.active_language = Some(None);
 
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             if let Some(language) = buffer.read(cx).language() {
-                self.active_language = Some(language.name());
+                self.active_language = Some(Some(language.name()));
             }
         }
 
@@ -50,23 +50,27 @@ impl View for ActiveBufferLanguage {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let active_language = if let Some(active_language) = self.active_language.as_ref() {
-            active_language.to_string()
-        } else {
-            "Unknown".to_string()
-        };
+        if let Some(active_language) = self.active_language.as_ref() {
+            let active_language_text = if let Some(active_language_text) = active_language {
+                active_language_text.to_string()
+            } else {
+                "Unknown".to_string()
+            };
 
-        MouseEventHandler::<Self>::new(0, cx, |state, cx| {
-            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-            let style = theme.active_language.style_for(state, false);
-            Label::new(active_language, style.text.clone())
-                .contained()
-                .with_style(style.container)
-                .boxed()
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Toggle))
-        .boxed()
+            MouseEventHandler::<Self>::new(0, cx, |state, cx| {
+                let theme = &cx.global::<Settings>().theme.workspace.status_bar;
+                let style = theme.active_language.style_for(state, false);
+                Label::new(active_language_text, style.text.clone())
+                    .contained()
+                    .with_style(style.container)
+                    .boxed()
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Toggle))
+            .boxed()
+        } else {
+            Empty::new().boxed()
+        }
     }
 }
 
