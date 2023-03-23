@@ -18,29 +18,22 @@ use util::{
 actions!(copilot, [SignIn, SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
-    let (copilot, task) = Copilot::start(client.http_client(), cx);
+    let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
     cx.set_global(copilot);
-    cx.spawn(|mut cx| async move {
-        task.await?;
-        cx.update(|cx| {
-            cx.add_global_action(|_: &SignIn, cx: &mut MutableAppContext| {
-                if let Some(copilot) = Copilot::global(cx) {
-                    copilot
-                        .update(cx, |copilot, cx| copilot.sign_in(cx))
-                        .detach_and_log_err(cx);
-                }
-            });
-            cx.add_global_action(|_: &SignOut, cx: &mut MutableAppContext| {
-                if let Some(copilot) = Copilot::global(cx) {
-                    copilot
-                        .update(cx, |copilot, cx| copilot.sign_out(cx))
-                        .detach_and_log_err(cx);
-                }
-            });
-        });
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+    cx.add_global_action(|_: &SignIn, cx: &mut MutableAppContext| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_in(cx))
+                .detach_and_log_err(cx);
+        }
+    });
+    cx.add_global_action(|_: &SignOut, cx: &mut MutableAppContext| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_out(cx))
+                .detach_and_log_err(cx);
+        }
+    });
 }
 
 enum CopilotServer {
@@ -83,55 +76,42 @@ impl Copilot {
         }
     }
 
-    fn start(
-        http: Arc<dyn HttpClient>,
-        cx: &mut MutableAppContext,
-    ) -> (ModelHandle<Self>, Task<Result<()>>) {
-        let this = cx.add_model(|_| Self {
-            server: CopilotServer::Downloading,
-        });
-        let task = cx.spawn({
-            let this = this.clone();
-            |mut cx| async move {
-                let start_language_server = async {
-                    let server_path = get_lsp_binary(http).await?;
-                    let server = LanguageServer::new(
-                        0,
-                        &server_path,
-                        &["--stdio"],
-                        Path::new("/"),
-                        cx.clone(),
-                    )?;
-                    let server = server.initialize(Default::default()).await?;
-                    let status = server
-                        .request::<request::CheckStatus>(request::CheckStatusParams {
-                            local_checks_only: false,
-                        })
-                        .await?;
-                    anyhow::Ok((server, status))
-                };
+    fn start(http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
+        cx.spawn(|this, mut cx| async move {
+            let start_language_server = async {
+                let server_path = get_lsp_binary(http).await?;
+                let server =
+                    LanguageServer::new(0, &server_path, &["--stdio"], Path::new("/"), cx.clone())?;
+                let server = server.initialize(Default::default()).await?;
+                let status = server
+                    .request::<request::CheckStatus>(request::CheckStatusParams {
+                        local_checks_only: false,
+                    })
+                    .await?;
+                anyhow::Ok((server, status))
+            };
 
-                let server = start_language_server.await;
-                this.update(&mut cx, |this, cx| {
-                    cx.notify();
-                    match server {
-                        Ok((server, status)) => {
-                            this.server = CopilotServer::Started {
-                                server,
-                                status: SignInStatus::SignedOut,
-                            };
-                            this.update_sign_in_status(status, cx);
-                            Ok(())
-                        }
-                        Err(error) => {
-                            this.server = CopilotServer::Error(error.to_string());
-                            Err(error)
-                        }
+            let server = start_language_server.await;
+            this.update(&mut cx, |this, cx| {
+                cx.notify();
+                match server {
+                    Ok((server, status)) => {
+                        this.server = CopilotServer::Started {
+                            server,
+                            status: SignInStatus::SignedOut,
+                        };
+                        this.update_sign_in_status(status, cx);
                     }
-                })
-            }
-        });
-        (this, task)
+                    Err(error) => {
+                        this.server = CopilotServer::Error(error.to_string());
+                    }
+                }
+            })
+        })
+        .detach();
+        Self {
+            server: CopilotServer::Downloading,
+        }
     }
 
     fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
