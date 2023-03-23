@@ -1,9 +1,15 @@
 use anyhow::{anyhow, Context, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use client::http::HttpClient;
-
+use futures::{io::BufReader, StreamExt};
 use serde::Deserialize;
+use smol::fs::{self, File};
 use smol::io::AsyncReadExt;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub struct GitHubLspBinaryVersion {
     pub name: String,
@@ -33,6 +39,40 @@ pub(crate) struct GithubRelease {
 pub(crate) struct GithubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
+}
+
+pub async fn ensure_node_installation_dir(http: Arc<dyn HttpClient>) -> Result<PathBuf> {
+    eprintln!("ensure_node_installation_dir");
+
+    let version = "v18.15.0";
+    let arch = "arm64";
+
+    let folder_name = format!("node-{version}-darwin-{arch}");
+    let node_containing_dir = dbg!(util::paths::SUPPORT_DIR.join("node"));
+    let node_dir = dbg!(node_containing_dir.join(folder_name));
+    let node_binary = node_dir.join("bin/node");
+
+    if fs::metadata(&node_binary).await.is_err() {
+        _ = fs::remove_dir_all(&node_containing_dir).await;
+        fs::create_dir(&node_containing_dir)
+            .await
+            .context("error creating node containing dir")?;
+
+        let url = format!("https://nodejs.org/dist/{version}/node-{version}-darwin-{arch}.tar.gz");
+        dbg!(&url);
+        let mut response = http
+            .get(&url, Default::default(), true)
+            .await
+            .context("error downloading Node binary tarball")?;
+
+        let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+        let archive = Archive::new(decompressed_bytes);
+        archive.unpack(&node_containing_dir).await?;
+        eprintln!("unpacked");
+    }
+
+    eprintln!("returning");
+    Ok(dbg!(node_dir))
 }
 
 pub async fn npm_package_latest_version(name: &str) -> Result<String> {

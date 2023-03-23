@@ -492,6 +492,7 @@ pub struct LanguageRegistry {
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
     login_shell_env_loaded: Shared<Task<()>>,
+    node_path: Shared<Task<Option<PathBuf>>>,
     #[allow(clippy::type_complexity)]
     lsp_binary_paths: Mutex<
         HashMap<
@@ -513,7 +514,7 @@ struct LanguageRegistryState {
 }
 
 impl LanguageRegistry {
-    pub fn new(login_shell_env_loaded: Task<()>) -> Self {
+    pub fn new(login_shell_env_loaded: Task<()>, node_path: Task<Option<PathBuf>>) -> Self {
         let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
             state: RwLock::new(LanguageRegistryState {
@@ -529,6 +530,7 @@ impl LanguageRegistry {
             lsp_binary_statuses_tx,
             lsp_binary_statuses_rx,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
+            node_path: node_path.shared(),
             lsp_binary_paths: Default::default(),
             executor: None,
         }
@@ -536,7 +538,7 @@ impl LanguageRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
-        Self::new(Task::ready(()))
+        Self::new(Task::ready(()), Task::Ready(None))
     }
 
     pub fn set_executor(&mut self, executor: Arc<Background>) {
@@ -802,8 +804,12 @@ impl LanguageRegistry {
         let adapter = language.adapter.clone()?;
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
+        let node_path = self.node_path.clone();
+
         Some(cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
+            let node_path = node_path.await;
+
             let server_binary_path = this
                 .lsp_binary_paths
                 .lock()
@@ -824,14 +830,27 @@ impl LanguageRegistry {
                 .map_err(|e| anyhow!(e));
 
             let server_binary_path = server_binary_path.await?;
-            let server_args = &adapter.server_args;
-            let server = lsp::LanguageServer::new(
-                server_id,
-                &server_binary_path,
-                server_args,
-                &root_path,
-                cx,
-            )?;
+            let server_name = server_binary_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string());
+
+            let mut command = match adapter.adapter.server_execution_kind().await {
+                ServerExecutionKind::Node => {
+                    let node_path = node_path
+                        .ok_or(anyhow!("Missing Node path for Node based language server"))?;
+                    let node_binary = node_path.join("bin/node");
+                    dbg!(&node_binary);
+                    let mut command = smol::process::Command::new(node_binary);
+                    command.arg(dbg!(server_binary_path));
+                    command
+                }
+
+                ServerExecutionKind::Launch => smol::process::Command::new(server_binary_path),
+            };
+
+            command.args(&adapter.server_args);
+            let server = lsp::LanguageServer::new(server_id, server_name, command, &root_path, cx)?;
+
             Ok(server)
         }))
     }
@@ -1528,7 +1547,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::new(Task::ready(()));
+        let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background());
         let languages = Arc::new(languages);
         languages.register(

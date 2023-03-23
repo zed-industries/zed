@@ -188,7 +188,7 @@ impl TestServer {
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
+            languages: Arc::new(LanguageRegistry::test()),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),

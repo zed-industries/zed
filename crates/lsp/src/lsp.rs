@@ -105,10 +105,10 @@ struct Error {
 }
 
 impl LanguageServer {
-    pub fn new<T: AsRef<std::ffi::OsStr>>(
+    pub fn new(
         server_id: usize,
-        binary_path: &Path,
-        args: &[T],
+        server_name: Option<String>,
+        mut command: process::Command,
         root_path: &Path,
         cx: AsyncAppContext,
     ) -> Result<Self> {
@@ -117,18 +117,17 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
-        let mut server = process::Command::new(binary_path)
+
+        let mut server = dbg!(command
             .current_dir(working_dir)
-            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true))
+        .spawn()?;
 
         let stdin = server.stdin.take().unwrap();
         let stout = server.stdout.take().unwrap();
-
         let mut server = Self::new_internal(
             server_id,
             stdin,
@@ -147,8 +146,9 @@ impl LanguageServer {
                 );
             },
         );
-        if let Some(name) = binary_path.file_name() {
-            server.name = name.to_string_lossy().to_string();
+
+        if let Some(name) = server_name {
+            server.name = name;
         }
         Ok(server)
     }
