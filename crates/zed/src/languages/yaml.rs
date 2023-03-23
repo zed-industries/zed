@@ -34,15 +34,15 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: Arc<dyn HttpClient>,
+        http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(npm_package_latest_version("yaml-language-server").await?) as Box<_>)
+        Ok(Box::new(npm_package_latest_version(http, "yaml-language-server").await?) as Box<_>)
     }
 
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        _: Arc<dyn HttpClient>,
+        http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<PathBuf> {
         let version = version.downcast::<String>().unwrap();
@@ -53,8 +53,12 @@ impl LspAdapter for YamlLspAdapter {
         let binary_path = version_dir.join(Self::BIN_PATH);
 
         if fs::metadata(&binary_path).await.is_err() {
-            npm_install_packages([("yaml-language-server", version.as_str())], &version_dir)
-                .await?;
+            npm_install_packages(
+                http,
+                [("yaml-language-server", version.as_str())],
+                &version_dir,
+            )
+            .await?;
 
             if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
                 while let Some(entry) = entries.next().await {

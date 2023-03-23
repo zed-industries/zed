@@ -654,7 +654,7 @@ mod tests {
     use assets::Assets;
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        executor::Deterministic, AssetSource, MutableAppContext, Task, TestAppContext, ViewHandle,
+        executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };
     use language::LanguageRegistry;
     use project::{Project, ProjectPath};

@@ -2,9 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::http::HttpClient;
-use futures::{io::BufReader, StreamExt};
+use futures::io::BufReader;
 use serde::Deserialize;
-use smol::fs::{self, File};
+use smol::fs::{self};
 use smol::io::AsyncReadExt;
 use std::{
     path::{Path, PathBuf},
@@ -75,10 +75,16 @@ pub async fn ensure_node_installation_dir(http: Arc<dyn HttpClient>) -> Result<P
     Ok(dbg!(node_dir))
 }
 
-pub async fn npm_package_latest_version(name: &str) -> Result<String> {
-    let output = smol::process::Command::new("npm")
+pub async fn npm_package_latest_version(http: Arc<dyn HttpClient>, name: &str) -> Result<String> {
+    let node_dir = ensure_node_installation_dir(http).await?;
+    let node_binary = node_dir.join("bin/npm");
+    let npm_file = node_dir.join("bin/npm");
+
+    let output = smol::process::Command::new(node_binary)
+        .arg(npm_file)
         .args(["-fetch-retry-mintimeout", "2000"])
         .args(["-fetch-retry-maxtimeout", "5000"])
+        .args(["-fetch-timeout", "5000"])
         .args(["info", name, "--json"])
         .output()
         .await
@@ -98,12 +104,19 @@ pub async fn npm_package_latest_version(name: &str) -> Result<String> {
 }
 
 pub async fn npm_install_packages(
+    http: Arc<dyn HttpClient>,
     packages: impl IntoIterator<Item = (&str, &str)>,
     directory: &Path,
 ) -> Result<()> {
-    let output = smol::process::Command::new("npm")
+    let node_dir = ensure_node_installation_dir(http).await?;
+    let node_binary = node_dir.join("bin/npm");
+    let npm_file = node_dir.join("bin/npm");
+
+    let output = smol::process::Command::new(node_binary)
+        .arg(npm_file)
         .args(["-fetch-retry-mintimeout", "2000"])
         .args(["-fetch-retry-maxtimeout", "5000"])
+        .args(["-fetch-timeout", "5000"])
         .arg("install")
         .arg("--prefix")
         .arg(directory)
