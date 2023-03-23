@@ -89,7 +89,7 @@ impl View for CollabTitlebarItem {
         let theme = cx.global::<Settings>().theme.clone();
 
         let mut left_container = Flex::row();
-        let mut right_container = Flex::row();
+        let mut right_container = Flex::row().align_children_center();
 
         left_container.add_child(
             Label::new(project_title, theme.workspace.titlebar.title.clone())
@@ -117,6 +117,7 @@ impl View for CollabTitlebarItem {
 
         let status = workspace.read(cx).client().status();
         let status = &*status.borrow();
+
         if matches!(status, client::Status::Connected { .. }) {
             right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
             right_container.add_child(self.render_user_menu_button(&theme, cx));
