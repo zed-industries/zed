@@ -16,17 +16,18 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     });
 }
 
+#[derive(Debug)]
 struct Copilot {
     copilot_server: PathBuf,
 }
 
 impl Copilot {
     fn sign_in(http: Arc<dyn HttpClient>, cx: &mut MutableAppContext) {
-        let copilot = cx.global::<Option<Arc<Copilot>>>().clone();
+        let maybe_copilot = cx.default_global::<Option<Arc<Copilot>>>().clone();
 
         cx.spawn(|mut cx| async move {
             // Lazily download / initialize copilot LSP
-            let copilot = if let Some(copilot) = copilot {
+            let copilot = if let Some(copilot) = maybe_copilot {
                 copilot
             } else {
                 let copilot_server = get_lsp_binary(http).await?; // TODO: Make this error user visible
@@ -37,6 +38,8 @@ impl Copilot {
                 });
                 new_copilot
             };
+
+            dbg!(copilot);
 
             Ok(())
         })

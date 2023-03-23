@@ -34,6 +34,7 @@ pub async fn latest_github_release(
         .read_to_end(&mut body)
         .await
         .context("error reading latest release")?;
+
     let release: GithubRelease =
         serde_json::from_slice(body.as_slice()).context("error deserializing latest release")?;
     Ok(release)
