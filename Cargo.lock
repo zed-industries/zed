@@ -1340,6 +1340,7 @@ dependencies = [
  "client",
  "futures 0.3.25",
  "gpui",
+ "language",
  "log",
  "lsp",
  "serde",

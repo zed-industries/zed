@@ -10,6 +10,7 @@ doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }
+language = { path = "../language" }
 settings = { path = "../settings" }
 lsp = { path = "../lsp" }
 util = { path = "../util" }
