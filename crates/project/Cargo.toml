@@ -27,6 +27,7 @@ fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 git = { path = "../git" }
+glob = { version = "0.3.1" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
