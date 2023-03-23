@@ -493,6 +493,24 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Keep track of the FS events reported to the language server.
     let fake_server = fake_servers.next().await.unwrap();
     let file_changes = Arc::new(Mutex::new(Vec::new()));
+    fake_server
+        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
+            registrations: vec![lsp::Registration {
+                id: Default::default(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+                register_options: serde_json::to_value(
+                    lsp::DidChangeWatchedFilesRegistrationOptions {
+                        watchers: vec![lsp::FileSystemWatcher {
+                            glob_pattern: "*.{rs,c}".to_string(),
+                            kind: None,
+                        }],
+                    },
+                )
+                .ok(),
+            }],
+        })
+        .await
+        .unwrap();
     fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
         let file_changes = file_changes.clone();
         move |params, _| {
@@ -505,15 +523,19 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     cx.foreground().run_until_parked();
     assert_eq!(file_changes.lock().len(), 0);
 
-    // Perform some file system mutations.
+    // Perform some file system mutations, two of which match the watched patterns,
+    // and one of which does not.
     fs.create_file("/the-root/c.rs".as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file("/the-root/d.txt".as_ref(), Default::default())
         .await
         .unwrap();
     fs.remove_file("/the-root/b.rs".as_ref(), Default::default())
         .await
         .unwrap();
 
-    // The language server receives events for both FS mutations.
+    // The language server receives events for the FS mutations that match its watch patterns.
     cx.foreground().run_until_parked();
     assert_eq!(
         &*file_changes.lock(),
