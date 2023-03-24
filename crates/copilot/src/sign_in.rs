@@ -2,7 +2,7 @@ use crate::{request::PromptUserDeviceFlow, Copilot};
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    Axis, Element, Entity, MutableAppContext, View, ViewContext, WindowKind, WindowOptions,
+    Axis, Element, Entity, MutableAppContext, View, WindowKind, WindowOptions,
 };
 use settings::Settings;
 
@@ -19,19 +19,18 @@ pub fn init(cx: &mut MutableAppContext) {
                     cx.remove_window(window_id);
                 }
 
-                let screen = cx.platform().screens().pop();
                 let (window_id, _) = cx.add_window(
                     WindowOptions {
                         bounds: gpui::WindowBounds::Fixed(RectF::new(
-                            vec2f(100., 100.),
-                            vec2f(300., 300.),
+                            Default::default(),
+                            vec2f(600., 400.),
                         )),
                         titlebar: None,
-                        center: false,
+                        center: true,
                         focus: false,
                         kind: WindowKind::Normal,
                         is_movable: true,
-                        screen,
+                        screen: None,
                     },
                     |_| CopilotCodeVerification::new(prompt),
                 );
@@ -47,16 +46,12 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 }
 
-pub enum Event {
-    Dismiss,
-}
-
 pub struct CopilotCodeVerification {
     prompt: PromptUserDeviceFlow,
 }
 
 impl Entity for CopilotCodeVerification {
-    type Event = Event;
+    type Event = ();
 }
 
 impl View for CopilotCodeVerification {
@@ -84,10 +79,6 @@ impl View for CopilotCodeVerification {
             .contained()
             .with_style(style.auth_modal)
             .named("Copilot Authentication status modal")
-    }
-
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismiss)
     }
 }
 
