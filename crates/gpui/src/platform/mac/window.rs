@@ -473,6 +473,7 @@ impl Window {
                 WindowBounds::Fixed(rect) => {
                     let screen_frame = screen.visibleFrame();
                     let ns_rect = rect.to_ns_rect();
+                    dbg!(screen_frame.as_CGRect(), ns_rect.as_CGRect());
                     if ns_rect.intersects(screen_frame) {
                         native_window.setFrame_display_(ns_rect, YES);
                     } else {

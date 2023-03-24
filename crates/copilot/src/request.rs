@@ -26,7 +26,7 @@ pub enum SignInInitiateResult {
     PromptUserDeviceFlow(PromptUserDeviceFlow),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptUserDeviceFlow {
     pub user_code: String,

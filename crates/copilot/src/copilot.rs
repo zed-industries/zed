@@ -1,10 +1,10 @@
-mod auth_modal;
 mod request;
+mod sign_in;
 
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
-use auth_modal::AuthModal;
 use client::Client;
+use futures::{future::Shared, FutureExt, TryFutureExt};
 use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, ToPointUtf16};
 use lsp::LanguageServer;
@@ -18,61 +18,25 @@ use std::{
 use util::{
     fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
 };
-use workspace::Workspace;
 
-actions!(copilot, [SignIn, SignOut, ToggleAuthStatus]);
+actions!(copilot, [SignIn, SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
     cx.set_global(copilot.clone());
-    cx.add_action(|_workspace: &mut Workspace, _: &SignIn, cx| {
+    cx.add_global_action(|_: &SignIn, cx| {
         let copilot = Copilot::global(cx);
-        if copilot.read(cx).status() == Status::Authorized {
-            return;
-        }
-
-        if !copilot.read(cx).has_subscription() {
-            let display_subscription =
-                cx.subscribe(&copilot, |workspace, _copilot, e, cx| match e {
-                    Event::PromptUserDeviceFlow => {
-                        workspace.toggle_modal(cx, |_workspace, cx| build_auth_modal(cx));
-                    }
-                });
-
-            copilot.update(cx, |copilot, _cx| {
-                copilot.set_subscription(display_subscription)
-            })
-        }
-
         copilot
             .update(cx, |copilot, cx| copilot.sign_in(cx))
             .detach_and_log_err(cx);
     });
-    cx.add_action(|workspace: &mut Workspace, _: &SignOut, cx| {
+    cx.add_global_action(|_: &SignOut, cx| {
         let copilot = Copilot::global(cx);
-
         copilot
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .detach_and_log_err(cx);
-
-        if workspace.modal::<AuthModal>().is_some() {
-            workspace.dismiss_modal(cx)
-        }
     });
-    cx.add_action(|workspace: &mut Workspace, _: &ToggleAuthStatus, cx| {
-        workspace.toggle_modal(cx, |_workspace, cx| build_auth_modal(cx))
-    })
-}
-
-fn build_auth_modal(cx: &mut gpui::ViewContext<Workspace>) -> gpui::ViewHandle<AuthModal> {
-    let modal = cx.add_view(|cx| AuthModal::new(cx));
-
-    cx.subscribe(&modal, |workspace, _, e: &auth_modal::Event, cx| match e {
-        auth_modal::Event::Dismiss => workspace.dismiss_modal(cx),
-    })
-    .detach();
-
-    modal
+    sign_in::init(cx);
 }
 
 enum CopilotServer {
@@ -84,23 +48,19 @@ enum CopilotServer {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PromptingUser {
-    user_code: String,
-    verification_uri: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 enum SignInStatus {
-    Authorized { user: String },
-    Unauthorized { user: String },
-    PromptingUser(PromptingUser),
+    Authorized {
+        user: String,
+    },
+    Unauthorized {
+        user: String,
+    },
+    SigningIn {
+        prompt: Option<request::PromptUserDeviceFlow>,
+        task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
+    },
     SignedOut,
-}
-
-#[derive(Debug)]
-pub enum Event {
-    PromptUserDeviceFlow,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -108,14 +68,11 @@ pub enum Status {
     Downloading,
     Error(Arc<str>),
     SignedOut,
+    SigningIn {
+        prompt: Option<request::PromptUserDeviceFlow>,
+    },
     Unauthorized,
     Authorized,
-}
-
-impl Status {
-    fn is_authorized(&self) -> bool {
-        matches!(self, Status::Authorized)
-    }
 }
 
 #[derive(Debug)]
@@ -126,25 +83,15 @@ pub struct Completion {
 
 struct Copilot {
     server: CopilotServer,
-    _display_subscription: Option<gpui::Subscription>,
 }
 
 impl Entity for Copilot {
-    type Event = Event;
+    type Event = ();
 }
 
 impl Copilot {
     fn global(cx: &AppContext) -> ModelHandle<Self> {
         cx.global::<ModelHandle<Self>>().clone()
-    }
-
-    fn has_subscription(&self) -> bool {
-        self._display_subscription.is_some()
-    }
-
-    fn set_subscription(&mut self, display_subscription: gpui::Subscription) {
-        debug_assert!(self._display_subscription.is_none());
-        self._display_subscription = Some(display_subscription);
     }
 
     fn start(http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
@@ -184,57 +131,99 @@ impl Copilot {
 
         Self {
             server: CopilotServer::Downloading,
-            _display_subscription: None,
         }
     }
 
     fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        if let CopilotServer::Started { server, .. } = &self.server {
-            let server = server.clone();
-            cx.spawn(|this, mut cx| async move {
-                let sign_in = server
-                    .request::<request::SignInInitiate>(request::SignInInitiateParams {})
-                    .await?;
-                if let request::SignInInitiateResult::PromptUserDeviceFlow(flow) = sign_in {
-                    this.update(&mut cx, |this, cx| {
-                        this.update_prompting_user(
-                            flow.user_code.clone(),
-                            flow.verification_uri,
-                            cx,
-                        );
-
-                        cx.emit(Event::PromptUserDeviceFlow)
-                    });
-                    // TODO: catch an error here and clear the corresponding user code
-                    let response = server
-                        .request::<request::SignInConfirm>(request::SignInConfirmParams {
-                            user_code: flow.user_code,
-                        })
-                        .await?;
-
-                    this.update(&mut cx, |this, cx| this.update_sign_in_status(response, cx));
+        if let CopilotServer::Started { server, status } = &mut self.server {
+            let task = match status {
+                SignInStatus::Authorized { .. } | SignInStatus::Unauthorized { .. } => {
+                    Task::ready(Ok(())).shared()
                 }
-                anyhow::Ok(())
-            })
+                SignInStatus::SigningIn { task, .. } => task.clone(),
+                SignInStatus::SignedOut => {
+                    let server = server.clone();
+                    let task = cx
+                        .spawn(|this, mut cx| async move {
+                            let sign_in = async {
+                                let sign_in = server
+                                    .request::<request::SignInInitiate>(
+                                        request::SignInInitiateParams {},
+                                    )
+                                    .await?;
+                                match sign_in {
+                                    request::SignInInitiateResult::AlreadySignedIn { user } => {
+                                        Ok(request::SignInStatus::Ok { user })
+                                    }
+                                    request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
+                                        this.update(&mut cx, |this, cx| {
+                                            if let CopilotServer::Started { status, .. } =
+                                                &mut this.server
+                                            {
+                                                if let SignInStatus::SigningIn {
+                                                    prompt: prompt_flow,
+                                                    ..
+                                                } = status
+                                                {
+                                                    *prompt_flow = Some(flow.clone());
+                                                    cx.notify();
+                                                }
+                                            }
+                                        });
+                                        let response = server
+                                            .request::<request::SignInConfirm>(
+                                                request::SignInConfirmParams {
+                                                    user_code: flow.user_code,
+                                                },
+                                            )
+                                            .await?;
+                                        Ok(response)
+                                    }
+                                }
+                            };
+
+                            let sign_in = sign_in.await;
+                            this.update(&mut cx, |this, cx| match sign_in {
+                                Ok(status) => {
+                                    this.update_sign_in_status(status, cx);
+                                    Ok(())
+                                }
+                                Err(error) => {
+                                    this.update_sign_in_status(
+                                        request::SignInStatus::NotSignedIn,
+                                        cx,
+                                    );
+                                    Err(Arc::new(error))
+                                }
+                            })
+                        })
+                        .shared();
+                    *status = SignInStatus::SigningIn {
+                        prompt: None,
+                        task: task.clone(),
+                    };
+                    cx.notify();
+                    task
+                }
+            };
+
+            cx.foreground()
+                .spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
             Task::ready(Err(anyhow!("copilot hasn't started yet")))
         }
     }
 
     fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        if let CopilotServer::Started { server, .. } = &self.server {
+        if let CopilotServer::Started { server, status } = &mut self.server {
+            *status = SignInStatus::SignedOut;
+            cx.notify();
+
             let server = server.clone();
-            cx.spawn(|this, mut cx| async move {
+            cx.background().spawn(async move {
                 server
                     .request::<request::SignOut>(request::SignOutParams {})
                     .await?;
-                this.update(&mut cx, |this, cx| {
-                    if let CopilotServer::Started { status, .. } = &mut this.server {
-                        *status = SignInStatus::SignedOut;
-                        cx.notify();
-                    }
-                });
-
                 anyhow::Ok(())
             })
         } else {
@@ -305,35 +294,12 @@ impl Copilot {
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Started { status, .. } => match status {
                 SignInStatus::Authorized { .. } => Status::Authorized,
-                SignInStatus::Unauthorized { .. } | SignInStatus::PromptingUser { .. } => {
-                    Status::Unauthorized
-                }
+                SignInStatus::Unauthorized { .. } => Status::Unauthorized,
+                SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
+                    prompt: prompt.clone(),
+                },
                 SignInStatus::SignedOut => Status::SignedOut,
             },
-        }
-    }
-
-    pub fn prompting_user(&self) -> Option<&PromptingUser> {
-        if let CopilotServer::Started { status, .. } = &self.server {
-            if let SignInStatus::PromptingUser(prompt) = status {
-                return Some(prompt);
-            }
-        }
-        None
-    }
-
-    fn update_prompting_user(
-        &mut self,
-        user_code: String,
-        verification_uri: String,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let CopilotServer::Started { status, .. } = &mut self.server {
-            *status = SignInStatus::PromptingUser(PromptingUser {
-                user_code,
-                verification_uri,
-            });
-            cx.notify();
         }
     }
 
