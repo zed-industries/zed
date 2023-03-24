@@ -3,11 +3,18 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
+use language::{LanguageServerBinary, LanguageServerName, LspAdapter, ServerExecutionKind};
 use serde_json::json;
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
+
+fn server_binary_arguments() -> Vec<String> {
+    ["--stdio", "--tsserver-path", "node_modules/typescript/lib"]
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
 
 pub struct TypeScriptLspAdapter;
 
@@ -31,13 +38,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         ServerExecutionKind::Node
     }
 
-    async fn server_args(&self) -> Vec<String> {
-        ["--stdio", "--tsserver-path", "node_modules/typescript/lib"]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    }
-
     async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
@@ -53,7 +53,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         versions: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let versions = versions.downcast::<Versions>().unwrap();
         let version_dir = container_dir.join(&format!(
             "typescript-{}:server-{}",
@@ -90,10 +90,13 @@ impl LspAdapter for TypeScriptLspAdapter {
             }
         }
 
-        Ok(binary_path)
+        Ok(LanguageServerBinary {
+            path: binary_path,
+            arguments: server_binary_arguments(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -107,9 +110,15 @@ impl LspAdapter for TypeScriptLspAdapter {
             let old_bin_path = last_version_dir.join(Self::OLD_BIN_PATH);
             let new_bin_path = last_version_dir.join(Self::NEW_BIN_PATH);
             if new_bin_path.exists() {
-                Ok(new_bin_path)
+                Ok(LanguageServerBinary {
+                    path: new_bin_path,
+                    arguments: server_binary_arguments(),
+                })
             } else if old_bin_path.exists() {
-                Ok(old_bin_path)
+                Ok(LanguageServerBinary {
+                    path: old_bin_path,
+                    arguments: server_binary_arguments(),
+                })
             } else {
                 Err(anyhow!(
                     "missing executable in directory {:?}",

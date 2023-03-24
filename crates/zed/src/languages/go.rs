@@ -10,6 +10,10 @@ use smol::{fs, process};
 use std::{any::Any, ops::Range, path::PathBuf, str, sync::Arc};
 use util::ResultExt;
 
+fn server_binary_arguments() -> Vec<String> {
+    vec!["-mode=stdio".into()]
+}
+
 #[derive(Copy, Clone)]
 pub struct GoLspAdapter;
 
@@ -25,10 +29,6 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn server_execution_kind(&self) -> ServerExecutionKind {
         ServerExecutionKind::Launch
-    }
-
-    async fn server_args(&self) -> Vec<String> {
-        vec!["-mode=stdio".into()]
     }
 
     async fn fetch_latest_server_version(
@@ -51,7 +51,7 @@ impl super::LspAdapter for GoLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
 
@@ -72,7 +72,10 @@ impl super::LspAdapter for GoLspAdapter {
                         }
                     }
 
-                    return Ok(binary_path.to_path_buf());
+                    return Ok(LanguageServerBinary {
+                        path: binary_path.to_path_buf(),
+                        arguments: server_binary_arguments(),
+                    });
                 }
             }
         } else if let Some(path) = this.cached_server_binary(container_dir.clone()).await {
@@ -106,10 +109,13 @@ impl super::LspAdapter for GoLspAdapter {
         let binary_path = container_dir.join(&format!("gopls_{version}"));
         fs::rename(&installed_binary_path, &binary_path).await?;
 
-        Ok(binary_path.to_path_buf())
+        Ok(LanguageServerBinary {
+            path: binary_path.to_path_buf(),
+            arguments: server_binary_arguments(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_binary_path = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -126,7 +132,10 @@ impl super::LspAdapter for GoLspAdapter {
             }
 
             if let Some(path) = last_binary_path {
-                Ok(path)
+                Ok(LanguageServerBinary {
+                    path,
+                    arguments: server_binary_arguments(),
+                })
             } else {
                 Err(anyhow!("no cached binary"))
             }

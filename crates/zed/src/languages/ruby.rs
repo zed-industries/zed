@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
-use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
+use language::{LanguageServerBinary, LanguageServerName, LspAdapter, ServerExecutionKind};
 use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
@@ -16,10 +16,6 @@ impl LspAdapter for RubyLanguageServer {
         ServerExecutionKind::Launch
     }
 
-    async fn server_args(&self) -> Vec<String> {
-        vec!["stdio".into()]
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
@@ -32,12 +28,15 @@ impl LspAdapter for RubyLanguageServer {
         _version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         _container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         Err(anyhow!("solargraph must be installed manually"))
     }
 
-    async fn cached_server_binary(&self, _container_dir: PathBuf) -> Option<PathBuf> {
-        Some("solargraph".into())
+    async fn cached_server_binary(&self, _container_dir: PathBuf) -> Option<LanguageServerBinary> {
+        Some(LanguageServerBinary {
+            path: "solargraph".into(),
+            arguments: vec!["stdio".into()],
+        })
     }
 
     async fn label_for_completion(

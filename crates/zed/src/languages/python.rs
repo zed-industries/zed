@@ -3,12 +3,16 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter, ServerExecutionKind};
+use language::{LanguageServerBinary, LanguageServerName, LspAdapter, ServerExecutionKind};
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
 pub struct PythonLspAdapter;
+
+fn server_binary_arguments() -> Vec<String> {
+    vec!["--stdio".into()]
+}
 
 impl PythonLspAdapter {
     const BIN_PATH: &'static str = "node_modules/pyright/langserver.index.js";
@@ -24,10 +28,6 @@ impl LspAdapter for PythonLspAdapter {
         ServerExecutionKind::Node
     }
 
-    async fn server_args(&self) -> Vec<String> {
-        vec!["--stdio".into()]
-    }
-
     async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
@@ -40,7 +40,7 @@ impl LspAdapter for PythonLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<String>().unwrap();
         let version_dir = container_dir.join(version.as_str());
         fs::create_dir_all(&version_dir)
@@ -63,10 +63,13 @@ impl LspAdapter for PythonLspAdapter {
             }
         }
 
-        Ok(binary_path)
+        Ok(LanguageServerBinary {
+            path: binary_path,
+            arguments: server_binary_arguments(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -79,7 +82,10 @@ impl LspAdapter for PythonLspAdapter {
             let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
             let bin_path = last_version_dir.join(Self::BIN_PATH);
             if bin_path.exists() {
-                Ok(bin_path)
+                Ok(LanguageServerBinary {
+                    path: bin_path,
+                    arguments: server_binary_arguments(),
+                })
             } else {
                 Err(anyhow!(
                     "missing executable in directory {:?}",

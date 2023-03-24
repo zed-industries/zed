@@ -43,7 +43,7 @@ impl super::LspAdapter for CLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
         let version_dir = container_dir.join(format!("clangd_{}", version.name));
@@ -85,10 +85,13 @@ impl super::LspAdapter for CLspAdapter {
             }
         }
 
-        Ok(binary_path)
+        Ok(LanguageServerBinary {
+            path: binary_path,
+            arguments: vec![],
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_clangd_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -101,7 +104,10 @@ impl super::LspAdapter for CLspAdapter {
             let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
             let clangd_bin = clangd_dir.join("bin/clangd");
             if clangd_bin.exists() {
-                Ok(clangd_bin)
+                Ok(LanguageServerBinary {
+                    path: clangd_bin,
+                    arguments: vec![],
+                })
             } else {
                 Err(anyhow!(
                     "missing clangd binary in directory {:?}",

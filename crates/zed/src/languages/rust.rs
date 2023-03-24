@@ -46,7 +46,7 @@ impl LspAdapter for RustLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
@@ -76,17 +76,23 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        Ok(destination_path)
+        Ok(LanguageServerBinary {
+            path: destination_path,
+            arguments: Default::default(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
                 last = Some(entry?.path());
             }
-            last.ok_or_else(|| anyhow!("no cached binary"))
+            anyhow::Ok(LanguageServerBinary {
+                path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+                arguments: Default::default(),
+            })
         })()
         .await
         .log_err()
