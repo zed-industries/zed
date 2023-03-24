@@ -6345,14 +6345,14 @@ impl Editor {
 
         #[derive(Serialize)]
         struct Chunk<'a> {
-            text: &'a str,
+            text: String,
             highlight: Option<&'a str>,
         }
 
         let snapshot = buffer.read(cx).snapshot();
         let chunks = snapshot.chunks(0..snapshot.len(), true);
         let mut lines = Vec::new();
-        let mut line = Vec::new();
+        let mut line: Vec<Chunk> = Vec::new();
 
         let theme = &cx.global::<Settings>().theme.editor.syntax;
 
@@ -6360,7 +6360,21 @@ impl Editor {
             let highlight = chunk.syntax_highlight_id.and_then(|id| id.name(theme));
             let mut chunk_lines = chunk.text.split("\n").peekable();
             while let Some(text) = chunk_lines.next() {
-                line.push(Chunk { text, highlight });
+                let mut merged_with_last_token = false;
+                if let Some(last_token) = line.last_mut() {
+                    if last_token.highlight == highlight {
+                        last_token.text.push_str(text);
+                        merged_with_last_token = true;
+                    }
+                }
+
+                if !merged_with_last_token {
+                    line.push(Chunk {
+                        text: text.into(),
+                        highlight,
+                    });
+                }
+
                 if chunk_lines.peek().is_some() {
                     lines.push(mem::take(&mut line));
                 }
