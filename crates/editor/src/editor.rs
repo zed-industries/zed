@@ -39,7 +39,7 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
-    serde_json::json,
+    serde_json::{self, json},
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
     ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -258,7 +258,8 @@ actions!(
         Hover,
         Format,
         ToggleSoftWrap,
-        RevealInFinder
+        RevealInFinder,
+        CopyHighlightJson
     ]
 );
 
@@ -378,6 +379,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::jump);
     cx.add_action(Editor::toggle_soft_wrap);
     cx.add_action(Editor::reveal_in_finder);
+    cx.add_action(Editor::copy_highlight_json);
     cx.add_async_action(Editor::format);
     cx.add_action(Editor::restart_language_server);
     cx.add_action(Editor::show_character_palette);
@@ -6332,6 +6334,73 @@ impl Editor {
                 cx.global::<Settings>().telemetry(),
             );
         }
+    }
+
+    /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
+    /// with each line being an array of {text, highlight} objects.
+    fn copy_highlight_json(&mut self, _: &CopyHighlightJson, cx: &mut ViewContext<Self>) {
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return;
+        };
+
+        #[derive(Serialize)]
+        struct Chunk<'a> {
+            text: String,
+            highlight: Option<&'a str>,
+        }
+
+        let snapshot = buffer.read(cx).snapshot();
+        let range = self
+            .selected_text_range(cx)
+            .and_then(|selected_range| {
+                if selected_range.is_empty() {
+                    None
+                } else {
+                    Some(selected_range)
+                }
+            })
+            .unwrap_or_else(|| 0..snapshot.len());
+
+        let chunks = snapshot.chunks(range, true);
+        let mut lines = Vec::new();
+        let mut line: VecDeque<Chunk> = VecDeque::new();
+
+        let theme = &cx.global::<Settings>().theme.editor.syntax;
+
+        for chunk in chunks {
+            let highlight = chunk.syntax_highlight_id.and_then(|id| id.name(theme));
+            let mut chunk_lines = chunk.text.split("\n").peekable();
+            while let Some(text) = chunk_lines.next() {
+                let mut merged_with_last_token = false;
+                if let Some(last_token) = line.back_mut() {
+                    if last_token.highlight == highlight {
+                        last_token.text.push_str(text);
+                        merged_with_last_token = true;
+                    }
+                }
+
+                if !merged_with_last_token {
+                    line.push_back(Chunk {
+                        text: text.into(),
+                        highlight,
+                    });
+                }
+
+                if chunk_lines.peek().is_some() {
+                    if line.len() > 1 && line.front().unwrap().text.is_empty() {
+                        line.pop_front();
+                    }
+                    if line.len() > 1 && line.back().unwrap().text.is_empty() {
+                        line.pop_back();
+                    }
+
+                    lines.push(mem::take(&mut line));
+                }
+            }
+        }
+
+        let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else { return; };
+        cx.write_to_clipboard(ClipboardItem::new(lines));
     }
 }
 

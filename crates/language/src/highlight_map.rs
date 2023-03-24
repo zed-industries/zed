@@ -59,7 +59,6 @@ impl HighlightId {
         theme.highlights.get(self.0 as usize).map(|entry| entry.1)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn name<'a>(&self, theme: &'a SyntaxTheme) -> Option<&'a str> {
         theme.highlights.get(self.0 as usize).map(|e| e.0.as_str())
     }
