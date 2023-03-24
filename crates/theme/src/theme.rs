@@ -116,9 +116,10 @@ pub struct AvatarStyle {
     pub outer_corner_radius: f32,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 pub struct Copilot {
-    pub auth_modal: TextStyle,
+    pub auth_modal: ContainerStyle,
+    pub auth_text: TextStyle,
 }
 
 #[derive(Deserialize, Default)]
