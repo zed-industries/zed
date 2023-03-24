@@ -25,17 +25,28 @@ actions!(copilot, [SignIn, SignOut, ToggleAuthStatus]);
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
     cx.set_global(copilot.clone());
-    cx.add_action(|workspace: &mut Workspace, _: &SignIn, cx| {
+    cx.add_action(|_workspace: &mut Workspace, _: &SignIn, cx| {
         let copilot = Copilot::global(cx);
         if copilot.read(cx).status() == Status::Authorized {
             return;
         }
 
+        if !copilot.read(cx).has_subscription() {
+            let display_subscription =
+                cx.subscribe(&copilot, |workspace, _copilot, e, cx| match e {
+                    Event::PromptUserDeviceFlow => {
+                        workspace.toggle_modal(cx, |_workspace, cx| build_auth_modal(cx));
+                    }
+                });
+
+            copilot.update(cx, |copilot, _cx| {
+                copilot.set_subscription(display_subscription)
+            })
+        }
+
         copilot
             .update(cx, |copilot, cx| copilot.sign_in(cx))
             .detach_and_log_err(cx);
-
-        workspace.toggle_modal(cx, |_workspace, cx| build_auth_modal(cx));
     });
     cx.add_action(|workspace: &mut Workspace, _: &SignOut, cx| {
         let copilot = Copilot::global(cx);
@@ -89,10 +100,7 @@ enum SignInStatus {
 
 #[derive(Debug)]
 pub enum Event {
-    PromptUserDeviceFlow {
-        user_code: String,
-        verification_uri: String,
-    },
+    PromptUserDeviceFlow,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -118,6 +126,7 @@ pub struct Completion {
 
 struct Copilot {
     server: CopilotServer,
+    _display_subscription: Option<gpui::Subscription>,
 }
 
 impl Entity for Copilot {
@@ -127,6 +136,15 @@ impl Entity for Copilot {
 impl Copilot {
     fn global(cx: &AppContext) -> ModelHandle<Self> {
         cx.global::<ModelHandle<Self>>().clone()
+    }
+
+    fn has_subscription(&self) -> bool {
+        self._display_subscription.is_some()
+    }
+
+    fn set_subscription(&mut self, display_subscription: gpui::Subscription) {
+        debug_assert!(self._display_subscription.is_none());
+        self._display_subscription = Some(display_subscription);
     }
 
     fn start(http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
@@ -166,6 +184,7 @@ impl Copilot {
 
         Self {
             server: CopilotServer::Downloading,
+            _display_subscription: None,
         }
     }
 
@@ -183,6 +202,8 @@ impl Copilot {
                             flow.verification_uri,
                             cx,
                         );
+
+                        cx.emit(Event::PromptUserDeviceFlow)
                     });
                     // TODO: catch an error here and clear the corresponding user code
                     let response = server
