@@ -340,12 +340,13 @@ pub struct Sidebar {
     pub container: ContainerStyle,
 }
 
-#[derive(Clone, Copy, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct SidebarItem {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub icon_color: Color,
     pub icon_size: f32,
+    pub label: ContainedText,
 }
 
 #[derive(Deserialize, Default)]

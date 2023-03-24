@@ -21,6 +21,8 @@ pub fn init(cx: &mut MutableAppContext) {
             } else if let Some((window_id, _)) = status_indicator.take() {
                 cx.remove_status_bar_item(window_id);
             }
+        } else if let Some((window_id, _)) = status_indicator.take() {
+            cx.remove_status_bar_item(window_id);
         }
     })
     .detach();
