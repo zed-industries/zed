@@ -27,6 +27,7 @@ fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 git = { path = "../git" }
+glob = { version = "0.3.1" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
@@ -44,7 +45,7 @@ ignore = "0.4"
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-postage = { version = "0.4.1", features = ["futures-traits"] }
+postage = { workspace = true }
 pulldown-cmark = { version = "0.9.1", default-features = false }
 rand = "0.8.3"
 regex = "1.5"
@@ -58,6 +59,8 @@ thiserror = "1.0.29"
 toml = "0.5"
 
 [dev-dependencies]
+ctor = "0.1"
+env_logger = "0.9"
 pretty_assertions = "1.3.0"
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }

@@ -1,5 +1,6 @@
 mod ignore;
 mod lsp_command;
+mod lsp_glob_set;
 pub mod search;
 pub mod terminals;
 pub mod worktree;
@@ -33,10 +34,11 @@ use language::{
     Transaction, Unclipped,
 };
 use lsp::{
-    DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
-    MarkedString,
+    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
+    DocumentHighlightKind, LanguageServer, LanguageString, MarkedString,
 };
 use lsp_command::*;
+use lsp_glob_set::LspGlobSet;
 use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
@@ -188,6 +190,7 @@ pub enum LanguageServerState {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
+        watched_paths: LspGlobSet,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
     },
 }
@@ -2046,8 +2049,26 @@ impl Project {
                             })
                             .detach();
                         language_server
-                            .on_request::<lsp::request::RegisterCapability, _, _>(|_, _| async {
-                                Ok(())
+                            .on_request::<lsp::request::RegisterCapability, _, _>({
+                                let this = this.downgrade();
+                                move |params, mut cx| async move {
+                                    let this = this
+                                        .upgrade(&cx)
+                                        .ok_or_else(|| anyhow!("project dropped"))?;
+                                    for reg in params.registrations {
+                                        if reg.method == "workspace/didChangeWatchedFiles" {
+                                            if let Some(options) = reg.register_options {
+                                                let options = serde_json::from_value(options)?;
+                                                this.update(&mut cx, |this, cx| {
+                                                    this.on_lsp_did_change_watched_files(
+                                                        server_id, options, cx,
+                                                    );
+                                                });
+                                            }
+                                        }
+                                    }
+                                    Ok(())
+                                }
                             })
                             .detach();
 
@@ -2117,6 +2138,7 @@ impl Project {
                                 LanguageServerState::Running {
                                     adapter: adapter.clone(),
                                     language,
+                                    watched_paths: Default::default(),
                                     server: language_server.clone(),
                                     simulate_disk_based_diagnostics_completion: None,
                                 },
@@ -2505,6 +2527,23 @@ impl Project {
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             status.pending_work.remove(&token);
+            cx.notify();
+        }
+    }
+
+    fn on_lsp_did_change_watched_files(
+        &mut self,
+        language_server_id: usize,
+        params: DidChangeWatchedFilesRegistrationOptions,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(LanguageServerState::Running { watched_paths, .. }) =
+            self.language_servers.get_mut(&language_server_id)
+        {
+            watched_paths.clear();
+            for watcher in params.watchers {
+                watched_paths.add_pattern(&watcher.glob_pattern).log_err();
+            }
             cx.notify();
         }
     }
@@ -4465,7 +4504,10 @@ impl Project {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
-                worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
+                worktree::Event::UpdatedEntries(changes) => {
+                    this.update_local_worktree_buffers(&worktree, cx);
+                    this.update_local_worktree_language_servers(&worktree, changes, cx);
+                }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
                 }
@@ -4496,7 +4538,7 @@ impl Project {
 
     fn update_local_worktree_buffers(
         &mut self,
-        worktree_handle: ModelHandle<Worktree>,
+        worktree_handle: &ModelHandle<Worktree>,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
@@ -4506,7 +4548,7 @@ impl Project {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
                     if let Some(old_file) = File::from_dyn(buffer.file()) {
-                        if old_file.worktree != worktree_handle {
+                        if old_file.worktree != *worktree_handle {
                             return;
                         }
 
@@ -4575,6 +4617,58 @@ impl Project {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
             self.detect_language_for_buffer(&buffer, cx);
             self.register_buffer_with_language_server(&buffer, cx);
+        }
+    }
+
+    fn update_local_worktree_language_servers(
+        &mut self,
+        worktree_handle: &ModelHandle<Worktree>,
+        changes: &HashMap<Arc<Path>, PathChange>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_id = worktree_handle.read(cx).id();
+        let abs_path = worktree_handle.read(cx).abs_path();
+        for ((server_worktree_id, _), server_id) in &self.language_server_ids {
+            if *server_worktree_id == worktree_id {
+                if let Some(server) = self.language_servers.get(server_id) {
+                    if let LanguageServerState::Running {
+                        server,
+                        watched_paths,
+                        ..
+                    } = server
+                    {
+                        let params = lsp::DidChangeWatchedFilesParams {
+                            changes: changes
+                                .iter()
+                                .filter_map(|(path, change)| {
+                                    let path = abs_path.join(path);
+                                    if watched_paths.matches(&path) {
+                                        Some(lsp::FileEvent {
+                                            uri: lsp::Url::from_file_path(path).unwrap(),
+                                            typ: match change {
+                                                PathChange::Added => lsp::FileChangeType::CREATED,
+                                                PathChange::Removed => lsp::FileChangeType::DELETED,
+                                                PathChange::Updated
+                                                | PathChange::AddedOrUpdated => {
+                                                    lsp::FileChangeType::CHANGED
+                                                }
+                                            },
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect(),
+                        };
+
+                        if !params.changes.is_empty() {
+                            server
+                                .notify::<lsp::notification::DidChangeWatchedFiles>(params)
+                                .log_err();
+                        }
+                    }
+                }
+            }
         }
     }
 

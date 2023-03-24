@@ -1,1 +1,6 @@
-[{"Text":"The quick"},{"Mode":"Insert"},{"Selection":{"start":[0,6],"end":[0,6]}},{"Mode":"Insert"},{"Text":"The quick"},{"Mode":"Insert"},{"Selection":{"start":[0,9],"end":[0,9]}},{"Mode":"Insert"}]
+{"Put":{"state":"The qˇuick"}}
+{"Key":"a"}
+{"Get":{"state":"The quˇick","mode":"Insert"}}
+{"Put":{"state":"The quicˇk"}}
+{"Key":"a"}
+{"Get":{"state":"The quickˇ","mode":"Insert"}}

@@ -1,1 +1,35 @@
-[{"Text":"\nfox jumps over\nthe lazy dog"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"\nfox jumps over\nThe quick brown\nthe lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[2,0],"end":[2,0]}},{"Mode":"Normal"},{"Text":"The quick brown\n\nthe lazy dog"},{"Mode":"Insert"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Insert"},{"Text":"The quick brown\nfox jumps over\n"},{"Mode":"Insert"},{"Selection":{"start":[2,0],"end":[2,0]}},{"Mode":"Insert"},{"Text":"\nthe lazy dog"},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"\nthe lazy dog\nThe quick brown\nfox jumps over"},{"Mode":"Normal"},{"Selection":{"start":[2,0],"end":[2,0]}},{"Mode":"Normal"},{"Text":"The quick brown\n"},{"Mode":"Insert"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Insert"},{"Text":"The quick brown\nfox jumps over\n"},{"Mode":"Insert"},{"Selection":{"start":[2,0],"end":[2,0]}},{"Mode":"Insert"}]
+{"Put":{"state":"The quˇick brown\nfox jumps over\nthe lazy dog"}}
+{"Key":"shift-v"}
+{"Key":"c"}
+{"Get":{"state":"ˇ\nfox jumps over\nthe lazy dog","mode":"Insert"}}
+{"Key":"escape"}
+{"Key":"j"}
+{"Key":"p"}
+{"Get":{"state":"\nfox jumps over\nˇThe quick brown\nthe lazy dog","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox juˇmps over\nthe lazy dog"}}
+{"Key":"shift-v"}
+{"Key":"c"}
+{"Get":{"state":"The quick brown\nˇ\nthe lazy dog","mode":"Insert"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe laˇzy dog"}}
+{"Key":"shift-v"}
+{"Key":"c"}
+{"Get":{"state":"The quick brown\nfox jumps over\nˇ","mode":"Insert"}}
+{"Put":{"state":"The quˇick brown\nfox jumps over\nthe lazy dog"}}
+{"Key":"shift-v"}
+{"Key":"j"}
+{"Key":"c"}
+{"Get":{"state":"ˇ\nthe lazy dog","mode":"Insert"}}
+{"Key":"escape"}
+{"Key":"j"}
+{"Key":"p"}
+{"Get":{"state":"\nthe lazy dog\nˇThe quick brown\nfox jumps over","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox juˇmps over\nthe lazy dog"}}
+{"Key":"shift-v"}
+{"Key":"j"}
+{"Key":"c"}
+{"Get":{"state":"The quick brown\nˇ","mode":"Insert"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe laˇzy dog"}}
+{"Key":"shift-v"}
+{"Key":"j"}
+{"Key":"c"}
+{"Get":{"state":"The quick brown\nfox jumps over\nˇ","mode":"Insert"}}

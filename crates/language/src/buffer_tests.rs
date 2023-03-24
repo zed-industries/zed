@@ -809,7 +809,6 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
         }"}],
     );
 
-    eprintln!("-----------------------");
     // Regression test: even though the parent node of the parentheses (the for loop) does
     // intersect the given range, the parentheses themselves do not contain the range, so
     // they should not be returned. Only the curly braces contain the range.

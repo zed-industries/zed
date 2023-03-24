@@ -19,7 +19,7 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-postage = { version = "0.4.1", features = ["futures-traits"] }
+postage = { workspace = true }
 futures = "0.3"
 unicase = "2.6"
 

@@ -1,1 +1,9 @@
-[{"Text":"\nThe quick\nbrown fox "},{"Mode":"Insert"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Insert"},{"Text":"\nThe quick\nbrown fox "},{"Mode":"Insert"},{"Selection":{"start":[1,9],"end":[1,9]}},{"Mode":"Insert"},{"Text":"\nThe quick\nbrown fox "},{"Mode":"Insert"},{"Selection":{"start":[2,10],"end":[2,10]}},{"Mode":"Insert"}]
+{"Put":{"state":"ˇ\nThe quick\nbrown fox "}}
+{"Key":"shift-a"}
+{"Get":{"state":"ˇ\nThe quick\nbrown fox ","mode":"Insert"}}
+{"Put":{"state":"\nThe qˇuick\nbrown fox "}}
+{"Key":"shift-a"}
+{"Get":{"state":"\nThe quickˇ\nbrown fox ","mode":"Insert"}}
+{"Put":{"state":"\nThe quick\nbrown ˇfox "}}
+{"Key":"shift-a"}
+{"Get":{"state":"\nThe quick\nbrown fox ˇ","mode":"Insert"}}

@@ -1,1 +1,24 @@
-[{"Text":"st Test"},{"Mode":"Normal"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Normal"},{"Text":"test"},{"Mode":"Normal"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Normal"},{"Text":"Test1 test3"},{"Mode":"Normal"},{"Selection":{"start":[0,6],"end":[0,6]}},{"Mode":"Normal"},{"Text":"Test \ntest"},{"Mode":"Normal"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Normal"},{"Text":"Test \n\ntest"},{"Mode":"Normal"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Normal"},{"Text":"Test test"},{"Mode":"Normal"},{"Selection":{"start":[0,5],"end":[0,5]}},{"Mode":"Normal"}]
+{"Put":{"state":"Teˇst Test"}}
+{"Key":"d"}
+{"Key":"b"}
+{"Get":{"state":"ˇst Test","mode":"Normal"}}
+{"Put":{"state":"Test ˇtest"}}
+{"Key":"d"}
+{"Key":"b"}
+{"Get":{"state":"ˇtest","mode":"Normal"}}
+{"Put":{"state":"Test1 test2 ˇtest3"}}
+{"Key":"d"}
+{"Key":"b"}
+{"Get":{"state":"Test1 ˇtest3","mode":"Normal"}}
+{"Put":{"state":"Test test\nˇtest"}}
+{"Key":"d"}
+{"Key":"b"}
+{"Get":{"state":"Testˇ \ntest","mode":"Normal"}}
+{"Put":{"state":"Test test\nˇ\ntest"}}
+{"Key":"d"}
+{"Key":"b"}
+{"Get":{"state":"Testˇ \n\ntest","mode":"Normal"}}
+{"Put":{"state":"Test test-test ˇtest"}}
+{"Key":"d"}
+{"Key":"shift-b"}
+{"Get":{"state":"Test ˇtest","mode":"Normal"}}
