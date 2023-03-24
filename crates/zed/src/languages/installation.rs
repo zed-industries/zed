@@ -48,8 +48,8 @@ pub async fn ensure_node_installation_dir(http: Arc<dyn HttpClient>) -> Result<P
     let arch = "arm64";
 
     let folder_name = format!("node-{version}-darwin-{arch}");
-    let node_containing_dir = dbg!(util::paths::SUPPORT_DIR.join("node"));
-    let node_dir = dbg!(node_containing_dir.join(folder_name));
+    let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
+    let node_dir = node_containing_dir.join(folder_name);
     let node_binary = node_dir.join("bin/node");
 
     if fs::metadata(&node_binary).await.is_err() {
@@ -59,7 +59,6 @@ pub async fn ensure_node_installation_dir(http: Arc<dyn HttpClient>) -> Result<P
             .context("error creating node containing dir")?;
 
         let url = format!("https://nodejs.org/dist/{version}/node-{version}-darwin-{arch}.tar.gz");
-        dbg!(&url);
         let mut response = http
             .get(&url, Default::default(), true)
             .await
@@ -71,8 +70,7 @@ pub async fn ensure_node_installation_dir(http: Arc<dyn HttpClient>) -> Result<P
         eprintln!("unpacked");
     }
 
-    eprintln!("returning");
-    Ok(dbg!(node_dir))
+    Ok(node_dir)
 }
 
 pub async fn npm_package_latest_version(http: Arc<dyn HttpClient>, name: &str) -> Result<String> {

@@ -6,7 +6,9 @@ use client::http::HttpClient;
 use collections::HashMap;
 use futures::{future::BoxFuture, io::BufReader, FutureExt, StreamExt};
 use gpui::MutableAppContext;
-use language::{LanguageRegistry, LanguageServerName, LspAdapter, ServerExecutionKind};
+use language::{
+    LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter, ServerExecutionKind,
+};
 use serde_json::json;
 use settings::{keymap_file_json_schema, settings_file_json_schema};
 use smol::fs::{self, File};
@@ -19,6 +21,10 @@ use std::{
 };
 use theme::ThemeRegistry;
 use util::{paths, ResultExt, StaffMode};
+
+fn server_binary_arguments() -> Vec<String> {
+    vec!["--stdio".into()]
+}
 
 pub struct JsonLspAdapter {
     languages: Arc<LanguageRegistry>,
@@ -39,10 +45,6 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn server_execution_kind(&self) -> ServerExecutionKind {
         ServerExecutionKind::Node
-    }
-
-    async fn server_args(&self) -> Vec<String> {
-        vec!["--stdio".into()]
     }
 
     async fn fetch_latest_server_version(
@@ -68,7 +70,7 @@ impl LspAdapter for JsonLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!(
             "json-language-server-{}-{}",
@@ -102,17 +104,23 @@ impl LspAdapter for JsonLspAdapter {
             }
         }
 
-        Ok(destination_path)
+        Ok(LanguageServerBinary {
+            path: destination_path,
+            arguments: server_binary_arguments(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
                 last = Some(entry?.path());
             }
-            last.ok_or_else(|| anyhow!("no cached binary"))
+            anyhow::Ok(LanguageServerBinary {
+                path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+                arguments: server_binary_arguments(),
+            })
         })()
         .await
         .log_err()

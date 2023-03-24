@@ -6,7 +6,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{io::BufReader, StreamExt};
-use language::{LanguageServerName, ServerExecutionKind};
+use language::{LanguageServerBinary, LanguageServerName, ServerExecutionKind};
 use smol::fs;
 use util::{async_iife, ResultExt};
 
@@ -14,6 +14,13 @@ use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
+
+fn server_binary_arguments() -> Vec<String> {
+    vec![
+        "--logpath=~/lua-language-server.log".into(),
+        "--loglevel=trace".into(),
+    ]
+}
 
 #[async_trait]
 impl super::LspAdapter for LuaLspAdapter {
@@ -23,13 +30,6 @@ impl super::LspAdapter for LuaLspAdapter {
 
     async fn server_execution_kind(&self) -> ServerExecutionKind {
         ServerExecutionKind::Launch
-    }
-
-    async fn server_args(&self) -> Vec<String> {
-        vec![
-            "--logpath=~/lua-language-server.log".into(),
-            "--loglevel=trace".into(),
-        ]
     }
 
     async fn fetch_latest_server_version(
@@ -61,7 +61,7 @@ impl super::LspAdapter for LuaLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
 
         let binary_path = container_dir.join("bin/lua-language-server");
@@ -81,10 +81,13 @@ impl super::LspAdapter for LuaLspAdapter {
             <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
         )
         .await?;
-        Ok(binary_path)
+        Ok(LanguageServerBinary {
+            path: binary_path,
+            arguments: server_binary_arguments(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         async_iife!({
             let mut last_binary_path = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -101,7 +104,10 @@ impl super::LspAdapter for LuaLspAdapter {
             }
 
             if let Some(path) = last_binary_path {
-                Ok(path)
+                Ok(LanguageServerBinary {
+                    path,
+                    arguments: server_binary_arguments(),
+                })
             } else {
                 Err(anyhow!("no cached binary"))
             }
