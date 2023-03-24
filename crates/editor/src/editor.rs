@@ -6350,9 +6350,20 @@ impl Editor {
         }
 
         let snapshot = buffer.read(cx).snapshot();
-        let chunks = snapshot.chunks(0..snapshot.len(), true);
+        let range = self
+            .selected_text_range(cx)
+            .and_then(|selected_range| {
+                if selected_range.is_empty() {
+                    None
+                } else {
+                    Some(selected_range)
+                }
+            })
+            .unwrap_or_else(|| 0..snapshot.len());
+
+        let chunks = snapshot.chunks(range, true);
         let mut lines = Vec::new();
-        let mut line: Vec<Chunk> = Vec::new();
+        let mut line: VecDeque<Chunk> = VecDeque::new();
 
         let theme = &cx.global::<Settings>().theme.editor.syntax;
 
@@ -6361,7 +6372,7 @@ impl Editor {
             let mut chunk_lines = chunk.text.split("\n").peekable();
             while let Some(text) = chunk_lines.next() {
                 let mut merged_with_last_token = false;
-                if let Some(last_token) = line.last_mut() {
+                if let Some(last_token) = line.back_mut() {
                     if last_token.highlight == highlight {
                         last_token.text.push_str(text);
                         merged_with_last_token = true;
@@ -6369,13 +6380,20 @@ impl Editor {
                 }
 
                 if !merged_with_last_token {
-                    line.push(Chunk {
+                    line.push_back(Chunk {
                         text: text.into(),
                         highlight,
                     });
                 }
 
                 if chunk_lines.peek().is_some() {
+                    if line.len() > 1 && line.front().unwrap().text.is_empty() {
+                        line.pop_front();
+                    }
+                    if line.len() > 1 && line.back().unwrap().text.is_empty() {
+                        line.pop_back();
+                    }
+
                     lines.push(mem::take(&mut line));
                 }
             }
