@@ -7,7 +7,7 @@ use gpui::{
 use settings::Settings;
 
 pub fn init(cx: &mut MutableAppContext) {
-    let copilot = Copilot::global(cx);
+    let copilot = Copilot::global(cx).unwrap();
 
     let mut code_verification_window_id = None;
     cx.observe(&copilot, move |copilot, cx| {

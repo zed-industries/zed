@@ -24,6 +24,7 @@ use anyhow::Result;
 use blink_manager::BlinkManager;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
@@ -96,6 +97,7 @@ const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const COPILOT_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {
@@ -260,6 +262,7 @@ actions!(
         ToggleSoftWrap,
         RevealInFinder,
         CopyHighlightJson
+        CycleCopilotSuggestions
     ]
 );
 
@@ -388,6 +391,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
+    cx.add_action(Editor::cycle_copilot_suggestions);
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
@@ -506,6 +510,7 @@ pub struct Editor {
     hover_state: HoverState,
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
+    copilot_state: CopilotState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1003,6 +1008,30 @@ impl CodeActionsMenu {
     }
 }
 
+struct CopilotState {
+    position: Anchor,
+    pending_refresh: Task<Option<()>>,
+    completions: Vec<copilot::Completion>,
+    active_completion_index: usize,
+}
+
+impl Default for CopilotState {
+    fn default() -> Self {
+        Self {
+            position: Anchor::min(),
+            pending_refresh: Task::ready(Some(())),
+            completions: Default::default(),
+            active_completion_index: 0,
+        }
+    }
+}
+
+impl CopilotState {
+    fn active_completion(&self) -> Option<&copilot::Completion> {
+        self.completions.get(self.active_completion_index)
+    }
+}
+
 #[derive(Debug)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
@@ -1176,6 +1205,7 @@ impl Editor {
             remote_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
+            copilot_state: Default::default(),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1385,6 +1415,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
+            self.refresh_copilot_suggestions(cx);
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
@@ -2677,6 +2708,129 @@ impl Editor {
         None
     }
 
+    fn refresh_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        let copilot = Copilot::global(cx)?;
+        if self.mode != EditorMode::Full {
+            return None;
+        }
+
+        self.copilot_state.completions.clear();
+        self.copilot_state.active_completion_index = 0;
+        self.copilot_state.position = Anchor::min();
+        self.display_map
+            .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+        cx.notify();
+
+        if !copilot.read(cx).status().is_authorized() {
+            return None;
+        }
+
+        let selection = self.selections.newest_anchor();
+        let position = if selection.start == selection.end {
+            selection.start
+        } else {
+            return None;
+        };
+        let (buffer, buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position, cx)?;
+        self.copilot_state.position = position;
+        self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
+            cx.background().timer(COPILOT_TIMEOUT).await;
+            let (completion, completions_cycling) = copilot.update(&mut cx, |copilot, cx| {
+                (
+                    copilot.completion(&buffer, buffer_position, cx),
+                    copilot.completions_cycling(&buffer, buffer_position, cx),
+                )
+            });
+
+            if let Some(completion) = completion.await.log_err() {
+                let this = this.upgrade(&cx)?;
+                this.update(&mut cx, |this, cx| {
+                    if let Some(completion) = completion {
+                        this.display_map.update(cx, |map, cx| {
+                            map.replace_suggestion(
+                                Some(Suggestion {
+                                    position,
+                                    text: completion.text.as_str().into(),
+                                    highlight_style: HighlightStyle {
+                                        color: Some(Color::from_u32(0x777777ff)),
+                                        ..Default::default()
+                                    },
+                                }),
+                                cx,
+                            )
+                        });
+                        this.copilot_state.completions.push(completion);
+                        cx.notify();
+                    }
+                });
+            }
+
+            if let Some(completions) = completions_cycling.await.log_err() {
+                let this = this.upgrade(&cx)?;
+                this.update(&mut cx, |this, cx| {
+                    let was_empty = this.copilot_state.completions.is_empty();
+                    if !completions.is_empty() {
+                        if was_empty {
+                            let completion = completions.first().unwrap();
+                            this.display_map.update(cx, |map, cx| {
+                                map.replace_suggestion(
+                                    Some(Suggestion {
+                                        position,
+                                        text: completion.text.as_str().into(),
+                                        highlight_style: HighlightStyle {
+                                            color: Some(Color::from_u32(0x777777ff)),
+                                            ..Default::default()
+                                        },
+                                    }),
+                                    cx,
+                                )
+                            });
+                            cx.notify();
+                        }
+                        this.copilot_state.completions.extend(completions);
+                    }
+                });
+            }
+
+            Some(())
+        });
+
+        Some(())
+    }
+
+    fn cycle_copilot_suggestions(
+        &mut self,
+        _: &CycleCopilotSuggestions,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.copilot_state.completions.is_empty() {
+            return;
+        }
+
+        self.copilot_state.active_completion_index =
+            (self.copilot_state.active_completion_index + 1) % self.copilot_state.completions.len();
+        if let Some(completion) = self.copilot_state.active_completion() {
+            self.display_map.update(cx, |map, cx| {
+                map.replace_suggestion(
+                    Some(Suggestion {
+                        position: self.copilot_state.position,
+                        text: completion.text.as_str().into(),
+                        highlight_style: HighlightStyle {
+                            color: Some(Color::from_u32(0x777777ff)),
+                            ..Default::default()
+                        },
+                    }),
+                    cx,
+                )
+            });
+        }
+
+        cx.notify();
+    }
+
     pub fn render_code_actions_indicator(
         &self,
         style: &EditorStyle,
@@ -2984,6 +3138,11 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if let Some(completion) = self.copilot_state.active_completion() {
+            self.insert(&completion.text.to_string(), cx);
+            return;
+        }
+
         if self.move_to_next_snippet_tabstop(cx) {
             return;
         }

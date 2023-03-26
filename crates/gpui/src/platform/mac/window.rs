@@ -494,7 +494,6 @@ impl Window {
                         NSSize::new(rect.width() as f64, rect.height() as f64),
                     );
 
-                    dbg!(screen_frame.as_CGRect(), ns_rect.as_CGRect());
                     if ns_rect.intersects(screen_frame) {
                         native_window.setFrame_display_(ns_rect, YES);
                     } else {

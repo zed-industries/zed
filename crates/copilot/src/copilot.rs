@@ -25,13 +25,13 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
     cx.set_global(copilot.clone());
     cx.add_global_action(|_: &SignIn, cx| {
-        let copilot = Copilot::global(cx);
+        let copilot = Copilot::global(cx).unwrap();
         copilot
             .update(cx, |copilot, cx| copilot.sign_in(cx))
             .detach_and_log_err(cx);
     });
     cx.add_global_action(|_: &SignOut, cx| {
-        let copilot = Copilot::global(cx);
+        let copilot = Copilot::global(cx).unwrap();
         copilot
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .detach_and_log_err(cx);
@@ -75,13 +75,19 @@ pub enum Status {
     Authorized,
 }
 
+impl Status {
+    pub fn is_authorized(&self) -> bool {
+        matches!(self, Status::Authorized)
+    }
+}
+
 #[derive(Debug)]
 pub struct Completion {
     pub position: Anchor,
     pub text: String,
 }
 
-struct Copilot {
+pub struct Copilot {
     server: CopilotServer,
 }
 
@@ -90,8 +96,12 @@ impl Entity for Copilot {
 }
 
 impl Copilot {
-    fn global(cx: &AppContext) -> ModelHandle<Self> {
-        cx.global::<ModelHandle<Self>>().clone()
+    pub fn global(cx: &AppContext) -> Option<ModelHandle<Self>> {
+        if cx.has_global::<ModelHandle<Self>>() {
+            Some(cx.global::<ModelHandle<Self>>().clone())
+        } else {
+            None
+        }
     }
 
     fn start(http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
@@ -240,7 +250,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        let server = match self.authenticated_server() {
+        let server = match self.authorized_server() {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
@@ -268,7 +278,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        let server = match self.authenticated_server() {
+        let server = match self.authorized_server() {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
@@ -322,7 +332,7 @@ impl Copilot {
         }
     }
 
-    fn authenticated_server(&self) -> Result<Arc<LanguageServer>> {
+    fn authorized_server(&self) -> Result<Arc<LanguageServer>> {
         match &self.server {
             CopilotServer::Downloading => Err(anyhow!("copilot is still downloading")),
             CopilotServer::Error(error) => Err(anyhow!(
