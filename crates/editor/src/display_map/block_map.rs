@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{ElementBox, RenderContext};
+use gpui::{fonts::HighlightStyle, ElementBox, RenderContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -572,7 +572,7 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(0..self.transforms.summary().output_rows, false, None)
+        self.chunks(0..self.transforms.summary().output_rows, false, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -582,6 +582,7 @@ impl BlockSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        suggestion_highlight: Option<HighlightStyle>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
@@ -614,6 +615,7 @@ impl BlockSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
+                suggestion_highlight,
             ),
             input_chunk: Default::default(),
             transforms: cursor,
@@ -1497,6 +1499,7 @@ mod tests {
                     .chunks(
                         start_row as u32..blocks_snapshot.max_point().row + 1,
                         false,
+                        None,
                         None,
                     )
                     .map(|chunk| chunk.text)

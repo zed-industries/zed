@@ -573,6 +573,7 @@ pub struct Editor {
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
+    pub suggestion: HighlightStyle,
     pub diagnostic_path_header: DiagnosticPathHeader,
     pub diagnostic_header: DiagnosticHeader,
     pub error_diagnostic: DiagnosticStyle,

@@ -3,6 +3,7 @@ use super::{
     TextHighlights,
 };
 use crate::MultiBufferSnapshot;
+use gpui::fonts::HighlightStyle;
 use language::{Chunk, Point};
 use parking_lot::Mutex;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
@@ -46,6 +47,7 @@ impl TabMap {
                 for chunk in old_snapshot.suggestion_snapshot.chunks(
                     suggestion_edit.old.end..old_max_offset,
                     false,
+                    None,
                     None,
                 ) {
                     let patterns: &[_] = &['\t', '\n'];
@@ -126,6 +128,7 @@ impl TabSnapshot {
                 TabPoint::new(row, 0)..TabPoint::new(row + 1, 0),
                 false,
                 None,
+                None,
             )
             .map(|chunk| chunk.text.len() as u32)
             .sum::<u32>()
@@ -153,7 +156,7 @@ impl TabSnapshot {
             self.max_point()
         };
         for c in self
-            .chunks(range.start..line_end, false, None)
+            .chunks(range.start..line_end, false, None, None)
             .flat_map(|chunk| chunk.text.chars())
         {
             if c == '\n' {
@@ -167,7 +170,12 @@ impl TabSnapshot {
             last_line_chars = first_line_chars;
         } else {
             for _ in self
-                .chunks(TabPoint::new(range.end.row(), 0)..range.end, false, None)
+                .chunks(
+                    TabPoint::new(range.end.row(), 0)..range.end,
+                    false,
+                    None,
+                    None,
+                )
                 .flat_map(|chunk| chunk.text.chars())
             {
                 last_line_chars += 1;
@@ -188,6 +196,7 @@ impl TabSnapshot {
         range: Range<TabPoint>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        suggestion_highlight: Option<HighlightStyle>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_suggestion_point(range.start, Bias::Left);
@@ -206,6 +215,7 @@ impl TabSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
+                suggestion_highlight,
             ),
             column: expanded_char_column,
             output_position: range.start.0,
@@ -225,7 +235,7 @@ impl TabSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(TabPoint::zero()..self.max_point(), false, None)
+        self.chunks(TabPoint::zero()..self.max_point(), false, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -574,7 +584,7 @@ mod tests {
             assert_eq!(
                 expected_text,
                 tabs_snapshot
-                    .chunks(start..end, false, None)
+                    .chunks(start..end, false, None, None)
                     .map(|c| c.text)
                     .collect::<String>(),
                 "chunks({:?}..{:?})",

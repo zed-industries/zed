@@ -43,6 +43,9 @@ export default function editor(colorScheme: ColorScheme) {
         background: background(layer),
         activeLineBackground: withOpacity(background(layer, "on"), 0.75),
         highlightedLineBackground: background(layer, "on"),
+        suggestion: {
+          color: foreground(layer, "disabled")
+        },
         codeActions: {
             indicator: {
                 color: foreground(layer, "variant"),

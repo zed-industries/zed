@@ -2753,10 +2753,6 @@ impl Editor {
                                 Some(Suggestion {
                                     position,
                                     text: completion.text.as_str().into(),
-                                    highlight_style: HighlightStyle {
-                                        color: Some(Color::from_u32(0x777777ff)),
-                                        ..Default::default()
-                                    },
                                 }),
                                 cx,
                             )
@@ -2779,10 +2775,6 @@ impl Editor {
                                     Some(Suggestion {
                                         position,
                                         text: completion.text.as_str().into(),
-                                        highlight_style: HighlightStyle {
-                                            color: Some(Color::from_u32(0x777777ff)),
-                                            ..Default::default()
-                                        },
                                     }),
                                     cx,
                                 )
@@ -2813,10 +2805,6 @@ impl Editor {
                     Some(Suggestion {
                         position: self.copilot_state.position,
                         text: completion.text.as_str().into(),
-                        highlight_style: HighlightStyle {
-                            color: Some(Color::from_u32(0x777777ff)),
-                            ..Default::default()
-                        },
                     }),
                     cx,
                 )
