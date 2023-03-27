@@ -85,7 +85,7 @@ impl<'a> NeovimBackedTestContext<'a> {
                 let mut marked_text = unmarked_text.clone();
                 marked_text.insert(*cursor_offset, 'ˇ');
 
-                // None represents all keybindings being exempted for that initial state
+                // None represents all key bindings being exempted for that initial state
                 self.exemptions.insert(marked_text, None);
             }
         }
