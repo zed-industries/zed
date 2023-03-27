@@ -2834,6 +2834,7 @@ impl Editor {
 
     fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
         if self.copilot_state.completions.is_empty() {
+            self.refresh_copilot_suggestions(cx);
             return;
         }
 
