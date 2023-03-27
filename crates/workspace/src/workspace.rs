@@ -258,6 +258,14 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             }
         }
     });
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &NewFile, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
+            }
+        }
+    });
 
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
