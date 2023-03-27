@@ -1030,21 +1030,22 @@ impl CopilotState {
         cursor: Anchor,
         buffer: &MultiBufferSnapshot,
     ) -> Option<&str> {
+        let cursor_offset = cursor.to_offset(buffer);
         let completion = self.completions.get(self.active_completion_index)?;
         if self.position.excerpt_id == cursor.excerpt_id
             && self.position.buffer_id == cursor.buffer_id
-            && buffer.chars_at(cursor).next().map_or(true, |ch| ch == '\n')
+            && (cursor_offset == buffer.len() || buffer.contains_str_at(cursor_offset, "\n"))
         {
-            let completion_position = Anchor {
+            let completion_offset = buffer.summary_for_anchor(&Anchor {
                 excerpt_id: self.position.excerpt_id,
                 buffer_id: self.position.buffer_id,
                 text_anchor: completion.position,
-            };
-            if completion_position.cmp(&cursor, buffer).is_le() {
-                let prefix = buffer
-                    .text_for_range(completion_position..cursor)
-                    .collect::<String>();
-                let suffix = completion.text.strip_prefix(&prefix)?;
+            });
+            let common_prefix_len = cursor_offset.saturating_sub(completion_offset);
+            if common_prefix_len <= completion.text.len()
+                && buffer.contains_str_at(completion_offset, &completion.text[..common_prefix_len])
+            {
+                let suffix = &completion.text[common_prefix_len..];
                 if !suffix.is_empty() {
                     return Some(suffix);
                 }
