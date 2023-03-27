@@ -759,10 +759,12 @@ impl ProjectPanel {
                 if ix > 0 {
                     new_file_name.push(format!(" {}", ix));
                 }
-                new_path.push(new_file_name);
                 if let Some(extension) = extension.as_ref() {
-                    new_path.set_extension(&extension);
+                    new_file_name.push(".");
+                    new_file_name.push(extension);
                 }
+
+                new_path.push(new_file_name);
                 ix += 1;
             }
 
@@ -1798,6 +1800,80 @@ mod tests {
                 "          a-different-filename",
                 "    > C",
                 "      .dockerignore",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let settings = Settings::test(cx);
+            cx.set_global(settings);
+        });
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.two.txt": "",
+                "one.txt": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
+
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.select_next(&Default::default(), cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two.txt  <== selected",
+                "      one.txt",
+            ]
+        );
+
+        // Regression test - file name is created correctly when
+        // the copied file's name contains multiple dots.
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.foreground().run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two copy.txt",
+                "      one.two.txt  <== selected",
+                "      one.txt",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.foreground().run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two copy 1.txt",
+                "      one.two copy.txt",
+                "      one.two.txt  <== selected",
+                "      one.txt",
             ]
         );
     }
