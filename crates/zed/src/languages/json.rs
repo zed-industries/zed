@@ -1,4 +1,7 @@
-use super::installation::{latest_github_release, GitHubLspBinaryVersion};
+use super::{
+    installation::{latest_github_release, GitHubLspBinaryVersion},
+    node_runtime::NodeRuntime,
+};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
@@ -6,15 +9,14 @@ use client::http::HttpClient;
 use collections::HashMap;
 use futures::{future::BoxFuture, io::BufReader, FutureExt, StreamExt};
 use gpui::MutableAppContext;
-use language::{
-    LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter, ServerExecutionKind,
-};
+use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
 use serde_json::json;
 use settings::{keymap_file_json_schema, settings_file_json_schema};
 use smol::fs::{self, File};
 use std::{
     any::Any,
     env::consts,
+    ffi::OsString,
     future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -22,18 +24,27 @@ use std::{
 use theme::ThemeRegistry;
 use util::{paths, ResultExt, StaffMode};
 
-fn server_binary_arguments() -> Vec<String> {
-    vec!["--stdio".into()]
+fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    dbg!(vec![server_path.into(), "--stdio".into()])
 }
 
 pub struct JsonLspAdapter {
+    node: Arc<NodeRuntime>,
     languages: Arc<LanguageRegistry>,
     themes: Arc<ThemeRegistry>,
 }
 
 impl JsonLspAdapter {
-    pub fn new(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) -> Self {
-        Self { languages, themes }
+    pub fn new(
+        node: Arc<NodeRuntime>,
+        languages: Arc<LanguageRegistry>,
+        themes: Arc<ThemeRegistry>,
+    ) -> Self {
+        JsonLspAdapter {
+            node,
+            languages,
+            themes,
+        }
     }
 }
 
@@ -41,10 +52,6 @@ impl JsonLspAdapter {
 impl LspAdapter for JsonLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("json-language-server".into())
-    }
-
-    async fn server_execution_kind(&self) -> ServerExecutionKind {
-        ServerExecutionKind::Node
     }
 
     async fn fetch_latest_server_version(
@@ -105,8 +112,8 @@ impl LspAdapter for JsonLspAdapter {
         }
 
         Ok(LanguageServerBinary {
-            path: destination_path,
-            arguments: server_binary_arguments(),
+            path: self.node.binary_path().await?,
+            arguments: server_binary_arguments(&destination_path),
         })
     }
 
@@ -118,8 +125,10 @@ impl LspAdapter for JsonLspAdapter {
                 last = Some(entry?.path());
             }
             anyhow::Ok(LanguageServerBinary {
-                path: last.ok_or_else(|| anyhow!("no cached binary"))?,
-                arguments: server_binary_arguments(),
+                path: self.node.binary_path().await?,
+                arguments: server_binary_arguments(
+                    &last.ok_or_else(|| anyhow!("no cached binary"))?,
+                ),
             })
         })()
         .await

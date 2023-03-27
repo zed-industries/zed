@@ -81,15 +81,6 @@ fn main() {
         })
     };
 
-    let node_path = {
-        let http = http.clone();
-        app.background().spawn(async move {
-            languages::ensure_node_installation_dir(http.clone())
-                .await
-                .log_err()
-        })
-    };
-
     let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
     let (open_paths_tx, mut open_paths_rx) = mpsc::unbounded();
     app.on_open_urls(move |urls, _| {
@@ -144,11 +135,16 @@ fn main() {
         }
 
         let client = client::Client::new(http.clone(), cx);
-        let mut languages = LanguageRegistry::new(login_shell_env_loaded, node_path);
+        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        languages::init(languages.clone(), themes.clone());
+        languages::init(
+            http.clone(),
+            cx.background().clone(),
+            languages.clone(),
+            themes.clone(),
+        );
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         cx.set_global(client.clone());

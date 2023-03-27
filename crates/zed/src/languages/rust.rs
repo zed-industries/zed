@@ -19,10 +19,6 @@ impl LspAdapter for RustLspAdapter {
         LanguageServerName("rust-analyzer".into())
     }
 
-    async fn server_execution_kind(&self) -> ServerExecutionKind {
-        ServerExecutionKind::Launch
-    }
-
     async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,

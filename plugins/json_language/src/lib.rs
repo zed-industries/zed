@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[import]
 fn command(string: &str) -> Option<Vec<u8>>;
 
-const BIN_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
 #[export]
 pub fn name() -> &'static str {
@@ -38,7 +38,7 @@ pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Result<Pa
     let version_dir = container_dir.join(version.as_str());
     fs::create_dir_all(&version_dir)
         .map_err(|_| "failed to create version directory".to_string())?;
-    let binary_path = version_dir.join(BIN_PATH);
+    let binary_path = version_dir.join(SERVER_PATH);
 
     if fs::metadata(&binary_path).is_err() {
         let output = command(&format!(
@@ -76,9 +76,9 @@ pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
     }
 
     let last_version_dir = last_version_dir?;
-    let bin_path = last_version_dir.join(BIN_PATH);
-    if bin_path.exists() {
-        Some(bin_path)
+    let server_path = last_version_dir.join(SERVER_PATH);
+    if server_path.exists() {
+        Some(server_path)
     } else {
         println!("no binary found");
         None

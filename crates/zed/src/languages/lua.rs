@@ -1,4 +1,4 @@
-use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
+use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -6,7 +6,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{io::BufReader, StreamExt};
-use language::{LanguageServerBinary, LanguageServerName, ServerExecutionKind};
+use language::{LanguageServerBinary, LanguageServerName};
 use smol::fs;
 use util::{async_iife, ResultExt};
 
@@ -15,7 +15,7 @@ use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
 
-fn server_binary_arguments() -> Vec<String> {
+fn server_binary_arguments() -> Vec<OsString> {
     vec![
         "--logpath=~/lua-language-server.log".into(),
         "--loglevel=trace".into(),
@@ -26,10 +26,6 @@ fn server_binary_arguments() -> Vec<String> {
 impl super::LspAdapter for LuaLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("lua-language-server".into())
-    }
-
-    async fn server_execution_kind(&self) -> ServerExecutionKind {
-        ServerExecutionKind::Launch
     }
 
     async fn fetch_latest_server_version(
