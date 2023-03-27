@@ -1,16 +1,19 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::http::HttpClient;
-use futures::{future::Shared, FutureExt, TryFutureExt};
+use futures::{future::Shared, FutureExt};
 use gpui::{executor::Background, Task};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use smol::{fs, io::BufReader};
 use std::{
+    env::consts,
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+const VERSION: &str = "v18.15.0";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -115,38 +118,7 @@ impl NodeRuntime {
             .get_or_insert_with(|| {
                 let http = self.http.clone();
                 self.background
-                    .spawn(
-                        async move {
-                            let version = "v18.15.0";
-                            let arch = "arm64";
-
-                            let folder_name = format!("node-{version}-darwin-{arch}");
-                            let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
-                            let node_dir = node_containing_dir.join(folder_name);
-                            let node_binary = node_dir.join("bin/node");
-
-                            if fs::metadata(&node_binary).await.is_err() {
-                                _ = fs::remove_dir_all(&node_containing_dir).await;
-                                fs::create_dir(&node_containing_dir)
-                                    .await
-                                    .context("error creating node containing dir")?;
-
-                                let url = format!("https://nodejs.org/dist/{version}/node-{version}-darwin-{arch}.tar.gz");
-                                let mut response =
-                                    http.get(&url, Default::default(), true)
-                                        .await
-                                        .context("error downloading Node binary tarball")?;
-
-                                let decompressed_bytes =
-                                    GzipDecoder::new(BufReader::new(response.body_mut()));
-                                let archive = Archive::new(decompressed_bytes);
-                                archive.unpack(&node_containing_dir).await?;
-                            }
-
-                            anyhow::Ok(node_dir)
-                        }
-                        .map_err(Arc::new),
-                    )
+                    .spawn(async move { Self::install(http).await.map_err(Arc::new) })
                     .shared()
             })
             .clone();
@@ -155,5 +127,38 @@ impl NodeRuntime {
             Ok(path) => Ok(path),
             Err(error) => Err(anyhow!("{}", error)),
         }
+    }
+
+    async fn install(http: Arc<dyn HttpClient>) -> Result<PathBuf> {
+        let arch = match consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            other => bail!("Running on unsupported platform: {other}"),
+        };
+
+        let folder_name = format!("node-{VERSION}-darwin-{arch}");
+        let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
+        let node_dir = node_containing_dir.join(folder_name);
+        let node_binary = node_dir.join("bin/node");
+
+        if fs::metadata(&node_binary).await.is_err() {
+            _ = fs::remove_dir_all(&node_containing_dir).await;
+            fs::create_dir(&node_containing_dir)
+                .await
+                .context("error creating node containing dir")?;
+
+            let file_name = format!("node-{VERSION}-darwin-{arch}.tar.gz");
+            let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
+            let mut response = http
+                .get(&url, Default::default(), true)
+                .await
+                .context("error downloading Node binary tarball")?;
+
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(&node_containing_dir).await?;
+        }
+
+        anyhow::Ok(node_dir)
     }
 }

@@ -792,7 +792,7 @@ impl LanguageRegistry {
                 Ok(server)
             }));
         }
-        
+
         dbg!();
 
         let download_dir = self
