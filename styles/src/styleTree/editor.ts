@@ -44,7 +44,7 @@ export default function editor(colorScheme: ColorScheme) {
         activeLineBackground: withOpacity(background(layer, "on"), 0.75),
         highlightedLineBackground: background(layer, "on"),
         suggestion: {
-          color: foreground(layer, "disabled")
+            color: syntax.predictive.color,
         },
         codeActions: {
             indicator: {
