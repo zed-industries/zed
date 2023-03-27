@@ -44,7 +44,7 @@ export default function statusBar(colorScheme: ColorScheme) {
             hover: {
                 message: text(layer, "sans"),
                 iconColor: foreground(layer),
-                background: background(layer),
+                background: background(layer, "hovered"),
             },
         },
         diagnosticMessage: {
