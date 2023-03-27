@@ -81,7 +81,7 @@ impl Status {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Completion {
     pub position: Anchor,
     pub text: String,

@@ -1026,8 +1026,45 @@ impl Default for CopilotState {
 }
 
 impl CopilotState {
-    fn active_completion(&self) -> Option<&copilot::Completion> {
-        self.completions.get(self.active_completion_index)
+    fn text_for_active_completion(
+        &self,
+        cursor: Anchor,
+        buffer: &MultiBufferSnapshot,
+    ) -> Option<&str> {
+        let completion = self.completions.get(self.active_completion_index)?;
+        if self.position.excerpt_id == cursor.excerpt_id
+            && self.position.buffer_id == cursor.buffer_id
+            && buffer.chars_at(cursor).next().map_or(true, |ch| ch == '\n')
+        {
+            let completion_position = Anchor {
+                excerpt_id: self.position.excerpt_id,
+                buffer_id: self.position.buffer_id,
+                text_anchor: completion.position,
+            };
+            if completion_position.cmp(&cursor, buffer).is_le() {
+                let prefix = buffer
+                    .text_for_range(completion_position..cursor)
+                    .collect::<String>();
+                let suffix = completion.text.strip_prefix(&prefix)?;
+                if !suffix.is_empty() {
+                    return Some(suffix);
+                }
+            }
+        }
+        None
+    }
+
+    fn push_completion(
+        &mut self,
+        new_completion: copilot::Completion,
+    ) -> Option<&copilot::Completion> {
+        for completion in &self.completions {
+            if *completion == new_completion {
+                return None;
+            }
+        }
+        self.completions.push(new_completion);
+        self.completions.last()
     }
 }
 
@@ -2713,30 +2750,46 @@ impl Editor {
             return None;
         }
 
-        self.copilot_state.completions.clear();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let selection = self.selections.newest_anchor();
+        let cursor = if selection.start == selection.end {
+            selection.start.bias_left(&snapshot)
+        } else {
+            self.clear_copilot_suggestions(cx);
+            return None;
+        };
+
+        if let Some(new_text) = self
+            .copilot_state
+            .text_for_active_completion(cursor, &snapshot)
+        {
+            self.display_map.update(cx, |map, cx| {
+                map.replace_suggestion(
+                    Some(Suggestion {
+                        position: cursor,
+                        text: new_text.into(),
+                    }),
+                    cx,
+                )
+            });
+            self.copilot_state
+                .completions
+                .swap(0, self.copilot_state.active_completion_index);
+            self.copilot_state.completions.truncate(1);
+        } else {
+            self.clear_copilot_suggestions(cx);
+        }
+        self.copilot_state.position = cursor;
         self.copilot_state.active_completion_index = 0;
-        self.copilot_state.position = Anchor::min();
-        self.display_map
-            .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
         cx.notify();
 
         if !copilot.read(cx).status().is_authorized() {
             return None;
         }
 
-        let selection = self.selections.newest_anchor();
-        let position = if selection.start == selection.end {
-            selection.start
-        } else {
-            return None;
-        };
-        let (buffer, buffer_position) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position, cx)?;
-        self.copilot_state.position = position;
+        let (buffer, buffer_position) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
-            cx.background().timer(COPILOT_TIMEOUT).await;
             let (completion, completions_cycling) = copilot.update(&mut cx, |copilot, cx| {
                 (
                     copilot.completion(&buffer, buffer_position, cx),
@@ -2744,47 +2797,31 @@ impl Editor {
                 )
             });
 
-            if let Some(completion) = completion.await.log_err() {
-                let this = this.upgrade(&cx)?;
-                this.update(&mut cx, |this, cx| {
-                    if let Some(completion) = completion {
-                        this.display_map.update(cx, |map, cx| {
-                            map.replace_suggestion(
-                                Some(Suggestion {
-                                    position,
-                                    text: completion.text.as_str().into(),
-                                }),
-                                cx,
-                            )
-                        });
-                        this.copilot_state.completions.push(completion);
-                        cx.notify();
-                    }
-                });
-            }
-
-            if let Some(completions) = completions_cycling.await.log_err() {
-                let this = this.upgrade(&cx)?;
-                this.update(&mut cx, |this, cx| {
+            let (completion, completions_cycling) = futures::join!(completion, completions_cycling);
+            let mut completions = Vec::new();
+            completions.extend(completion.log_err().flatten());
+            completions.extend(completions_cycling.log_err().into_iter().flatten());
+            this.upgrade(&cx)?.update(&mut cx, |this, cx| {
+                this.copilot_state.completions.clear();
+                this.copilot_state.active_completion_index = 0;
+                for completion in completions {
                     let was_empty = this.copilot_state.completions.is_empty();
-                    if !completions.is_empty() {
+                    if let Some(completion) = this.copilot_state.push_completion(completion) {
                         if was_empty {
-                            let completion = completions.first().unwrap();
                             this.display_map.update(cx, |map, cx| {
                                 map.replace_suggestion(
                                     Some(Suggestion {
-                                        position,
+                                        position: cursor,
                                         text: completion.text.as_str().into(),
                                     }),
                                     cx,
                                 )
                             });
-                            cx.notify();
                         }
-                        this.copilot_state.completions.extend(completions);
                     }
-                });
-            }
+                }
+                cx.notify();
+            });
 
             Some(())
         });
@@ -2797,21 +2834,49 @@ impl Editor {
             return;
         }
 
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
         self.copilot_state.active_completion_index =
             (self.copilot_state.active_completion_index + 1) % self.copilot_state.completions.len();
-        if let Some(completion) = self.copilot_state.active_completion() {
+        if let Some(text) = self
+            .copilot_state
+            .text_for_active_completion(self.copilot_state.position, &snapshot)
+        {
             self.display_map.update(cx, |map, cx| {
                 map.replace_suggestion(
                     Some(Suggestion {
                         position: self.copilot_state.position,
-                        text: completion.text.as_str().into(),
+                        text: text.into(),
                     }),
                     cx,
                 )
             });
+            cx.notify();
         }
+    }
 
-        cx.notify();
+    fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        if let Some(text) = self
+            .copilot_state
+            .text_for_active_completion(self.copilot_state.position, &snapshot)
+            .map(|text| text.to_string())
+        {
+            self.copilot_state = Default::default();
+            self.insert(&text, cx);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
+        self.display_map
+            .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+        self.copilot_state.completions.clear();
+        self.copilot_state.active_completion_index = 0;
+        self.copilot_state.pending_refresh = Task::ready(None);
+        self.copilot_state.position = Anchor::min();
     }
 
     pub fn render_code_actions_indicator(
@@ -3121,8 +3186,7 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        if let Some(completion) = self.copilot_state.active_completion() {
-            self.insert(&completion.text.to_string(), cx);
+        if self.accept_copilot_suggestion(cx) {
             return;
         }
 
