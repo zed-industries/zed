@@ -1,18 +1,22 @@
+use std::borrow::Cow;
+
 use gpui::{
     color::Color,
     elements::{
         ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label,
         MouseEventHandler, ParentElement, Svg,
     },
-    Action, Element, ElementBox, EventContext, RenderContext, View,
+    geometry::vector::{vec2f, Vector2F},
+    scene::MouseClick,
+    Action, Element, ElementBox, EventContext, MouseButton, MouseState, RenderContext, View,
 };
 use serde::Deserialize;
 
-use crate::ContainedText;
+use crate::{ContainedText, Interactive};
 
 #[derive(Clone, Deserialize, Default)]
 pub struct CheckboxStyle {
-    pub icon: IconStyle,
+    pub icon: SvgStyle,
     pub label: ContainedText,
     pub default: ContainerStyle,
     pub checked: ContainerStyle,
@@ -44,7 +48,7 @@ pub fn checkbox_with_label<T: 'static, V: View>(
 ) -> MouseEventHandler<T> {
     MouseEventHandler::<T>::new(0, cx, |state, _| {
         let indicator = if checked {
-            icon(&style.icon)
+            svg(&style.icon)
         } else {
             Empty::new()
                 .constrained()
@@ -80,9 +84,9 @@ pub fn checkbox_with_label<T: 'static, V: View>(
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct IconStyle {
+pub struct SvgStyle {
     pub color: Color,
-    pub icon: String,
+    pub asset: String,
     pub dimensions: Dimensions,
 }
 
@@ -92,12 +96,28 @@ pub struct Dimensions {
     pub height: f32,
 }
 
-pub fn icon(style: &IconStyle) -> ConstrainedBox {
-    Svg::new(style.icon.clone())
+impl Dimensions {
+    pub fn to_vec(&self) -> Vector2F {
+        vec2f(self.width, self.height)
+    }
+}
+
+pub fn svg(style: &SvgStyle) -> ConstrainedBox {
+    Svg::new(style.asset.clone())
         .with_color(style.color)
         .constrained()
         .with_width(style.dimensions.width)
         .with_height(style.dimensions.height)
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct IconStyle {
+    icon: SvgStyle,
+    container: ContainerStyle,
+}
+
+pub fn icon(style: &IconStyle) -> Container {
+    svg(&style.icon).contained().with_style(style.container)
 }
 
 pub fn keystroke_label<V: View>(
@@ -146,4 +166,50 @@ pub fn keystroke_label_for(
         })
         .contained()
         .with_style(label_style.container)
+}
+
+pub type ButtonStyle = Interactive<ContainedText>;
+
+pub fn cta_button<L, A, V>(
+    label: L,
+    action: A,
+    max_width: f32,
+    style: &ButtonStyle,
+    cx: &mut RenderContext<V>,
+) -> ElementBox
+where
+    L: Into<Cow<'static, str>>,
+    A: 'static + Action + Clone,
+    V: View,
+{
+    cta_button_with_click(label, max_width, style, cx, move |_, cx| {
+        cx.dispatch_action(action.clone())
+    })
+}
+
+pub fn cta_button_with_click<L, V, F>(
+    label: L,
+    max_width: f32,
+    style: &ButtonStyle,
+    cx: &mut RenderContext<V>,
+    f: F,
+) -> ElementBox
+where
+    L: Into<Cow<'static, str>>,
+    V: View,
+    F: Fn(MouseClick, &mut EventContext) + 'static,
+{
+    MouseEventHandler::<F>::new(0, cx, |state, _| {
+        let style = style.style_for(state, false);
+        Label::new(label, style.text.to_owned())
+            .aligned()
+            .contained()
+            .with_style(style.container)
+            .constrained()
+            .with_max_width(max_width)
+            .boxed()
+    })
+    .on_click(MouseButton::Left, f)
+    .with_cursor_style(gpui::CursorStyle::PointingHand)
+    .boxed()
 }

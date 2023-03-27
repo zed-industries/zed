@@ -12,6 +12,7 @@ doctest = false
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
+theme = { path = "../theme" }
 lsp = { path = "../lsp" }
 util = { path = "../util" }
 client = { path = "../client" }

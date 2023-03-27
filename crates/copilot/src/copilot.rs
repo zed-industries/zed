@@ -475,7 +475,7 @@ mod tests {
             .update(cx, |copilot, cx| copilot.sign_in(cx))
             .await
             .unwrap();
-        dbg!(copilot.read_with(cx, |copilot, _| copilot.status()));
+        copilot.read_with(cx, |copilot, _| copilot.status());
 
         let buffer = cx.add_model(|cx| language::Buffer::new(0, "fn foo() -> ", cx));
         dbg!(copilot

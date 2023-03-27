@@ -9,7 +9,7 @@ use gpui::{
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
-use ui::{CheckboxStyle, IconStyle};
+use ui::{ButtonStyle, CheckboxStyle, Dimensions, IconStyle, SvgStyle};
 
 pub mod ui;
 
@@ -76,8 +76,8 @@ pub struct Workspace {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct BlankPaneStyle {
-    pub logo: IconStyle,
-    pub logo_shadow: IconStyle,
+    pub logo: SvgStyle,
+    pub logo_shadow: SvgStyle,
     pub logo_container: ContainerStyle,
     pub keyboard_hints: ContainerStyle,
     pub keyboard_hint: Interactive<ContainedText>,
@@ -118,8 +118,19 @@ pub struct AvatarStyle {
 
 #[derive(Deserialize, Default, Clone)]
 pub struct Copilot {
-    pub auth_modal: ContainerStyle,
-    pub auth_text: TextStyle,
+    pub auth: CopilotAuth,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuth {
+    pub popup_container: ContainerStyle,
+    pub popup_dimensions: Dimensions,
+    pub instruction_text: TextStyle,
+    pub user_code: TextStyle,
+    pub button: ButtonStyle,
+    pub button_width: f32,
+    pub copilot_icon: SvgStyle,
+    pub close_icon: Interactive<IconStyle>,
 }
 
 #[derive(Deserialize, Default)]
@@ -876,7 +887,7 @@ pub struct FeedbackStyle {
 #[derive(Clone, Deserialize, Default)]
 pub struct WelcomeStyle {
     pub page_width: f32,
-    pub logo: IconStyle,
+    pub logo: SvgStyle,
     pub logo_subheading: ContainedText,
     pub usage_note: ContainedText,
     pub checkbox: CheckboxStyle,

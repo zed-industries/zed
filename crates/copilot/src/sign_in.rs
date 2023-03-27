@@ -1,10 +1,17 @@
 use crate::{request::PromptUserDeviceFlow, Copilot};
 use gpui::{
-    elements::*,
-    geometry::{rect::RectF, vector::vec2f},
-    Axis, Element, Entity, MutableAppContext, View, WindowKind, WindowOptions,
+    elements::*, geometry::rect::RectF, impl_internal_actions, ClipboardItem, Element, Entity,
+    MutableAppContext, View, WindowKind, WindowOptions,
 };
 use settings::Settings;
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+struct CopyUserCode;
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+struct OpenGithub;
+
+impl_internal_actions!(copilot_sign_in, [CopyUserCode, OpenGithub]);
 
 pub fn init(cx: &mut MutableAppContext) {
     let copilot = Copilot::global(cx).unwrap();
@@ -19,16 +26,24 @@ pub fn init(cx: &mut MutableAppContext) {
                     cx.remove_window(window_id);
                 }
 
+                let window_size = cx
+                    .global::<Settings>()
+                    .theme
+                    .copilot
+                    .auth
+                    .popup_dimensions
+                    .to_vec();
+
                 let (window_id, _) = cx.add_window(
                     WindowOptions {
                         bounds: gpui::WindowBounds::Fixed(RectF::new(
                             Default::default(),
-                            vec2f(600., 400.),
+                            window_size,
                         )),
                         titlebar: None,
                         center: true,
                         focus: false,
-                        kind: WindowKind::Normal,
+                        kind: WindowKind::PopUp,
                         is_movable: true,
                         screen: None,
                     },
@@ -62,23 +77,68 @@ impl View for CopilotCodeVerification {
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         let style = cx.global::<Settings>().theme.copilot.clone();
 
-        let auth_text = style.auth_text.clone();
-        let prompt = self.prompt.clone();
-        Flex::new(Axis::Vertical)
-            .with_child(Label::new(prompt.user_code.clone(), auth_text.clone()).boxed())
+        let instruction_text = style.auth.instruction_text;
+        let user_code_text = style.auth.user_code;
+        let button = style.auth.button;
+        let button_width = style.auth.button_width;
+        let height = style.auth.popup_dimensions.height;
+
+        let user_code = self.prompt.user_code.replace("-", " - ");
+
+        Flex::column()
             .with_child(
-                MouseEventHandler::<Self>::new(1, cx, move |_state, _cx| {
-                    Label::new("Click here to open GitHub!", auth_text.clone()).boxed()
+                MouseEventHandler::<Self>::new(0, cx, |state, _cx| {
+                    let style = style.auth.close_icon.style_for(state, false);
+                    theme::ui::icon(style).boxed()
                 })
-                .on_click(gpui::MouseButton::Left, move |_click, cx| {
-                    cx.platform().open_url(&prompt.verification_uri)
+                .on_click(gpui::MouseButton::Left, move |_, cx| {
+                    let window_id = cx.window_id();
+                    cx.remove_window(window_id);
                 })
                 .with_cursor_style(gpui::CursorStyle::PointingHand)
+                .aligned()
+                .right()
                 .boxed(),
             )
+            .with_child(
+                Flex::column()
+                    .align_children_center()
+                    .with_children([
+                        theme::ui::svg(&style.auth.copilot_icon).boxed(),
+                        Label::new(
+                            "Here is your code to authenticate with github",
+                            instruction_text.clone(),
+                        )
+                        .boxed(),
+                        Label::new(user_code, user_code_text.clone()).boxed(),
+                        theme::ui::cta_button_with_click("Copy Code", button_width, &button, cx, {
+                            let user_code = self.prompt.user_code.clone();
+                            move |_, cx| {
+                                cx.platform()
+                                    .write_to_clipboard(ClipboardItem::new(user_code.clone()))
+                            }
+                        }),
+                        Label::new("Copy it and enter it on GitHub", instruction_text.clone())
+                            .boxed(),
+                        theme::ui::cta_button_with_click(
+                            "Go to Github",
+                            button_width,
+                            &button,
+                            cx,
+                            {
+                                let verification_uri = self.prompt.verification_uri.clone();
+                                move |_, cx| cx.platform().open_url(&verification_uri)
+                            },
+                        ),
+                    ])
+                    .aligned()
+                    .boxed(),
+            )
             .contained()
-            .with_style(style.auth_modal)
-            .named("Copilot Authentication status modal")
+            .with_style(style.auth.popup_container)
+            .constrained()
+            .with_height(height)
+            .boxed()
     }
 }
 
