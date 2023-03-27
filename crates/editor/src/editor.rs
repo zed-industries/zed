@@ -262,7 +262,6 @@ actions!(
         ToggleSoftWrap,
         RevealInFinder,
         CopyHighlightJson
-        CycleCopilotSuggestions
     ]
 );
 
@@ -391,7 +390,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
-    cx.add_action(Editor::cycle_copilot_suggestions);
+    cx.add_action(Editor::next_copilot_suggestion);
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
@@ -2801,11 +2800,7 @@ impl Editor {
         Some(())
     }
 
-    fn cycle_copilot_suggestions(
-        &mut self,
-        _: &CycleCopilotSuggestions,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
         if self.copilot_state.completions.is_empty() {
             return;
         }

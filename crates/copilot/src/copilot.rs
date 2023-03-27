@@ -19,7 +19,7 @@ use util::{
     fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
 };
 
-actions!(copilot, [SignIn, SignOut]);
+actions!(copilot, [SignIn, SignOut, NextSuggestion]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
