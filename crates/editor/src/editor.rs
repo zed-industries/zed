@@ -97,7 +97,6 @@ const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
-pub const COPILOT_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {
@@ -1825,6 +1824,10 @@ impl Editor {
             return;
         }
 
+        if self.clear_copilot_suggestions(cx) {
+            return;
+        }
+
         if self.snippet_stack.pop().is_some() {
             return;
         }
@@ -2870,13 +2873,16 @@ impl Editor {
         }
     }
 
-    fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) -> bool {
         self.display_map
             .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+        let was_empty = self.copilot_state.completions.is_empty();
         self.copilot_state.completions.clear();
         self.copilot_state.active_completion_index = 0;
         self.copilot_state.pending_refresh = Task::ready(None);
         self.copilot_state.position = Anchor::min();
+        cx.notify();
+        !was_empty
     }
 
     pub fn render_code_actions_indicator(
