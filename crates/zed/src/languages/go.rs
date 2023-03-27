@@ -7,10 +7,10 @@ pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::{fs, process};
-use std::{any::Any, ops::Range, path::PathBuf, str, sync::Arc};
+use std::{any::Any, ffi::OsString, ops::Range, path::PathBuf, str, sync::Arc};
 use util::ResultExt;
 
-fn server_binary_arguments() -> Vec<String> {
+fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
 }
 
@@ -25,10 +25,6 @@ lazy_static! {
 impl super::LspAdapter for GoLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("gopls".into())
-    }
-
-    async fn server_execution_kind(&self) -> ServerExecutionKind {
-        ServerExecutionKind::Launch
     }
 
     async fn fetch_latest_server_version(

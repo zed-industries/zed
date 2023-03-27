@@ -29,6 +29,7 @@ use std::{
     any::Any,
     borrow::Cow,
     cell::RefCell,
+    ffi::OsString,
     fmt::Debug,
     hash::Hash,
     mem,
@@ -86,7 +87,7 @@ pub enum ServerExecutionKind {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
-    pub arguments: Vec<String>,
+    pub arguments: Vec<OsString>,
 }
 
 /// Represents a Language Server, with certain cached sync properties.
@@ -183,8 +184,6 @@ impl CachedLspAdapter {
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
-
-    async fn server_execution_kind(&self) -> ServerExecutionKind;
 
     async fn fetch_latest_server_version(
         &self,
@@ -494,7 +493,6 @@ pub struct LanguageRegistry {
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
     login_shell_env_loaded: Shared<Task<()>>,
-    node_path: Shared<Task<Option<PathBuf>>>,
     #[allow(clippy::type_complexity)]
     lsp_binary_paths: Mutex<
         HashMap<
@@ -516,7 +514,7 @@ struct LanguageRegistryState {
 }
 
 impl LanguageRegistry {
-    pub fn new(login_shell_env_loaded: Task<()>, node_path: Task<Option<PathBuf>>) -> Self {
+    pub fn new(login_shell_env_loaded: Task<()>) -> Self {
         let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
             state: RwLock::new(LanguageRegistryState {
@@ -532,7 +530,6 @@ impl LanguageRegistry {
             lsp_binary_statuses_tx,
             lsp_binary_statuses_rx,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
-            node_path: node_path.shared(),
             lsp_binary_paths: Default::default(),
             executor: None,
         }
@@ -540,7 +537,7 @@ impl LanguageRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
-        Self::new(Task::ready(()), Task::Ready(None))
+        Self::new(Task::ready(()))
     }
 
     pub fn set_executor(&mut self, executor: Arc<Background>) {
@@ -795,6 +792,8 @@ impl LanguageRegistry {
                 Ok(server)
             }));
         }
+        
+        dbg!();
 
         let download_dir = self
             .language_server_download_dir
@@ -806,18 +805,18 @@ impl LanguageRegistry {
         let adapter = language.adapter.clone()?;
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
-        let node_path = self.node_path.clone();
+        dbg!();
 
         Some(cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
-            let node_path = node_path.await;
 
-            let server_binary = this
+            let binary = this
                 .lsp_binary_paths
                 .lock()
                 .entry(adapter.name.clone())
                 .or_insert_with(|| {
-                    get_server_binary(
+                    dbg!();
+                    get_binary(
                         adapter.clone(),
                         language.clone(),
                         http_client,
@@ -829,30 +828,19 @@ impl LanguageRegistry {
                     .shared()
                 })
                 .clone()
-                .map_err(|e| anyhow!(e));
+                .map_err(|e| anyhow!(e))
+                .await?;
+            dbg!();
 
-            let server_binary = server_binary.await?;
-            let server_name = server_binary
-                .path
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string());
+            let server = lsp::LanguageServer::new(
+                server_id,
+                &binary.path,
+                &binary.arguments,
+                &root_path,
+                cx,
+            )?;
 
-            let mut command = match adapter.adapter.server_execution_kind().await {
-                ServerExecutionKind::Node => {
-                    let node_path = node_path
-                        .ok_or(anyhow!("Missing Node path for Node based language server"))?;
-                    let node_binary = node_path.join("bin/node");
-                    let mut command = smol::process::Command::new(node_binary);
-                    command.arg(dbg!(server_binary.path));
-                    command
-                }
-
-                ServerExecutionKind::Launch => smol::process::Command::new(server_binary.path),
-            };
-
-            command.args(dbg!(&server_binary.arguments));
-            let server = lsp::LanguageServer::new(server_id, server_name, command, &root_path, cx)?;
-
+            dbg!();
             Ok(server)
         }))
     }
@@ -882,7 +870,7 @@ impl Default for LanguageRegistry {
     }
 }
 
-async fn get_server_binary(
+async fn get_binary(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
@@ -896,7 +884,7 @@ async fn get_server_binary(
             .context("failed to create container directory")?;
     }
 
-    let binary = fetch_latest_server_binary(
+    let binary = fetch_latest_binary(
         adapter.clone(),
         language.clone(),
         http_client,
@@ -924,7 +912,7 @@ async fn get_server_binary(
     binary
 }
 
-async fn fetch_latest_server_binary(
+async fn fetch_latest_binary(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
@@ -1469,10 +1457,6 @@ impl Default for FakeLspAdapter {
 impl LspAdapter for Arc<FakeLspAdapter> {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
-    }
-
-    async fn server_execution_kind(&self) -> ServerExecutionKind {
-        ServerExecutionKind::Launch
     }
 
     async fn fetch_latest_server_version(
