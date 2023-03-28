@@ -5014,6 +5014,7 @@ dependencies = [
  "settings",
  "smol",
  "text",
+ "util",
  "workspace",
 ]
 
