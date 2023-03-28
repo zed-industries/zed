@@ -793,8 +793,6 @@ impl LanguageRegistry {
             }));
         }
 
-        dbg!();
-
         let download_dir = self
             .language_server_download_dir
             .clone()
@@ -805,17 +803,14 @@ impl LanguageRegistry {
         let adapter = language.adapter.clone()?;
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
-        dbg!();
 
         Some(cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
 
-            let binary = this
-                .lsp_binary_paths
-                .lock()
+            let mut lock = this.lsp_binary_paths.lock();
+            let entry = lock
                 .entry(adapter.name.clone())
                 .or_insert_with(|| {
-                    dbg!();
                     get_binary(
                         adapter.clone(),
                         language.clone(),
@@ -827,10 +822,9 @@ impl LanguageRegistry {
                     .boxed()
                     .shared()
                 })
-                .clone()
-                .map_err(|e| anyhow!(e))
-                .await?;
-            dbg!();
+                .clone();
+            drop(lock);
+            let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
 
             let server = lsp::LanguageServer::new(
                 server_id,
@@ -840,7 +834,6 @@ impl LanguageRegistry {
                 cx,
             )?;
 
-            dbg!();
             Ok(server)
         }))
     }
@@ -892,6 +885,7 @@ async fn get_binary(
         statuses.clone(),
     )
     .await;
+
     if let Err(error) = binary.as_ref() {
         if let Some(cached) = adapter.cached_server_binary(container_dir).await {
             statuses
