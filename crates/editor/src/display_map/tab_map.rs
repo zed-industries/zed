@@ -245,7 +245,7 @@ impl TabSnapshot {
         let chars = self
             .suggestion_snapshot
             .chars_at(SuggestionPoint::new(input.row(), 0));
-        let expanded = Self::expand_tabs(chars, input.column() as usize, self.tab_size);
+        let expanded = self.expand_tabs(chars, input.column() as usize);
         TabPoint::new(input.row(), expanded as u32)
     }
 
@@ -259,7 +259,7 @@ impl TabSnapshot {
             .chars_at(SuggestionPoint::new(output.row(), 0));
         let expanded = output.column() as usize;
         let (collapsed, expanded_char_column, to_next_stop) =
-            Self::collapse_tabs(chars, expanded, bias, self.tab_size);
+            self.collapse_tabs(chars, expanded, bias);
         (
             SuggestionPoint::new(output.row(), collapsed as u32),
             expanded_char_column,
@@ -282,11 +282,9 @@ impl TabSnapshot {
         fold_point.to_buffer_point(&self.suggestion_snapshot.fold_snapshot)
     }
 
-    pub fn expand_tabs(
-        chars: impl Iterator<Item = char>,
-        column: usize,
-        tab_size: NonZeroU32,
-    ) -> usize {
+    pub fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: usize) -> usize {
+        let tab_size = self.tab_size.get() as usize;
+
         let mut expanded_chars = 0;
         let mut expanded_bytes = 0;
         let mut collapsed_bytes = 0;
@@ -295,7 +293,6 @@ impl TabSnapshot {
                 break;
             }
             if c == '\t' {
-                let tab_size = tab_size.get() as usize;
                 let tab_len = tab_size - expanded_chars % tab_size;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
@@ -309,11 +306,13 @@ impl TabSnapshot {
     }
 
     fn collapse_tabs(
+        &self,
         chars: impl Iterator<Item = char>,
         column: usize,
         bias: Bias,
-        tab_size: NonZeroU32,
     ) -> (usize, usize, usize) {
+        let tab_size = self.tab_size.get() as usize;
+
         let mut expanded_bytes = 0;
         let mut expanded_chars = 0;
         let mut collapsed_bytes = 0;
@@ -323,7 +322,6 @@ impl TabSnapshot {
             }
 
             if c == '\t' {
-                let tab_size = tab_size.get() as usize;
                 let tab_len = tab_size - (expanded_chars % tab_size);
                 expanded_chars += tab_len;
                 expanded_bytes += tab_len;
@@ -508,20 +506,17 @@ mod tests {
     };
     use rand::{prelude::StdRng, Rng};
 
-    #[test]
-    fn test_expand_tabs() {
-        assert_eq!(
-            TabSnapshot::expand_tabs("\t".chars(), 0, 4.try_into().unwrap()),
-            0
-        );
-        assert_eq!(
-            TabSnapshot::expand_tabs("\t".chars(), 1, 4.try_into().unwrap()),
-            4
-        );
-        assert_eq!(
-            TabSnapshot::expand_tabs("\ta".chars(), 2, 4.try_into().unwrap()),
-            5
-        );
+    #[gpui::test]
+    fn test_expand_tabs(cx: &mut gpui::MutableAppContext) {
+        let buffer = MultiBuffer::build_simple("", cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
+        let (_, tabs_snapshot) = TabMap::new(suggestion_snapshot, 4.try_into().unwrap());
+
+        assert_eq!(tabs_snapshot.expand_tabs("\t".chars(), 0), 0);
+        assert_eq!(tabs_snapshot.expand_tabs("\t".chars(), 1), 4);
+        assert_eq!(tabs_snapshot.expand_tabs("\ta".chars(), 2), 5);
     }
 
     #[gpui::test(iterations = 100)]
