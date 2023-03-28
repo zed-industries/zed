@@ -62,6 +62,7 @@ impl NodeRuntime {
             .output()
             .await
             .context("failed to run npm info")?;
+
         if !output.status.success() {
             Err(anyhow!(
                 "failed to execute npm info:\nstdout: {:?}\nstderr: {:?}",
@@ -69,6 +70,7 @@ impl NodeRuntime {
                 String::from_utf8_lossy(&output.stderr)
             ))?;
         }
+
         let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
         info.dist_tags
             .latest
