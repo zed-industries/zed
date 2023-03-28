@@ -68,6 +68,7 @@ pub trait Platform: Send + Sync {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn open_url(&self, url: &str);
+    fn convert_to_shortened_path(&self, path: &Path) -> PathBuf;
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()>;
     fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;

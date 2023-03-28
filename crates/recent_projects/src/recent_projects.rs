@@ -192,6 +192,7 @@ impl PickerDelegate for RecentProjectsView {
         let highlighted_location = HighlightedWorkspaceLocation::new(
             &string_match,
             &self.workspace_locations[string_match.candidate_id],
+            &cx,
         );
 
         Flex::column()

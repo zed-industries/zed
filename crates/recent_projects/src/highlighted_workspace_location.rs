@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fuzzy::StringMatch;
 use gpui::{
@@ -55,20 +55,17 @@ pub struct HighlightedWorkspaceLocation {
 }
 
 impl HighlightedWorkspaceLocation {
-    pub fn new(string_match: &StringMatch, location: &WorkspaceLocation) -> Self {
+    pub fn new(
+        string_match: &StringMatch,
+        location: &WorkspaceLocation,
+        cx: &gpui::AppContext,
+    ) -> Self {
         let mut path_start_offset = 0;
         let (names, paths): (Vec<_>, Vec<_>) = location
             .paths()
             .iter()
             .map(|path| {
-                let mut full_path = PathBuf::new();
-                if path.starts_with(util::paths::HOME.as_path()) {
-                    full_path.push("~");
-                    full_path.push(path.strip_prefix(util::paths::HOME.as_path()).unwrap());
-                } else {
-                    full_path.push(path)
-                }
-
+                let full_path = cx.platform().convert_to_shortened_path(&path);
                 let highlighted_text = Self::highlights_for_path(
                     full_path.as_ref(),
                     &string_match.positions,
