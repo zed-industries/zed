@@ -8,6 +8,8 @@ use parking_lot::Mutex;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
+const MAX_EXPANSION_COLUMN: u32 = 256;
+
 pub struct TabMap(Mutex<TabSnapshot>);
 
 impl TabMap {
@@ -15,9 +17,16 @@ impl TabMap {
         let snapshot = TabSnapshot {
             suggestion_snapshot: input,
             tab_size,
+            max_expansion_column: MAX_EXPANSION_COLUMN,
             version: 0,
         };
         (Self(Mutex::new(snapshot.clone())), snapshot)
+    }
+
+    #[cfg(test)]
+    pub fn set_max_expansion_column(&self, column: u32) -> TabSnapshot {
+        self.0.lock().max_expansion_column = column;
+        self.0.lock().clone()
     }
 
     pub fn sync(
@@ -30,6 +39,7 @@ impl TabMap {
         let mut new_snapshot = TabSnapshot {
             suggestion_snapshot,
             tab_size,
+            max_expansion_column: old_snapshot.max_expansion_column,
             version: old_snapshot.version,
         };
 
@@ -111,6 +121,7 @@ impl TabMap {
 pub struct TabSnapshot {
     pub suggestion_snapshot: SuggestionSnapshot,
     pub tab_size: NonZeroU32,
+    pub max_expansion_column: u32,
     pub version: usize,
 }
 
@@ -122,14 +133,12 @@ impl TabSnapshot {
     pub fn line_len(&self, row: u32) -> u32 {
         let max_point = self.max_point();
         if row < max_point.row() {
-            self.chunks(
-                TabPoint::new(row, 0)..TabPoint::new(row + 1, 0),
-                false,
-                None,
-            )
-            .map(|chunk| chunk.text.len() as u32)
-            .sum::<u32>()
-                - 1
+            self.to_tab_point(SuggestionPoint::new(
+                row,
+                self.suggestion_snapshot.line_len(row),
+            ))
+            .0
+            .column
         } else {
             max_point.column()
         }
@@ -191,12 +200,13 @@ impl TabSnapshot {
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_suggestion_point(range.start, Bias::Left);
+        let input_column = input_start.column();
         let input_start = self.suggestion_snapshot.to_offset(input_start);
         let input_end = self
             .suggestion_snapshot
             .to_offset(self.to_suggestion_point(range.end, Bias::Right).0);
-        let to_next_stop = if range.start.0 + Point::new(0, to_next_stop as u32) > range.end.0 {
-            (range.end.column() - range.start.column()) as usize
+        let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
+            range.end.column() - range.start.column()
         } else {
             to_next_stop
         };
@@ -207,12 +217,14 @@ impl TabSnapshot {
                 language_aware,
                 text_highlights,
             ),
+            input_column,
             column: expanded_char_column,
+            max_expansion_column: self.max_expansion_column,
             output_position: range.start.0,
             max_output_position: range.end.0,
             tab_size: self.tab_size,
             chunk: Chunk {
-                text: &SPACES[0..to_next_stop],
+                text: &SPACES[0..(to_next_stop as usize)],
                 ..Default::default()
             },
             skip_leading_tab: to_next_stop > 0,
@@ -245,19 +257,15 @@ impl TabSnapshot {
         let chars = self
             .suggestion_snapshot
             .chars_at(SuggestionPoint::new(input.row(), 0));
-        let expanded = self.expand_tabs(chars, input.column() as usize);
-        TabPoint::new(input.row(), expanded as u32)
+        let expanded = self.expand_tabs(chars, input.column());
+        TabPoint::new(input.row(), expanded)
     }
 
-    pub fn to_suggestion_point(
-        &self,
-        output: TabPoint,
-        bias: Bias,
-    ) -> (SuggestionPoint, usize, usize) {
+    pub fn to_suggestion_point(&self, output: TabPoint, bias: Bias) -> (SuggestionPoint, u32, u32) {
         let chars = self
             .suggestion_snapshot
             .chars_at(SuggestionPoint::new(output.row(), 0));
-        let expanded = output.column() as usize;
+        let expanded = output.column();
         let (collapsed, expanded_char_column, to_next_stop) =
             self.collapse_tabs(chars, expanded, bias);
         (
@@ -282,14 +290,15 @@ impl TabSnapshot {
         fold_point.to_buffer_point(&self.suggestion_snapshot.fold_snapshot)
     }
 
-    pub fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: usize) -> usize {
-        let tab_size = self.tab_size.get() as usize;
+    pub fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
+        let tab_size = self.tab_size.get();
 
         let mut expanded_chars = 0;
         let mut expanded_bytes = 0;
         let mut collapsed_bytes = 0;
+        let end_column = column.min(self.max_expansion_column);
         for c in chars {
-            if collapsed_bytes == column {
+            if collapsed_bytes >= end_column {
                 break;
             }
             if c == '\t' {
@@ -297,27 +306,30 @@ impl TabSnapshot {
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
             } else {
-                expanded_bytes += c.len_utf8();
+                expanded_bytes += c.len_utf8() as u32;
                 expanded_chars += 1;
             }
-            collapsed_bytes += c.len_utf8();
+            collapsed_bytes += c.len_utf8() as u32;
         }
-        expanded_bytes
+        expanded_bytes + column.saturating_sub(collapsed_bytes)
     }
 
     fn collapse_tabs(
         &self,
         chars: impl Iterator<Item = char>,
-        column: usize,
+        column: u32,
         bias: Bias,
-    ) -> (usize, usize, usize) {
-        let tab_size = self.tab_size.get() as usize;
+    ) -> (u32, u32, u32) {
+        let tab_size = self.tab_size.get();
 
         let mut expanded_bytes = 0;
         let mut expanded_chars = 0;
         let mut collapsed_bytes = 0;
         for c in chars {
             if expanded_bytes >= column {
+                break;
+            }
+            if collapsed_bytes >= self.max_expansion_column {
                 break;
             }
 
@@ -334,7 +346,7 @@ impl TabSnapshot {
                 }
             } else {
                 expanded_chars += 1;
-                expanded_bytes += c.len_utf8();
+                expanded_bytes += c.len_utf8() as u32;
             }
 
             if expanded_bytes > column && matches!(bias, Bias::Left) {
@@ -342,9 +354,13 @@ impl TabSnapshot {
                 break;
             }
 
-            collapsed_bytes += c.len_utf8();
+            collapsed_bytes += c.len_utf8() as u32;
         }
-        (collapsed_bytes, expanded_chars, 0)
+        (
+            collapsed_bytes + column.saturating_sub(expanded_bytes),
+            expanded_chars,
+            0,
+        )
     }
 }
 
@@ -432,8 +448,10 @@ const SPACES: &str = "                ";
 pub struct TabChunks<'a> {
     suggestion_chunks: SuggestionChunks<'a>,
     chunk: Chunk<'a>,
-    column: usize,
+    column: u32,
+    max_expansion_column: u32,
     output_position: Point,
+    input_column: u32,
     max_output_position: Point,
     tab_size: NonZeroU32,
     skip_leading_tab: bool,
@@ -467,14 +485,19 @@ impl<'a> Iterator for TabChunks<'a> {
                         });
                     } else {
                         self.chunk.text = &self.chunk.text[1..];
-                        let tab_size = self.tab_size.get() as u32;
-                        let mut len = tab_size - self.column as u32 % tab_size;
+                        let tab_size = if self.input_column < self.max_expansion_column {
+                            self.tab_size.get() as u32
+                        } else {
+                            1
+                        };
+                        let mut len = tab_size - self.column % tab_size;
                         let next_output_position = cmp::min(
                             self.output_position + Point::new(0, len),
                             self.max_output_position,
                         );
                         len = next_output_position.column - self.output_position.column;
-                        self.column += len as usize;
+                        self.column += len;
+                        self.input_column += 1;
                         self.output_position = next_output_position;
                         return Some(Chunk {
                             text: &SPACES[0..len as usize],
@@ -484,10 +507,12 @@ impl<'a> Iterator for TabChunks<'a> {
                 }
                 '\n' => {
                     self.column = 0;
+                    self.input_column = 0;
                     self.output_position += Point::new(1, 0);
                 }
                 _ => {
                     self.column += 1;
+                    self.input_column += c.len_utf8() as u32;
                     self.output_position.column += c.len_utf8() as u32;
                 }
             }
@@ -512,11 +537,76 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, tabs_snapshot) = TabMap::new(suggestion_snapshot, 4.try_into().unwrap());
+        let (_, tab_snapshot) = TabMap::new(suggestion_snapshot, 4.try_into().unwrap());
 
-        assert_eq!(tabs_snapshot.expand_tabs("\t".chars(), 0), 0);
-        assert_eq!(tabs_snapshot.expand_tabs("\t".chars(), 1), 4);
-        assert_eq!(tabs_snapshot.expand_tabs("\ta".chars(), 2), 5);
+        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
+        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 1), 4);
+        assert_eq!(tab_snapshot.expand_tabs("\ta".chars(), 2), 5);
+    }
+
+    #[gpui::test]
+    fn test_long_lines(cx: &mut gpui::MutableAppContext) {
+        let max_expansion_column = 12;
+        let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
+        let output = "A   BC  DEF G   HI J K L M";
+
+        let buffer = MultiBuffer::build_simple(input, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
+        let (_, mut tab_snapshot) = TabMap::new(suggestion_snapshot, 4.try_into().unwrap());
+
+        tab_snapshot.max_expansion_column = max_expansion_column;
+        assert_eq!(tab_snapshot.text(), output);
+
+        for (ix, c) in input.char_indices() {
+            assert_eq!(
+                tab_snapshot
+                    .chunks(
+                        TabPoint::new(0, ix as u32)..tab_snapshot.max_point(),
+                        false,
+                        None
+                    )
+                    .map(|c| c.text)
+                    .collect::<String>(),
+                &output[ix..],
+                "text from index {ix}"
+            );
+
+            if c != '\t' {
+                let input_point = Point::new(0, ix as u32);
+                let output_point = Point::new(0, output.find(c).unwrap() as u32);
+                assert_eq!(
+                    tab_snapshot.to_tab_point(SuggestionPoint(input_point)),
+                    TabPoint(output_point),
+                    "to_tab_point({input_point:?})"
+                );
+                assert_eq!(
+                    tab_snapshot
+                        .to_suggestion_point(TabPoint(output_point), Bias::Left)
+                        .0,
+                    SuggestionPoint(input_point),
+                    "to_suggestion_point({output_point:?})"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_long_lines_with_character_spanning_max_expansion_column(
+        cx: &mut gpui::MutableAppContext,
+    ) {
+        let max_expansion_column = 8;
+        let input = "abcdefg⋯hij";
+
+        let buffer = MultiBuffer::build_simple(input, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
+        let (_, mut tab_snapshot) = TabMap::new(suggestion_snapshot, 4.try_into().unwrap());
+
+        tab_snapshot.max_expansion_column = max_expansion_column;
+        assert_eq!(tab_snapshot.text(), input);
     }
 
     #[gpui::test(iterations = 100)]
@@ -542,7 +632,9 @@ mod tests {
         let (suggestion_snapshot, _) = suggestion_map.randomly_mutate(&mut rng);
         log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
 
-        let (_, tabs_snapshot) = TabMap::new(suggestion_snapshot.clone(), tab_size);
+        let (tab_map, _) = TabMap::new(suggestion_snapshot.clone(), tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+
         let text = text::Rope::from(tabs_snapshot.text().as_str());
         log::info!(
             "TabMap text (tab size: {}): {:?}",
@@ -586,7 +678,11 @@ mod tests {
         }
 
         for row in 0..=text.max_point().row {
-            assert_eq!(tabs_snapshot.line_len(row), text.line_len(row));
+            assert_eq!(
+                tabs_snapshot.line_len(row),
+                text.line_len(row),
+                "line_len({row})"
+            );
         }
     }
 }
