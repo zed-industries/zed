@@ -9,7 +9,7 @@ use gpui::{
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonStyle, CheckboxStyle, Dimensions, IconStyle, SvgStyle};
+use ui::{ButtonStyle, CheckboxStyle, ModalStyle, SvgStyle};
 
 pub mod ui;
 
@@ -118,19 +118,29 @@ pub struct AvatarStyle {
 
 #[derive(Deserialize, Default, Clone)]
 pub struct Copilot {
+    pub modal: ModalStyle,
     pub auth: CopilotAuth,
 }
 
 #[derive(Deserialize, Default, Clone)]
 pub struct CopilotAuth {
-    pub popup_container: ContainerStyle,
-    pub popup_dimensions: Dimensions,
     pub instruction_text: TextStyle,
-    pub user_code: TextStyle,
-    pub button: ButtonStyle,
-    pub button_width: f32,
+    pub cta_button: ButtonStyle,
+    pub content_width: f32,
     pub copilot_icon: SvgStyle,
-    pub close_icon: Interactive<IconStyle>,
+    pub plus_icon: SvgStyle,
+    pub zed_icon: SvgStyle,
+    pub header_text: TextStyle,
+    pub device_code_group: ContainerStyle,
+    pub github_group: ContainerStyle,
+    pub header_group: ContainerStyle,
+    pub device_code: TextStyle,
+    pub device_code_cta: ButtonStyle,
+    pub device_code_left: f32,
+    pub device_code_left_container: ContainerStyle,
+    pub device_code_right: f32,
+    pub device_code_right_container: ContainerStyle,
+    pub device_code_seperator_height: f32,
 }
 
 #[derive(Deserialize, Default)]

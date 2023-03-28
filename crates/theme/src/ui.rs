@@ -4,11 +4,12 @@ use gpui::{
     color::Color,
     elements::{
         ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label,
-        MouseEventHandler, ParentElement, Svg,
+        MouseEventHandler, ParentElement, Stack, Svg,
     },
+    fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
     scene::MouseClick,
-    Action, Element, ElementBox, EventContext, MouseButton, MouseState, RenderContext, View,
+    Action, Element, ElementBox, EventContext, MouseButton, RenderContext, View,
 };
 use serde::Deserialize;
 
@@ -212,4 +213,61 @@ where
     .on_click(MouseButton::Left, f)
     .with_cursor_style(gpui::CursorStyle::PointingHand)
     .boxed()
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct ModalStyle {
+    close_icon: Interactive<IconStyle>,
+    container: ContainerStyle,
+    titlebar: ContainerStyle,
+    title_text: TextStyle,
+    dimensions: Dimensions,
+}
+
+impl ModalStyle {
+    pub fn dimensions(&self) -> Vector2F {
+        self.dimensions.to_vec()
+    }
+}
+
+pub fn modal<V, I, F>(
+    title: I,
+    style: &ModalStyle,
+    cx: &mut RenderContext<V>,
+    build_modal: F,
+) -> ElementBox
+where
+    V: View,
+    I: Into<Cow<'static, str>>,
+    F: FnOnce(&mut gpui::RenderContext<V>) -> ElementBox,
+{
+    Flex::column()
+        .with_child(
+            Stack::new()
+                .with_children([
+                    Label::new(title, style.title_text.clone()).boxed(),
+                    // FIXME: Get a better tag type
+                    MouseEventHandler::<V>::new(999999, cx, |state, _cx| {
+                        let style = style.close_icon.style_for(state, false);
+                        icon(style).boxed()
+                    })
+                    .on_click(gpui::MouseButton::Left, move |_, cx| {
+                        let window_id = cx.window_id();
+                        cx.remove_window(window_id);
+                    })
+                    .with_cursor_style(gpui::CursorStyle::PointingHand)
+                    .aligned()
+                    .right()
+                    .boxed(),
+                ])
+                .contained()
+                .with_style(style.titlebar)
+                .boxed(),
+        )
+        .with_child(build_modal(cx))
+        .contained()
+        .with_style(style.container)
+        .constrained()
+        .with_height(style.dimensions().y())
+        .boxed()
 }

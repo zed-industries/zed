@@ -51,10 +51,10 @@ enum CopilotServer {
 #[derive(Clone, Debug)]
 enum SignInStatus {
     Authorized {
-        user: String,
+        _user: String,
     },
     Unauthorized {
-        user: String,
+        _user: String,
     },
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
@@ -321,10 +321,10 @@ impl Copilot {
         if let CopilotServer::Started { status, .. } = &mut self.server {
             *status = match lsp_status {
                 request::SignInStatus::Ok { user } | request::SignInStatus::MaybeOk { user } => {
-                    SignInStatus::Authorized { user }
+                    SignInStatus::Authorized { _user: user }
                 }
                 request::SignInStatus::NotAuthorized { user } => {
-                    SignInStatus::Unauthorized { user }
+                    SignInStatus::Unauthorized { _user: user }
                 }
                 _ => SignInStatus::SignedOut,
             };
