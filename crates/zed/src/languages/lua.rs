@@ -10,7 +10,7 @@ use language::{LanguageServerBinary, LanguageServerName};
 use smol::fs;
 use util::{async_iife, ResultExt};
 
-use super::installation::{latest_github_release, GitHubLspBinaryVersion};
+use super::github::{latest_github_release, GitHubLspBinaryVersion};
 
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
