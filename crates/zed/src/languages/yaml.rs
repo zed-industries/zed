@@ -1,21 +1,36 @@
+use super::node_runtime::NodeRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::MutableAppContext;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use serde_json::Value;
 use settings::Settings;
 use smol::fs;
-use std::{any::Any, future, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    ffi::OsString,
+    future,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::ResultExt;
 
-use super::installation::{npm_install_packages, npm_package_latest_version};
+fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    vec![server_path.into(), "--stdio".into()]
+}
 
-pub struct YamlLspAdapter;
+pub struct YamlLspAdapter {
+    node: Arc<NodeRuntime>,
+}
 
 impl YamlLspAdapter {
-    const BIN_PATH: &'static str = "node_modules/yaml-language-server/bin/yaml-language-server";
+    const SERVER_PATH: &'static str = "node_modules/yaml-language-server/bin/yaml-language-server";
+
+    pub fn new(node: Arc<NodeRuntime>) -> Self {
+        YamlLspAdapter { node }
+    }
 }
 
 #[async_trait]
@@ -24,15 +39,15 @@ impl LspAdapter for YamlLspAdapter {
         LanguageServerName("yaml-language-server".into())
     }
 
-    async fn server_args(&self) -> Vec<String> {
-        vec!["--stdio".into()]
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(npm_package_latest_version("yaml-language-server").await?) as Box<_>)
+        Ok(Box::new(
+            self.node
+                .npm_package_latest_version("yaml-language-server")
+                .await?,
+        ) as Box<_>)
     }
 
     async fn fetch_server_binary(
@@ -40,16 +55,17 @@ impl LspAdapter for YamlLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<String>().unwrap();
         let version_dir = container_dir.join(version.as_str());
         fs::create_dir_all(&version_dir)
             .await
             .context("failed to create version directory")?;
-        let binary_path = version_dir.join(Self::BIN_PATH);
+        let server_path = version_dir.join(Self::SERVER_PATH);
 
-        if fs::metadata(&binary_path).await.is_err() {
-            npm_install_packages([("yaml-language-server", version.as_str())], &version_dir)
+        if fs::metadata(&server_path).await.is_err() {
+            self.node
+                .npm_install_packages([("yaml-language-server", version.as_str())], &version_dir)
                 .await?;
 
             if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
@@ -64,10 +80,13 @@ impl LspAdapter for YamlLspAdapter {
             }
         }
 
-        Ok(binary_path)
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            arguments: server_binary_arguments(&server_path),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -78,9 +97,12 @@ impl LspAdapter for YamlLspAdapter {
                 }
             }
             let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let bin_path = last_version_dir.join(Self::BIN_PATH);
-            if bin_path.exists() {
-                Ok(bin_path)
+            let server_path = last_version_dir.join(Self::SERVER_PATH);
+            if server_path.exists() {
+                Ok(LanguageServerBinary {
+                    path: self.node.binary_path().await?,
+                    arguments: server_binary_arguments(&server_path),
+                })
             } else {
                 Err(anyhow!(
                     "missing executable in directory {:?}",

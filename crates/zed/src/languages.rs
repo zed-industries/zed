@@ -1,17 +1,21 @@
 use anyhow::Context;
+use client::http::HttpClient;
+use gpui::executor::Background;
 pub use language::*;
+use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 use theme::ThemeRegistry;
 
 mod c;
 mod elixir;
+mod github;
 mod go;
 mod html;
-mod installation;
 mod json;
 mod language_plugin;
 mod lua;
+mod node_runtime;
 mod python;
 mod ruby;
 mod rust;
@@ -32,7 +36,14 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
+pub fn init(
+    http: Arc<dyn HttpClient>,
+    background: Arc<Background>,
+    languages: Arc<LanguageRegistry>,
+    themes: Arc<ThemeRegistry>,
+) {
+    let node_runtime = NodeRuntime::new(http, background);
+
     for (name, grammar, lsp_adapter) in [
         (
             "c",
@@ -63,6 +74,7 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
             "json",
             tree_sitter_json::language(),
             Some(Arc::new(json::JsonLspAdapter::new(
+                node_runtime.clone(),
                 languages.clone(),
                 themes.clone(),
             ))),
@@ -75,7 +87,9 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "python",
             tree_sitter_python::language(),
-            Some(Arc::new(python::PythonLspAdapter)),
+            Some(Arc::new(python::PythonLspAdapter::new(
+                node_runtime.clone(),
+            ))),
         ),
         (
             "rust",
@@ -90,22 +104,28 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(Arc::new(typescript::TypeScriptLspAdapter::new(
+                node_runtime.clone(),
+            ))),
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(Arc::new(typescript::TypeScriptLspAdapter::new(
+                node_runtime.clone(),
+            ))),
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(Arc::new(typescript::TypeScriptLspAdapter::new(
+                node_runtime.clone(),
+            ))),
         ),
         (
             "html",
             tree_sitter_html::language(),
-            Some(Arc::new(html::HtmlLspAdapter)),
+            Some(Arc::new(html::HtmlLspAdapter::new(node_runtime.clone()))),
         ),
         (
             "ruby",
@@ -135,7 +155,7 @@ pub fn init(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) {
         (
             "yaml",
             tree_sitter_yaml::language(),
-            Some(Arc::new(yaml::YamlLspAdapter)),
+            Some(Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))),
         ),
     ] {
         languages.register(name, load_config(name), grammar, lsp_adapter, load_queries);

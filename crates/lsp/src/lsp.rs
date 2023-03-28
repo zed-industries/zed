@@ -108,7 +108,7 @@ impl LanguageServer {
     pub fn new<T: AsRef<std::ffi::OsStr>>(
         server_id: usize,
         binary_path: &Path,
-        args: &[T],
+        arguments: &[T],
         root_path: &Path,
         cx: AsyncAppContext,
     ) -> Result<Self> {
@@ -117,9 +117,10 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
+
         let mut server = process::Command::new(binary_path)
             .current_dir(working_dir)
-            .args(args)
+            .args(arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -128,7 +129,6 @@ impl LanguageServer {
 
         let stdin = server.stdin.take().unwrap();
         let stout = server.stdout.take().unwrap();
-
         let mut server = Self::new_internal(
             server_id,
             stdin,
@@ -147,6 +147,7 @@ impl LanguageServer {
                 );
             },
         );
+
         if let Some(name) = binary_path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }

@@ -1,18 +1,17 @@
-use super::installation::{latest_github_release, GitHubLspBinaryVersion};
-use anyhow::{anyhow, Result};
-use async_compression::futures::bufread::GzipDecoder;
+use super::node_runtime::NodeRuntime;
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use collections::HashMap;
-use futures::{future::BoxFuture, io::BufReader, FutureExt, StreamExt};
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::MutableAppContext;
-use language::{LanguageRegistry, LanguageServerName, LspAdapter};
+use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
 use serde_json::json;
 use settings::{keymap_file_json_schema, settings_file_json_schema};
-use smol::fs::{self, File};
+use smol::fs;
 use std::{
     any::Any,
-    env::consts,
+    ffi::OsString,
     future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -20,14 +19,30 @@ use std::{
 use theme::ThemeRegistry;
 use util::{paths, ResultExt, StaffMode};
 
+const SERVER_PATH: &'static str =
+    "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+
+fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    vec![server_path.into(), "--stdio".into()]
+}
+
 pub struct JsonLspAdapter {
+    node: Arc<NodeRuntime>,
     languages: Arc<LanguageRegistry>,
     themes: Arc<ThemeRegistry>,
 }
 
 impl JsonLspAdapter {
-    pub fn new(languages: Arc<LanguageRegistry>, themes: Arc<ThemeRegistry>) -> Self {
-        Self { languages, themes }
+    pub fn new(
+        node: Arc<NodeRuntime>,
+        languages: Arc<LanguageRegistry>,
+        themes: Arc<ThemeRegistry>,
+    ) -> Self {
+        JsonLspAdapter {
+            node,
+            languages,
+            themes,
+        }
     }
 }
 
@@ -37,78 +52,80 @@ impl LspAdapter for JsonLspAdapter {
         LanguageServerName("json-language-server".into())
     }
 
-    async fn server_args(&self) -> Vec<String> {
-        vec!["--stdio".into()]
-    }
-
     async fn fetch_latest_server_version(
         &self,
-        http: Arc<dyn HttpClient>,
+        _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("zed-industries/json-language-server", http).await?;
-        let asset_name = format!("json-language-server-darwin-{}.gz", consts::ARCH);
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
-        let version = GitHubLspBinaryVersion {
-            name: release.name,
-            url: asset.browser_download_url.clone(),
-        };
-        Ok(Box::new(version) as Box<_>)
+        Ok(Box::new(
+            self.node
+                .npm_package_latest_version("vscode-json-languageserver")
+                .await?,
+        ) as Box<_>)
     }
 
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
-        http: Arc<dyn HttpClient>,
+        _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!(
-            "json-language-server-{}-{}",
-            version.name,
-            consts::ARCH
-        ));
+    ) -> Result<LanguageServerBinary> {
+        let version = version.downcast::<String>().unwrap();
+        let version_dir = container_dir.join(version.as_str());
+        fs::create_dir_all(&version_dir)
+            .await
+            .context("failed to create version directory")?;
+        let server_path = version_dir.join(SERVER_PATH);
 
-        if fs::metadata(&destination_path).await.is_err() {
-            let mut response = http
-                .get(&version.url, Default::default(), true)
-                .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let mut file = File::create(&destination_path).await?;
-            futures::io::copy(decompressed_bytes, &mut file).await?;
-            fs::set_permissions(
-                &destination_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
+        if fs::metadata(&server_path).await.is_err() {
+            self.node
+                .npm_install_packages(
+                    [("vscode-json-languageserver", version.as_str())],
+                    &version_dir,
+                )
+                .await?;
 
             if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
                 while let Some(entry) = entries.next().await {
                     if let Some(entry) = entry.log_err() {
                         let entry_path = entry.path();
-                        if entry_path.as_path() != destination_path {
-                            fs::remove_file(&entry_path).await.log_err();
+                        if entry_path.as_path() != version_dir {
+                            fs::remove_dir_all(&entry_path).await.log_err();
                         }
                     }
                 }
             }
         }
 
-        Ok(destination_path)
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            arguments: server_binary_arguments(&server_path),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
-            let mut last = None;
+            let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
-                last = Some(entry?.path());
+                let entry = entry?;
+                if entry.file_type().await?.is_dir() {
+                    last_version_dir = Some(entry.path());
+                }
             }
-            last.ok_or_else(|| anyhow!("no cached binary"))
+
+            let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+            let server_path = last_version_dir.join(SERVER_PATH);
+            if server_path.exists() {
+                Ok(LanguageServerBinary {
+                    path: self.node.binary_path().await?,
+                    arguments: server_binary_arguments(&server_path),
+                })
+            } else {
+                Err(anyhow!(
+                    "missing executable in directory {:?}",
+                    last_version_dir
+                ))
+            }
         })()
         .await
         .log_err()

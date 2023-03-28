@@ -13,9 +13,7 @@ use client::{
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{
-    executor::Deterministic, test::EmptyView, ModelHandle, Task, TestAppContext, ViewHandle,
-};
+use gpui::{executor::Deterministic, test::EmptyView, ModelHandle, TestAppContext, ViewHandle};
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
@@ -188,7 +186,7 @@ impl TestServer {
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
+            languages: Arc::new(LanguageRegistry::test()),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),

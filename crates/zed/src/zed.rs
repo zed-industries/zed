@@ -652,9 +652,10 @@ fn open_bundled_file(
 mod tests {
     use super::*;
     use assets::Assets;
+    use client::test::FakeHttpClient;
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        executor::Deterministic, AssetSource, MutableAppContext, Task, TestAppContext, ViewHandle,
+        executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };
     use language::LanguageRegistry;
     use project::{Project, ProjectPath};
@@ -1846,11 +1847,16 @@ mod tests {
 
     #[gpui::test]
     fn test_bundled_languages(cx: &mut MutableAppContext) {
-        let mut languages = LanguageRegistry::new(Task::ready(()));
+        let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
-        languages::init(languages.clone(), themes);
+        languages::init(
+            FakeHttpClient::with_404_response(),
+            cx.background().clone(),
+            languages.clone(),
+            themes,
+        );
         for name in languages.language_names() {
             languages.language_for_name(&name);
         }

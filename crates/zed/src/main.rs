@@ -139,7 +139,12 @@ fn main() {
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        languages::init(languages.clone(), themes.clone());
+        languages::init(
+            http.clone(),
+            cx.background().clone(),
+            languages.clone(),
+            themes.clone(),
+        );
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         cx.set_global(client.clone());
