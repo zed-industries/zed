@@ -648,7 +648,7 @@ impl DisplaySnapshot {
                     false
                 }
             }),
-            buffer.line_len(buffer_row) as usize, // Never collapse
+            buffer.line_len(buffer_row), // Never collapse
         );
 
         (indent_size as u32, is_blank)

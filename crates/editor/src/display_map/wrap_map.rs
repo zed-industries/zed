@@ -1089,7 +1089,8 @@ mod tests {
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
         let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
         log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (tab_map, tabs_snapshot) = TabMap::new(suggestion_snapshot.clone(), tab_size);
+        let (tab_map, _) = TabMap::new(suggestion_snapshot.clone(), tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
         let mut line_wrapper = LineWrapper::new(font_id, font_size, font_system);

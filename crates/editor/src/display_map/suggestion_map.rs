@@ -210,6 +210,32 @@ impl SuggestionSnapshot {
         }
     }
 
+    pub fn line_len(&self, row: u32) -> u32 {
+        if let Some(suggestion) = &self.suggestion {
+            let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
+            let suggestion_end = suggestion_start + suggestion.text.max_point();
+
+            if row < suggestion_start.row {
+                self.fold_snapshot.line_len(row)
+            } else if row > suggestion_end.row {
+                self.fold_snapshot
+                    .line_len(suggestion_start.row + (row - suggestion_end.row))
+            } else {
+                let mut result = suggestion.text.line_len(row - suggestion_start.row);
+                if row == suggestion_start.row {
+                    result += suggestion_start.column;
+                }
+                if row == suggestion_end.row {
+                    result +=
+                        self.fold_snapshot.line_len(suggestion_start.row) - suggestion_start.column;
+                }
+                result
+            }
+        } else {
+            self.fold_snapshot.line_len(row)
+        }
+    }
+
     pub fn clip_point(&self, point: SuggestionPoint, bias: Bias) -> SuggestionPoint {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;
