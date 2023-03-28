@@ -9,9 +9,9 @@ use theme::ThemeRegistry;
 
 mod c;
 mod elixir;
+mod github;
 mod go;
 mod html;
-mod installation;
 mod json;
 mod language_plugin;
 mod lua;

@@ -1,4 +1,4 @@
-use super::installation::{latest_github_release, GitHubLspBinaryVersion};
+use super::github::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;

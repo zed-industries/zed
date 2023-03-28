@@ -1,4 +1,4 @@
-use super::installation::latest_github_release;
+use super::github::latest_github_release;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
