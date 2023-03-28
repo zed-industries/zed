@@ -1034,19 +1034,16 @@ impl CopilotState {
         let completion = self.completions.get(self.active_completion_index)?;
         if self.position.excerpt_id == cursor.excerpt_id
             && self.position.buffer_id == cursor.buffer_id
-            && (cursor_offset == buffer.len() || buffer.contains_str_at(cursor_offset, "\n"))
         {
-            let completion_offset = buffer.summary_for_anchor(&Anchor {
+            let completion_offset: usize = buffer.summary_for_anchor(&Anchor {
                 excerpt_id: self.position.excerpt_id,
                 buffer_id: self.position.buffer_id,
                 text_anchor: completion.position,
             });
-            let common_prefix_len = cursor_offset.saturating_sub(completion_offset);
-            if common_prefix_len <= completion.text.len()
-                && buffer.contains_str_at(completion_offset, &completion.text[..common_prefix_len])
-            {
-                let suffix = &completion.text[common_prefix_len..];
-                if !suffix.is_empty() {
+            let prefix_len = cursor_offset.saturating_sub(completion_offset);
+            if completion_offset <= cursor_offset && prefix_len <= completion.text.len() {
+                let (prefix, suffix) = completion.text.split_at(prefix_len);
+                if buffer.contains_str_at(completion_offset, prefix) && !suffix.is_empty() {
                     return Some(suffix);
                 }
             }
@@ -2867,8 +2864,8 @@ impl Editor {
             .text_for_active_completion(self.copilot_state.position, &snapshot)
             .map(|text| text.to_string())
         {
-            self.copilot_state = Default::default();
             self.insert(&text, cx);
+            self.clear_copilot_suggestions(cx);
             true
         } else {
             false
