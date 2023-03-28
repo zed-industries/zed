@@ -1343,6 +1343,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "node_runtime",
  "serde",
  "serde_derive",
  "settings",
@@ -3929,6 +3930,23 @@ dependencies = [
  "cfg-if 1.0.0",
  "libc",
  "memoffset 0.6.5",
+]
+
+[[package]]
+name = "node_runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "futures 0.3.25",
+ "gpui",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "smol",
+ "util",
 ]
 
 [[package]]
@@ -8512,6 +8530,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
+ "node_runtime",
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",

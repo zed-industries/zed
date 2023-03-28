@@ -1,9 +1,9 @@
-use super::node_runtime::NodeRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::MutableAppContext;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use node_runtime::NodeRuntime;
 use serde_json::Value;
 use settings::Settings;
 use smol::fs;

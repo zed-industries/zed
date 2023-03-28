@@ -8,7 +8,7 @@ use smol::fs;
 use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
 use util::{async_iife, github::latest_github_release, http::HttpClient, ResultExt};
 
-use super::github::GitHubLspBinaryVersion;
+use util::github::GitHubLspBinaryVersion;
 
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;

@@ -1,4 +1,3 @@
-use super::github::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
@@ -9,6 +8,7 @@ use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
 use util::fs::remove_matching;
+use util::github::{latest_github_release, GitHubLspBinaryVersion};
 use util::http::HttpClient;
 use util::ResultExt;
 

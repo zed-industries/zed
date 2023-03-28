@@ -1,4 +1,4 @@
-use super::node_runtime::NodeRuntime;
+use node_runtime::NodeRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;

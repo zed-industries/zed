@@ -657,6 +657,7 @@ mod tests {
         executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };
     use language::LanguageRegistry;
+    use node_runtime::NodeRuntime;
     use project::{Project, ProjectPath};
     use serde_json::json;
     use std::{
@@ -1851,12 +1852,9 @@ mod tests {
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
-        languages::init(
-            FakeHttpClient::with_404_response(),
-            cx.background().clone(),
-            languages.clone(),
-            themes,
-        );
+        let http = FakeHttpClient::with_404_response();
+        let node_runtime = NodeRuntime::new(http, cx.background().to_owned());
+        languages::init(languages.clone(), themes, node_runtime);
         for name in languages.language_names() {
             languages.language_for_name(&name);
         }

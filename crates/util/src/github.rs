@@ -4,6 +4,11 @@ use futures::AsyncReadExt;
 use serde::Deserialize;
 use std::sync::Arc;
 
+pub struct GitHubLspBinaryVersion {
+    pub name: String,
+    pub url: String,
+}
+
 #[derive(Deserialize)]
 pub struct GithubRelease {
     pub name: String,

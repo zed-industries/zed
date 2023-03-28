@@ -18,6 +18,7 @@ use gpui::{Action, App, AssetSource, AsyncAppContext, MutableAppContext, Task, V
 use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
+use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::Fs;
 use serde_json::json;
@@ -136,12 +137,9 @@ fn main() {
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        languages::init(
-            http.clone(),
-            cx.background().clone(),
-            languages.clone(),
-            themes.clone(),
-        );
+        let node_runtime = NodeRuntime::new(http.clone(), cx.background().to_owned());
+
+        languages::init(languages.clone(), themes.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         cx.set_global(client.clone());
@@ -162,7 +160,7 @@ fn main() {
         terminal_view::init(cx);
         theme_testbench::init(cx);
         recent_projects::init(cx);
-        copilot::init(client.clone(), cx);
+        copilot::init(client.clone(), node_runtime, cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();

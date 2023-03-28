@@ -36,6 +36,7 @@ members = [
     "crates/lsp",
     "crates/media",
     "crates/menu",
+    "crates/node_runtime",
     "crates/outline",
     "crates/picker",
     "crates/plugin",

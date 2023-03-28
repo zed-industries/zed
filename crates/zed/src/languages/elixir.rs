@@ -10,7 +10,7 @@ use util::github::latest_github_release;
 use util::http::HttpClient;
 use util::ResultExt;
 
-use super::github::GitHubLspBinaryVersion;
+use util::github::GitHubLspBinaryVersion;
 
 pub struct ElixirLspAdapter;
 

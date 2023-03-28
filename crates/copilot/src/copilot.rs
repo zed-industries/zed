@@ -8,6 +8,7 @@ use futures::{future::Shared, FutureExt, TryFutureExt};
 use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, ToPointUtf16};
 use lsp::LanguageServer;
+use node_runtime::NodeRuntime;
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
@@ -21,8 +22,8 @@ use util::{
 
 actions!(copilot, [SignIn, SignOut, NextSuggestion]);
 
-pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
-    let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), cx));
+pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
+    let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), node_runtime, cx));
     cx.set_global(copilot.clone());
     cx.add_global_action(|_: &SignIn, cx| {
         let copilot = Copilot::global(cx).unwrap();
@@ -104,7 +105,11 @@ impl Copilot {
         }
     }
 
-    fn start(http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
+    fn start(
+        http: Arc<dyn HttpClient>,
+        node_runtime: Arc<NodeRuntime>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         // TODO: Don't eagerly download the LSP
         cx.spawn(|this, mut cx| async move {
             let start_language_server = async {
@@ -469,7 +474,8 @@ mod tests {
     async fn test_smoke(cx: &mut TestAppContext) {
         Settings::test_async(cx);
         let http = http::client();
-        let copilot = cx.add_model(|cx| Copilot::start(http, cx));
+        let node_runtime = NodeRuntime::new(http.clone(), cx.background());
+        let copilot = cx.add_model(|cx| Copilot::start(http, node_runtime, cx));
         smol::Timer::after(std::time::Duration::from_secs(2)).await;
         copilot
             .update(cx, |copilot, cx| copilot.sign_in(cx))

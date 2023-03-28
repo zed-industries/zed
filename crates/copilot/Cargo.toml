@@ -14,6 +14,7 @@ language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 lsp = { path = "../lsp" }
+node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
 client = { path = "../client" }
 workspace = { path = "../workspace" }
