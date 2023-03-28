@@ -1007,7 +1007,7 @@ impl CodeActionsMenu {
 }
 
 struct CopilotState {
-    position: Anchor,
+    excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
     completions: Vec<copilot::Completion>,
     active_completion_index: usize,
@@ -1016,7 +1016,7 @@ struct CopilotState {
 impl Default for CopilotState {
     fn default() -> Self {
         Self {
-            position: Anchor::min(),
+            excerpt_id: None,
             pending_refresh: Task::ready(Some(())),
             completions: Default::default(),
             active_completion_index: 0,
@@ -1032,12 +1032,10 @@ impl CopilotState {
     ) -> Option<&str> {
         let cursor_offset = cursor.to_offset(buffer);
         let completion = self.completions.get(self.active_completion_index)?;
-        if self.position.excerpt_id == cursor.excerpt_id
-            && self.position.buffer_id == cursor.buffer_id
-        {
+        if self.excerpt_id == Some(cursor.excerpt_id) {
             let completion_offset: usize = buffer.summary_for_anchor(&Anchor {
-                excerpt_id: self.position.excerpt_id,
-                buffer_id: self.position.buffer_id,
+                excerpt_id: cursor.excerpt_id,
+                buffer_id: cursor.buffer_id,
                 text_anchor: completion.position,
             });
             let prefix_len = cursor_offset.saturating_sub(completion_offset);
@@ -2777,12 +2775,11 @@ impl Editor {
                 .completions
                 .swap(0, self.copilot_state.active_completion_index);
             self.copilot_state.completions.truncate(1);
+            self.copilot_state.active_completion_index = 0;
+            cx.notify();
         } else {
             self.clear_copilot_suggestions(cx);
         }
-        self.copilot_state.position = cursor;
-        self.copilot_state.active_completion_index = 0;
-        cx.notify();
 
         if !copilot.read(cx).status().is_authorized() {
             return None;
@@ -2805,6 +2802,7 @@ impl Editor {
             this.upgrade(&cx)?.update(&mut cx, |this, cx| {
                 this.copilot_state.completions.clear();
                 this.copilot_state.active_completion_index = 0;
+                this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
                 for completion in completions {
                     let was_empty = this.copilot_state.completions.is_empty();
                     if let Some(completion) = this.copilot_state.push_completion(completion) {
@@ -2837,17 +2835,18 @@ impl Editor {
         }
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursor = self.selections.newest_anchor().head();
 
         self.copilot_state.active_completion_index =
             (self.copilot_state.active_completion_index + 1) % self.copilot_state.completions.len();
         if let Some(text) = self
             .copilot_state
-            .text_for_active_completion(self.copilot_state.position, &snapshot)
+            .text_for_active_completion(cursor, &snapshot)
         {
             self.display_map.update(cx, |map, cx| {
                 map.replace_suggestion(
                     Some(Suggestion {
-                        position: self.copilot_state.position,
+                        position: cursor,
                         text: text.into(),
                     }),
                     cx,
@@ -2859,12 +2858,12 @@ impl Editor {
 
     fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursor = self.selections.newest_anchor().head();
         if let Some(text) = self
             .copilot_state
-            .text_for_active_completion(self.copilot_state.position, &snapshot)
-            .map(|text| text.to_string())
+            .text_for_active_completion(cursor, &snapshot)
         {
-            self.insert(&text, cx);
+            self.insert(&text.to_string(), cx);
             self.clear_copilot_suggestions(cx);
             true
         } else {
@@ -2879,7 +2878,7 @@ impl Editor {
         self.copilot_state.completions.clear();
         self.copilot_state.active_completion_index = 0;
         self.copilot_state.pending_refresh = Task::ready(None);
-        self.copilot_state.position = Anchor::min();
+        self.copilot_state.excerpt_id = None;
         cx.notify();
         !was_empty
     }
