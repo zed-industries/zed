@@ -52,45 +52,59 @@ impl TabMap {
 
         if old_snapshot.tab_size == new_snapshot.tab_size {
             for suggestion_edit in &mut suggestion_edits {
-                let old_end = old_snapshot
+                let mut old_column = old_snapshot
                     .suggestion_snapshot
-                    .to_point(suggestion_edit.old.end);
-                let old_end_row_len = old_snapshot.suggestion_snapshot.line_len(old_end.row());
-                let old_end_row_exceeds_max_expansion =
-                    old_end_row_len > old_snapshot.max_expansion_column;
-                let new_end = new_snapshot
+                    .to_point(suggestion_edit.old.end)
+                    .column();
+                let mut new_column = new_snapshot
                     .suggestion_snapshot
-                    .to_point(suggestion_edit.new.end);
-                let new_end_row_len = new_snapshot.suggestion_snapshot.line_len(new_end.row());
-                let new_end_row_exceeds_max_expansion =
-                    new_end_row_len > new_snapshot.max_expansion_column;
-                if old_end_row_exceeds_max_expansion || new_end_row_exceeds_max_expansion {
-                    suggestion_edit.old.end = old_snapshot
-                        .suggestion_snapshot
-                        .to_offset(SuggestionPoint::new(old_end.row(), old_end_row_len));
-                    suggestion_edit.new.end = new_snapshot
-                        .suggestion_snapshot
-                        .to_offset(SuggestionPoint::new(new_end.row(), new_end_row_len));
-                    continue;
-                }
+                    .to_point(suggestion_edit.new.end)
+                    .column();
 
                 let mut delta = 0;
-                for chunk in old_snapshot.suggestion_snapshot.chunks(
+                let mut first_tab_ix = None;
+                let mut last_tab_ix_with_changed_expansion = None;
+                'outer: for chunk in old_snapshot.suggestion_snapshot.chunks(
                     suggestion_edit.old.end..old_max_offset,
                     false,
                     None,
                 ) {
                     let patterns: &[_] = &['\t', '\n'];
-                    if let Some(ix) = chunk.text.find(patterns) {
-                        if &chunk.text[ix..ix + 1] == "\t" {
-                            suggestion_edit.old.end.0 += delta + ix + 1;
-                            suggestion_edit.new.end.0 += delta + ix + 1;
-                        }
+                    for (ix, mat) in chunk.text.match_indices(patterns) {
+                        match mat {
+                            "\t" => {
+                                if first_tab_ix.is_none() {
+                                    first_tab_ix = Some(delta + ix);
+                                }
 
-                        break;
+                                let old_column = old_column + ix as u32;
+                                let new_column = new_column + ix as u32;
+                                let was_expanded = old_column < old_snapshot.max_expansion_column;
+                                let is_expanded = new_column < new_snapshot.max_expansion_column;
+                                if was_expanded != is_expanded {
+                                    last_tab_ix_with_changed_expansion = Some(delta + ix);
+                                } else if !was_expanded && !is_expanded {
+                                    break 'outer;
+                                }
+                            }
+                            "\n" => break 'outer,
+                            _ => unreachable!(),
+                        }
                     }
 
                     delta += chunk.text.len();
+                    old_column += chunk.text.len() as u32;
+                    new_column += chunk.text.len() as u32;
+                    if old_column >= old_snapshot.max_expansion_column
+                        && new_column >= new_snapshot.max_expansion_column
+                    {
+                        break;
+                    }
+                }
+
+                if let Some(tab_ix) = last_tab_ix_with_changed_expansion.or(first_tab_ix) {
+                    suggestion_edit.old.end.0 += tab_ix + 1;
+                    suggestion_edit.new.end.0 += tab_ix + 1;
                 }
             }
 
