@@ -58,6 +58,29 @@ pub struct Settings {
     pub telemetry_overrides: TelemetrySettings,
     pub auto_update: bool,
     pub base_keymap: BaseKeymap,
+    pub copilot: CopilotSettings,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+pub enum CopilotSettings {
+    #[default]
+    On,
+    Off,
+}
+
+impl From<CopilotSettings> for bool {
+    fn from(value: CopilotSettings) -> Self {
+        match value {
+            CopilotSettings::On => true,
+            CopilotSettings::Off => false,
+        }
+    }
+}
+
+impl CopilotSettings {
+    pub fn as_bool(&self) -> bool {
+        <CopilotSettings as Into<bool>>::into(*self)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
@@ -375,6 +398,8 @@ pub struct SettingsFileContent {
     pub auto_update: Option<bool>,
     #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
+    #[serde(default)]
+    pub copilot: Option<CopilotSettings>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -452,6 +477,7 @@ impl Settings {
             telemetry_overrides: Default::default(),
             auto_update: defaults.auto_update.unwrap(),
             base_keymap: Default::default(),
+            copilot: Default::default(),
         }
     }
 
@@ -503,6 +529,7 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
+        merge(&mut self.copilot, data.copilot);
 
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
@@ -681,6 +708,7 @@ impl Settings {
             telemetry_overrides: Default::default(),
             auto_update: true,
             base_keymap: Default::default(),
+            copilot: Default::default(),
         }
     }
 

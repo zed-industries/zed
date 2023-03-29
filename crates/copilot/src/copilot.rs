@@ -3,8 +3,11 @@ mod sign_in;
 
 use anyhow::{anyhow, Result};
 use client::Client;
-use futures::{future::Shared, FutureExt, TryFutureExt};
-use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use futures::{future::Shared, Future, FutureExt, TryFutureExt};
+use gpui::{
+    actions, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
+    Task,
+};
 use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, ToPointUtf16};
 use lsp::LanguageServer;
 use node_runtime::NodeRuntime;
@@ -17,6 +20,7 @@ use std::{
 };
 use util::{fs::remove_matching, http::HttpClient, paths, ResultExt};
 
+const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
 
 const COPILOT_NAMESPACE: &'static str = "copilot";
@@ -42,8 +46,18 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
         let status = handle.read(cx).status();
         cx.update_global::<collections::CommandPaletteFilter, _, _>(
             move |filter, _cx| match status {
-                Status::Authorized => filter.filtered_namespaces.remove(COPILOT_NAMESPACE),
-                _ => filter.filtered_namespaces.insert(COPILOT_NAMESPACE),
+                Status::Disabled => {
+                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
+                    filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
+                }
+                Status::Authorized => {
+                    filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
+                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+                }
+                _ => {
+                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
+                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+                }
             },
         );
     })
@@ -55,6 +69,7 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
 enum CopilotServer {
     Downloading,
     Error(Arc<str>),
+    Disabled,
     Started {
         server: Arc<LanguageServer>,
         status: SignInStatus,
@@ -80,6 +95,7 @@ enum SignInStatus {
 pub enum Status {
     Downloading,
     Error(Arc<str>),
+    Disabled,
     SignedOut,
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
@@ -122,8 +138,55 @@ impl Copilot {
         node_runtime: Arc<NodeRuntime>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        // TODO: Don't eagerly download the LSP
-        cx.spawn(|this, mut cx| async move {
+        // TODO: Make this task resilient to users thrashing the copilot setting
+        cx.observe_global::<Settings, _>({
+            let http = http.clone();
+            let node_runtime = node_runtime.clone();
+            move |this, cx| {
+                if cx.global::<Settings>().copilot.as_bool() {
+                    if matches!(this.server, CopilotServer::Disabled) {
+                        cx.spawn({
+                            let http = http.clone();
+                            let node_runtime = node_runtime.clone();
+                            move |this, cx| {
+                                Self::start_language_server(http, node_runtime, this, cx)
+                            }
+                        })
+                        .detach();
+                    }
+                } else {
+                    // TODO: What else needs to be turned off here?
+                    this.server = CopilotServer::Disabled
+                }
+            }
+        })
+        .detach();
+
+        if !cx.global::<Settings>().copilot.as_bool() {
+            return Self {
+                server: CopilotServer::Disabled,
+            };
+        }
+
+        cx.spawn({
+            let http = http.clone();
+            let node_runtime = node_runtime.clone();
+            move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
+        })
+        .detach();
+
+        Self {
+            server: CopilotServer::Downloading,
+        }
+    }
+
+    fn start_language_server(
+        http: Arc<dyn HttpClient>,
+        node_runtime: Arc<NodeRuntime>,
+        this: ModelHandle<Self>,
+        mut cx: AsyncAppContext,
+    ) -> impl Future<Output = ()> {
+        async move {
             let start_language_server = async {
                 let server_path = get_copilot_lsp(http, node_runtime.clone()).await?;
                 let node_path = node_runtime.binary_path().await?;
@@ -156,11 +219,6 @@ impl Copilot {
                     }
                 }
             })
-        })
-        .detach();
-
-        Self {
-            server: CopilotServer::Downloading,
         }
     }
 
@@ -324,6 +382,7 @@ impl Copilot {
     pub fn status(&self) -> Status {
         match &self.server {
             CopilotServer::Downloading => Status::Downloading,
+            CopilotServer::Disabled => Status::Disabled,
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Started { status, .. } => match status {
                 SignInStatus::Authorized { .. } => Status::Authorized,
@@ -358,6 +417,7 @@ impl Copilot {
     fn authorized_server(&self) -> Result<Arc<LanguageServer>> {
         match &self.server {
             CopilotServer::Downloading => Err(anyhow!("copilot is still downloading")),
+            CopilotServer::Disabled => Err(anyhow!("copilot is disabled")),
             CopilotServer::Error(error) => Err(anyhow!(
                 "copilot was not started because of an error: {}",
                 error
