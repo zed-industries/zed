@@ -226,6 +226,7 @@ impl Copilot {
         if let CopilotServer::Started { server, status } = &mut self.server {
             let task = match status {
                 SignInStatus::Authorized { .. } | SignInStatus::Unauthorized { .. } => {
+                    cx.notify();
                     Task::ready(Ok(())).shared()
                 }
                 SignInStatus::SigningIn { task, .. } => {
