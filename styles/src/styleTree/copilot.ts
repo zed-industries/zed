@@ -31,12 +31,17 @@ export default function copilot(colorScheme: ColorScheme) {
 
     return {
         modal: {
-            titleText: text(layer, "sans", { size: "md" }),
+            titleText: {
+                ...text(layer, "sans", { size: "md", color: background(layer, "default") }),
+                active: {
+                    ...text(layer, "sans", { size: "md" }),
+                }
+            },
             titlebar: {
                 border: border(layer, "active"),
                 padding: {
-                    top: 4,
-                    bottom: 4,
+                    top: 8,
+                    bottom: 8,
                     left: 8,
                     right: 8,
                 },
@@ -44,7 +49,7 @@ export default function copilot(colorScheme: ColorScheme) {
                     top: 0,
                     left: 0,
                     right: 0,
-                    bottom: 8
+                    bottom: 16
                 }
             },
             container: {
@@ -54,6 +59,7 @@ export default function copilot(colorScheme: ColorScheme) {
             closeIcon: {
                 icon: svg(background(layer, "on"), "icons/x_mark_16.svg", 16, 16),
                 container: {
+                    cornerRadius: 2,
                     padding: {
                         top: 3,
                         bottom: 3,
@@ -61,8 +67,14 @@ export default function copilot(colorScheme: ColorScheme) {
                         right: 0,
                     }
                 },
-                hover: {
-                    icon: svg(foreground(layer, "on"), "icons/x_mark_16.svg", 16, 16),
+                active: {
+                    icon: svg(foreground(colorScheme.lowest, "warning"), "icons/x_mark_16.svg", 16, 16),
+                },
+                hoverAndActive: {
+                    icon: svg(foreground(layer, "on", "hovered"), "icons/x_mark_16.svg", 16, 16),
+                },
+                clickedAndactive: {
+                    icon: svg(foreground(layer, "on", "pressed"), "icons/x_mark_16.svg", 16, 16),
                 }
             },
             dimensions: {
@@ -81,17 +93,35 @@ export default function copilot(colorScheme: ColorScheme) {
                     right: 0
                 }
             },
-            headerText: text(layer, "sans", { size: "lg" }),
-            copilotIcon: svg(foreground(layer, "default"), "icons/github-copilot-dummy.svg", 36, 36),
-            plusIcon: svg(foreground(layer, "default"), "icons/plus_16.svg", 36, 36),
-            zedIcon: svg(foreground(layer, "default"), "icons/logo_96.svg", 36, 36),
+            copilotIcon: svg(foreground(layer, "default"), "icons/github-copilot-dummy.svg", 32, 32),
+            plusIcon: {
+                icon: svg(foreground(layer, "default"), "icons/plus_12.svg", 12, 12),
+                container: {
+                    padding: {
+                        top: 12,
+                        bottom: 12,
+                        left: 12,
+                        right: 12,
+                    }
+                }
+            },
+            zedIcon: svg(foreground(layer, "default"), "icons/logo_96.svg", 32, 32),
+            enableText: text(layer, "sans", { size: "md" }),
+            enableGroup: {
+                margin: {
+                    top: 5,
+                    bottom: 5,
+                    left: 0,
+                    right: 0
+                }
+            },
 
             instructionText: text(layer, "sans"),
 
             deviceCodeGroup: {
                 margin: {
-                    top: 5,
-                    bottom: 5,
+                    top: 20,
+                    bottom: 20,
                     left: 0,
                     right: 0
                 }
@@ -127,6 +157,31 @@ export default function copilot(colorScheme: ColorScheme) {
                 },
             },
             deviceCodeSeperatorHeight: 0,
+            hint: {
+                ...text(layer, "sans", { size: "xs" }),
+                margin: {
+                    top: -5,
+                }
+            },
+            enabledHint: {
+                margin: {
+                    top: 10,
+                    bottom: 10
+                }
+            },
+            notAuthorizedHint: {
+                margin: {
+                    top: 10,
+                    bottom: 10
+                }
+            },
+
+            warning: {
+                ...text(layer, "sans", { size: "md", color: foreground(layer, "warning") }),
+                border: border(layer, "warning"),
+                background_color: background(layer, "warning"),
+                cornerRadius: 2,
+            },
 
             githubGroup: {
                 margin: {

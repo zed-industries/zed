@@ -9,7 +9,7 @@ use gpui::{
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonStyle, CheckboxStyle, ModalStyle, SvgStyle};
+use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle, SvgStyle};
 
 pub mod ui;
 
@@ -124,13 +124,14 @@ pub struct Copilot {
 
 #[derive(Deserialize, Default, Clone)]
 pub struct CopilotAuth {
+    pub enable_group: ContainerStyle,
+    pub enable_text: TextStyle,
     pub instruction_text: TextStyle,
     pub cta_button: ButtonStyle,
     pub content_width: f32,
     pub copilot_icon: SvgStyle,
-    pub plus_icon: SvgStyle,
+    pub plus_icon: IconStyle,
     pub zed_icon: SvgStyle,
-    pub header_text: TextStyle,
     pub device_code_group: ContainerStyle,
     pub github_group: ContainerStyle,
     pub header_group: ContainerStyle,
@@ -141,6 +142,10 @@ pub struct CopilotAuth {
     pub device_code_right: f32,
     pub device_code_right_container: ContainerStyle,
     pub device_code_seperator_height: f32,
+    pub hint: ContainedText,
+    pub enabled_hint: ContainerStyle,
+    pub not_authorized_hint: ContainerStyle,
+    pub warning: ContainedText,
 }
 
 #[derive(Deserialize, Default)]
@@ -720,7 +725,9 @@ pub struct DiffStyle {
 pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,
+    pub hover_and_active: Option<T>,
     pub clicked: Option<T>,
+    pub click_and_active: Option<T>,
     pub active: Option<T>,
     pub disabled: Option<T>,
 }
@@ -728,7 +735,17 @@ pub struct Interactive<T> {
 impl<T> Interactive<T> {
     pub fn style_for(&self, state: &mut MouseState, active: bool) -> &T {
         if active {
-            self.active.as_ref().unwrap_or(&self.default)
+            if state.hovered() {
+                self.hover_and_active
+                    .as_ref()
+                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
+            } else if state.clicked() == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
+                self.click_and_active
+                    .as_ref()
+                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
+            } else {
+                self.active.as_ref().unwrap_or(&self.default)
+            }
         } else if state.clicked() == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
             self.clicked.as_ref().unwrap()
         } else if state.hovered() {
@@ -753,7 +770,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             #[serde(flatten)]
             default: Value,
             hover: Option<Value>,
+            hover_and_active: Option<Value>,
             clicked: Option<Value>,
+            click_and_active: Option<Value>,
             active: Option<Value>,
             disabled: Option<Value>,
         }
@@ -780,7 +799,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         };
 
         let hover = deserialize_state(json.hover)?;
+        let hover_and_active = deserialize_state(json.hover_and_active)?;
         let clicked = deserialize_state(json.clicked)?;
+        let click_and_active = deserialize_state(json.click_and_active)?;
         let active = deserialize_state(json.active)?;
         let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
@@ -788,7 +809,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         Ok(Interactive {
             default,
             hover,
+            hover_and_active,
             clicked,
+            click_and_active,
             active,
             disabled,
         })

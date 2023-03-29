@@ -765,6 +765,12 @@ impl MutableAppContext {
             })
     }
 
+    pub fn has_window(&self, window_id: usize) -> bool {
+        self.window_ids()
+            .find(|window| window == &window_id)
+            .is_some()
+    }
+
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
         self.cx.windows.keys().copied()
     }

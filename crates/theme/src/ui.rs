@@ -9,7 +9,7 @@ use gpui::{
     fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
     scene::MouseClick,
-    Action, Element, ElementBox, EventContext, MouseButton, RenderContext, View,
+    Action, Element, ElementBox, EventContext, MouseButton, MouseState, RenderContext, View,
 };
 use serde::Deserialize;
 
@@ -220,7 +220,7 @@ pub struct ModalStyle {
     close_icon: Interactive<IconStyle>,
     container: ContainerStyle,
     titlebar: ContainerStyle,
-    title_text: TextStyle,
+    title_text: Interactive<TextStyle>,
     dimensions: Dimensions,
 }
 
@@ -241,14 +241,23 @@ where
     I: Into<Cow<'static, str>>,
     F: FnOnce(&mut gpui::RenderContext<V>) -> ElementBox,
 {
+    let active = cx.window_is_active(cx.window_id());
+
     Flex::column()
         .with_child(
             Stack::new()
                 .with_children([
-                    Label::new(title, style.title_text.clone()).boxed(),
+                    Label::new(
+                        title,
+                        style
+                            .title_text
+                            .style_for(&mut MouseState::default(), active)
+                            .clone(),
+                    )
+                    .boxed(),
                     // FIXME: Get a better tag type
                     MouseEventHandler::<V>::new(999999, cx, |state, _cx| {
-                        let style = style.close_icon.style_for(state, false);
+                        let style = style.close_icon.style_for(state, active);
                         icon(style).boxed()
                     })
                     .on_click(gpui::MouseButton::Left, move |_, cx| {

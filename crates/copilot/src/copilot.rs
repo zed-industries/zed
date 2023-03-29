@@ -155,7 +155,10 @@ impl Copilot {
                 SignInStatus::Authorized { .. } | SignInStatus::Unauthorized { .. } => {
                     Task::ready(Ok(())).shared()
                 }
-                SignInStatus::SigningIn { task, .. } => task.clone(),
+                SignInStatus::SigningIn { task, .. } => {
+                    cx.notify(); // To re-show the prompt, just in case.
+                    task.clone()
+                }
                 SignInStatus::SignedOut => {
                     let server = server.clone();
                     let task = cx
@@ -461,37 +464,5 @@ async fn get_lsp_binary(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
             })()
             .await
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::TestAppContext;
-    use util::http;
-
-    #[gpui::test]
-    async fn test_smoke(cx: &mut TestAppContext) {
-        Settings::test_async(cx);
-        let http = http::client();
-        let node_runtime = NodeRuntime::new(http.clone(), cx.background());
-        let copilot = cx.add_model(|cx| Copilot::start(http, node_runtime, cx));
-        smol::Timer::after(std::time::Duration::from_secs(2)).await;
-        copilot
-            .update(cx, |copilot, cx| copilot.sign_in(cx))
-            .await
-            .unwrap();
-        copilot.read_with(cx, |copilot, _| copilot.status());
-
-        let buffer = cx.add_model(|cx| language::Buffer::new(0, "fn foo() -> ", cx));
-        dbg!(copilot
-            .update(cx, |copilot, cx| copilot.completion(&buffer, 12, cx))
-            .await
-            .unwrap());
-        dbg!(copilot
-            .update(cx, |copilot, cx| copilot
-                .completions_cycling(&buffer, 12, cx))
-            .await
-            .unwrap());
     }
 }
