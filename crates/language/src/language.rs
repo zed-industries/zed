@@ -78,12 +78,6 @@ pub trait ToLspPosition {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub enum ServerExecutionKind {
-    Launch,
-    Node,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
