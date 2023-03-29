@@ -634,24 +634,21 @@ impl DisplaySnapshot {
             .buffer_snapshot
             .buffer_line_for_row(buffer_row)
             .unwrap();
-        let chars = buffer.chars_at(Point::new(range.start.row, 0));
 
+        let mut indent_size = 0;
         let mut is_blank = false;
-        let indent_size = self.tab_snapshot.expand_tabs(
-            chars.take_while(|c| {
-                if *c == ' ' || *c == '\t' {
-                    true
-                } else {
-                    if *c == '\n' {
-                        is_blank = true;
-                    }
-                    false
+        for c in buffer.chars_at(Point::new(range.start.row, 0)) {
+            if c == ' ' || c == '\t' {
+                indent_size += 1;
+            } else {
+                if c == '\n' {
+                    is_blank = true;
                 }
-            }),
-            buffer.line_len(buffer_row), // Never collapse
-        );
+                break;
+            }
+        }
 
-        (indent_size as u32, is_blank)
+        (indent_size, is_blank)
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
