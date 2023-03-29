@@ -2,7 +2,6 @@ mod request;
 mod sign_in;
 
 use anyhow::{anyhow, Result};
-use async_compression::futures::bufread::GzipDecoder;
 use client::Client;
 use futures::{future::Shared, FutureExt, TryFutureExt};
 use gpui::{actions, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
@@ -10,17 +9,18 @@ use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapsho
 use lsp::LanguageServer;
 use node_runtime::NodeRuntime;
 use settings::Settings;
-use smol::{fs, io::BufReader, stream::StreamExt};
+use smol::{fs, stream::StreamExt};
 use std::{
-    env::consts,
+    ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
-};
+use util::{fs::remove_matching, http::HttpClient, paths, ResultExt};
 
-actions!(copilot, [SignIn, SignOut, NextSuggestion]);
+actions!(copilot_auth, [SignIn, SignOut]);
+
+const COPILOT_NAMESPACE: &'static str = "copilot";
+actions!(copilot, [NextSuggestion]);
 
 pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), node_runtime, cx));
@@ -37,6 +37,18 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .detach_and_log_err(cx);
     });
+
+    cx.observe(&copilot, |handle, cx| {
+        let status = handle.read(cx).status();
+        cx.update_global::<collections::CommandPaletteFilter, _, _>(
+            move |filter, _cx| match status {
+                Status::Authorized => filter.filtered_namespaces.remove(COPILOT_NAMESPACE),
+                _ => filter.filtered_namespaces.insert(COPILOT_NAMESPACE),
+            },
+        );
+    })
+    .detach();
+
     sign_in::init(cx);
 }
 
@@ -113,9 +125,12 @@ impl Copilot {
         // TODO: Don't eagerly download the LSP
         cx.spawn(|this, mut cx| async move {
             let start_language_server = async {
-                let server_path = get_lsp_binary(http).await?;
+                let server_path = get_copilot_lsp(http, node_runtime.clone()).await?;
+                let node_path = node_runtime.binary_path().await?;
+                let arguments: &[OsString] = &[server_path.into(), "--stdio".into()];
                 let server =
-                    LanguageServer::new(0, &server_path, &["--stdio"], Path::new("/"), cx.clone())?;
+                    LanguageServer::new(0, &node_path, arguments, Path::new("/"), cx.clone())?;
+
                 let server = server.initialize(Default::default()).await?;
                 let status = server
                     .request::<request::CheckStatus>(request::CheckStatusParams {
@@ -414,53 +429,61 @@ fn completion_from_lsp(completion: request::Completion, buffer: &BufferSnapshot)
     }
 }
 
-async fn get_lsp_binary(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
+async fn get_copilot_lsp(
+    http: Arc<dyn HttpClient>,
+    node: Arc<NodeRuntime>,
+) -> anyhow::Result<PathBuf> {
+    const SERVER_PATH: &'static str = "node_modules/copilot-node-server/copilot/dist/agent.js";
+
     ///Check for the latest copilot language server and download it if we haven't already
-    async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-        let release = latest_github_release("zed-industries/copilot", http.clone()).await?;
-        let asset_name = format!("copilot-darwin-{}.gz", consts::ARCH);
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+    async fn fetch_latest(
+        _http: Arc<dyn HttpClient>,
+        node: Arc<NodeRuntime>,
+    ) -> anyhow::Result<PathBuf> {
+        const COPILOT_NPM_PACKAGE: &'static str = "copilot-node-server";
 
-        fs::create_dir_all(&*paths::COPILOT_DIR).await?;
-        let destination_path =
-            paths::COPILOT_DIR.join(format!("copilot-{}-{}", release.name, consts::ARCH));
+        let release = node.npm_package_latest_version(COPILOT_NPM_PACKAGE).await?;
 
-        if fs::metadata(&destination_path).await.is_err() {
-            let mut response = http
-                .get(&asset.browser_download_url, Default::default(), true)
-                .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let mut file = fs::File::create(&destination_path).await?;
-            futures::io::copy(decompressed_bytes, &mut file).await?;
-            fs::set_permissions(
-                &destination_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
+        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.clone()));
 
-            remove_matching(&paths::COPILOT_DIR, |entry| entry != destination_path).await;
+        fs::create_dir_all(version_dir).await?;
+        let server_path = version_dir.join(SERVER_PATH);
+
+        if fs::metadata(&server_path).await.is_err() {
+            node.npm_install_packages([(COPILOT_NPM_PACKAGE, release.as_str())], version_dir)
+                .await?;
+
+            remove_matching(&paths::COPILOT_DIR, |entry| entry != version_dir).await;
         }
 
-        Ok(destination_path)
+        Ok(server_path)
     }
 
-    match fetch_latest(http).await {
+    match fetch_latest(http, node).await {
         ok @ Result::Ok(..) => ok,
         e @ Err(..) => {
             e.log_err();
             // Fetch a cached binary, if it exists
             (|| async move {
-                let mut last = None;
+                let mut last_version_dir = None;
                 let mut entries = fs::read_dir(paths::COPILOT_DIR.as_path()).await?;
                 while let Some(entry) = entries.next().await {
-                    last = Some(entry?.path());
+                    let entry = entry?;
+                    if entry.file_type().await?.is_dir() {
+                        last_version_dir = Some(entry.path());
+                    }
                 }
-                last.ok_or_else(|| anyhow!("no cached binary"))
+                let last_version_dir =
+                    last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+                let server_path = last_version_dir.join(SERVER_PATH);
+                if server_path.exists() {
+                    Ok(server_path)
+                } else {
+                    Err(anyhow!(
+                        "missing executable in directory {:?}",
+                        last_version_dir
+                    ))
+                }
             })()
             .await
         }

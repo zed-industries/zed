@@ -1,7 +1,7 @@
 use crate::{request::PromptUserDeviceFlow, Copilot};
 use gpui::{
-    elements::*, geometry::rect::RectF, impl_internal_actions, ClipboardItem, Element, Entity,
-    MutableAppContext, View, WindowKind, WindowOptions,
+    elements::*, geometry::rect::RectF, ClipboardItem, Element, Entity, MutableAppContext, View,
+    WindowKind, WindowOptions,
 };
 use settings::Settings;
 
@@ -10,8 +10,6 @@ struct CopyUserCode;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct OpenGithub;
-
-impl_internal_actions!(copilot_sign_in, [CopyUserCode, OpenGithub]);
 
 const _COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 

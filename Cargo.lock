@@ -1338,6 +1338,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "client",
+ "collections",
  "futures 0.3.25",
  "gpui",
  "language",

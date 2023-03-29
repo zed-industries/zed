@@ -9,6 +9,7 @@ path = "src/copilot.rs"
 doctest = false
 
 [dependencies]
+collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }

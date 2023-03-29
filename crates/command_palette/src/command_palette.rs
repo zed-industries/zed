@@ -1,4 +1,4 @@
-use collections::HashSet;
+use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -11,11 +11,6 @@ use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::cmp;
 use workspace::Workspace;
-
-#[derive(Default)]
-pub struct CommandPaletteFilter {
-    pub filtered_namespaces: HashSet<&'static str>,
-}
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CommandPalette::toggle);
