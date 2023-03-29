@@ -1603,6 +1603,10 @@ impl View for Pane {
     }
 
     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.pane_focus_update(true, cx);
+        });
+
         if let Some(active_item) = self.active_item() {
             if cx.is_self_focused() {
                 // Pane was focused directly. We need to either focus a view inside the active item,
@@ -1624,6 +1628,12 @@ impl View for Pane {
                     .insert(active_item.id(), focused.downgrade());
             }
         }
+    }
+
+    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.pane_focus_update(false, cx);
+        });
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
