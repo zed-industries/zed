@@ -227,7 +227,7 @@ impl TabSnapshot {
                 text: &SPACES[0..(to_next_stop as usize)],
                 ..Default::default()
             },
-            skip_leading_tab: to_next_stop > 0,
+            inside_leading_tab: to_next_stop > 0,
         }
     }
 
@@ -454,7 +454,7 @@ pub struct TabChunks<'a> {
     input_column: u32,
     max_output_position: Point,
     tab_size: NonZeroU32,
-    skip_leading_tab: bool,
+    inside_leading_tab: bool,
 }
 
 impl<'a> Iterator for TabChunks<'a> {
@@ -464,9 +464,9 @@ impl<'a> Iterator for TabChunks<'a> {
         if self.chunk.text.is_empty() {
             if let Some(chunk) = self.suggestion_chunks.next() {
                 self.chunk = chunk;
-                if self.skip_leading_tab {
+                if self.inside_leading_tab {
                     self.chunk.text = &self.chunk.text[1..];
-                    self.skip_leading_tab = false;
+                    self.inside_leading_tab = false;
                     self.input_column += 1;
                 }
             } else {
@@ -513,7 +513,7 @@ impl<'a> Iterator for TabChunks<'a> {
                 }
                 _ => {
                     self.column += 1;
-                    if !self.skip_leading_tab {
+                    if !self.inside_leading_tab {
                         self.input_column += c.len_utf8() as u32;
                     }
                     self.output_position.column += c.len_utf8() as u32;
