@@ -1,8 +1,8 @@
-use node_runtime::NodeRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use node_runtime::NodeRuntime;
 use smol::fs;
 use std::{
     any::Any,

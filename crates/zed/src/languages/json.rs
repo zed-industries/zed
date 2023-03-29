@@ -1,10 +1,10 @@
-use node_runtime::NodeRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::MutableAppContext;
 use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
+use node_runtime::NodeRuntime;
 use serde_json::json;
 use settings::{keymap_file_json_schema, settings_file_json_schema};
 use smol::fs;
