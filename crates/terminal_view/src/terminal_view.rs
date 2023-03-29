@@ -612,7 +612,7 @@ impl Item for TerminalView {
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
         Some(vec![Text::new(
             self.terminal().read(cx).breadcrumb_text.clone(),
-            theme.breadcrumbs.text.clone(),
+            theme.workspace.breadcrumbs.default.text.clone(),
         )
         .boxed()])
     }

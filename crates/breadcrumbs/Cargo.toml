@@ -18,6 +18,7 @@ search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
+outline = { path = "../outline" }
 itertools = "0.10"
 
 [dev-dependencies]

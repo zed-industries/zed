@@ -785,6 +785,7 @@ dependencies = [
  "gpui",
  "itertools",
  "language",
+ "outline",
  "project",
  "search",
  "settings",

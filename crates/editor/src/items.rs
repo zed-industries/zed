@@ -747,11 +747,15 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
-        let mut breadcrumbs = vec![Label::new(filename, theme.breadcrumbs.text.clone()).boxed()];
+        let filename_label = Label::new(filename, theme.workspace.breadcrumbs.default.text.clone());
+        let mut breadcrumbs = vec![filename_label.boxed()];
         breadcrumbs.extend(symbols.into_iter().map(|symbol| {
-            Text::new(symbol.text, theme.breadcrumbs.text.clone())
-                .with_highlights(symbol.highlight_ranges)
-                .boxed()
+            Text::new(
+                symbol.text,
+                theme.workspace.breadcrumbs.default.text.clone(),
+            )
+            .with_highlights(symbol.highlight_ranges)
+            .boxed()
         }));
         Some(breadcrumbs)
     }

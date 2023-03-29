@@ -20,6 +20,8 @@ pub trait ToolbarItemView: View {
     ) -> ToolbarItemLocation {
         current_location
     }
+
+    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut MutableAppContext) {}
 }
 
 trait ToolbarItemViewHandle {
@@ -30,6 +32,7 @@ trait ToolbarItemViewHandle {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut MutableAppContext,
     ) -> ToolbarItemLocation;
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -260,6 +263,12 @@ impl Toolbar {
         }
     }
 
+    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext) {
+        for (toolbar_item, _) in self.items.iter_mut() {
+            toolbar_item.pane_focus_update(pane_focused, cx);
+        }
+    }
+
     pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<ViewHandle<T>> {
         self.items
             .iter()
@@ -288,6 +297,10 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         })
+    }
+
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.pane_focus_update(pane_focused, cx));
     }
 }
 

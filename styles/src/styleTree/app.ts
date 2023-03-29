@@ -44,12 +44,6 @@ export default function app(colorScheme: ColorScheme): Object {
         contactList: contactList(colorScheme),
         search: search(colorScheme),
         sharedScreen: sharedScreen(colorScheme),
-        breadcrumbs: {
-            ...text(colorScheme.highest, "sans", "variant"),
-            padding: {
-                left: 6,
-            },
-        },
         updateNotification: updateNotification(colorScheme),
         simpleMessageNotification: simpleMessageNotification(colorScheme),
         tooltip: tooltip(colorScheme),
