@@ -55,17 +55,13 @@ pub struct HighlightedWorkspaceLocation {
 }
 
 impl HighlightedWorkspaceLocation {
-    pub fn new(
-        string_match: &StringMatch,
-        location: &WorkspaceLocation,
-        cx: &gpui::AppContext,
-    ) -> Self {
+    pub fn new(string_match: &StringMatch, location: &WorkspaceLocation) -> Self {
         let mut path_start_offset = 0;
         let (names, paths): (Vec<_>, Vec<_>) = location
             .paths()
             .iter()
             .map(|path| {
-                let full_path = cx.platform().convert_to_shortened_path(&path);
+                let full_path = util::paths::compact(&path);
                 let highlighted_text = Self::highlights_for_path(
                     full_path.as_ref(),
                     &string_match.positions,
