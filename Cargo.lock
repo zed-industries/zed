@@ -1339,6 +1339,7 @@ dependencies = [
  "async-compression",
  "client",
  "collections",
+ "context_menu",
  "futures 0.3.25",
  "gpui",
  "language",

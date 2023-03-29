@@ -390,6 +390,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
     cx.add_action(Editor::next_copilot_suggestion);
+    cx.add_action(Editor::previous_copilot_suggestion);
+    cx.add_action(Editor::toggle_copilot_suggestions);
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
@@ -1011,6 +1013,7 @@ struct CopilotState {
     pending_refresh: Task<Option<()>>,
     completions: Vec<copilot::Completion>,
     active_completion_index: usize,
+    user_enabled: Option<bool>,
 }
 
 impl Default for CopilotState {
@@ -1020,6 +1023,7 @@ impl Default for CopilotState {
             pending_refresh: Task::ready(Some(())),
             completions: Default::default(),
             active_completion_index: 0,
+            user_enabled: None,
         }
     }
 }
@@ -2745,12 +2749,40 @@ impl Editor {
 
     fn refresh_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let copilot = Copilot::global(cx)?;
+
         if self.mode != EditorMode::Full {
+            return None;
+        }
+
+        let settings = cx.global::<Settings>();
+
+        dbg!(self.copilot_state.user_enabled);
+
+        if !self
+            .copilot_state
+            .user_enabled
+            .unwrap_or_else(|| settings.copilot_on(None))
+        {
             return None;
         }
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest_anchor();
+
+        if !self.copilot_state.user_enabled.is_some() {
+            let language_name = snapshot
+                .language_at(selection.start)
+                .map(|language| language.name());
+
+            let copilot_enabled = settings.copilot_on(language_name.as_deref());
+
+            dbg!(language_name, copilot_enabled);
+
+            if !copilot_enabled {
+                return None;
+            }
+        }
+
         let cursor = if selection.start == selection.end {
             selection.start.bias_left(&snapshot)
         } else {
@@ -2829,16 +2861,76 @@ impl Editor {
     }
 
     fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
+        // Auto re-enable copilot if you're asking for a suggestion
+        if self.copilot_state.user_enabled == Some(false) {
+            self.copilot_state.user_enabled = Some(true);
+        }
+
         if self.copilot_state.completions.is_empty() {
             self.refresh_copilot_suggestions(cx);
             return;
         }
 
+        self.copilot_state.active_completion_index =
+            (self.copilot_state.active_completion_index + 1) % self.copilot_state.completions.len();
+
+        self.sync_suggestion(cx);
+    }
+
+    fn previous_copilot_suggestion(
+        &mut self,
+        _: &copilot::PreviousSuggestion,
+        cx: &mut ViewContext<Self>,
+    ) {
+        // Auto re-enable copilot if you're asking for a suggestion
+        if self.copilot_state.user_enabled == Some(false) {
+            self.copilot_state.user_enabled = Some(true);
+        }
+
+        if self.copilot_state.completions.is_empty() {
+            self.refresh_copilot_suggestions(cx);
+            return;
+        }
+
+        self.copilot_state.active_completion_index =
+            if self.copilot_state.active_completion_index == 0 {
+                self.copilot_state.completions.len() - 1
+            } else {
+                self.copilot_state.active_completion_index - 1
+            };
+
+        self.sync_suggestion(cx);
+    }
+
+    fn toggle_copilot_suggestions(&mut self, _: &copilot::Toggle, cx: &mut ViewContext<Self>) {
+        self.copilot_state.user_enabled = match self.copilot_state.user_enabled {
+            Some(enabled) => Some(!enabled),
+            None => {
+                let selection = self.selections.newest_anchor().start;
+
+                let language_name = self
+                    .snapshot(cx)
+                    .language_at(selection)
+                    .map(|language| language.name());
+
+                let copilot_enabled = cx.global::<Settings>().copilot_on(language_name.as_deref());
+
+                Some(!copilot_enabled)
+            }
+        };
+
+        // We know this can't be None, as we just set it to Some above
+        if self.copilot_state.user_enabled == Some(true) {
+            self.refresh_copilot_suggestions(cx);
+        } else {
+            self.clear_copilot_suggestions(cx);
+        }
+    }
+
+    fn sync_suggestion(&mut self, cx: &mut ViewContext<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
 
-        self.copilot_state.active_completion_index =
-            (self.copilot_state.active_completion_index + 1) % self.copilot_state.completions.len();
         if let Some(text) = self
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)

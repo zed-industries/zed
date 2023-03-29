@@ -32,6 +32,7 @@ pub struct Settings {
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
+    pub enable_copilot_integration: bool,
     pub buffer_font_size: f32,
     pub active_pane_magnification: f32,
     pub cursor_blink: bool,
@@ -58,10 +59,10 @@ pub struct Settings {
     pub telemetry_overrides: TelemetrySettings,
     pub auto_update: bool,
     pub base_keymap: BaseKeymap,
-    pub copilot: CopilotSettings,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum CopilotSettings {
     #[default]
     On,
@@ -78,7 +79,7 @@ impl From<CopilotSettings> for bool {
 }
 
 impl CopilotSettings {
-    pub fn as_bool(&self) -> bool {
+    pub fn is_on(&self) -> bool {
         <CopilotSettings as Into<bool>>::into(*self)
     }
 }
@@ -176,6 +177,29 @@ pub struct EditorSettings {
     pub ensure_final_newline_on_save: Option<bool>,
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
+    pub copilot: Option<OnOff>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OnOff {
+    On,
+    Off,
+}
+
+impl OnOff {
+    fn as_bool(&self) -> bool {
+        match self {
+            OnOff::On => true,
+            OnOff::Off => false,
+        }
+    }
+}
+
+impl Into<bool> for OnOff {
+    fn into(self) -> bool {
+        self.as_bool()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -399,7 +423,7 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
     #[serde(default)]
-    pub copilot: Option<CopilotSettings>,
+    pub enable_copilot_integration: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -461,6 +485,7 @@ impl Settings {
                 format_on_save: required(defaults.editor.format_on_save),
                 formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
+                copilot: required(defaults.editor.copilot),
             },
             editor_overrides: Default::default(),
             git: defaults.git.unwrap(),
@@ -477,7 +502,7 @@ impl Settings {
             telemetry_overrides: Default::default(),
             auto_update: defaults.auto_update.unwrap(),
             base_keymap: Default::default(),
-            copilot: Default::default(),
+            enable_copilot_integration: defaults.enable_copilot_integration.unwrap(),
         }
     }
 
@@ -529,7 +554,6 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
-        merge(&mut self.copilot, data.copilot);
 
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
@@ -551,6 +575,14 @@ impl Settings {
         self.language_defaults
             .insert(language_name.into(), overrides);
         self
+    }
+
+    pub fn copilot_on(&self, language: Option<&str>) -> bool {
+        if self.enable_copilot_integration {
+            self.language_setting(language, |settings| settings.copilot.map(Into::into))
+        } else {
+            false
+        }
     }
 
     pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
@@ -689,6 +721,7 @@ impl Settings {
                 format_on_save: Some(FormatOnSave::On),
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
+                copilot: Some(OnOff::On),
             },
             editor_overrides: Default::default(),
             journal_defaults: Default::default(),
@@ -708,7 +741,7 @@ impl Settings {
             telemetry_overrides: Default::default(),
             auto_update: true,
             base_keymap: Default::default(),
-            copilot: Default::default(),
+            enable_copilot_integration: true,
         }
     }
 

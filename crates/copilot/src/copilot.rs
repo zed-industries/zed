@@ -1,3 +1,4 @@
+pub mod copilot_button;
 mod request;
 mod sign_in;
 
@@ -24,7 +25,7 @@ const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
 
 const COPILOT_NAMESPACE: &'static str = "copilot";
-actions!(copilot, [NextSuggestion]);
+actions!(copilot, [NextSuggestion, PreviousSuggestion, Toggle]);
 
 pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), node_runtime, cx));
@@ -67,9 +68,11 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
 }
 
 enum CopilotServer {
-    Downloading,
-    Error(Arc<str>),
     Disabled,
+    Starting {
+        _task: Shared<Task<()>>,
+    },
+    Error(Arc<str>),
     Started {
         server: Arc<LanguageServer>,
         status: SignInStatus,
@@ -93,7 +96,7 @@ enum SignInStatus {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Status {
-    Downloading,
+    Starting,
     Error(Arc<str>),
     Disabled,
     SignedOut,
@@ -138,45 +141,46 @@ impl Copilot {
         node_runtime: Arc<NodeRuntime>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        // TODO: Make this task resilient to users thrashing the copilot setting
         cx.observe_global::<Settings, _>({
             let http = http.clone();
             let node_runtime = node_runtime.clone();
             move |this, cx| {
-                if cx.global::<Settings>().copilot.as_bool() {
+                if cx.global::<Settings>().enable_copilot_integration {
                     if matches!(this.server, CopilotServer::Disabled) {
-                        cx.spawn({
-                            let http = http.clone();
-                            let node_runtime = node_runtime.clone();
-                            move |this, cx| {
-                                Self::start_language_server(http, node_runtime, this, cx)
-                            }
-                        })
-                        .detach();
+                        let start_task = cx
+                            .spawn({
+                                let http = http.clone();
+                                let node_runtime = node_runtime.clone();
+                                move |this, cx| {
+                                    Self::start_language_server(http, node_runtime, this, cx)
+                                }
+                            })
+                            .shared();
+                        this.server = CopilotServer::Starting { _task: start_task }
                     }
                 } else {
-                    // TODO: What else needs to be turned off here?
                     this.server = CopilotServer::Disabled
                 }
             }
         })
         .detach();
 
-        if !cx.global::<Settings>().copilot.as_bool() {
-            return Self {
+        if cx.global::<Settings>().enable_copilot_integration {
+            let start_task = cx
+                .spawn({
+                    let http = http.clone();
+                    let node_runtime = node_runtime.clone();
+                    move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
+                })
+                .shared();
+
+            Self {
+                server: CopilotServer::Starting { _task: start_task },
+            }
+        } else {
+            Self {
                 server: CopilotServer::Disabled,
-            };
-        }
-
-        cx.spawn({
-            let http = http.clone();
-            let node_runtime = node_runtime.clone();
-            move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
-        })
-        .detach();
-
-        Self {
-            server: CopilotServer::Downloading,
+            }
         }
     }
 
@@ -216,6 +220,7 @@ impl Copilot {
                     }
                     Err(error) => {
                         this.server = CopilotServer::Error(error.to_string().into());
+                        cx.notify()
                     }
                 }
             })
@@ -226,11 +231,10 @@ impl Copilot {
         if let CopilotServer::Started { server, status } = &mut self.server {
             let task = match status {
                 SignInStatus::Authorized { .. } | SignInStatus::Unauthorized { .. } => {
-                    cx.notify();
                     Task::ready(Ok(())).shared()
                 }
                 SignInStatus::SigningIn { task, .. } => {
-                    cx.notify(); // To re-show the prompt, just in case.
+                    cx.notify();
                     task.clone()
                 }
                 SignInStatus::SignedOut => {
@@ -382,7 +386,7 @@ impl Copilot {
 
     pub fn status(&self) -> Status {
         match &self.server {
-            CopilotServer::Downloading => Status::Downloading,
+            CopilotServer::Starting { .. } => Status::Starting,
             CopilotServer::Disabled => Status::Disabled,
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Started { status, .. } => match status {
@@ -403,13 +407,15 @@ impl Copilot {
     ) {
         if let CopilotServer::Started { status, .. } = &mut self.server {
             *status = match lsp_status {
-                request::SignInStatus::Ok { user } | request::SignInStatus::MaybeOk { user } => {
+                request::SignInStatus::Ok { user }
+                | request::SignInStatus::MaybeOk { user }
+                | request::SignInStatus::AlreadySignedIn { user } => {
                     SignInStatus::Authorized { _user: user }
                 }
                 request::SignInStatus::NotAuthorized { user } => {
                     SignInStatus::Unauthorized { _user: user }
                 }
-                _ => SignInStatus::SignedOut,
+                request::SignInStatus::NotSignedIn => SignInStatus::SignedOut,
             };
             cx.notify();
         }
@@ -417,7 +423,7 @@ impl Copilot {
 
     fn authorized_server(&self) -> Result<Arc<LanguageServer>> {
         match &self.server {
-            CopilotServer::Downloading => Err(anyhow!("copilot is still downloading")),
+            CopilotServer::Starting { .. } => Err(anyhow!("copilot is still starting")),
             CopilotServer::Disabled => Err(anyhow!("copilot is disabled")),
             CopilotServer::Error(error) => Err(anyhow!(
                 "copilot was not started because of an error: {}",
