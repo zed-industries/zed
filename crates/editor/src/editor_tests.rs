@@ -630,7 +630,7 @@ fn test_cancel(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_fold(cx: &mut gpui::MutableAppContext) {
+fn test_fold_action(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(
         &"

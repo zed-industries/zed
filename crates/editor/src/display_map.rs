@@ -19,7 +19,7 @@ use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 pub use suggestion_map::Suggestion;
 use suggestion_map::SuggestionMap;
 use sum_tree::{Bias, TreeMap};
-use tab_map::{TabMap, TabSnapshot};
+use tab_map::TabMap;
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -634,25 +634,21 @@ impl DisplaySnapshot {
             .buffer_snapshot
             .buffer_line_for_row(buffer_row)
             .unwrap();
-        let chars = buffer.chars_at(Point::new(range.start.row, 0));
 
+        let mut indent_size = 0;
         let mut is_blank = false;
-        let indent_size = TabSnapshot::expand_tabs(
-            chars.take_while(|c| {
-                if *c == ' ' || *c == '\t' {
-                    true
-                } else {
-                    if *c == '\n' {
-                        is_blank = true;
-                    }
-                    false
+        for c in buffer.chars_at(Point::new(range.start.row, 0)) {
+            if c == ' ' || c == '\t' {
+                indent_size += 1;
+            } else {
+                if c == '\n' {
+                    is_blank = true;
                 }
-            }),
-            buffer.line_len(buffer_row) as usize, // Never collapse
-            self.tab_snapshot.tab_size,
-        );
+                break;
+            }
+        }
 
-        (indent_size as u32, is_blank)
+        (indent_size, is_blank)
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
