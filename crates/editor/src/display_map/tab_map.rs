@@ -467,6 +467,7 @@ impl<'a> Iterator for TabChunks<'a> {
                 if self.skip_leading_tab {
                     self.chunk.text = &self.chunk.text[1..];
                     self.skip_leading_tab = false;
+                    self.input_column += 1;
                 }
             } else {
                 return None;
@@ -500,7 +501,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         self.input_column += 1;
                         self.output_position = next_output_position;
                         return Some(Chunk {
-                            text: &SPACES[0..len as usize],
+                            text: &SPACES[..len as usize],
                             ..self.chunk
                         });
                     }
@@ -512,7 +513,9 @@ impl<'a> Iterator for TabChunks<'a> {
                 }
                 _ => {
                     self.column += 1;
-                    self.input_column += c.len_utf8() as u32;
+                    if !self.skip_leading_tab {
+                        self.input_column += c.len_utf8() as u32;
+                    }
                     self.output_position.column += c.len_utf8() as u32;
                 }
             }
@@ -659,11 +662,11 @@ mod tests {
                 .collect::<String>();
             let expected_summary = TextSummary::from(expected_text.as_str());
             assert_eq!(
-                expected_text,
                 tabs_snapshot
                     .chunks(start..end, false, None)
                     .map(|c| c.text)
                     .collect::<String>(),
+                expected_text,
                 "chunks({:?}..{:?})",
                 start,
                 end
