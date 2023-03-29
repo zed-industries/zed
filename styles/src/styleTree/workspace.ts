@@ -276,9 +276,22 @@ export default function workspace(colorScheme: ColorScheme) {
             },
             padding: { left: 8, right: 8, top: 4, bottom: 4 },
         },
+        breadcrumbHeight: 24,
         breadcrumbs: {
-            ...text(layer, "mono", "variant"),
-            padding: { left: 6 },
+            ...text(colorScheme.highest, "sans", "variant"),
+            cornerRadius: 6,
+            padding: {
+                left: 6,
+                right: 6,
+            },
+            hover: {
+                color: foreground(colorScheme.highest, "on", "hovered"),
+                background: background(
+                    colorScheme.highest,
+                    "on",
+                    "hovered"
+                ),
+            },
         },
         disconnectedOverlay: {
             ...text(layer, "sans"),
