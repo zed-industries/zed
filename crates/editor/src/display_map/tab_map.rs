@@ -51,38 +51,41 @@ impl TabMap {
         let mut tab_edits = Vec::with_capacity(suggestion_edits.len());
 
         if old_snapshot.tab_size == new_snapshot.tab_size {
+            // Expand each edit to include the next tab on the same line as the edit,
+            // and any subsequent tabs on that line that moved across the tab expansion
+            // boundary.
             for suggestion_edit in &mut suggestion_edits {
-                let mut old_column = old_snapshot
+                let old_end_column = old_snapshot
                     .suggestion_snapshot
                     .to_point(suggestion_edit.old.end)
                     .column();
-                let mut new_column = new_snapshot
+                let new_end_column = new_snapshot
                     .suggestion_snapshot
                     .to_point(suggestion_edit.new.end)
                     .column();
 
-                let mut delta = 0;
-                let mut first_tab_ix = None;
-                let mut last_tab_ix_with_changed_expansion = None;
+                let mut offset_from_edit = 0;
+                let mut first_tab_offset = None;
+                let mut last_tab_with_changed_expansion_offset = None;
                 'outer: for chunk in old_snapshot.suggestion_snapshot.chunks(
                     suggestion_edit.old.end..old_max_offset,
                     false,
                     None,
                 ) {
-                    let patterns: &[_] = &['\t', '\n'];
-                    for (ix, mat) in chunk.text.match_indices(patterns) {
+                    for (ix, mat) in chunk.text.match_indices(&['\t', '\n']) {
+                        let offset_from_edit = offset_from_edit + (ix as u32);
                         match mat {
                             "\t" => {
-                                if first_tab_ix.is_none() {
-                                    first_tab_ix = Some(delta + ix);
+                                if first_tab_offset.is_none() {
+                                    first_tab_offset = Some(offset_from_edit);
                                 }
 
-                                let old_column = old_column + ix as u32;
-                                let new_column = new_column + ix as u32;
+                                let old_column = old_end_column + offset_from_edit;
+                                let new_column = new_end_column + offset_from_edit;
                                 let was_expanded = old_column < old_snapshot.max_expansion_column;
                                 let is_expanded = new_column < new_snapshot.max_expansion_column;
                                 if was_expanded != is_expanded {
-                                    last_tab_ix_with_changed_expansion = Some(delta + ix);
+                                    last_tab_with_changed_expansion_offset = Some(offset_from_edit);
                                 } else if !was_expanded && !is_expanded {
                                     break 'outer;
                                 }
@@ -92,22 +95,21 @@ impl TabMap {
                         }
                     }
 
-                    delta += chunk.text.len();
-                    old_column += chunk.text.len() as u32;
-                    new_column += chunk.text.len() as u32;
-                    if old_column >= old_snapshot.max_expansion_column
-                        && new_column >= new_snapshot.max_expansion_column
+                    offset_from_edit += chunk.text.len() as u32;
+                    if old_end_column + offset_from_edit >= old_snapshot.max_expansion_column
+                        && new_end_column | offset_from_edit >= new_snapshot.max_expansion_column
                     {
                         break;
                     }
                 }
 
-                if let Some(tab_ix) = last_tab_ix_with_changed_expansion.or(first_tab_ix) {
-                    suggestion_edit.old.end.0 += tab_ix + 1;
-                    suggestion_edit.new.end.0 += tab_ix + 1;
+                if let Some(offset) = last_tab_with_changed_expansion_offset.or(first_tab_offset) {
+                    suggestion_edit.old.end.0 += offset as usize + 1;
+                    suggestion_edit.new.end.0 += offset as usize + 1;
                 }
             }
 
+            // Combine any edits that overlap due to the expansion.
             let mut ix = 1;
             while ix < suggestion_edits.len() {
                 let (prev_edits, next_edits) = suggestion_edits.split_at_mut(ix);
