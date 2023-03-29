@@ -52,6 +52,28 @@ impl TabMap {
 
         if old_snapshot.tab_size == new_snapshot.tab_size {
             for suggestion_edit in &mut suggestion_edits {
+                let old_end = old_snapshot
+                    .suggestion_snapshot
+                    .to_point(suggestion_edit.old.end);
+                let old_end_row_len = old_snapshot.suggestion_snapshot.line_len(old_end.row());
+                let old_end_row_exceeds_max_expansion =
+                    old_end_row_len > old_snapshot.max_expansion_column;
+                let new_end = new_snapshot
+                    .suggestion_snapshot
+                    .to_point(suggestion_edit.new.end);
+                let new_end_row_len = new_snapshot.suggestion_snapshot.line_len(new_end.row());
+                let new_end_row_exceeds_max_expansion =
+                    new_end_row_len > new_snapshot.max_expansion_column;
+                if old_end_row_exceeds_max_expansion || new_end_row_exceeds_max_expansion {
+                    suggestion_edit.old.end = old_snapshot
+                        .suggestion_snapshot
+                        .to_offset(SuggestionPoint::new(old_end.row(), old_end_row_len));
+                    suggestion_edit.new.end = new_snapshot
+                        .suggestion_snapshot
+                        .to_offset(SuggestionPoint::new(new_end.row(), new_end_row_len));
+                    continue;
+                }
+
                 let mut delta = 0;
                 for chunk in old_snapshot.suggestion_snapshot.chunks(
                     suggestion_edit.old.end..old_max_offset,
