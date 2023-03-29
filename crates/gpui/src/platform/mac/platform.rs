@@ -674,18 +674,6 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn convert_to_shortened_path(&self, path: &Path) -> PathBuf {
-        match path.strip_prefix(util::paths::HOME.as_path()) {
-            Ok(relative_path) => {
-                let mut shortened_path = PathBuf::new();
-                shortened_path.push("~");
-                shortened_path.push(relative_path);
-                shortened_path
-            }
-            Err(_) => path.to_path_buf(),
-        }
-    }
-
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
         let url = CFString::from(url);
         let username = CFString::from(username);
@@ -1124,24 +1112,5 @@ mod tests {
         let mut platform = MacPlatform::new();
         platform.pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
         platform
-    }
-
-    #[test]
-    fn test_convert_to_shortened_path() {
-        let platform = build_platform();
-
-        let full_path: PathBuf = [
-            util::paths::HOME.to_string_lossy().to_string(),
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ]
-        .iter()
-        .collect();
-
-        let shortened_path_actual = platform.convert_to_shortened_path(&full_path);
-        let shortened_path_expected = PathBuf::from("~/a/b/c");
-
-        assert_eq!(shortened_path_actual, shortened_path_expected);
     }
 }

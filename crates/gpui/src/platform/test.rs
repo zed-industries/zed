@@ -175,10 +175,6 @@ impl super::Platform for Platform {
 
     fn open_url(&self, _: &str) {}
 
-    fn convert_to_shortened_path(&self, _path: &Path) -> PathBuf {
-        PathBuf::new()
-    }
-
     fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Result<()> {
         Ok(())
     }
