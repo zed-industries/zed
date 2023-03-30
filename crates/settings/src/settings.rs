@@ -21,7 +21,7 @@ use sqlez::{
 use std::{collections::HashMap, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use tree_sitter::Query;
-use util::ResultExt as _;
+use util::{RangeExt, ResultExt as _};
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub use watched_json::watch_files;
@@ -865,6 +865,7 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
     .unwrap();
 
     let mut depth = 0;
+    let mut last_value_range = 0..0;
     let mut first_key_start = None;
     let mut existing_value_range = 0..settings_content.len();
     let matches = cursor.matches(&query, tree.root_node(), settings_content.as_bytes());
@@ -875,6 +876,14 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
 
         let key_range = mat.captures[0].node.byte_range();
         let value_range = mat.captures[1].node.byte_range();
+
+        // Don't enter sub objects until we find an exact
+        // match for the current keypath
+        if last_value_range.contains_inclusive(&value_range) {
+            continue;
+        }
+
+        last_value_range = value_range.clone();
 
         if key_range.start > existing_value_range.end {
             break;
@@ -889,6 +898,8 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
 
         if found_key {
             existing_value_range = value_range;
+            // Reset last value range when increasing in depth
+            last_value_range = existing_value_range.start..existing_value_range.start;
             depth += 1;
 
             if depth == key_path.len() {
@@ -930,7 +941,8 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
             }
 
             if row > 0 {
-                let new_val = to_pretty_json(&new_value, column, column);
+                // depth is 0 based, but division needs to be 1 based.
+                let new_val = to_pretty_json(&new_value, column / (depth + 1), column);
                 let content = format!(r#""{new_key}": {new_val},"#);
                 settings_content.insert_str(first_key_start, &content);
 
