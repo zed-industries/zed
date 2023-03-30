@@ -3,7 +3,11 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use theme;
+use workspace::{
+    item::{Item, ItemHandle},
+    StatusItemView, Workspace,
+};
 
 actions!(assisltant, [DeployAssistant]);
 
@@ -29,8 +33,20 @@ impl View for Assistant {
         "Assistant"
     }
 
-    fn render(&mut self, _: &mut RenderContext<'_, Self>) -> ElementBox {
-        Empty::new().boxed()
+    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+        let style = &cx.global::<Settings>().theme.assistant;
+        Label::new("HELLO CHAT GPT", style.text.clone()).boxed()
+    }
+}
+
+impl Item for Assistant {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        style: &theme::Tab,
+        _: &gpui::AppContext,
+    ) -> ElementBox {
+        Label::new("Assistant", style.label.clone()).boxed()
     }
 }
 
@@ -45,9 +61,20 @@ impl AssistantButton {
     fn deploy_assistant(&mut self, _: &DeployAssistant, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
             workspace.update(cx, |workspace, cx| {
-                let dock = workspace
-                    .dock_pane()
-                    .update(cx, |dock, cx| dock.set_active(true, cx));
+                let assistant = workspace.items_of_type::<Assistant>(cx).next();
+                if let Some(assistant) = assistant {
+                    workspace.activate_item(&assistant, cx);
+                } else {
+                    workspace.show_dock(true, cx);
+                    let assistant = cx.add_view(|_| Assistant {});
+                    workspace.add_item_to_dock(Box::new(assistant.clone()), cx);
+                }
+
+                // let dock = workspace
+                //     .dock_pane()
+                //     .update(cx, |dock, cx| dock.item);
+
+                // cx.dispatch_action(FocusDock);
 
                 // workspace.op
                 // dock.update(cx, |dock, cx| {
@@ -80,7 +107,7 @@ impl View for AssistantButton {
                         .item
                         .style_for(state, active);
 
-                    Svg::new("icons/speech_bubble_12.svg")
+                    Svg::new("icons/assistant_12.svg")
                         .with_color(style.icon_color)
                         .constrained()
                         .with_width(style.icon_size)
@@ -94,9 +121,7 @@ impl View for AssistantButton {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    if !active {
-                        cx.dispatch_action(DeployAssistant)
-                    }
+                    cx.dispatch_action(DeployAssistant)
                 })
                 .with_tooltip::<Self, _>(
                     0,

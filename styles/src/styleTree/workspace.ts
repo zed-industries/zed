@@ -1,5 +1,6 @@
 import { ColorScheme } from "../themes/common/colorScheme"
 import { withOpacity } from "../utils/color"
+import { assistant } from "./assistant"
 import { background, border, borderColor, foreground, text } from "./components"
 import statusBar from "./statusBar"
 import tabBar from "./tabBar"

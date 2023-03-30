@@ -21,6 +21,7 @@ import incomingCallNotification from "./incomingCallNotification"
 import { ColorScheme } from "../themes/common/colorScheme"
 import feedback from "./feedback"
 import welcome from "./welcome"
+import { assistant } from "./assistant"
 
 export default function app(colorScheme: ColorScheme): Object {
     return {
@@ -28,6 +29,7 @@ export default function app(colorScheme: ColorScheme): Object {
             name: colorScheme.name,
             isLight: colorScheme.isLight,
         },
+        assistant: assistant(colorScheme),
         commandPalette: commandPalette(colorScheme),
         contactNotification: contactNotification(colorScheme),
         projectSharedNotification: projectSharedNotification(colorScheme),

@@ -40,6 +40,7 @@ pub struct Theme {
     pub terminal: TerminalStyle,
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
+    pub assistant: AssistantStyle,
     pub color_scheme: ColorScheme,
 }
 
@@ -878,6 +879,11 @@ pub struct WelcomeStyle {
     pub button_group: ContainerStyle,
     pub heading_group: ContainerStyle,
     pub checkbox_group: ContainerStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AssistantStyle {
+    pub text: TextStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

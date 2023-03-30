@@ -931,6 +931,10 @@ impl Workspace {
         self.weak_self.clone()
     }
 
+    pub fn show_dock(&mut self, focus: bool, cx: &mut ViewContext<Self>) {
+        Dock::show(self, focus, cx);
+    }
+
     pub fn left_sidebar(&self) -> &ViewHandle<Sidebar> {
         &self.left_sidebar
     }
@@ -1485,6 +1489,11 @@ impl Workspace {
         } else {
             false
         }
+    }
+
+    pub fn add_item_to_dock(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        let dock_pane = self.dock_pane().clone();
+        Pane::add_item(self, &dock_pane, item, true, true, None, cx);
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
