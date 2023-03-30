@@ -97,7 +97,7 @@ impl TabMap {
 
                     offset_from_edit += chunk.text.len() as u32;
                     if old_end_column + offset_from_edit >= old_snapshot.max_expansion_column
-                        && new_end_column | offset_from_edit >= new_snapshot.max_expansion_column
+                        && new_end_column + offset_from_edit >= new_snapshot.max_expansion_column
                     {
                         break;
                     }
