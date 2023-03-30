@@ -11,7 +11,7 @@ use workspace::{
     item::ItemHandle, notifications::simple_message_notification::OsOpen, StatusItemView,
 };
 
-use copilot::{Copilot, SignOut, Status};
+use copilot::{Copilot, SignIn, SignOut, Status};
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -140,7 +140,7 @@ impl View for CopilotButton {
                     if authorized {
                         cx.dispatch_action(DeployCopilotMenu);
                     } else {
-                        cx.dispatch_action(DeployCopilotModal);
+                        cx.dispatch_action(SignIn);
                     }
                 })
                 .with_tooltip::<Self, _>(

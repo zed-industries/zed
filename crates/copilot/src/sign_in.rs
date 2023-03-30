@@ -66,6 +66,7 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 
     // Modal theming test:
+    // use gpui::geometry::vector::vec2f;
     // let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
     // let window_options = WindowOptions {
     //     bounds: gpui::WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
@@ -326,52 +327,17 @@ impl CopilotCodeVerification {
                         .aligned()
                         .boxed(),
                     Self::render_device_code(data, &style, cx),
-                    // match &self.prompt {
-                    //     SignInContents::PromptingUser(data) => {
-
-                    //     }
-                    //     SignInContents::Unauthorized => Self::render_not_authorized_warning(&style),
-                    //     SignInContents::Enabled => Self::render_copilot_enabled(&style),
-                    // },
                     Flex::column()
-                        .with_child(
-                            theme::ui::cta_button_with_click(
-                                "Connect to GitHub",
-                                style.auth.content_width,
-                                &style.auth.cta_button,
-                                cx,
-                                {
-                                    let verification_uri = data.verification_uri.clone();
-                                    move |_, cx| cx.platform().open_url(&verification_uri)
-                                },
-                            ),
-                            // {
-                            // match &self.prompt {
-                            //     SignInContents::PromptingUser(data) => {
-
-                            //     }
-                            //     // SignInContents::Unauthorized => theme::ui::cta_button_with_click(
-                            //     //     "Close",
-                            //     //     style.auth.content_width,
-                            //     //     &style.auth.cta_button,
-                            //     //     cx,
-                            //     //     |_, cx| {
-                            //     //         let window_id = cx.window_id();
-                            //     //         cx.remove_window(window_id)
-                            //     //     },
-                            //     // ),
-                            //     // SignInContents::Enabled => theme::ui::cta_button_with_click(
-                            //     //     "Done",
-                            //     //     style.auth.content_width,
-                            //     //     &style.auth.cta_button,
-                            //     //     cx,
-                            //     //     |_, cx| {
-                            //     //         let window_id = cx.window_id();
-                            //     //         cx.remove_window(window_id)
-                            //     //     },
-                            //     // ),
-                            // }
-                        )
+                        .with_child(theme::ui::cta_button_with_click(
+                            "Connect to GitHub",
+                            style.auth.content_width,
+                            &style.auth.cta_button,
+                            cx,
+                            {
+                                let verification_uri = data.verification_uri.clone();
+                                move |_, cx| cx.platform().open_url(&verification_uri)
+                            },
+                        ))
                         .align_children_center()
                         .contained()
                         .with_style(style.auth.github_group)

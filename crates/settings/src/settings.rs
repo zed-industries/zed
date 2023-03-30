@@ -567,6 +567,10 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
+        merge(
+            &mut self.enable_copilot_integration,
+            data.enable_copilot_integration,
+        );
 
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
