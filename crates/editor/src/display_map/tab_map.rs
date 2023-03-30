@@ -47,7 +47,6 @@ impl TabMap {
             new_snapshot.version += 1;
         }
 
-        let old_max_offset = old_snapshot.suggestion_snapshot.len();
         let mut tab_edits = Vec::with_capacity(suggestion_edits.len());
 
         if old_snapshot.tab_size == new_snapshot.tab_size {
@@ -55,49 +54,46 @@ impl TabMap {
             // and any subsequent tabs on that line that moved across the tab expansion
             // boundary.
             for suggestion_edit in &mut suggestion_edits {
-                let old_end_column = old_snapshot
+                let old_end = old_snapshot
                     .suggestion_snapshot
-                    .to_point(suggestion_edit.old.end)
-                    .column();
-                let new_end_column = new_snapshot
+                    .to_point(suggestion_edit.old.end);
+                let old_end_row_successor_offset =
+                    old_snapshot.suggestion_snapshot.to_offset(cmp::min(
+                        SuggestionPoint::new(old_end.row() + 1, 0),
+                        old_snapshot.suggestion_snapshot.max_point(),
+                    ));
+                let new_end = new_snapshot
                     .suggestion_snapshot
-                    .to_point(suggestion_edit.new.end)
-                    .column();
+                    .to_point(suggestion_edit.new.end);
 
                 let mut offset_from_edit = 0;
                 let mut first_tab_offset = None;
                 let mut last_tab_with_changed_expansion_offset = None;
                 'outer: for chunk in old_snapshot.suggestion_snapshot.chunks(
-                    suggestion_edit.old.end..old_max_offset,
+                    suggestion_edit.old.end..old_end_row_successor_offset,
                     false,
                     None,
                 ) {
-                    for (ix, mat) in chunk.text.match_indices(&['\t', '\n']) {
+                    for (ix, _) in chunk.text.match_indices('\t') {
                         let offset_from_edit = offset_from_edit + (ix as u32);
-                        match mat {
-                            "\t" => {
-                                if first_tab_offset.is_none() {
-                                    first_tab_offset = Some(offset_from_edit);
-                                }
+                        if first_tab_offset.is_none() {
+                            first_tab_offset = Some(offset_from_edit);
+                        }
 
-                                let old_column = old_end_column + offset_from_edit;
-                                let new_column = new_end_column + offset_from_edit;
-                                let was_expanded = old_column < old_snapshot.max_expansion_column;
-                                let is_expanded = new_column < new_snapshot.max_expansion_column;
-                                if was_expanded != is_expanded {
-                                    last_tab_with_changed_expansion_offset = Some(offset_from_edit);
-                                } else if !was_expanded && !is_expanded {
-                                    break 'outer;
-                                }
-                            }
-                            "\n" => break 'outer,
-                            _ => unreachable!(),
+                        let old_column = old_end.column() + offset_from_edit;
+                        let new_column = new_end.column() + offset_from_edit;
+                        let was_expanded = old_column < old_snapshot.max_expansion_column;
+                        let is_expanded = new_column < new_snapshot.max_expansion_column;
+                        if was_expanded != is_expanded {
+                            last_tab_with_changed_expansion_offset = Some(offset_from_edit);
+                        } else if !was_expanded && !is_expanded {
+                            break 'outer;
                         }
                     }
 
                     offset_from_edit += chunk.text.len() as u32;
-                    if old_end_column + offset_from_edit >= old_snapshot.max_expansion_column
-                        && new_end_column + offset_from_edit >= new_snapshot.max_expansion_column
+                    if old_end.column() + offset_from_edit >= old_snapshot.max_expansion_column
+                        && new_end.column() + offset_from_edit >= new_snapshot.max_expansion_column
                     {
                         break;
                     }
