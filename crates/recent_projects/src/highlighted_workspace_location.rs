@@ -63,7 +63,7 @@ impl HighlightedWorkspaceLocation {
             .map(|path| {
                 let path = util::paths::compact(&path);
                 let highlighted_text = Self::highlights_for_path(
-                    full_path.as_ref(),
+                    path.as_ref(),
                     &string_match.positions,
                     path_start_offset,
                 );
