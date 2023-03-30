@@ -54,12 +54,6 @@ pub mod legacy {
 /// * A `PathBuf` containing the compacted file path. If the input path
 ///   does not have the user's home directory prefix, or if we are not on
 ///   Linux or macOS, the original path is returned unchanged.
-///
-/// # Errors
-///
-/// This function will not produce any errors, but in case the input path
-/// cannot be stripped of the home directory prefix, the original path
-/// will be returned unchanged.
 pub fn compact(path: &Path) -> PathBuf {
     if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
         match path.strip_prefix(HOME.as_path()) {
