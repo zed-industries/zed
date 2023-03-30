@@ -1,7 +1,9 @@
 mod request;
 mod sign_in;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use client::Client;
 use futures::{future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
@@ -12,13 +14,15 @@ use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapsho
 use lsp::LanguageServer;
 use node_runtime::NodeRuntime;
 use settings::Settings;
-use smol::{fs, stream::StreamExt};
+use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, http::HttpClient, paths, ResultExt};
+use util::{
+    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
+};
 
 const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
@@ -191,7 +195,7 @@ impl Copilot {
     ) -> impl Future<Output = ()> {
         async move {
             let start_language_server = async {
-                let server_path = get_copilot_lsp(http, node_runtime.clone()).await?;
+                let server_path = get_copilot_lsp(http).await?;
                 let node_path = node_runtime.binary_path().await?;
                 let arguments: &[OsString] = &[server_path.into(), "--stdio".into()];
                 let server =
@@ -305,6 +309,8 @@ impl Copilot {
             cx.foreground()
                 .spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
+            // If we're downloading, wait until download is finished
+            // If we're in a stuck state, display to the user
             Task::ready(Err(anyhow!("copilot hasn't started yet")))
         }
     }
@@ -495,29 +501,32 @@ fn completion_from_lsp(completion: request::Completion, buffer: &BufferSnapshot)
     }
 }
 
-async fn get_copilot_lsp(
-    http: Arc<dyn HttpClient>,
-    node: Arc<NodeRuntime>,
-) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &'static str = "node_modules/copilot-node-server/copilot/dist/agent.js";
+async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
+    const SERVER_PATH: &'static str = "agent.js";
 
     ///Check for the latest copilot language server and download it if we haven't already
-    async fn fetch_latest(
-        _http: Arc<dyn HttpClient>,
-        node: Arc<NodeRuntime>,
-    ) -> anyhow::Result<PathBuf> {
-        const COPILOT_NPM_PACKAGE: &'static str = "copilot-node-server";
+    async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
+        let release = latest_github_release("zed-industries/copilot", http.clone()).await?;
 
-        let release = node.npm_package_latest_version(COPILOT_NPM_PACKAGE).await?;
-
-        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.clone()));
+        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.name));
 
         fs::create_dir_all(version_dir).await?;
         let server_path = version_dir.join(SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            node.npm_install_packages([(COPILOT_NPM_PACKAGE, release.as_str())], version_dir)
-                .await?;
+            let url = &release
+                .assets
+                .get(0)
+                .context("Github release for copilot contained no assets")?
+                .browser_download_url;
+
+            let mut response = http
+                .get(&url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading copilot release: {}", err))?;
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(version_dir).await?;
 
             remove_matching(&paths::COPILOT_DIR, |entry| entry != version_dir).await;
         }
@@ -525,7 +534,7 @@ async fn get_copilot_lsp(
         Ok(server_path)
     }
 
-    match fetch_latest(http, node).await {
+    match fetch_latest(http).await {
         ok @ Result::Ok(..) => ok,
         e @ Err(..) => {
             e.log_err();
