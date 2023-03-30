@@ -2756,8 +2756,6 @@ impl Editor {
 
         let settings = cx.global::<Settings>();
 
-        dbg!(self.copilot_state.user_enabled);
-
         if !self
             .copilot_state
             .user_enabled
@@ -2775,8 +2773,6 @@ impl Editor {
                 .map(|language| language.name());
 
             let copilot_enabled = settings.copilot_on(language_name.as_deref());
-
-            dbg!(language_name, copilot_enabled);
 
             if !copilot_enabled {
                 return None;

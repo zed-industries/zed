@@ -1,172 +1,126 @@
-// use context_menu::{ContextMenu, ContextMenuItem};
-// use gpui::{
-//     elements::*, impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
-//     MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakModelHandle,
-//     WeakViewHandle,
-// };
-// use settings::Settings;
-// use std::any::TypeId;
-// use workspace::{dock::FocusDock, item::ItemHandle, NewTerminal, StatusItemView, Workspace};
+use context_menu::{ContextMenu, ContextMenuItem};
+use gpui::{
+    elements::*, impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+};
+use settings::Settings;
+use workspace::{item::ItemHandle, NewTerminal, StatusItemView};
 
-// #[derive(Clone, PartialEq)]
-// pub struct DeployTerminalMenu;
+const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
-// impl_internal_actions!(terminal, [DeployTerminalMenu]);
+#[derive(Clone, PartialEq)]
+pub struct DeployCopilotMenu;
 
-// pub fn init(cx: &mut MutableAppContext) {
-//     cx.add_action(CopilotButton::deploy_terminal_menu);
-// }
+impl_internal_actions!(copilot, [DeployCopilotMenu]);
 
-// pub struct CopilotButton {
-//     workspace: WeakViewHandle<Workspace>,
-//     popup_menu: ViewHandle<ContextMenu>,
-// }
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(CopilotButton::deploy_copilot_menu);
+}
 
-// impl Entity for CopilotButton {
-//     type Event = ();
-// }
+pub struct CopilotButton {
+    popup_menu: ViewHandle<ContextMenu>,
+}
 
-// impl View for CopilotButton {
-//     fn ui_name() -> &'static str {
-//         "TerminalButton"
-//     }
+impl Entity for CopilotButton {
+    type Event = ();
+}
 
-//     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
-//         let workspace = self.workspace.upgrade(cx);
-//         let project = match workspace {
-//             Some(workspace) => workspace.read(cx).project().read(cx),
-//             None => return Empty::new().boxed(),
-//         };
+impl View for CopilotButton {
+    fn ui_name() -> &'static str {
+        "CopilotButton"
+    }
 
-//         let focused_view = cx.focused_view_id(cx.window_id());
-//         let active = focused_view
-//             .map(|view_id| {
-//                 cx.view_type_id(cx.window_id(), view_id) == Some(TypeId::of::<TerminalView>())
-//             })
-//             .unwrap_or(false);
+    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+        let theme = cx.global::<Settings>().theme.clone();
 
-//         let has_terminals = !project.local_terminal_handles().is_empty();
-//         let terminal_count = project.local_terminal_handles().len() as i32;
-//         let theme = cx.global::<Settings>().theme.clone();
+        let visible = self.popup_menu.read(cx).visible();
 
-//         Stack::new()
-//             .with_child(
-//                 MouseEventHandler::<Self>::new(0, cx, {
-//                     let theme = theme.clone();
-//                     move |state, _cx| {
-//                         let style = theme
-//                             .workspace
-//                             .status_bar
-//                             .sidebar_buttons
-//                             .item
-//                             .style_for(state, active);
+        Stack::new()
+            .with_child(
+                MouseEventHandler::<Self>::new(0, cx, {
+                    let theme = theme.clone();
+                    move |state, _cx| {
+                        let style = theme
+                            .workspace
+                            .status_bar
+                            .sidebar_buttons
+                            .item
+                            .style_for(state, visible);
 
-//                         Flex::row()
-//                             .with_child(
-//                                 Svg::new("icons/terminal_12.svg")
-//                                     .with_color(style.icon_color)
-//                                     .constrained()
-//                                     .with_width(style.icon_size)
-//                                     .aligned()
-//                                     .named("terminals-icon"),
-//                             )
-//                             .with_children(has_terminals.then(|| {
-//                                 Label::new(terminal_count.to_string(), style.label.text.clone())
-//                                     .contained()
-//                                     .with_style(style.label.container)
-//                                     .aligned()
-//                                     .boxed()
-//                             }))
-//                             .constrained()
-//                             .with_height(style.icon_size)
-//                             .contained()
-//                             .with_style(style.container)
-//                             .boxed()
-//                     }
-//                 })
-//                 .with_cursor_style(CursorStyle::PointingHand)
-//                 .on_click(MouseButton::Left, move |_, cx| {
-//                     if has_terminals {
-//                         cx.dispatch_action(DeployTerminalMenu);
-//                     } else {
-//                         if !active {
-//                             cx.dispatch_action(FocusDock);
-//                         }
-//                     };
-//                 })
-//                 .with_tooltip::<Self, _>(
-//                     0,
-//                     "Show Terminal".into(),
-//                     Some(Box::new(FocusDock)),
-//                     theme.tooltip.clone(),
-//                     cx,
-//                 )
-//                 .boxed(),
-//             )
-//             .with_child(
-//                 ChildView::new(&self.popup_menu, cx)
-//                     .aligned()
-//                     .top()
-//                     .right()
-//                     .boxed(),
-//             )
-//             .boxed()
-//     }
-// }
+                        Flex::row()
+                            .with_child(
+                                Svg::new("icons/maybe_copilot.svg")
+                                    .with_color(style.icon_color)
+                                    .constrained()
+                                    .with_width(style.icon_size)
+                                    .aligned()
+                                    .named("copilot-icon"),
+                            )
+                            .constrained()
+                            .with_height(style.icon_size)
+                            .contained()
+                            .with_style(style.container)
+                            .boxed()
+                    }
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, _cx| {
+                    // TODO: Behavior of this
+                    // if has_terminals {
+                    //     cx.dispatch_action(DeployCopilotMenu);
+                    // } else {
+                    //     if !active {
+                    //         cx.dispatch_action(FocusDock);
+                    //     }
+                    // };
+                })
+                .with_tooltip::<Self, _>(
+                    0,
+                    "GitHub Copilot".into(),
+                    None,
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .boxed(),
+            )
+            .with_child(
+                ChildView::new(&self.popup_menu, cx)
+                    .aligned()
+                    .top()
+                    .right()
+                    .boxed(),
+            )
+            .boxed()
+    }
+}
 
-// impl CopilotButton {
-//     pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
-//         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-//         Self {
-//             workspace: workspace.downgrade(),
-//             popup_menu: cx.add_view(|cx| {
-//                 let mut menu = ContextMenu::new(cx);
-//                 menu.set_position_mode(OverlayPositionMode::Local);
-//                 menu
-//             }),
-//         }
-//     }
+impl CopilotButton {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        Self {
+            popup_menu: cx.add_view(|cx| {
+                let mut menu = ContextMenu::new(cx);
+                menu.set_position_mode(OverlayPositionMode::Local);
+                menu
+            }),
+        }
+    }
 
-//     pub fn deploy_terminal_menu(
-//         &mut self,
-//         _action: &DeployTerminalMenu,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         let mut menu_options = vec![ContextMenuItem::item("New Terminal", NewTerminal)];
+    pub fn deploy_copilot_menu(&mut self, _: &DeployCopilotMenu, cx: &mut ViewContext<Self>) {
+        let mut menu_options = vec![ContextMenuItem::item("New Terminal", NewTerminal)];
 
-//         if let Some(workspace) = self.workspace.upgrade(cx) {
-//             let project = workspace.read(cx).project().read(cx);
-//             let local_terminal_handles = project.local_terminal_handles();
+        self.popup_menu.update(cx, |menu, cx| {
+            menu.show(
+                Default::default(),
+                AnchorCorner::BottomRight,
+                menu_options,
+                cx,
+            );
+        });
+    }
+}
 
-//             if !local_terminal_handles.is_empty() {
-//                 menu_options.push(ContextMenuItem::Separator)
-//             }
-
-//             for local_terminal_handle in local_terminal_handles {
-//                 if let Some(terminal) = local_terminal_handle.upgrade(cx) {
-//                     menu_options.push(ContextMenuItem::item(
-//                         terminal.read(cx).title(),
-//                         // FocusTerminal {
-//                         //     terminal_handle: local_terminal_handle.clone(),
-//                         // },
-//                     ))
-//                 }
-//             }
-//         }
-
-//         self.popup_menu.update(cx, |menu, cx| {
-//             menu.show(
-//                 Default::default(),
-//                 AnchorCorner::BottomRight,
-//                 menu_options,
-//                 cx,
-//             );
-//         });
-//     }
-// }
-
-// impl StatusItemView for CopilotButton {
-//     fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-//         cx.notify();
-//     }
-// }
+impl StatusItemView for CopilotButton {
+    fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        cx.notify();
+    }
+}
