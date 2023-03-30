@@ -8,12 +8,15 @@ use gpui::{
 };
 use settings::{settings_file::SettingsFile, Settings};
 use workspace::{
-    item::ItemHandle, notifications::simple_message_notification::OsOpen, StatusItemView,
+    item::ItemHandle, notifications::simple_message_notification::OsOpen, DismissToast,
+    StatusItemView,
 };
 
-use copilot::{Copilot, SignIn, SignOut, Status};
+use copilot::{Copilot, Reinstall, SignIn, SignOut, Status};
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
+const COPILOT_STARTING_TOAST_ID: usize = 1337;
+const COPILOT_ERROR_TOAST_ID: usize = 1338;
 
 #[derive(Clone, PartialEq)]
 pub struct DeployCopilotMenu;
@@ -36,7 +39,7 @@ impl_internal_actions!(
         DeployCopilotMenu,
         DeployCopilotModal,
         ToggleCopilotForLanguage,
-        ToggleCopilotGlobally
+        ToggleCopilotGlobally,
     ]
 );
 
@@ -93,14 +96,18 @@ impl View for CopilotButton {
         }
 
         let theme = settings.theme.clone();
-        let active = self.popup_menu.read(cx).visible() /* || modal.is_shown */;
-        let authorized = Copilot::global(cx).unwrap().read(cx).status() == Status::Authorized;
+        let active = self.popup_menu.read(cx).visible();
+        let status = Copilot::global(cx).unwrap().read(cx).status();
+
         let enabled = self.editor_enabled.unwrap_or(settings.copilot_on(None));
+
+        let view_id = cx.view_id();
 
         Stack::new()
             .with_child(
                 MouseEventHandler::<Self>::new(0, cx, {
                     let theme = theme.clone();
+                    let status = status.clone();
                     move |state, _cx| {
                         let style = theme
                             .workspace
@@ -112,14 +119,16 @@ impl View for CopilotButton {
                         Flex::row()
                             .with_child(
                                 Svg::new({
-                                    if authorized {
-                                        if enabled {
-                                            "icons/copilot_16.svg"
-                                        } else {
-                                            "icons/copilot_disabled_16.svg"
+                                    match status {
+                                        Status::Error(_) => "icons/copilot_error_16.svg",
+                                        Status::Authorized => {
+                                            if enabled {
+                                                "icons/copilot_16.svg"
+                                            } else {
+                                                "icons/copilot_disabled_16.svg"
+                                            }
                                         }
-                                    } else {
-                                        "icons/copilot_init_16.svg"
+                                        _ => "icons/copilot_init_16.svg",
                                     }
                                 })
                                 .with_color(style.icon_color)
@@ -136,11 +145,50 @@ impl View for CopilotButton {
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
-                    if authorized {
-                        cx.dispatch_action(DeployCopilotMenu);
-                    } else {
-                        cx.dispatch_action(SignIn);
+                .on_click(MouseButton::Left, {
+                    let status = status.clone();
+                    move |_, cx| match status {
+                        Status::Authorized => cx.dispatch_action(DeployCopilotMenu),
+                        Status::Starting { ref task } => {
+                            cx.dispatch_action(workspace::Toast::new(
+                                COPILOT_STARTING_TOAST_ID,
+                                "Copilot is starting...",
+                            ));
+                            let window_id = cx.window_id();
+                            let task = task.to_owned();
+                            cx.spawn(|mut cx| async move {
+                                task.await;
+                                cx.update(|cx| {
+                                    let status = Copilot::global(cx).unwrap().read(cx).status();
+                                    match status {
+                                        Status::Authorized => cx.dispatch_action_at(
+                                            window_id,
+                                            view_id,
+                                            workspace::Toast::new(
+                                                COPILOT_STARTING_TOAST_ID,
+                                                "Copilot has started!",
+                                            ),
+                                        ),
+                                        _ => {
+                                            cx.dispatch_action_at(
+                                                window_id,
+                                                view_id,
+                                                DismissToast::new(COPILOT_STARTING_TOAST_ID),
+                                            );
+                                            cx.dispatch_global_action(SignIn)
+                                        }
+                                    }
+                                })
+                            })
+                            .detach();
+                        }
+                        Status::Error(ref e) => cx.dispatch_action(workspace::Toast::new_action(
+                            COPILOT_ERROR_TOAST_ID,
+                            format!("Copilot can't be started: {}", e),
+                            "Reinstall Copilot",
+                            Reinstall,
+                        )),
+                        _ => cx.dispatch_action(SignIn),
                     }
                 })
                 .with_tooltip::<Self, _>(
@@ -195,9 +243,9 @@ impl CopilotButton {
             let locally_enabled = self.editor_enabled.unwrap_or(settings.copilot_on(None));
             menu_options.push(ContextMenuItem::item_for_view(
                 if locally_enabled {
-                    "Pause Copilot for file"
+                    "Pause Copilot for this file"
                 } else {
-                    "Resume Copilot for file"
+                    "Resume Copilot for this file"
                 },
                 *view_id,
                 copilot::Toggle,
@@ -244,6 +292,7 @@ impl CopilotButton {
                             Label::new("Copilot Settings", style.label.clone()).boxed(),
                             theme::ui::icon(icon_style.style_for(state, false)).boxed(),
                         ])
+                        .align_children_center()
                         .boxed()
                 },
             ),

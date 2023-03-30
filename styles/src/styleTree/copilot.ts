@@ -31,13 +31,13 @@ export default function copilot(colorScheme: ColorScheme) {
 
     return {
         outLinkIcon: {
-            icon: svg(foreground(layer, "variant"), "icons/maybe_link_out.svg", 12, 12),
+            icon: svg(foreground(layer, "variant"), "icons/link_out_12.svg", 12, 12),
             container: {
                 cornerRadius: 6,
-                padding: { top: 6, bottom: 6, left: 6, right: 6 },
+                padding: { left: 6 },
             },
             hover: {
-                icon: svg(foreground(layer, "hovered"), "icons/maybe_link_out.svg", 12, 12)
+                icon: svg(foreground(layer, "hovered"), "icons/link_out_12.svg", 12, 12)
             },
         },
         modal: {
@@ -103,19 +103,7 @@ export default function copilot(colorScheme: ColorScheme) {
                     right: 0
                 }
             },
-            copilotIcon: svg(foreground(layer, "default"), "icons/github-copilot-dummy.svg", 32, 32),
-            plusIcon: {
-                icon: svg(foreground(layer, "default"), "icons/plus_12.svg", 12, 12),
-                container: {
-                    padding: {
-                        top: 12,
-                        bottom: 12,
-                        left: 12,
-                        right: 12,
-                    }
-                }
-            },
-            zedIcon: svg(foreground(layer, "default"), "icons/logo_96.svg", 32, 32),
+            copilotPlusZedIcon: svg(foreground(layer, "default"), "icons/zed_plus_copilot_32.svg", 32, 92),
             enableText: text(layer, "sans", { size: "md" }),
             enableGroup: {
                 margin: {

@@ -1,5 +1,5 @@
 import { ColorScheme } from "../themes/common/colorScheme"
-import { foreground, text } from "./components"
+import { background, border, foreground, text } from "./components"
 
 const headerPadding = 8
 
@@ -14,9 +14,21 @@ export default function simpleMessageNotification(
         },
         actionMessage: {
             ...text(layer, "sans", { size: "xs" }),
+            border: border(layer, "active"),
+            cornerRadius: 4,
+            padding: {
+                top: 3,
+                bottom: 3,
+                left: 7,
+                right: 7,
+            },
+
+
             margin: { left: headerPadding, top: 6, bottom: 6 },
             hover: {
-                color: foreground(layer, "hovered"),
+                ...text(layer, "sans", "default", { size: "xs" }),
+                background: background(layer, "hovered"),
+                border: border(layer, "active"),
             },
         },
         dismissButton: {

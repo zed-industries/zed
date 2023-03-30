@@ -298,9 +298,7 @@ impl CopilotCodeVerification {
                         .with_children([
                             Flex::row()
                                 .with_children([
-                                    theme::ui::svg(&style.auth.copilot_icon).boxed(),
-                                    theme::ui::icon(&style.auth.plus_icon).boxed(),
-                                    theme::ui::svg(&style.auth.zed_icon).boxed(),
+                                    theme::ui::svg(&style.auth.copilot_plus_zed_icon).boxed()
                                 ])
                                 .boxed(),
                             Flex::column()
@@ -362,9 +360,7 @@ impl CopilotCodeVerification {
                         .with_children([
                             Flex::row()
                                 .with_children([
-                                    theme::ui::svg(&style.auth.copilot_icon).boxed(),
-                                    theme::ui::icon(&style.auth.plus_icon).boxed(),
-                                    theme::ui::svg(&style.auth.zed_icon).boxed(),
+                                    theme::ui::svg(&style.auth.copilot_plus_zed_icon).boxed()
                                 ])
                                 .boxed(),
                             Label::new("Copilot Enabled!", style.auth.enable_text.clone()).boxed(),
@@ -410,9 +406,7 @@ impl CopilotCodeVerification {
                         .with_children([
                             Flex::row()
                                 .with_children([
-                                    theme::ui::svg(&style.auth.copilot_icon).boxed(),
-                                    theme::ui::icon(&style.auth.plus_icon).boxed(),
-                                    theme::ui::svg(&style.auth.zed_icon).boxed(),
+                                    theme::ui::svg(&style.auth.copilot_plus_zed_icon).boxed()
                                 ])
                                 .boxed(),
                             Flex::column()
@@ -483,13 +477,13 @@ impl View for CopilotCodeVerification {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        let style = cx.global::<Settings>().theme.copilot.clone();
+        let style = cx.global::<Settings>().theme.clone();
         match &self.status {
             Status::SigningIn {
                 prompt: Some(prompt),
-            } => Self::render_prompting_modal(&prompt, &style, cx),
-            Status::Unauthorized => Self::render_unauthorized_modal(&style, cx),
-            Status::Authorized => Self::render_enabled_modal(&style, cx),
+            } => Self::render_prompting_modal(&prompt, &style.copilot, cx),
+            Status::Unauthorized => Self::render_unauthorized_modal(&style.copilot, cx),
+            Status::Authorized => Self::render_enabled_modal(&style.copilot, cx),
             _ => Empty::new().boxed(),
         }
     }

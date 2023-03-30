@@ -28,7 +28,10 @@ const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
 
 const COPILOT_NAMESPACE: &'static str = "copilot";
-actions!(copilot, [NextSuggestion, PreviousSuggestion, Toggle]);
+actions!(
+    copilot,
+    [NextSuggestion, PreviousSuggestion, Toggle, Reinstall]
+);
 
 pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), node_runtime, cx));
@@ -44,6 +47,13 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
         copilot
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .detach_and_log_err(cx);
+    });
+
+    cx.add_global_action(|_: &Reinstall, cx| {
+        let copilot = Copilot::global(cx).unwrap();
+        copilot
+            .update(cx, |copilot, cx| copilot.reinstall(cx))
+            .detach();
     });
 
     cx.observe(&copilot, |handle, cx| {
@@ -73,7 +83,7 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
 enum CopilotServer {
     Disabled,
     Starting {
-        _task: Shared<Task<()>>,
+        task: Shared<Task<()>>,
     },
     Error(Arc<str>),
     Started {
@@ -97,9 +107,11 @@ enum SignInStatus {
     SignedOut,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Status {
-    Starting,
+    Starting {
+        task: Shared<Task<()>>,
+    },
     Error(Arc<str>),
     Disabled,
     SignedOut,
@@ -123,6 +135,8 @@ pub struct Completion {
 }
 
 pub struct Copilot {
+    http: Arc<dyn HttpClient>,
+    node_runtime: Arc<NodeRuntime>,
     server: CopilotServer,
 }
 
@@ -131,6 +145,13 @@ impl Entity for Copilot {
 }
 
 impl Copilot {
+    pub fn starting_task(&self) -> Option<Shared<Task<()>>> {
+        match self.server {
+            CopilotServer::Starting { ref task } => Some(task.clone()),
+            _ => None,
+        }
+    }
+
     pub fn global(cx: &AppContext) -> Option<ModelHandle<Self>> {
         if cx.has_global::<ModelHandle<Self>>() {
             Some(cx.global::<ModelHandle<Self>>().clone())
@@ -159,10 +180,12 @@ impl Copilot {
                                 }
                             })
                             .shared();
-                        this.server = CopilotServer::Starting { _task: start_task }
+                        this.server = CopilotServer::Starting { task: start_task };
+                        cx.notify();
                     }
                 } else {
-                    this.server = CopilotServer::Disabled
+                    this.server = CopilotServer::Disabled;
+                    cx.notify();
                 }
             }
         })
@@ -178,10 +201,14 @@ impl Copilot {
                 .shared();
 
             Self {
-                server: CopilotServer::Starting { _task: start_task },
+                http,
+                node_runtime,
+                server: CopilotServer::Starting { task: start_task },
             }
         } else {
             Self {
+                http,
+                node_runtime,
                 server: CopilotServer::Disabled,
             }
         }
@@ -332,6 +359,27 @@ impl Copilot {
         }
     }
 
+    fn reinstall(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+        let start_task = cx
+            .spawn({
+                let http = self.http.clone();
+                let node_runtime = self.node_runtime.clone();
+                move |this, cx| async move {
+                    clear_copilot_dir().await;
+                    Self::start_language_server(http, node_runtime, this, cx).await
+                }
+            })
+            .shared();
+
+        self.server = CopilotServer::Starting {
+            task: start_task.clone(),
+        };
+
+        cx.notify();
+
+        cx.foreground().spawn(start_task)
+    }
+
     pub fn completion<T>(
         &self,
         buffer: &ModelHandle<Buffer>,
@@ -391,7 +439,7 @@ impl Copilot {
 
     pub fn status(&self) -> Status {
         match &self.server {
-            CopilotServer::Starting { .. } => Status::Starting,
+            CopilotServer::Starting { task } => Status::Starting { task: task.clone() },
             CopilotServer::Disabled => Status::Disabled,
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Started { status, .. } => match status {
@@ -501,8 +549,12 @@ fn completion_from_lsp(completion: request::Completion, buffer: &BufferSnapshot)
     }
 }
 
+async fn clear_copilot_dir() {
+    remove_matching(&paths::COPILOT_DIR, |_| true).await
+}
+
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &'static str = "agent.js";
+    const SERVER_PATH: &'static str = "dist/agent.js";
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
@@ -514,6 +566,10 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let server_path = version_dir.join(SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
+            // Copilot LSP looks for this dist dir specifcially, so lets add it in.
+            let dist_dir = version_dir.join("dist");
+            fs::create_dir_all(dist_dir.as_path()).await?;
+
             let url = &release
                 .assets
                 .get(0)
@@ -526,7 +582,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                 .map_err(|err| anyhow!("error downloading copilot release: {}", err))?;
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
-            archive.unpack(version_dir).await?;
+            archive.unpack(dist_dir).await?;
 
             remove_matching(&paths::COPILOT_DIR, |entry| entry != version_dir).await;
         }
