@@ -21,3 +21,4 @@ workspace = { path = "../workspace" }
 ordered-float = "2.1.1"
 postage = { workspace = true }
 smol = "1.2"
+util = { path = "../util"}

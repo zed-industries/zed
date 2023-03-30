@@ -87,21 +87,21 @@ pub fn marked_text_ranges_by(
 /// 1. To mark a range of text, surround it with the `«` and `»` angle brackets,
 ///    which can be typed on a US keyboard with the `alt-|` and `alt-shift-|` keys.
 ///
-///    ```
+///    ```text
 ///    foo «selected text» bar
 ///    ```
 ///
 /// 2. To mark a single position in the text, use the `ˇ` caron,
 ///    which can be typed on a US keyboard with the `alt-shift-t` key.
 ///
-///    ```
+///    ```text
 ///    the cursors are hereˇ and hereˇ.
 ///    ```
 ///
 /// 3. To mark a range whose direction is meaningful (like a selection),
 ///    put a caron character beside one of its bounds, on the inside:
 ///
-///    ```
+///    ```text
 ///    one «ˇreversed» selection and one «forwardˇ» selection
 ///    ```
 pub fn marked_text_ranges(
