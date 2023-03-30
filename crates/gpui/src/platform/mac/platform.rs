@@ -83,6 +83,10 @@ unsafe fn build_classes() {
             did_finish_launching as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(applicationShouldHandleReopen:hasVisibleWindows:),
+            should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
+        );
+        decl.add_method(
             sel!(applicationDidBecomeActive:),
             did_become_active as extern "C" fn(&mut Object, Sel, id),
         );
@@ -144,6 +148,7 @@ pub struct MacForegroundPlatform(RefCell<MacForegroundPlatformState>);
 pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
+    reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -158,15 +163,16 @@ pub struct MacForegroundPlatformState {
 impl MacForegroundPlatform {
     pub fn new(foreground: Rc<executor::Foreground>) -> Self {
         Self(RefCell::new(MacForegroundPlatformState {
-            become_active: Default::default(),
-            resign_active: Default::default(),
-            quit: Default::default(),
-            event: Default::default(),
-            menu_command: Default::default(),
-            validate_menu_command: Default::default(),
-            will_open_menu: Default::default(),
-            open_urls: Default::default(),
-            finish_launching: Default::default(),
+            become_active: None,
+            resign_active: None,
+            reopen: None,
+            quit: None,
+            event: None,
+            menu_command: None,
+            validate_menu_command: None,
+            will_open_menu: None,
+            open_urls: None,
+            finish_launching: None,
             menu_actions: Default::default(),
             foreground,
         }))
@@ -330,6 +336,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().quit = Some(callback);
+    }
+
+    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().reopen = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
@@ -938,6 +948,15 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let platform = get_foreground_platform(this);
         let callback = platform.0.borrow_mut().finish_launching.take();
         if let Some(callback) = callback {
+            callback();
+        }
+    }
+}
+
+extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
+    if !has_open_windows {
+        let platform = unsafe { get_foreground_platform(this) };
+        if let Some(callback) = platform.0.borrow_mut().reopen.as_mut() {
             callback();
         }
     }
