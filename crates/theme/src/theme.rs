@@ -267,7 +267,7 @@ pub struct Notifications {
 pub struct Search {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub editor: FindEditor,
+    pub editor: SearchEditor,
     pub invalid_editor: ContainerStyle,
     pub option_button_group: ContainerStyle,
     pub option_button: Interactive<ContainedText>,
@@ -278,7 +278,7 @@ pub struct Search {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct FindEditor {
+pub struct SearchEditor {
     #[serde(flatten)]
     pub input: FieldEditor,
     pub min_width: f32,
@@ -883,7 +883,15 @@ pub struct WelcomeStyle {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct AssistantStyle {
-    pub text: TextStyle,
+    pub assistant_message: ContainedText,
+    pub player_message: ContainedText,
+    pub composer: AssistantComposerStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AssistantComposerStyle {
+    pub container: ContainerStyle,
+    pub editor: FieldEditor,
 }
 
 #[derive(Clone, Deserialize, Default)]

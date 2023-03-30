@@ -9,6 +9,7 @@ path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
+editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

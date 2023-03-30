@@ -1,3 +1,4 @@
+use editor::Editor;
 use gpui::{
     actions, elements::*, CursorStyle, Entity, MouseButton, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -11,7 +12,15 @@ use workspace::{
 
 actions!(assisltant, [DeployAssistant]);
 
-pub struct Assistant {}
+pub struct Assistant {
+    composer: ViewHandle<Editor>,
+    message_list: ListState,
+    messages: Vec<Message>,
+}
+
+pub struct Message {
+    text: String,
+}
 
 pub struct AssistantButton {
     workspace: WeakViewHandle<Workspace>,
@@ -22,7 +31,42 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(AssistantButton::deploy_assistant);
 }
 
-impl Assistant {}
+impl Assistant {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let composer = cx.add_view(|cx| Editor::single_line(None, cx));
+
+        let messages = vec![
+            Message {
+                text: "Hello World".into(),
+            },
+            Message {
+                text: "I Am Skynet".into(),
+            },
+            Message {
+                text: "Prepare To Die".into(),
+            },
+        ];
+
+        Self {
+            composer,
+            message_list: ListState::new(
+                messages.len(),
+                Orientation::Bottom,
+                512.,
+                cx,
+                |this, ix, cx| {
+                    let style = &cx.global::<Settings>().theme.assistant;
+                    let text = this.messages[ix].text.clone();
+                    Text::new(text, style.assistant_message.text.clone())
+                        .contained()
+                        .with_style(style.assistant_message.container)
+                        .boxed()
+                },
+            ),
+            messages,
+        }
+    }
+}
 
 impl Entity for Assistant {
     type Event = ();
@@ -34,8 +78,10 @@ impl View for Assistant {
     }
 
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
-        let style = &cx.global::<Settings>().theme.assistant;
-        Label::new("HELLO CHAT GPT", style.text.clone()).boxed()
+        Flex::column()
+            .with_child(List::new(self.message_list.clone()).boxed())
+            .with_child(ChildView::new(&self.composer, cx).boxed())
+            .boxed()
     }
 }
 
@@ -66,20 +112,9 @@ impl AssistantButton {
                     workspace.activate_item(&assistant, cx);
                 } else {
                     workspace.show_dock(true, cx);
-                    let assistant = cx.add_view(|_| Assistant {});
+                    let assistant = cx.add_view(|cx| Assistant::new(cx));
                     workspace.add_item_to_dock(Box::new(assistant.clone()), cx);
                 }
-
-                // let dock = workspace
-                //     .dock_pane()
-                //     .update(cx, |dock, cx| dock.item);
-
-                // cx.dispatch_action(FocusDock);
-
-                // workspace.op
-                // dock.update(cx, |dock, cx| {
-                //     dock.item
-                // });
             })
         }
     }
