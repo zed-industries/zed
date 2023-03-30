@@ -65,62 +65,6 @@ pub fn init(cx: &mut MutableAppContext) {
         }
     })
     .detach();
-
-    // Modal theming test:
-    use gpui::geometry::vector::vec2f;
-
-    let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
-    let window_options = WindowOptions {
-        bounds: gpui::WindowBounds::Fixed(RectF::new(vec2f(0., 0.), window_size)),
-        titlebar: None,
-        center: false,
-        focus: false,
-        kind: WindowKind::PopUp,
-        is_movable: true,
-        screen: None,
-    };
-    let (_, _view) = cx.add_window(window_options, |_cx| {
-        CopilotCodeVerification::new(Status::Authorized)
-    });
-
-    let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
-    let window_options = WindowOptions {
-        bounds: gpui::WindowBounds::Fixed(RectF::new(
-            vec2f(window_size.x() + 10., 0.),
-            window_size,
-        )),
-        titlebar: None,
-        center: false,
-        focus: false,
-        kind: WindowKind::PopUp,
-        is_movable: true,
-        screen: None,
-    };
-    let (_, _view) = cx.add_window(window_options, |_cx| {
-        CopilotCodeVerification::new(Status::SigningIn {
-            prompt: Some(PromptUserDeviceFlow {
-                user_code: "ABCD-1234".to_string(),
-                verification_uri: "https://github.com/login/device".to_string(),
-            }),
-        })
-    });
-
-    let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
-    let window_options = WindowOptions {
-        bounds: gpui::WindowBounds::Fixed(RectF::new(
-            vec2f((window_size.x() + 10.) * 2., 0.),
-            window_size,
-        )),
-        titlebar: None,
-        center: false,
-        focus: false,
-        kind: WindowKind::PopUp,
-        is_movable: true,
-        screen: None,
-    };
-    let (_, _view) = cx.add_window(window_options, |_cx| {
-        CopilotCodeVerification::new(Status::Unauthorized)
-    });
 }
 
 pub struct CopilotCodeVerification {
