@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use node_runtime::NodeRuntime;
+use lsp::CodeActionKind;
 use serde_json::json;
 use smol::fs;
 use std::{
@@ -132,6 +133,15 @@ impl LspAdapter for TypeScriptLspAdapter {
         })()
         .await
         .log_err()
+    }
+
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::REFACTOR,
+            CodeActionKind::REFACTOR_EXTRACT,
+            CodeActionKind::SOURCE,
+        ])
     }
 
     async fn label_for_completion(

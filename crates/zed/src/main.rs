@@ -103,7 +103,8 @@ fn main() {
                 .map_err(|_| anyhow!("no listener for open urls requests"))
                 .log_err();
         }
-    });
+    })
+    .on_reopen(move |cx| cx.dispatch_global_action(NewFile));
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);

@@ -225,8 +225,14 @@ impl Copilot {
                 let server_path = get_copilot_lsp(http).await?;
                 let node_path = node_runtime.binary_path().await?;
                 let arguments: &[OsString] = &[server_path.into(), "--stdio".into()];
-                let server =
-                    LanguageServer::new(0, &node_path, arguments, Path::new("/"), cx.clone())?;
+                let server = LanguageServer::new(
+                    0,
+                    &node_path,
+                    arguments,
+                    Path::new("/"),
+                    None,
+                    cx.clone(),
+                )?;
 
                 let server = server.initialize(Default::default()).await?;
                 let status = server

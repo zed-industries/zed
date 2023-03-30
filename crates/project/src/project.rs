@@ -3773,7 +3773,7 @@ impl Project {
             worktree = file.worktree.clone();
             buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
-            return Task::ready(Ok(Default::default()));
+            return Task::ready(Ok(Vec::new()));
         };
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
 
@@ -3783,13 +3783,13 @@ impl Project {
             {
                 server.clone()
             } else {
-                return Task::ready(Ok(Default::default()));
+                return Task::ready(Ok(Vec::new()));
             };
 
             let lsp_range = range_to_lsp(range.to_point_utf16(buffer));
             cx.foreground().spawn(async move {
                 if lang_server.capabilities().code_action_provider.is_none() {
-                    return Ok(Default::default());
+                    return Ok(Vec::new());
                 }
 
                 Ok(lang_server
@@ -3802,13 +3802,7 @@ impl Project {
                         partial_result_params: Default::default(),
                         context: lsp::CodeActionContext {
                             diagnostics: relevant_diagnostics,
-                            only: Some(vec![
-                                lsp::CodeActionKind::EMPTY,
-                                lsp::CodeActionKind::QUICKFIX,
-                                lsp::CodeActionKind::REFACTOR,
-                                lsp::CodeActionKind::REFACTOR_EXTRACT,
-                                lsp::CodeActionKind::SOURCE,
-                            ]),
+                            only: lang_server.code_action_kinds(),
                         },
                     })
                     .await?

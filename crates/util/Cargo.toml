@@ -6,7 +6,7 @@ publish = false
 
 [lib]
 path = "src/util.rs"
-doctest = false
+doctest = true
 
 [features]
 test-support = ["tempdir", "git2"]

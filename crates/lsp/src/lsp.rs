@@ -40,6 +40,7 @@ pub struct LanguageServer {
     outbound_tx: channel::Sender<Vec<u8>>,
     name: String,
     capabilities: ServerCapabilities,
+    code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
     executor: Arc<executor::Background>,
@@ -110,6 +111,7 @@ impl LanguageServer {
         binary_path: &Path,
         arguments: &[T],
         root_path: &Path,
+        code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -135,6 +137,7 @@ impl LanguageServer {
             stout,
             Some(server),
             root_path,
+            code_action_kinds,
             cx,
             |notification| {
                 log::info!(
@@ -160,6 +163,7 @@ impl LanguageServer {
         stdout: Stdout,
         server: Option<Child>,
         root_path: &Path,
+        code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
         on_unhandled_notification: F,
     ) -> Self
@@ -197,6 +201,7 @@ impl LanguageServer {
             response_handlers,
             name: Default::default(),
             capabilities: Default::default(),
+            code_action_kinds,
             next_id: Default::default(),
             outbound_tx,
             executor: cx.background(),
@@ -205,6 +210,10 @@ impl LanguageServer {
             root_path: root_path.to_path_buf(),
             _server: server,
         }
+    }
+
+    pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        self.code_action_kinds.clone()
     }
 
     async fn handle_input<Stdout, F>(
@@ -715,6 +724,7 @@ impl LanguageServer {
             stdout_reader,
             None,
             Path::new("/"),
+            None,
             cx.clone(),
             |_| {},
         );
@@ -725,6 +735,7 @@ impl LanguageServer {
                 stdin_reader,
                 None,
                 Path::new("/"),
+                None,
                 cx,
                 move |msg| {
                     notifications_tx
