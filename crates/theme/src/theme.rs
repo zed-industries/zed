@@ -126,26 +126,41 @@ pub struct Copilot {
 
 #[derive(Deserialize, Default, Clone)]
 pub struct CopilotAuth {
-    pub enable_group: ContainerStyle,
-    pub enable_text: TextStyle,
-    pub instruction_text: TextStyle,
-    pub cta_button: ButtonStyle,
     pub content_width: f32,
-    pub copilot_plus_zed_icon: SvgStyle,
-    pub device_code_group: ContainerStyle,
-    pub github_group: ContainerStyle,
-    pub header_group: ContainerStyle,
-    pub device_code: TextStyle,
-    pub device_code_cta: ButtonStyle,
-    pub device_code_left: f32,
-    pub device_code_left_container: ContainerStyle,
-    pub device_code_right: f32,
-    pub device_code_right_container: ContainerStyle,
-    pub device_code_seperator_height: f32,
+    pub prompting: CopilotAuthPrompting,
+    pub not_authorized: CopilotAuthNotAuthorized,
+    pub authorized: CopilotAuthAuthorized,
+    pub cta_button: ButtonStyle,
+    pub header: IconStyle,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuthPrompting {
+    pub subheading: ContainedText,
     pub hint: ContainedText,
-    pub enabled_hint: ContainerStyle,
-    pub not_authorized_hint: ContainerStyle,
+    pub device_code: DeviceCode,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct DeviceCode {
+    pub text: TextStyle,
+    pub cta: ButtonStyle,
+    pub left: f32,
+    pub left_container: ContainerStyle,
+    pub right: f32,
+    pub right_container: Interactive<ContainerStyle>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuthNotAuthorized {
+    pub subheading: ContainedText,
     pub warning: ContainedText,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuthAuthorized {
+    pub subheading: ContainedText,
+    pub hint: ContainedText,
 }
 
 #[derive(Deserialize, Default)]

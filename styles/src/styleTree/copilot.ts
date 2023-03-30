@@ -3,17 +3,19 @@ import { background, border, foreground, svg, text } from "./components";
 
 
 export default function copilot(colorScheme: ColorScheme) {
-    let layer = colorScheme.highest;
+    let layer = colorScheme.middle;
 
-    let content_width = 304;
+    let content_width = 264;
 
     let ctaButton = { // Copied from welcome screen. FIXME: Move this into a ZDS component
         background: background(layer),
-        border: border(layer, "active"),
+        border: border(layer, "default"),
         cornerRadius: 4,
         margin: {
             top: 4,
             bottom: 4,
+            left: 8,
+            right: 8
         },
         padding: {
             top: 3,
@@ -42,155 +44,183 @@ export default function copilot(colorScheme: ColorScheme) {
         },
         modal: {
             titleText: {
-                ...text(layer, "sans", { size: "md", color: background(layer, "default") }),
-                active: {
-                    ...text(layer, "sans", { size: "md" }),
-                }
+                ...text(layer, "sans", { size: "xs", "weight": "bold" })
             },
             titlebar: {
+                background: background(colorScheme.lowest),
                 border: border(layer, "active"),
                 padding: {
-                    top: 8,
-                    bottom: 8,
+                    top: 4,
+                    bottom: 4,
                     left: 8,
                     right: 8,
-                },
-                margin: {
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 16
                 }
             },
             container: {
-                background: background(colorScheme.highest),
-
+                background: background(colorScheme.lowest),
+                padding: {
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 8,
+                }
             },
             closeIcon: {
-                icon: svg(background(layer, "on"), "icons/x_mark_16.svg", 16, 16),
+                icon: svg(foreground(layer, "variant"), "icons/x_mark_8.svg", 8, 8),
                 container: {
                     cornerRadius: 2,
                     padding: {
-                        top: 3,
-                        bottom: 3,
-                        left: 7,
-                        right: 0,
+                        top: 4,
+                        bottom: 4,
+                        left: 4,
+                        right: 4,
+                    },
+                    margin: {
+                        right: 0
                     }
                 },
-                active: {
-                    icon: svg(foreground(colorScheme.lowest, "warning"), "icons/x_mark_16.svg", 16, 16),
+                hover: {
+                    icon: svg(foreground(layer, "on"), "icons/x_mark_8.svg", 8, 8),
                 },
-                hoverAndActive: {
-                    icon: svg(foreground(layer, "on", "hovered"), "icons/x_mark_16.svg", 16, 16),
-                },
-                clickedAndactive: {
-                    icon: svg(foreground(layer, "on", "pressed"), "icons/x_mark_16.svg", 16, 16),
+                clicked: {
+                    icon: svg(foreground(layer, "base"), "icons/x_mark_8.svg", 8, 8),
                 }
             },
             dimensions: {
-                width: 400,
-                height: 500,
+                width: 280,
+                height: 280,
             },
         },
+
         auth: {
             content_width,
 
-            headerGroup: {
-                margin: {
-                    top: 5,
-                    bottom: 5,
-                    left: 0,
-                    right: 0
-                }
-            },
-            copilotPlusZedIcon: svg(foreground(layer, "default"), "icons/zed_plus_copilot_32.svg", 32, 92),
-            enableText: text(layer, "sans", { size: "md" }),
-            enableGroup: {
-                margin: {
-                    top: 5,
-                    bottom: 5,
-                    left: 0,
-                    right: 0
-                }
-            },
+            ctaButton,
 
-            instructionText: text(layer, "sans"),
-
-            deviceCodeGroup: {
-                margin: {
-                    top: 20,
-                    bottom: 20,
-                    left: 0,
-                    right: 0
-                }
-            },
-            deviceCode:
-                text(layer, "mono", { size: "md" }),
-            deviceCodeCta: {
-                ...ctaButton,
-                padding: {
-                    top: 0,
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
+            header: {
+                icon: svg(foreground(layer, "default"), "icons/zed_plus_copilot_32.svg", 92, 32),
+                container: {
+                    margin: {
+                        top: 35,
+                        bottom: 5,
+                        left: 0,
+                        right: 0
+                    }
                 },
             },
-            deviceCodeLeft: content_width * 2 / 3,
-            deviceCodeLeftContainer: {
-                padding: {
-                    top: 3,
-                    bottom: 3,
-                    left: 0,
-                    right: 0,
+
+            prompting: {
+                subheading: {
+                    ...text(layer, "sans", { size: "xs" }),
+                    margin: {
+                        top: 6,
+                        bottom: 12,
+                        left: 0,
+                        right: 0
+                    }
+                },
+
+                hint: {
+                    ...text(layer, "sans", { size: "xs", color: "#838994" }),
+                    margin: {
+                        top: 6,
+                        bottom: 2
+                    }
+                },
+
+                deviceCode: {
+                    text:
+                        text(layer, "mono", { size: "sm" }),
+                    cta: {
+                        ...ctaButton,
+                        background: background(colorScheme.lowest),
+                        border: border(colorScheme.lowest, "inverted"),
+                        padding: {
+                            top: 0,
+                            bottom: 0,
+                            left: 16,
+                            right: 16,
+                        },
+                        margin: {
+                            left: 16,
+                            right: 16,
+                        }
+                    },
+                    left: content_width / 2,
+                    leftContainer: {
+                        padding: {
+                            top: 3,
+                            bottom: 3,
+                            left: 0,
+                            right: 6,
+                        },
+                    },
+                    right: content_width * 1 / 3,
+                    rightContainer: {
+                        border: border(colorScheme.lowest, "inverted", { bottom: false, right: false, top: false, left: true }),
+                        padding: {
+                            top: 3,
+                            bottom: 5,
+                            left: 8,
+                            right: 0,
+                        },
+                        hover: {
+                            border: border(layer, "active", { bottom: false, right: false, top: false, left: true }),
+                        },
+                    }
                 },
             },
-            deviceCodeRight: content_width * 1 / 3,
-            deviceCodeRightContainer: {
-                border: border(layer, "active", { bottom: false, right: false, top: false, left: true }),
-                padding: {
-                    top: 3,
-                    bottom: 5,
-                    left: 0,
-                    right: 0,
+
+            notAuthorized: {
+                subheading: {
+                    ...text(layer, "sans", { size: "xs" }),
+
+                    margin: {
+                        top: 16,
+                        bottom: 16,
+                        left: 0,
+                        right: 0
+                    }
+                },
+
+                warning: {
+                    ...text(layer, "sans", { size: "xs", color: foreground(layer, "warning") }),
+                    border: border(layer, "warning"),
+                    background: background(layer, "warning"),
+                    cornerRadius: 2,
+                    padding: {
+                        top: 4,
+                        left: 4,
+                        bottom: 4,
+                        right: 4,
+                    },
+                    margin: {
+                        bottom: 16,
+                        left: 8,
+                        right: 8
+                    }
                 },
             },
-            deviceCodeSeperatorHeight: 0,
-            hint: {
-                ...text(layer, "sans", { size: "xs" }),
-                margin: {
-                    top: -5,
-                }
-            },
-            enabledHint: {
-                margin: {
-                    top: 10,
-                    bottom: 10
-                }
-            },
-            notAuthorizedHint: {
-                margin: {
-                    top: 10,
-                    bottom: 10
-                }
-            },
 
-            warning: {
-                ...text(layer, "sans", { size: "md", color: foreground(layer, "warning") }),
-                border: border(layer, "warning"),
-                background_color: background(layer, "warning"),
-                cornerRadius: 2,
-            },
+            authorized: {
+                subheading: {
+                    ...text(layer, "sans", { size: "xs" }),
 
-            githubGroup: {
-                margin: {
-                    top: 3,
-                    bottom: 3,
-                    left: 0,
-                    right: 0
-                }
-            },
+                    margin: {
+                        top: 16,
+                        bottom: 16
+                    }
+                },
 
-            ctaButton
+                hint: {
+                    ...text(layer, "sans", { size: "xs", color: "#838994" }),
+                    margin: {
+                        top: 24,
+                        bottom: 4
+                    }
+                },
+
+            },
         }
     }
 }

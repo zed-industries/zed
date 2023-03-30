@@ -186,6 +186,7 @@ where
     cta_button_with_click(label, max_width, style, cx, move |_, cx| {
         cx.dispatch_action(action.clone())
     })
+    .boxed()
 }
 
 pub fn cta_button_with_click<L, V, F>(
@@ -194,7 +195,7 @@ pub fn cta_button_with_click<L, V, F>(
     style: &ButtonStyle,
     cx: &mut RenderContext<V>,
     f: F,
-) -> ElementBox
+) -> MouseEventHandler<F>
 where
     L: Into<Cow<'static, str>>,
     V: View,
@@ -212,7 +213,6 @@ where
     })
     .on_click(MouseButton::Left, f)
     .with_cursor_style(gpui::CursorStyle::PointingHand)
-    .boxed()
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -241,7 +241,8 @@ where
     I: Into<Cow<'static, str>>,
     F: FnOnce(&mut gpui::RenderContext<V>) -> ElementBox,
 {
-    let active = cx.window_is_active(cx.window_id());
+    const TITLEBAR_HEIGHT: f32 = 28.;
+    // let active = cx.window_is_active(cx.window_id());
 
     Flex::column()
         .with_child(
@@ -251,13 +252,13 @@ where
                         title,
                         style
                             .title_text
-                            .style_for(&mut MouseState::default(), active)
+                            .style_for(&mut MouseState::default(), false)
                             .clone(),
                     )
                     .boxed(),
                     // FIXME: Get a better tag type
                     MouseEventHandler::<V>::new(999999, cx, |state, _cx| {
-                        let style = style.close_icon.style_for(state, active);
+                        let style = style.close_icon.style_for(state, false);
                         icon(style).boxed()
                     })
                     .on_click(gpui::MouseButton::Left, move |_, cx| {
@@ -271,11 +272,18 @@ where
                 ])
                 .contained()
                 .with_style(style.titlebar)
+                .constrained()
+                .with_height(TITLEBAR_HEIGHT)
                 .boxed(),
         )
-        .with_child(build_modal(cx))
-        .contained()
-        .with_style(style.container)
+        .with_child(
+            Container::new(build_modal(cx))
+                .with_style(style.container)
+                .constrained()
+                .with_width(style.dimensions().x())
+                .with_height(style.dimensions().y() - TITLEBAR_HEIGHT)
+                .boxed(),
+        )
         .constrained()
         .with_height(style.dimensions().y())
         .boxed()

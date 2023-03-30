@@ -4,6 +4,7 @@ use gpui::{
     ViewContext, ViewHandle, WindowKind, WindowOptions,
 };
 use settings::Settings;
+use theme::ui::modal;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct CopyUserCode;
@@ -11,7 +12,7 @@ struct CopyUserCode;
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct OpenGithub;
 
-const _COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
+const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
 pub fn init(cx: &mut MutableAppContext) {
     let copilot = Copilot::global(cx).unwrap();
@@ -66,53 +67,60 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 
     // Modal theming test:
-    // use gpui::geometry::vector::vec2f;
-    // let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
-    // let window_options = WindowOptions {
-    //     bounds: gpui::WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
-    //     titlebar: None,
-    //     center: false,
-    //     focus: false,
-    //     kind: WindowKind::PopUp,
-    //     is_movable: true,
-    //     screen: None,
-    // };
-    // let (_, _view) = cx.add_window(window_options, |_cx| {
-    //     CopilotCodeVerification::new(Status::SigningIn {
-    //         prompt: Some(PromptUserDeviceFlow {
-    //             user_code: "ABCD-1234".to_string(),
-    //             verification_uri: "https://github.com/login/device".to_string(),
-    //         }),
-    //     })
-    // });
+    use gpui::geometry::vector::vec2f;
 
-    // let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
-    // let window_options = WindowOptions {
-    //     bounds: gpui::WindowBounds::Fixed(RectF::new(vec2f(window_size.x(), 0.), window_size)),
-    //     titlebar: None,
-    //     center: false,
-    //     focus: false,
-    //     kind: WindowKind::PopUp,
-    //     is_movable: true,
-    //     screen: None,
-    // };
-    // let (_, _view) = cx.add_window(window_options, |_cx| {
-    //     CopilotCodeVerification::new(Status::Authorized)
-    // });
+    let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
+    let window_options = WindowOptions {
+        bounds: gpui::WindowBounds::Fixed(RectF::new(vec2f(0., 0.), window_size)),
+        titlebar: None,
+        center: false,
+        focus: false,
+        kind: WindowKind::PopUp,
+        is_movable: true,
+        screen: None,
+    };
+    let (_, _view) = cx.add_window(window_options, |_cx| {
+        CopilotCodeVerification::new(Status::Authorized)
+    });
 
-    // let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
-    // let window_options = WindowOptions {
-    //     bounds: gpui::WindowBounds::Fixed(RectF::new(vec2f(0., window_size.y()), window_size)),
-    //     titlebar: None,
-    //     center: false,
-    //     focus: false,
-    //     kind: WindowKind::PopUp,
-    //     is_movable: true,
-    //     screen: None,
-    // };
-    // let (_, _view) = cx.add_window(window_options, |_cx| {
-    //     CopilotCodeVerification::new(Status::Unauthorized)
-    // });
+    let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
+    let window_options = WindowOptions {
+        bounds: gpui::WindowBounds::Fixed(RectF::new(
+            vec2f(window_size.x() + 10., 0.),
+            window_size,
+        )),
+        titlebar: None,
+        center: false,
+        focus: false,
+        kind: WindowKind::PopUp,
+        is_movable: true,
+        screen: None,
+    };
+    let (_, _view) = cx.add_window(window_options, |_cx| {
+        CopilotCodeVerification::new(Status::SigningIn {
+            prompt: Some(PromptUserDeviceFlow {
+                user_code: "ABCD-1234".to_string(),
+                verification_uri: "https://github.com/login/device".to_string(),
+            }),
+        })
+    });
+
+    let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
+    let window_options = WindowOptions {
+        bounds: gpui::WindowBounds::Fixed(RectF::new(
+            vec2f((window_size.x() + 10.) * 2., 0.),
+            window_size,
+        )),
+        titlebar: None,
+        center: false,
+        focus: false,
+        kind: WindowKind::PopUp,
+        is_movable: true,
+        screen: None,
+    };
+    let (_, _view) = cx.add_window(window_options, |_cx| {
+        CopilotCodeVerification::new(Status::Unauthorized)
+    });
 }
 
 pub struct CopilotCodeVerification {
@@ -139,151 +147,43 @@ impl CopilotCodeVerification {
             .map(|item| item.text() == &data.user_code)
             .unwrap_or(false);
 
-        Flex::column()
-            .with_children([
-                MouseEventHandler::<Self>::new(0, cx, |state, _cx| {
-                    Flex::row()
-                        .with_children([
-                            Label::new(data.user_code.clone(), style.auth.device_code.clone())
-                                .aligned()
-                                .contained()
-                                .with_style(style.auth.device_code_left_container)
-                                .constrained()
-                                .with_width(style.auth.device_code_left)
-                                .boxed(),
-                            Empty::new()
-                                .constrained()
-                                .with_width(1.)
-                                .with_height(style.auth.device_code_seperator_height)
-                                .contained()
-                                .with_background_color(
-                                    style
-                                        .auth
-                                        .cta_button
-                                        .style_for(state, false)
-                                        .container
-                                        .border
-                                        .color,
-                                )
-                                .boxed(),
-                            Label::new(
-                                if copied { "Copied!" } else { "Copy" },
-                                style.auth.cta_button.style_for(state, false).text.clone(),
-                            )
-                            .aligned()
-                            .contained()
-                            .with_style(style.auth.device_code_right_container)
-                            .constrained()
-                            .with_width(style.auth.device_code_right)
-                            .boxed(),
-                        ])
+        let device_code_style = &style.auth.prompting.device_code;
+
+        MouseEventHandler::<Self>::new(0, cx, |state, _cx| {
+            Flex::row()
+                .with_children([
+                    Label::new(data.user_code.clone(), device_code_style.text.clone())
+                        .aligned()
                         .contained()
-                        .with_style(style.auth.device_code_cta.style_for(state, false).container)
+                        .with_style(device_code_style.left_container)
                         .constrained()
-                        .with_width(style.auth.content_width)
-                        .boxed()
-                })
-                .on_click(gpui::MouseButton::Left, {
-                    let user_code = data.user_code.clone();
-                    move |_, cx| {
-                        cx.platform()
-                            .write_to_clipboard(ClipboardItem::new(user_code.clone()));
-                        cx.notify();
-                    }
-                })
-                .with_cursor_style(gpui::CursorStyle::PointingHand)
-                .boxed(),
-                Flex::column()
-                    .with_children([
-                        Label::new(
-                            "Paste this code into GitHub after",
-                            style.auth.hint.text.clone(),
-                        )
+                        .with_width(device_code_style.left)
                         .boxed(),
-                        Label::new("clicking the button below.", style.auth.hint.text.clone())
-                            .boxed(),
-                    ])
-                    .align_children_center()
-                    .contained()
-                    .with_style(style.auth.hint.container.clone())
-                    .boxed(),
-            ])
-            .align_children_center()
-            .contained()
-            .with_style(style.auth.device_code_group)
-            .aligned()
-            .boxed()
-    }
-
-    fn render_not_authorized_warning(style: &theme::Copilot) -> ElementBox {
-        Flex::column()
-            .with_children([
-                Flex::column()
-                    .with_children([
-                        Label::new(
-                            "You must have an active copilot",
-                            style.auth.warning.text.to_owned(),
-                        )
-                        .aligned()
-                        .boxed(),
-                        Label::new(
-                            "license to use it in Zed.",
-                            style.auth.warning.text.to_owned(),
-                        )
-                        .aligned()
-                        .boxed(),
-                    ])
-                    .align_children_center()
-                    .contained()
-                    .with_style(style.auth.warning.container)
-                    .boxed(),
-                Flex::column()
-                    .with_children([
-                        Label::new(
-                            "Try connecting again once you",
-                            style.auth.hint.text.to_owned(),
-                        )
-                        .aligned()
-                        .boxed(),
-                        Label::new(
-                            "have activated a Copilot license.",
-                            style.auth.hint.text.to_owned(),
-                        )
-                        .aligned()
-                        .boxed(),
-                    ])
-                    .align_children_center()
-                    .contained()
-                    .with_style(style.auth.not_authorized_hint)
-                    .boxed(),
-            ])
-            .align_children_center()
-            .boxed()
-    }
-
-    fn render_copilot_enabled(style: &theme::Copilot) -> ElementBox {
-        Flex::column()
-            .with_children([
-                Label::new(
-                    "You can update your settings or",
-                    style.auth.hint.text.clone(),
-                )
-                .aligned()
-                .boxed(),
-                Label::new(
-                    "sign out from the Copilot menu in",
-                    style.auth.hint.text.clone(),
-                )
-                .aligned()
-                .boxed(),
-                Label::new("the status bar.", style.auth.hint.text.clone())
+                    Label::new(
+                        if copied { "Copied!" } else { "Copy" },
+                        device_code_style.cta.style_for(state, false).text.clone(),
+                    )
                     .aligned()
+                    .contained()
+                    .with_style(*device_code_style.right_container.style_for(state, false))
+                    .constrained()
+                    .with_width(device_code_style.right)
                     .boxed(),
-            ])
-            .align_children_center()
-            .contained()
-            .with_style(style.auth.enabled_hint)
-            .boxed()
+                ])
+                .contained()
+                .with_style(device_code_style.cta.style_for(state, false).container)
+                .boxed()
+        })
+        .on_click(gpui::MouseButton::Left, {
+            let user_code = data.user_code.clone();
+            move |_, cx| {
+                cx.platform()
+                    .write_to_clipboard(ClipboardItem::new(user_code.clone()));
+                cx.notify();
+            }
+        })
+        .with_cursor_style(gpui::CursorStyle::PointingHand)
+        .boxed()
     }
 
     fn render_prompting_modal(
@@ -291,171 +191,172 @@ impl CopilotCodeVerification {
         style: &theme::Copilot,
         cx: &mut gpui::RenderContext<Self>,
     ) -> ElementBox {
-        theme::ui::modal("Connect Copilot to Zed", &style.modal, cx, |cx| {
-            Flex::column()
-                .with_children([
-                    Flex::column()
-                        .with_children([
-                            Flex::row()
-                                .with_children([
-                                    theme::ui::svg(&style.auth.copilot_plus_zed_icon).boxed()
-                                ])
-                                .boxed(),
-                            Flex::column()
-                                .with_children([
-                                    Label::new(
-                                        "Enable Copilot by connecting",
-                                        style.auth.enable_text.clone(),
-                                    )
-                                    .boxed(),
-                                    Label::new(
-                                        "your existing license.",
-                                        style.auth.enable_text.clone(),
-                                    )
-                                    .boxed(),
-                                ])
-                                .align_children_center()
-                                .contained()
-                                .with_style(style.auth.enable_group.clone())
-                                .boxed(),
-                        ])
-                        .align_children_center()
-                        .contained()
-                        .with_style(style.auth.header_group)
+        Flex::column()
+            .with_children([
+                Flex::column()
+                    .with_children([
+                        Label::new(
+                            "Enable Copilot by connecting",
+                            style.auth.prompting.subheading.text.clone(),
+                        )
                         .aligned()
                         .boxed(),
-                    Self::render_device_code(data, &style, cx),
-                    Flex::column()
-                        .with_child(theme::ui::cta_button_with_click(
-                            "Connect to GitHub",
-                            style.auth.content_width,
-                            &style.auth.cta_button,
-                            cx,
-                            {
-                                let verification_uri = data.verification_uri.clone();
-                                move |_, cx| cx.platform().open_url(&verification_uri)
-                            },
-                        ))
-                        .align_children_center()
-                        .contained()
-                        .with_style(style.auth.github_group)
+                        Label::new(
+                            "your existing license.",
+                            style.auth.prompting.subheading.text.clone(),
+                        )
                         .aligned()
                         .boxed(),
-                ])
-                .align_children_center()
-                .constrained()
-                .with_width(style.auth.content_width)
-                .aligned()
-                .boxed()
-        })
+                    ])
+                    .align_children_center()
+                    .contained()
+                    .with_style(style.auth.prompting.subheading.container)
+                    .boxed(),
+                Self::render_device_code(data, &style, cx),
+                Flex::column()
+                    .with_children([
+                        Label::new(
+                            "Paste this code into GitHub after",
+                            style.auth.prompting.hint.text.clone(),
+                        )
+                        .aligned()
+                        .boxed(),
+                        Label::new(
+                            "clicking the button below.",
+                            style.auth.prompting.hint.text.clone(),
+                        )
+                        .aligned()
+                        .boxed(),
+                    ])
+                    .align_children_center()
+                    .contained()
+                    .with_style(style.auth.prompting.hint.container.clone())
+                    .boxed(),
+                theme::ui::cta_button_with_click(
+                    "Connect to GitHub",
+                    style.auth.content_width,
+                    &style.auth.cta_button,
+                    cx,
+                    {
+                        let verification_uri = data.verification_uri.clone();
+                        move |_, cx| cx.platform().open_url(&verification_uri)
+                    },
+                )
+                .boxed(),
+            ])
+            .align_children_center()
+            .boxed()
     }
     fn render_enabled_modal(
         style: &theme::Copilot,
         cx: &mut gpui::RenderContext<Self>,
     ) -> ElementBox {
-        theme::ui::modal("Connect Copilot to Zed", &style.modal, cx, |cx| {
-            Flex::column()
-                .with_children([
-                    Flex::column()
-                        .with_children([
-                            Flex::row()
-                                .with_children([
-                                    theme::ui::svg(&style.auth.copilot_plus_zed_icon).boxed()
-                                ])
-                                .boxed(),
-                            Label::new("Copilot Enabled!", style.auth.enable_text.clone()).boxed(),
-                        ])
-                        .align_children_center()
-                        .contained()
-                        .with_style(style.auth.header_group)
+        let enabled_style = &style.auth.authorized;
+        Flex::column()
+            .with_children([
+                Label::new("Copilot Enabled!", enabled_style.subheading.text.clone())
+                    .contained()
+                    .with_style(enabled_style.subheading.container)
+                    .aligned()
+                    .boxed(),
+                Flex::column()
+                    .with_children([
+                        Label::new(
+                            "You can update your settings or",
+                            enabled_style.hint.text.clone(),
+                        )
                         .aligned()
                         .boxed(),
-                    Self::render_copilot_enabled(&style),
-                    Flex::column()
-                        .with_child(theme::ui::cta_button_with_click(
-                            "Close",
-                            style.auth.content_width,
-                            &style.auth.cta_button,
-                            cx,
-                            |_, cx| {
-                                let window_id = cx.window_id();
-                                cx.remove_window(window_id)
-                            },
-                        ))
-                        .align_children_center()
-                        .contained()
-                        .with_style(style.auth.github_group)
+                        Label::new(
+                            "sign out from the Copilot menu in",
+                            enabled_style.hint.text.clone(),
+                        )
                         .aligned()
                         .boxed(),
-                ])
-                .align_children_center()
-                .constrained()
-                .with_width(style.auth.content_width)
-                .aligned()
-                .boxed()
-        })
+                        Label::new("the status bar.", enabled_style.hint.text.clone())
+                            .aligned()
+                            .boxed(),
+                    ])
+                    .align_children_center()
+                    .contained()
+                    .with_style(enabled_style.hint.container)
+                    .boxed(),
+                theme::ui::cta_button_with_click(
+                    "Done",
+                    style.auth.content_width,
+                    &style.auth.cta_button,
+                    cx,
+                    |_, cx| {
+                        let window_id = cx.window_id();
+                        cx.remove_window(window_id)
+                    },
+                )
+                .boxed(),
+            ])
+            .align_children_center()
+            .boxed()
     }
     fn render_unauthorized_modal(
         style: &theme::Copilot,
         cx: &mut gpui::RenderContext<Self>,
     ) -> ElementBox {
-        theme::ui::modal("Connect Copilot to Zed", &style.modal, cx, |cx| {
-            Flex::column()
-                .with_children([
-                    Flex::column()
-                        .with_children([
-                            Flex::row()
-                                .with_children([
-                                    theme::ui::svg(&style.auth.copilot_plus_zed_icon).boxed()
-                                ])
-                                .boxed(),
-                            Flex::column()
-                                .with_children([
-                                    Label::new(
-                                        "Enable Copilot by connecting",
-                                        style.auth.enable_text.clone(),
-                                    )
-                                    .boxed(),
-                                    Label::new(
-                                        "your existing license.",
-                                        style.auth.enable_text.clone(),
-                                    )
-                                    .boxed(),
-                                ])
-                                .align_children_center()
-                                .contained()
-                                .with_style(style.auth.enable_group.clone())
-                                .boxed(),
-                        ])
-                        .align_children_center()
-                        .contained()
-                        .with_style(style.auth.header_group)
+        let unauthorized_style = &style.auth.not_authorized;
+
+        Flex::column()
+            .with_children([
+                Flex::column()
+                    .with_children([
+                        Label::new(
+                            "Enable Copilot by connecting",
+                            unauthorized_style.subheading.text.clone(),
+                        )
                         .aligned()
                         .boxed(),
-                    Self::render_not_authorized_warning(&style),
-                    Flex::column()
-                        .with_child(theme::ui::cta_button_with_click(
-                            "Close",
-                            style.auth.content_width,
-                            &style.auth.cta_button,
-                            cx,
-                            |_, cx| {
-                                let window_id = cx.window_id();
-                                cx.remove_window(window_id)
-                            },
-                        ))
-                        .align_children_center()
-                        .contained()
-                        .with_style(style.auth.github_group)
+                        Label::new(
+                            "your existing license.",
+                            unauthorized_style.subheading.text.clone(),
+                        )
                         .aligned()
                         .boxed(),
-                ])
-                .align_children_center()
-                .constrained()
-                .with_width(style.auth.content_width)
-                .aligned()
-                .boxed()
-        })
+                    ])
+                    .align_children_center()
+                    .contained()
+                    .with_style(unauthorized_style.subheading.container)
+                    .boxed(),
+                Flex::column()
+                    .with_children([
+                        Label::new(
+                            "You must have an active copilot",
+                            unauthorized_style.warning.text.clone(),
+                        )
+                        .aligned()
+                        .boxed(),
+                        Label::new(
+                            "license to use it in Zed.",
+                            unauthorized_style.warning.text.clone(),
+                        )
+                        .aligned()
+                        .boxed(),
+                    ])
+                    .align_children_center()
+                    .contained()
+                    .with_style(unauthorized_style.warning.container)
+                    .boxed(),
+                theme::ui::cta_button_with_click(
+                    "Subscribe on GitHub",
+                    style.auth.content_width,
+                    &style.auth.cta_button,
+                    cx,
+                    |_, cx| {
+                        let window_id = cx.window_id();
+                        cx.remove_window(window_id);
+                        cx.platform().open_url(COPILOT_SIGN_UP_URL)
+                    },
+                )
+                .boxed(),
+            ])
+            .align_children_center()
+            .boxed()
     }
 }
 
@@ -478,13 +379,22 @@ impl View for CopilotCodeVerification {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         let style = cx.global::<Settings>().theme.clone();
-        match &self.status {
-            Status::SigningIn {
-                prompt: Some(prompt),
-            } => Self::render_prompting_modal(&prompt, &style.copilot, cx),
-            Status::Unauthorized => Self::render_unauthorized_modal(&style.copilot, cx),
-            Status::Authorized => Self::render_enabled_modal(&style.copilot, cx),
-            _ => Empty::new().boxed(),
-        }
+
+        modal("Connect Copilot to Zed", &style.copilot.modal, cx, |cx| {
+            Flex::column()
+                .with_children([
+                    theme::ui::icon(&style.copilot.auth.header).boxed(),
+                    match &self.status {
+                        Status::SigningIn {
+                            prompt: Some(prompt),
+                        } => Self::render_prompting_modal(&prompt, &style.copilot, cx),
+                        Status::Unauthorized => Self::render_unauthorized_modal(&style.copilot, cx),
+                        Status::Authorized => Self::render_enabled_modal(&style.copilot, cx),
+                        _ => Empty::new().boxed(),
+                    },
+                ])
+                .align_children_center()
+                .boxed()
+        })
     }
 }
