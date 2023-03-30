@@ -1,17 +1,24 @@
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     elements::*, impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
+use theme::Editor;
 use workspace::{item::ItemHandle, NewTerminal, StatusItemView};
+
+use crate::{Copilot, Status};
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
 #[derive(Clone, PartialEq)]
 pub struct DeployCopilotMenu;
 
-impl_internal_actions!(copilot, [DeployCopilotMenu]);
+// TODO: Make the other code path use `get_or_insert` logic for this modal
+#[derive(Clone, PartialEq)]
+pub struct DeployCopilotModal;
+
+impl_internal_actions!(copilot, [DeployCopilotMenu, DeployCopilotModal]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CopilotButton::deploy_copilot_menu);
@@ -19,6 +26,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub struct CopilotButton {
     popup_menu: ViewHandle<ContextMenu>,
+    editor: Option<WeakViewHandle<Editor>>,
 }
 
 impl Entity for CopilotButton {
@@ -31,9 +39,16 @@ impl View for CopilotButton {
     }
 
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
-        let theme = cx.global::<Settings>().theme.clone();
+        let settings = cx.global::<Settings>();
 
-        let visible = self.popup_menu.read(cx).visible();
+        if !settings.enable_copilot_integration {
+            return Empty::new().boxed();
+        }
+
+        let theme = settings.theme.clone();
+        let active = self.popup_menu.read(cx).visible() /* || modal.is_shown */;
+        let authorized = Copilot::global(cx).unwrap().read(cx).status() == Status::Authorized;
+        let enabled = true;
 
         Stack::new()
             .with_child(
@@ -45,16 +60,26 @@ impl View for CopilotButton {
                             .status_bar
                             .sidebar_buttons
                             .item
-                            .style_for(state, visible);
+                            .style_for(state, active);
 
                         Flex::row()
                             .with_child(
-                                Svg::new("icons/maybe_copilot.svg")
-                                    .with_color(style.icon_color)
-                                    .constrained()
-                                    .with_width(style.icon_size)
-                                    .aligned()
-                                    .named("copilot-icon"),
+                                Svg::new({
+                                    if authorized {
+                                        if enabled {
+                                            "icons/copilot_16.svg"
+                                        } else {
+                                            "icons/copilot_disabled_16.svg"
+                                        }
+                                    } else {
+                                        "icons/copilot_init_16.svg"
+                                    }
+                                })
+                                .with_color(style.icon_color)
+                                .constrained()
+                                .with_width(style.icon_size)
+                                .aligned()
+                                .named("copilot-icon"),
                             )
                             .constrained()
                             .with_height(style.icon_size)
@@ -64,15 +89,12 @@ impl View for CopilotButton {
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _cx| {
-                    // TODO: Behavior of this
-                    // if has_terminals {
-                    //     cx.dispatch_action(DeployCopilotMenu);
-                    // } else {
-                    //     if !active {
-                    //         cx.dispatch_action(FocusDock);
-                    //     }
-                    // };
+                .on_click(MouseButton::Left, move |_, cx| {
+                    if authorized {
+                        cx.dispatch_action(DeployCopilotMenu);
+                    } else {
+                        cx.dispatch_action(DeployCopilotModal);
+                    }
                 })
                 .with_tooltip::<Self, _>(
                     0,
@@ -102,6 +124,7 @@ impl CopilotButton {
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),
+            editor: None,
         }
     }
 
@@ -121,6 +144,7 @@ impl CopilotButton {
 
 impl StatusItemView for CopilotButton {
     fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        if let Some(editor) = item.map(|item| item.act_as::<editor::Editor>(cx)) {}
         cx.notify();
     }
 }
