@@ -945,7 +945,6 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
                 settings_content.insert_str(first_key_start, &content);
             }
         } else {
-            dbg!("here???");
             new_value = serde_json::json!({ new_key.to_string(): new_value });
             let indent_prefix_len = 4 * depth;
             let new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
