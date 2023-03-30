@@ -8,7 +8,6 @@ use breadcrumbs::Breadcrumbs;
 pub use client;
 use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
 use collections::VecDeque;
-use copilot::copilot_button::CopilotButton;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
@@ -262,6 +261,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
     activity_indicator::init(cx);
+    copilot_button::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
 }
@@ -312,7 +312,7 @@ pub fn initialize_workspace(
     });
 
     let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
-    let copilot = cx.add_view(|cx| CopilotButton::new(cx));
+    let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(cx));
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
     let activity_indicator =

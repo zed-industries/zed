@@ -1357,6 +1357,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "copilot_button"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "context_menu",
+ "copilot",
+ "editor",
+ "futures 0.3.25",
+ "gpui",
+ "settings",
+ "smol",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
@@ -5924,6 +5941,7 @@ dependencies = [
  "gpui",
  "json_comments",
  "postage",
+ "pretty_assertions",
  "schemars",
  "serde",
  "serde_derive",
@@ -8507,6 +8525,7 @@ dependencies = [
  "command_palette",
  "context_menu",
  "copilot",
+ "copilot_button",
  "ctor",
  "db",
  "diagnostics",

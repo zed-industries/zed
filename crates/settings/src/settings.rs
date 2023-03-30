@@ -188,17 +188,30 @@ pub enum OnOff {
 }
 
 impl OnOff {
-    fn as_bool(&self) -> bool {
+    pub fn as_bool(&self) -> bool {
         match self {
             OnOff::On => true,
             OnOff::Off => false,
         }
     }
+
+    pub fn from_bool(value: bool) -> OnOff {
+        match value {
+            true => OnOff::On,
+            false => OnOff::Off,
+        }
+    }
 }
 
-impl Into<bool> for OnOff {
-    fn into(self) -> bool {
-        self.as_bool()
+impl From<OnOff> for bool {
+    fn from(value: OnOff) -> bool {
+        value.as_bool()
+    }
+}
+
+impl From<bool> for OnOff {
+    fn from(value: bool) -> OnOff {
+        OnOff::from_bool(value)
     }
 }
 
@@ -928,6 +941,7 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
                 settings_content.insert_str(first_key_start, &content);
             }
         } else {
+            dbg!("here???");
             new_value = serde_json::json!({ new_key.to_string(): new_value });
             let indent_prefix_len = 4 * depth;
             let new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
@@ -973,12 +987,27 @@ fn to_pretty_json(
 
 pub fn update_settings_file(
     mut text: String,
-    old_file_content: SettingsFileContent,
+    mut old_file_content: SettingsFileContent,
     update: impl FnOnce(&mut SettingsFileContent),
 ) -> String {
     let mut new_file_content = old_file_content.clone();
 
     update(&mut new_file_content);
+
+    if new_file_content.languages.len() != old_file_content.languages.len() {
+        for language in new_file_content.languages.keys() {
+            old_file_content
+                .languages
+                .entry(language.clone())
+                .or_default();
+        }
+        for language in old_file_content.languages.keys() {
+            new_file_content
+                .languages
+                .entry(language.clone())
+                .or_default();
+        }
+    }
 
     let old_object = to_json_object(old_file_content);
     let new_object = to_json_object(new_file_content);
@@ -992,6 +1021,7 @@ pub fn update_settings_file(
         for (key, old_value) in old_object.iter() {
             // We know that these two are from the same shape of object, so we can just unwrap
             let new_value = new_object.get(key).unwrap();
+
             if old_value != new_value {
                 match new_value {
                     Value::Bool(_) | Value::Number(_) | Value::String(_) => {
@@ -1047,7 +1077,75 @@ mod tests {
         let old_json = old_json.into();
         let old_content: SettingsFileContent = serde_json::from_str(&old_json).unwrap_or_default();
         let new_json = update_settings_file(old_json, old_content, update);
-        assert_eq!(new_json, expected_new_json.into());
+        pretty_assertions::assert_eq!(new_json, expected_new_json.into());
+    }
+
+    #[test]
+    fn test_update_copilot() {
+        assert_new_settings(
+            r#"
+                {
+                    "languages": {
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings.editor.copilot = Some(OnOff::On);
+            },
+            r#"
+                {
+                    "copilot": "on",
+                    "languages": {
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_langauge_copilot() {
+        assert_new_settings(
+            r#"
+                {
+                    "languages": {
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings.languages.insert(
+                    "Rust".into(),
+                    EditorSettings {
+                        copilot: Some(OnOff::On),
+                        ..Default::default()
+                    },
+                );
+            },
+            r#"
+                {
+                    "languages": {
+                        "Rust": {
+                            "copilot": "on"
+                        },
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+        );
     }
 
     #[test]

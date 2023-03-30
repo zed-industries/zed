@@ -141,7 +141,13 @@ pub mod simple_message_notification {
     actions!(message_notifications, [CancelMessageNotification]);
 
     #[derive(Clone, Default, Deserialize, PartialEq)]
-    pub struct OsOpen(pub String);
+    pub struct OsOpen(pub Cow<'static, str>);
+
+    impl OsOpen {
+        pub fn new<I: Into<Cow<'static, str>>>(url: I) -> Self {
+            OsOpen(url.into())
+        }
+    }
 
     impl_actions!(message_notifications, [OsOpen]);
 
@@ -149,7 +155,7 @@ pub mod simple_message_notification {
         cx.add_action(MessageNotification::dismiss);
         cx.add_action(
             |_workspace: &mut Workspace, open_action: &OsOpen, cx: &mut ViewContext<Workspace>| {
-                cx.platform().open_url(open_action.0.as_str());
+                cx.platform().open_url(open_action.0.as_ref());
             },
         )
     }

@@ -30,6 +30,16 @@ export default function copilot(colorScheme: ColorScheme) {
     };
 
     return {
+        outLinkIcon: {
+            icon: svg(foreground(layer, "variant"), "icons/maybe_link_out.svg", 12, 12),
+            container: {
+                cornerRadius: 6,
+                padding: { top: 6, bottom: 6, left: 6, right: 6 },
+            },
+            hover: {
+                icon: svg(foreground(layer, "hovered"), "icons/maybe_link_out.svg", 12, 12)
+            },
+        },
         modal: {
             titleText: {
                 ...text(layer, "sans", { size: "md", color: background(layer, "default") }),

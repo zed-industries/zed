@@ -119,6 +119,7 @@ pub struct AvatarStyle {
 
 #[derive(Deserialize, Default, Clone)]
 pub struct Copilot {
+    pub out_link_icon: Interactive<IconStyle>,
     pub modal: ModalStyle,
     pub auth: CopilotAuth,
 }

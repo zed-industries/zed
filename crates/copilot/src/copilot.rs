@@ -1,4 +1,3 @@
-pub mod copilot_button;
 mod request;
 mod sign_in;
 

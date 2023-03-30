@@ -510,7 +510,7 @@ pub struct Editor {
     hover_state: HoverState,
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
-    copilot_state: CopilotState,
+    pub copilot_state: CopilotState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1008,12 +1008,12 @@ impl CodeActionsMenu {
     }
 }
 
-struct CopilotState {
+pub struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
     completions: Vec<copilot::Completion>,
     active_completion_index: usize,
-    user_enabled: Option<bool>,
+    pub user_enabled: Option<bool>,
 }
 
 impl Default for CopilotState {
@@ -2859,6 +2859,7 @@ impl Editor {
     fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
         // Auto re-enable copilot if you're asking for a suggestion
         if self.copilot_state.user_enabled == Some(false) {
+            cx.notify();
             self.copilot_state.user_enabled = Some(true);
         }
 
@@ -2880,6 +2881,7 @@ impl Editor {
     ) {
         // Auto re-enable copilot if you're asking for a suggestion
         if self.copilot_state.user_enabled == Some(false) {
+            cx.notify();
             self.copilot_state.user_enabled = Some(true);
         }
 
@@ -2921,6 +2923,8 @@ impl Editor {
         } else {
             self.clear_copilot_suggestions(cx);
         }
+
+        cx.notify();
     }
 
     fn sync_suggestion(&mut self, cx: &mut ViewContext<Self>) {
