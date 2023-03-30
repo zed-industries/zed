@@ -18,3 +18,4 @@ serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_path_to_error = "0.1.4"
 toml = "0.5"
+ts-rs = "6.1"

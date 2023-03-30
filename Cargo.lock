@@ -2697,6 +2697,7 @@ dependencies = [
  "sum_tree",
  "time 0.3.17",
  "tiny-skia",
+ "ts-rs",
  "usvg",
  "util",
  "uuid 1.2.2",
@@ -6613,6 +6614,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "toml",
+ "ts-rs",
 ]
 
 [[package]]
@@ -7287,6 +7289,29 @@ name = "try-lock"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59547bce71d9c38b83d9c0e92b6066c4253371f15005def0c30d9657f50c7642"
+
+[[package]]
+name = "ts-rs"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4added4070a4fdf9df03457206cd2e4b12417c8560a2954d91ffcbe60177a56a"
+dependencies = [
+ "thiserror",
+ "ts-rs-macros",
+]
+
+[[package]]
+name = "ts-rs-macros"
+version = "6.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f807fdb3151fee75df7485b901a89624358cd07a67a8fb1a5831bf5a07681ff"
+dependencies = [
+ "Inflector",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "termcolor",
+]
 
 [[package]]
 name = "ttf-parser"
