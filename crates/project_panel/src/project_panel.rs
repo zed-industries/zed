@@ -115,7 +115,7 @@ actions!(
     [
         ExpandSelectedEntry,
         CollapseSelectedEntry,
-        NewDirectory,
+        NewFolder,
         NewFile,
         Copy,
         CopyPath,
@@ -141,7 +141,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
     cx.add_action(ProjectPanel::new_file);
-    cx.add_action(ProjectPanel::new_directory);
+    cx.add_action(ProjectPanel::new_folder);
     cx.add_action(ProjectPanel::rename);
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
@@ -306,7 +306,7 @@ impl ProjectPanel {
                 }
             }
             menu_entries.push(ContextMenuItem::item("New File", NewFile));
-            menu_entries.push(ContextMenuItem::item("New Folder", NewDirectory));
+            menu_entries.push(ContextMenuItem::item("New Folder", NewFolder));
             menu_entries.push(ContextMenuItem::item("Reveal in Finder", RevealInFinder));
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::item("Copy", Copy));
@@ -535,7 +535,7 @@ impl ProjectPanel {
         self.add_entry(false, cx)
     }
 
-    fn new_directory(&mut self, _: &NewDirectory, cx: &mut ViewContext<Self>) {
+    fn new_folder(&mut self, _: &NewFolder, cx: &mut ViewContext<Self>) {
         self.add_entry(true, cx)
     }
 
@@ -1711,7 +1711,7 @@ mod tests {
             ]
         );
 
-        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
+        panel.update(cx, |panel, cx| panel.new_folder(&NewFolder, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
