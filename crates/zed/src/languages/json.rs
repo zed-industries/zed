@@ -84,7 +84,7 @@ impl LspAdapter for JsonLspAdapter {
                 )
                 .await?;
 
-            remove_matching(&container_dir, |entry| entry != server_path).await;
+            remove_matching(&container_dir, |entry| entry != version_dir).await;
         }
 
         Ok(LanguageServerBinary {
