@@ -1,5 +1,5 @@
 use crate::{
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    SearchOption, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use collections::HashMap;
@@ -676,7 +676,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn select_prev_match(pane: &mut Pane, _: &SelectPrevMatch, cx: &mut ViewContext<Pane>) {
+    fn select_prev_match(pane: &mut Pane, _: &SelectPreviousMatch, cx: &mut ViewContext<Pane>) {
         if let Some(search_view) = pane
             .active_item()
             .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -750,7 +750,7 @@ impl ProjectSearchBar {
         let tooltip;
         match direction {
             Direction::Prev => {
-                action = Box::new(SelectPrevMatch);
+                action = Box::new(SelectPreviousMatch);
                 tooltip = "Select Previous Match";
             }
             Direction::Next => {

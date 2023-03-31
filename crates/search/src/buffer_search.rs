@@ -1,5 +1,5 @@
 use crate::{
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    SearchOption, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use collections::HashMap;
@@ -367,7 +367,7 @@ impl BufferSearchBar {
         let tooltip;
         match direction {
             Direction::Prev => {
-                action = Box::new(SelectPrevMatch);
+                action = Box::new(SelectPreviousMatch);
                 tooltip = "Select Previous Match";
             }
             Direction::Next => {
@@ -485,7 +485,7 @@ impl BufferSearchBar {
         self.select_match(Direction::Next, cx);
     }
 
-    fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
+    fn select_prev_match(&mut self, _: &SelectPreviousMatch, cx: &mut ViewContext<Self>) {
         self.select_match(Direction::Prev, cx);
     }
 
@@ -517,7 +517,7 @@ impl BufferSearchBar {
 
     fn select_prev_match_on_pane(
         pane: &mut Pane,
-        action: &SelectPrevMatch,
+        action: &SelectPreviousMatch,
         cx: &mut ViewContext<Pane>,
     ) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -840,7 +840,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_prev_match(&SelectPrevMatch, cx);
+            search_bar.select_prev_match(&SelectPreviousMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -851,7 +851,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_prev_match(&SelectPrevMatch, cx);
+            search_bar.select_prev_match(&SelectPreviousMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
@@ -862,7 +862,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_prev_match(&SelectPrevMatch, cx);
+            search_bar.select_prev_match(&SelectPreviousMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -881,7 +881,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
-            search_bar.select_prev_match(&SelectPrevMatch, cx);
+            search_bar.select_prev_match(&SelectPreviousMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -919,7 +919,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
-            search_bar.select_prev_match(&SelectPrevMatch, cx);
+            search_bar.select_prev_match(&SelectPreviousMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -957,7 +957,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
-            search_bar.select_prev_match(&SelectPrevMatch, cx);
+            search_bar.select_prev_match(&SelectPreviousMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]

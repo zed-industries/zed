@@ -37,7 +37,7 @@
         "context": "Pane",
         "bindings": {
             "f4": "search::SelectNextMatch",
-            "shift-f4": "search::SelectPrevMatch"
+            "shift-f4": "search::SelectPreviousMatch"
         }
     },
     {
