@@ -25,7 +25,7 @@ impl ScrollAmount {
 
             match self {
                 Self::LineDown | Self::HalfPageDown => context_menu.select_next(cx),
-                Self::LineUp | Self::HalfPageUp => context_menu.select_prev(cx),
+                Self::LineUp | Self::HalfPageUp => context_menu.select_previous(cx),
                 Self::PageDown => context_menu.select_last(cx),
                 Self::PageUp => context_menu.select_first(cx),
             }

@@ -29,7 +29,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactList::respond_to_contact_request);
     cx.add_action(ContactList::cancel);
     cx.add_action(ContactList::select_next);
-    cx.add_action(ContactList::select_prev);
+    cx.add_action(ContactList::select_previous);
     cx.add_action(ContactList::confirm);
     cx.add_action(ContactList::toggle_expanded);
     cx.add_action(ContactList::call);
@@ -380,7 +380,7 @@ impl ContactList {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selection {
             if ix > 0 {
                 self.selection = Some(ix - 1);

@@ -145,7 +145,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx.add_action(Self::select_first);
         cx.add_action(Self::select_last);
         cx.add_action(Self::select_next);
-        cx.add_action(Self::select_prev);
+        cx.add_action(Self::select_previous);
         cx.add_action(Self::select_index);
         cx.add_action(Self::confirm);
         cx.add_action(Self::cancel);
@@ -309,7 +309,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
+    pub fn select_previous(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             delegate.update(cx, |delegate, cx| {
                 let mut selected_index = delegate.selected_index();

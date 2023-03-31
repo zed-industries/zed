@@ -18,7 +18,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContextMenu::select_first);
     cx.add_action(ContextMenu::select_last);
     cx.add_action(ContextMenu::select_next);
-    cx.add_action(ContextMenu::select_prev);
+    cx.add_action(ContextMenu::select_previous);
     cx.add_action(ContextMenu::clicked);
     cx.add_action(ContextMenu::confirm);
     cx.add_action(ContextMenu::cancel);
@@ -281,7 +281,7 @@ impl ContextMenu {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
             for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
                 if item.is_action() {

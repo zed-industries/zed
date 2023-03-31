@@ -137,7 +137,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::toggle_expanded);
-    cx.add_action(ProjectPanel::select_prev);
+    cx.add_action(ProjectPanel::select_previous);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
     cx.add_action(ProjectPanel::new_file);
@@ -403,7 +403,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.selection {
             let (mut worktree_ix, mut entry_ix, _) =
                 self.index_for_selection(selection).unwrap_or_default();

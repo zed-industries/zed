@@ -671,11 +671,11 @@ impl ContextMenu {
         }
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_previous(&mut self, cx: &mut ViewContext<Editor>) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_prev(cx),
-                ContextMenu::CodeActions(menu) => menu.select_prev(cx),
+                ContextMenu::Completions(menu) => menu.select_previous(cx),
+                ContextMenu::CodeActions(menu) => menu.select_previous(cx),
             }
             true
         } else {
@@ -745,7 +745,7 @@ impl CompletionsMenu {
         cx.notify();
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_previous(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
             self.list.scroll_to(ScrollTarget::Show(self.selected_item));
@@ -920,7 +920,7 @@ impl CodeActionsMenu {
         cx.notify()
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_previous(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
             cx.notify()
@@ -4137,7 +4137,7 @@ impl Editor {
         }
 
         if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_prev(cx) {
+            if context_menu.select_previous(cx) {
                 return;
             }
         }
