@@ -22,7 +22,7 @@
             "cmd-w": "pane::CloseActiveTab",
             "alt-cmd-t": "pane::CloseInactiveTabs",
             "cmd-k u": "pane::CloseCleanItems",
-            "cmd-k cmd-w": "pane::CloseAllItems",
+            "cmd-k cmd-w": "pane::CloseAllTabs",
             "cmd-shift-w": "workspace::CloseWindow",
             "cmd-s": "workspace::Save",
             "cmd-shift-s": "workspace::SaveAs",
