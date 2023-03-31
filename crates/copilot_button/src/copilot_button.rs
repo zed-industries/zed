@@ -286,7 +286,7 @@ impl CopilotButton {
             if globally_enabled {
                 "Disable Copilot Globally"
             } else {
-                "Enable Copilot Locally"
+                "Enable Copilot Globally"
             },
             ToggleCopilotGlobally,
         ));
