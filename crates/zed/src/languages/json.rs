@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::{fs::remove_matching, http::HttpClient};
+use util::http::HttpClient;
 use util::{paths, ResultExt, StaffMode};
 
 const SERVER_PATH: &'static str =
@@ -83,8 +83,6 @@ impl LspAdapter for JsonLspAdapter {
                     &version_dir,
                 )
                 .await?;
-
-            remove_matching(&container_dir, |entry| entry != server_path).await;
         }
 
         Ok(LanguageServerBinary {
