@@ -1,7 +1,7 @@
 mod request;
 mod sign_in;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::Client;
@@ -424,9 +424,16 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
 
-        let buffer = buffer.read(cx).snapshot();
-        let request = server
-            .request::<request::GetCompletions>(build_completion_params(&buffer, position, cx));
+        let buffer = buffer.read(cx);
+
+        if !buffer.file().map(|file| file.is_local()).unwrap_or(true) {
+            return Task::ready(Err(anyhow!("Copilot only works locally")));
+        }
+
+        let buffer = buffer.snapshot();
+        let request = server.request::<request::GetCompletions>(
+            build_completion_params(&buffer, position, cx).unwrap(),
+        );
         cx.background().spawn(async move {
             let result = request.await?;
             let completion = result
@@ -452,10 +459,16 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
 
-        let buffer = buffer.read(cx).snapshot();
-        let request = server.request::<request::GetCompletionsCycling>(build_completion_params(
-            &buffer, position, cx,
-        ));
+        let buffer = buffer.read(cx);
+
+        if !buffer.file().map(|file| file.is_local()).unwrap_or(true) {
+            return Task::ready(Err(anyhow!("Copilot only works locally")));
+        }
+
+        let buffer = buffer.snapshot();
+        let request = server.request::<request::GetCompletionsCycling>(
+            build_completion_params(&buffer, position, cx).unwrap(),
+        );
         cx.background().spawn(async move {
             let result = request.await?;
             let completions = result
@@ -527,7 +540,7 @@ fn build_completion_params<T>(
     buffer: &BufferSnapshot,
     position: T,
     cx: &AppContext,
-) -> request::GetCompletionsParams
+) -> anyhow::Result<request::GetCompletionsParams>
 where
     T: ToPointUtf16,
 {
@@ -555,20 +568,25 @@ where
         Some(language_name) => language_name.to_lowercase(),
         None => "plaintext".to_string(),
     };
-    request::GetCompletionsParams {
+
+    let Ok(uri) = lsp::Url::from_file_path(&path) else {
+        bail!("Failed convert file path")
+    };
+
+    Ok(request::GetCompletionsParams {
         doc: request::GetCompletionsDocument {
             source: buffer.text(),
             tab_size: settings.tab_size(language_name).into(),
             indent_size: 1,
             insert_spaces: !settings.hard_tabs(language_name),
-            uri: lsp::Url::from_file_path(&path).unwrap(),
+            uri,
             path: path.to_string_lossy().into(),
             relative_path: relative_path.to_string_lossy().into(),
             language_id,
             position: point_to_lsp(position),
             version: 0,
         },
-    }
+    })
 }
 
 fn completion_from_lsp(completion: request::Completion, buffer: &BufferSnapshot) -> Completion {
