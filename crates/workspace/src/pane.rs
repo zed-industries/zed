@@ -41,7 +41,7 @@ actions!(
     pane,
     [
         ActivatePreviousTab,
-        ActivateNextItem,
+        ActivateNextTab,
         ActivateLastItem,
         CloseActiveItem,
         CloseInactiveItems,
@@ -116,7 +116,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &ActivatePreviousTab, cx| {
         pane.activate_prev_item(true, cx);
     });
-    cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
+    cx.add_action(|pane: &mut Pane, _: &ActivateNextTab, cx| {
         pane.activate_next_item(true, cx);
     });
     cx.add_async_action(Pane::close_active_item);
