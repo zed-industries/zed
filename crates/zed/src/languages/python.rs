@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
@@ -10,7 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::fs::remove_matching;
 use util::http::HttpClient;
 use util::ResultExt;
 
@@ -50,18 +49,12 @@ impl LspAdapter for PythonLspAdapter {
         container_dir: PathBuf,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<String>().unwrap();
-        let version_dir = container_dir.join(version.as_str());
-        fs::create_dir_all(&version_dir)
-            .await
-            .context("failed to create version directory")?;
-        let server_path = version_dir.join(Self::SERVER_PATH);
+        let server_path = container_dir.join(Self::SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
-                .npm_install_packages([("pyright", version.as_str())], &version_dir)
+                .npm_install_packages([("pyright", version.as_str())], &container_dir)
                 .await?;
-
-            remove_matching(&container_dir, |entry| entry != version_dir).await;
         }
 
         Ok(LanguageServerBinary {
