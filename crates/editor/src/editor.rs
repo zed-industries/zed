@@ -2145,6 +2145,21 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        self.insert_with_autoindent_mode(
+            text,
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            cx,
+        );
+    }
+
+    fn insert_with_autoindent_mode(
+        &mut self,
+        text: &str,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
             let old_selections = this.selections.all_adjusted(cx);
@@ -2163,9 +2178,7 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| (s.start..s.end, text.clone())),
-                    Some(AutoindentMode::Block {
-                        original_indent_columns: Vec::new(),
-                    }),
+                    autoindent_mode,
                     cx,
                 );
                 anchors
@@ -2975,7 +2988,7 @@ impl Editor {
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)
         {
-            self.insert(&text.to_string(), cx);
+            self.insert_with_autoindent_mode(&text.to_string(), None, cx);
             self.clear_copilot_suggestions(cx);
             true
         } else {
