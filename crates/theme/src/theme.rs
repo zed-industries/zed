@@ -9,7 +9,7 @@ use gpui::{
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
-use ui::{CheckboxStyle, IconStyle};
+use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle, SvgStyle};
 
 pub mod ui;
 
@@ -23,6 +23,7 @@ pub struct Theme {
     pub context_menu: ContextMenu,
     pub contacts_popover: ContactsPopover,
     pub contact_list: ContactList,
+    pub copilot: Copilot,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
@@ -75,8 +76,8 @@ pub struct Workspace {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct BlankPaneStyle {
-    pub logo: IconStyle,
-    pub logo_shadow: IconStyle,
+    pub logo: SvgStyle,
+    pub logo_shadow: SvgStyle,
     pub logo_container: ContainerStyle,
     pub keyboard_hints: ContainerStyle,
     pub keyboard_hint: Interactive<ContainedText>,
@@ -113,6 +114,52 @@ pub struct AvatarStyle {
     pub image: ImageStyle,
     pub outer_width: f32,
     pub outer_corner_radius: f32,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct Copilot {
+    pub out_link_icon: Interactive<IconStyle>,
+    pub modal: ModalStyle,
+    pub auth: CopilotAuth,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuth {
+    pub content_width: f32,
+    pub prompting: CopilotAuthPrompting,
+    pub not_authorized: CopilotAuthNotAuthorized,
+    pub authorized: CopilotAuthAuthorized,
+    pub cta_button: ButtonStyle,
+    pub header: IconStyle,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuthPrompting {
+    pub subheading: ContainedText,
+    pub hint: ContainedText,
+    pub device_code: DeviceCode,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct DeviceCode {
+    pub text: TextStyle,
+    pub cta: ButtonStyle,
+    pub left: f32,
+    pub left_container: ContainerStyle,
+    pub right: f32,
+    pub right_container: Interactive<ContainerStyle>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuthNotAuthorized {
+    pub subheading: ContainedText,
+    pub warning: ContainedText,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct CopilotAuthAuthorized {
+    pub subheading: ContainedText,
+    pub hint: ContainedText,
 }
 
 #[derive(Deserialize, Default)]
@@ -566,6 +613,7 @@ pub struct Editor {
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
+    pub suggestion: HighlightStyle,
     pub diagnostic_path_header: DiagnosticPathHeader,
     pub diagnostic_header: DiagnosticHeader,
     pub error_diagnostic: DiagnosticStyle,
@@ -691,7 +739,9 @@ pub struct DiffStyle {
 pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,
+    pub hover_and_active: Option<T>,
     pub clicked: Option<T>,
+    pub click_and_active: Option<T>,
     pub active: Option<T>,
     pub disabled: Option<T>,
 }
@@ -699,7 +749,17 @@ pub struct Interactive<T> {
 impl<T> Interactive<T> {
     pub fn style_for(&self, state: &mut MouseState, active: bool) -> &T {
         if active {
-            self.active.as_ref().unwrap_or(&self.default)
+            if state.hovered() {
+                self.hover_and_active
+                    .as_ref()
+                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
+            } else if state.clicked() == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
+                self.click_and_active
+                    .as_ref()
+                    .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
+            } else {
+                self.active.as_ref().unwrap_or(&self.default)
+            }
         } else if state.clicked() == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
             self.clicked.as_ref().unwrap()
         } else if state.hovered() {
@@ -724,7 +784,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             #[serde(flatten)]
             default: Value,
             hover: Option<Value>,
+            hover_and_active: Option<Value>,
             clicked: Option<Value>,
+            click_and_active: Option<Value>,
             active: Option<Value>,
             disabled: Option<Value>,
         }
@@ -751,7 +813,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         };
 
         let hover = deserialize_state(json.hover)?;
+        let hover_and_active = deserialize_state(json.hover_and_active)?;
         let clicked = deserialize_state(json.clicked)?;
+        let click_and_active = deserialize_state(json.click_and_active)?;
         let active = deserialize_state(json.active)?;
         let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
@@ -759,7 +823,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         Ok(Interactive {
             default,
             hover,
+            hover_and_active,
             clicked,
+            click_and_active,
             active,
             disabled,
         })
@@ -868,7 +934,7 @@ pub struct FeedbackStyle {
 #[derive(Clone, Deserialize, Default)]
 pub struct WelcomeStyle {
     pub page_width: f32,
-    pub logo: IconStyle,
+    pub logo: SvgStyle,
     pub logo_subheading: ContainedText,
     pub usage_note: ContainedText,
     pub checkbox: CheckboxStyle,

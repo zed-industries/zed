@@ -1,16 +1,14 @@
-use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
-
 use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::{io::BufReader, StreamExt};
 use language::{LanguageServerBinary, LanguageServerName};
 use smol::fs;
-use util::{async_iife, ResultExt};
+use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
+use util::{async_iife, github::latest_github_release, http::HttpClient, ResultExt};
 
-use super::github::{latest_github_release, GitHubLspBinaryVersion};
+use util::github::GitHubLspBinaryVersion;
 
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;

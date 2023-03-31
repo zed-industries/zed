@@ -1,13 +1,15 @@
-use super::github::latest_github_release;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::StreamExt;
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::{fs, process};
-use std::{any::Any, ffi::OsString, ops::Range, path::PathBuf, str, sync::Arc};
+use std::ffi::{OsStr, OsString};
+use std::{any::Any, ops::Range, path::PathBuf, str, sync::Arc};
+use util::fs::remove_matching;
+use util::github::latest_github_release;
+use util::http::HttpClient;
 use util::ResultExt;
 
 fn server_binary_arguments() -> Vec<OsString> {
@@ -55,18 +57,10 @@ impl super::LspAdapter for GoLspAdapter {
             let binary_path = container_dir.join(&format!("gopls_{version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await {
                 if metadata.is_file() {
-                    if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                        while let Some(entry) = entries.next().await {
-                            if let Some(entry) = entry.log_err() {
-                                let entry_path = entry.path();
-                                if entry_path.as_path() != binary_path
-                                    && entry.file_name() != "gobin"
-                                {
-                                    fs::remove_file(&entry_path).await.log_err();
-                                }
-                            }
-                        }
-                    }
+                    remove_matching(&container_dir, |entry| {
+                        entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
+                    })
+                    .await;
 
                     return Ok(LanguageServerBinary {
                         path: binary_path.to_path_buf(),

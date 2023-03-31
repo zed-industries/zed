@@ -1,11 +1,10 @@
-use super::node_runtime::NodeRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use collections::HashMap;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::MutableAppContext;
 use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
+use node_runtime::NodeRuntime;
 use serde_json::json;
 use settings::{keymap_file_json_schema, settings_file_json_schema};
 use smol::fs;
@@ -17,6 +16,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
+use util::{fs::remove_matching, http::HttpClient};
 use util::{paths, ResultExt, StaffMode};
 
 const SERVER_PATH: &'static str =
@@ -84,16 +84,7 @@ impl LspAdapter for JsonLspAdapter {
                 )
                 .await?;
 
-            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if entry_path.as_path() != version_dir {
-                            fs::remove_dir_all(&entry_path).await.log_err();
-                        }
-                    }
-                }
-            }
+            remove_matching(&container_dir, |entry| entry != server_path).await;
         }
 
         Ok(LanguageServerBinary {

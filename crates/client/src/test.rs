@@ -1,16 +1,14 @@
-use crate::{
-    http::{self, HttpClient, Request, Response},
-    Client, Connection, Credentials, EstablishConnectionError, UserStore,
-};
+use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{anyhow, Result};
-use futures::{future::BoxFuture, stream::BoxStream, Future, StreamExt};
+use futures::{stream::BoxStream, StreamExt};
 use gpui::{executor, ModelHandle, TestAppContext};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
     ConnectionId, Peer, Receipt, TypedEnvelope,
 };
-use std::{fmt, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
+use util::http::FakeHttpClient;
 
 pub struct FakeServer {
     peer: Arc<Peer>,
@@ -217,48 +215,5 @@ impl FakeServer {
 impl Drop for FakeServer {
     fn drop(&mut self) {
         self.disconnect();
-    }
-}
-
-pub struct FakeHttpClient {
-    handler: Box<
-        dyn 'static
-            + Send
-            + Sync
-            + Fn(Request) -> BoxFuture<'static, Result<Response, http::Error>>,
-    >,
-}
-
-impl FakeHttpClient {
-    pub fn create<Fut, F>(handler: F) -> Arc<dyn HttpClient>
-    where
-        Fut: 'static + Send + Future<Output = Result<Response, http::Error>>,
-        F: 'static + Send + Sync + Fn(Request) -> Fut,
-    {
-        Arc::new(Self {
-            handler: Box::new(move |req| Box::pin(handler(req))),
-        })
-    }
-
-    pub fn with_404_response() -> Arc<dyn HttpClient> {
-        Self::create(|_| async move {
-            Ok(isahc::Response::builder()
-                .status(404)
-                .body(Default::default())
-                .unwrap())
-        })
-    }
-}
-
-impl fmt::Debug for FakeHttpClient {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FakeHttpClient").finish()
-    }
-}
-
-impl HttpClient for FakeHttpClient {
-    fn send(&self, req: Request) -> BoxFuture<Result<Response, crate::http::Error>> {
-        let future = (self.handler)(req);
-        Box::pin(async move { future.await.map(Into::into) })
     }
 }

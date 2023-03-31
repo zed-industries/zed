@@ -1,4 +1,4 @@
-use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
+use super::{proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
@@ -7,6 +7,7 @@ use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use settings::Settings;
 use std::sync::{Arc, Weak};
+use util::http::HttpClient;
 use util::{StaffMode, TryFutureExt as _};
 
 #[derive(Default, Debug)]

@@ -29,4 +29,4 @@ editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { workspace = true }

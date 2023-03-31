@@ -6,6 +6,7 @@ import {
     foreground,
     text,
     TextProperties,
+    svg,
 } from "./components"
 
 export default function welcome(colorScheme: ColorScheme) {
@@ -32,14 +33,7 @@ export default function welcome(colorScheme: ColorScheme) {
 
     return {
         pageWidth: 320,
-        logo: {
-            color: foreground(layer, "default"),
-            icon: "icons/logo_96.svg",
-            dimensions: {
-                width: 64,
-                height: 64,
-            },
-        },
+        logo: svg(foreground(layer, "default"), "icons/logo_96.svg", 64, 64),
         logoSubheading: {
             ...text(layer, "sans", "variant", { size: "md" }),
             margin: {
@@ -109,14 +103,7 @@ export default function welcome(colorScheme: ColorScheme) {
                 ...text(layer, "sans", interactive_text_size),
                 // Also supports margin, container, border, etc.
             },
-            icon: {
-                color: foreground(layer, "on"),
-                icon: "icons/check_12.svg",
-                dimensions: {
-                    width: 12,
-                    height: 12,
-                },
-            },
+            icon: svg(foreground(layer, "on"), "icons/check_12.svg", 12, 12),
             default: {
                 ...checkboxBase,
                 background: background(layer, "default"),

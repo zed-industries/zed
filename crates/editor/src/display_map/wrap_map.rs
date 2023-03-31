@@ -5,8 +5,9 @@ use super::{
 };
 use crate::MultiBufferSnapshot;
 use gpui::{
-    fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task,
+    fonts::{FontId, HighlightStyle},
+    text_layout::LineWrapper,
+    Entity, ModelContext, ModelHandle, MutableAppContext, Task,
 };
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
@@ -444,6 +445,7 @@ impl WrapSnapshot {
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
                     false,
                     None,
+                    None,
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
@@ -573,6 +575,7 @@ impl WrapSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        suggestion_highlight: Option<HighlightStyle>,
     ) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
@@ -590,6 +593,7 @@ impl WrapSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
+                suggestion_highlight,
             ),
             input_chunk: Default::default(),
             output_position: output_start,
@@ -1316,7 +1320,7 @@ mod tests {
         }
 
         pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-            self.chunks(wrap_row..self.max_point().row() + 1, false, None)
+            self.chunks(wrap_row..self.max_point().row() + 1, false, None, None)
                 .map(|h| h.text)
         }
 
@@ -1340,7 +1344,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .chunks(start_row..end_row, true, None)
+                    .chunks(start_row..end_row, true, None, None)
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

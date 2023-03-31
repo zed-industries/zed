@@ -1,0 +1,39 @@
+[package]
+name = "copilot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/copilot.rs"
+doctest = false
+
+[dependencies]
+collections = { path = "../collections" }
+context_menu = { path = "../context_menu" }
+gpui = { path = "../gpui" }
+language = { path = "../language" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+lsp = { path = "../lsp" }
+node_runtime = { path = "../node_runtime"}
+util = { path = "../util" }
+client = { path = "../client" }
+workspace = { path = "../workspace" }
+async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+async-tar = "0.4.2"
+anyhow = "1.0"
+log = "0.4"
+serde = { workspace = true }
+serde_derive = { workspace = true }
+smol = "1.2.5"
+futures = "0.3"
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
+lsp = { path = "../lsp", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+client = { path = "../client", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }

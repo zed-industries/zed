@@ -1,8 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
-use client::{ZED_APP_PATH, ZED_APP_VERSION};
+use client::{ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -14,6 +13,7 @@ use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
 use util::channel::ReleaseChannel;
+use util::http::HttpClient;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";

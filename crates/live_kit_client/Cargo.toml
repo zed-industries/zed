@@ -62,12 +62,12 @@ jwt = "0.16"
 lazy_static = "1.4"
 objc = "0.2"
 parking_lot = "0.11.1"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
 sha2 = "0.10"
 simplelog = "0.9"
 
 [build-dependencies]
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }

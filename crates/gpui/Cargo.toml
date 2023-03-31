@@ -41,9 +41,9 @@ rand = "0.8.3"
 resvg = "0.14"
 schemars = "0.8"
 seahash = "4.1"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 time = { version = "0.3", features = ["serde", "serde-well-known"] }

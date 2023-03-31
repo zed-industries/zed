@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use std::{any::Any, path::PathBuf, sync::Arc};
+use util::http::HttpClient;
 
 pub struct RubyLanguageServer;
 

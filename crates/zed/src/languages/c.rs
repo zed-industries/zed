@@ -1,12 +1,15 @@
-use super::github::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::StreamExt;
 pub use language::*;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
+use util::fs::remove_matching;
+use util::github::latest_github_release;
+use util::http::HttpClient;
 use util::ResultExt;
+
+use util::github::GitHubLspBinaryVersion;
 
 pub struct CLspAdapter;
 
@@ -69,16 +72,7 @@ impl super::LspAdapter for CLspAdapter {
                 Err(anyhow!("failed to unzip clangd archive"))?;
             }
 
-            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if entry_path.as_path() != version_dir {
-                            fs::remove_dir_all(&entry_path).await.log_err();
-                        }
-                    }
-                }
-            }
+            remove_matching(&container_dir, |entry| entry != version_dir).await;
         }
 
         Ok(LanguageServerBinary {
