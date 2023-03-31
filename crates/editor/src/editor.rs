@@ -1028,13 +1028,6 @@ impl Default for CopilotState {
     }
 }
 
-fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
-    a.zip(b)
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum()
-}
-
 impl CopilotState {
     fn text_for_active_completion(
         &self,
@@ -1048,12 +1041,12 @@ impl CopilotState {
         let completion_buffer = buffer.buffer_for_excerpt(excerpt_id)?;
 
         let mut completion_range = completion.range.to_offset(&completion_buffer);
-        let prefix_len = common_prefix(
+        let prefix_len = Self::common_prefix(
             completion_buffer.chars_for_range(completion_range.clone()),
             completion.text.chars(),
         );
         completion_range.start += prefix_len;
-        let suffix_len = common_prefix(
+        let suffix_len = Self::common_prefix(
             completion_buffer.reversed_chars_for_range(completion_range.clone()),
             completion.text[prefix_len..].chars().rev(),
         );
@@ -1075,6 +1068,13 @@ impl CopilotState {
             }
         }
         self.completions.push(new_completion);
+    }
+
+    fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
+        a.zip(b)
+            .take_while(|(a, b)| a == b)
+            .map(|(a, _)| a.len_utf8())
+            .sum()
     }
 }
 
