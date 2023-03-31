@@ -28,14 +28,15 @@ pub use self::{
 use self::{clipped::Clipped, expanded::Expanded};
 pub use crate::presenter::ChildView;
 use crate::{
+    fonts::TextStyle,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json,
     presenter::MeasurementContext,
-    Action, DebugContext, EventContext, LayoutContext, PaintContext, RenderContext, SizeConstraint,
-    View,
+    Action, DebugContext, EventContext, LayoutContext, MutableAppContext, PaintContext,
+    RenderContext, SizeConstraint, View,
 };
 use core::panic;
 use json::ToJson;
@@ -204,6 +205,52 @@ pub trait Element {
             initial_size,
             cx,
         )
+    }
+}
+
+pub trait CompositeElement {
+    fn render(&mut self, cx: &mut MutableAppContext) -> ElementRc;
+}
+
+impl<T: CompositeElement> Element for T {
+    type LayoutState = ElementRc;
+
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        cx: &mut LayoutContext,
+    ) -> (Vector2F, Self::LayoutState) {
+        let mut element = self.render(cx);
+        let size = element.layout(constraint, cx);
+        (size, element)
+    }
+
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        element: &mut ElementRc,
+        cx: &mut PaintContext,
+    ) -> Self::PaintState {
+        element.paint(bounds.origin(), visible_bounds, cx);
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        element: &ElementRc,
+        _: &(),
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        element.rect_for_text_range(range_utf16, cx)
+    }
+
+    fn debug(&self, _: RectF, element: &ElementRc, _: &(), cx: &DebugContext) -> serde_json::Value {
+        element.debug(cx)
     }
 }
 
@@ -489,5 +536,36 @@ pub fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F
         vec2f(size.x() * max_size.y() / size.y(), max_size.y())
     } else {
         vec2f(max_size.x(), size.y() * max_size.x() / size.x())
+    }
+}
+
+// This is for example purposes and shouldn't actually be in this file
+
+struct ButtonStyle {
+    text: TextStyle,
+    container: ContainerStyle,
+}
+
+struct Button {
+    label: Cow<'static, str>,
+    style: ButtonStyle,
+}
+
+impl CompositeElement for Button {
+    fn render(&mut self, _: &mut MutableAppContext) -> ElementRc {
+        Text::new(self.label.clone(), self.style.text.clone())
+            .contained()
+            .with_style(self.style.container)
+            .boxed()
+            .into()
+    }
+}
+
+impl Button {
+    pub fn new(label: impl Into<Cow<'static, str>>, style: ButtonStyle) -> Self {
+        Self {
+            label: label.into(),
+            style,
+        }
     }
 }
