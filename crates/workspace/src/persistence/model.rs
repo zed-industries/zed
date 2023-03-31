@@ -203,7 +203,7 @@ impl SerializedPane {
 
         if let Some(active_item_index) = active_item_index {
             pane_handle.update(cx, |pane, cx| {
-                pane.activate_item(active_item_index, false, false, cx);
+                pane.activate_tab(active_item_index, false, false, cx);
             })
         }
     }

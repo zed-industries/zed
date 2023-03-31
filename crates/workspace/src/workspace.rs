@@ -1480,7 +1480,7 @@ impl Workspace {
                 None
             } else {
                 sidebar.set_open(true, cx);
-                sidebar.activate_item(action.item_index, cx);
+                sidebar.activate_tab(action.item_index, cx);
                 sidebar.active_item().cloned()
             }
         });
@@ -1514,7 +1514,7 @@ impl Workspace {
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.set_open(true, cx);
-            sidebar.activate_item(item_index, cx);
+            sidebar.activate_tab(item_index, cx);
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
@@ -1653,7 +1653,7 @@ impl Workspace {
             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
             .and_then(|item| item.downcast())
         {
-            self.activate_item(&item, cx);
+            self.activate_tab(&item, cx);
             return item;
         }
 
@@ -1671,14 +1671,14 @@ impl Workspace {
         }
     }
 
-    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
+    pub fn activate_tab(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             pane.read(cx)
                 .index_for_item(item)
                 .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
-            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
+            pane.update(cx, |pane, cx| pane.activate_tab(ix, true, true, cx));
             true
         } else {
             false
@@ -1762,7 +1762,7 @@ impl Workspace {
                 }
                 pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
                 pane::Event::Remove if is_dock => Dock::hide(self, cx),
-                pane::Event::ActivateItem { local } => {
+                pane::Event::ActivateTab { local } => {
                     if *local {
                         self.unfollow(&pane, cx);
                     }
@@ -2492,7 +2492,7 @@ impl Workspace {
                 .unwrap_or_default();
 
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
-                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
+                pane.update(cx, |pane, cx| pane.activate_tab(index, false, false, cx));
             } else {
                 Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
             }
@@ -3365,7 +3365,7 @@ mod tests {
 
         let close_items = workspace.update(cx, |workspace, cx| {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, true, cx);
+                pane.activate_tab(1, true, true, cx);
                 assert_eq!(pane.active_item().unwrap().id(), item2.id());
             });
 
@@ -3490,7 +3490,7 @@ mod tests {
                 workspace.add_item(Box::new(item), cx);
             }
             left_pane.update(cx, |pane, cx| {
-                pane.activate_item(2, true, true, cx);
+                pane.activate_tab(2, true, true, cx);
             });
 
             workspace

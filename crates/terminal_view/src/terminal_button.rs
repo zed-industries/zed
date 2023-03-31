@@ -182,7 +182,7 @@ impl TerminalButton {
                         terminal.read(cx).model().downgrade() == action.terminal_handle
                     });
                 if let Some(terminal) = terminal {
-                    workspace.activate_item(&terminal, cx);
+                    workspace.activate_tab(&terminal, cx);
                 }
             });
         }

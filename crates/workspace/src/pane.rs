@@ -35,7 +35,7 @@ use theme::Theme;
 use util::ResultExt;
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct ActivateItem(pub usize);
+pub struct ActivateTab(pub usize);
 
 actions!(
     pane,
@@ -90,7 +90,7 @@ pub struct DeployDockMenu;
 #[derive(Clone, PartialEq)]
 pub struct DeployNewMenu;
 
-impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
+impl_actions!(pane, [GoBack, GoForward, ActivateTab]);
 impl_internal_actions!(
     pane,
     [
@@ -107,11 +107,11 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-        pane.activate_item(action.0, true, true, cx);
+    cx.add_action(|pane: &mut Pane, action: &ActivateTab, cx| {
+        pane.activate_tab(action.0, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-        pane.activate_item(pane.items.len() - 1, true, true, cx);
+        pane.activate_tab(pane.items.len() - 1, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePreviousTab, cx| {
         pane.activate_prev_item(true, cx);
@@ -193,7 +193,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 #[derive(Debug)]
 pub enum Event {
-    ActivateItem { local: bool },
+    ActivateTab { local: bool },
     Remove,
     RemoveItem { item_id: usize },
     Split(SplitDirection),
@@ -428,7 +428,7 @@ impl Pane {
                 {
                     let prev_active_item_index = pane.active_item_index;
                     pane.nav_history.borrow_mut().set_mode(mode);
-                    pane.activate_item(index, true, true, cx);
+                    pane.activate_tab(index, true, true, cx);
                     pane.nav_history
                         .borrow_mut()
                         .set_mode(NavigationMode::Normal);
@@ -528,7 +528,7 @@ impl Pane {
 
         if let Some((index, existing_item)) = existing_item {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(index, focus_item, focus_item, cx);
+                pane.activate_tab(index, focus_item, focus_item, cx);
             });
             existing_item
         } else {
@@ -622,7 +622,7 @@ impl Pane {
                     cx.notify();
                 }
 
-                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
+                pane.activate_tab(insertion_index, activate_pane, focus_item, cx);
             });
         } else {
             pane.update(cx, |pane, cx| {
@@ -632,7 +632,7 @@ impl Pane {
                     pane.active_item_index += 1;
                 }
 
-                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
+                pane.activate_tab(insertion_index, activate_pane, focus_item, cx);
                 cx.notify();
             });
         }
@@ -674,7 +674,7 @@ impl Pane {
         self.items.iter().position(|i| i.id() == item.id())
     }
 
-    pub fn activate_item(
+    pub fn activate_tab(
         &mut self,
         index: usize,
         activate_pane: bool,
@@ -692,7 +692,7 @@ impl Pane {
                     prev_item.deactivated(cx);
                 }
 
-                cx.emit(Event::ActivateItem {
+                cx.emit(Event::ActivateTab {
                     local: activate_pane,
                 });
             }
@@ -723,7 +723,7 @@ impl Pane {
         } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, activate_pane, activate_pane, cx);
+        self.activate_tab(index, activate_pane, activate_pane, cx);
     }
 
     pub fn activate_next_item(&mut self, activate_pane: bool, cx: &mut ViewContext<Self>) {
@@ -733,7 +733,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, activate_pane, activate_pane, cx);
+        self.activate_tab(index, activate_pane, activate_pane, cx);
     }
 
     pub fn close_active_tab(
@@ -907,7 +907,7 @@ impl Pane {
                 // to activating the item to the left
                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
-            self.activate_item(index_to_activate, activate_pane, activate_pane, cx);
+            self.activate_tab(index_to_activate, activate_pane, activate_pane, cx);
         }
 
         let item = self.items.remove(item_index);
@@ -969,7 +969,7 @@ impl Pane {
 
         if has_conflict && can_save {
             let mut answer = pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, true, true, cx);
+                pane.activate_tab(item_ix, true, true, cx);
                 cx.prompt(
                     PromptLevel::Warning,
                     CONFLICT_MESSAGE,
@@ -990,7 +990,7 @@ impl Pane {
             });
             let should_save = if should_prompt_for_save && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
-                    pane.activate_item(item_ix, true, true, cx);
+                    pane.activate_tab(item_ix, true, true, cx);
                     cx.prompt(
                         PromptLevel::Warning,
                         DIRTY_MESSAGE,
@@ -1216,7 +1216,7 @@ impl Pane {
                                 )
                             })
                             .on_down(MouseButton::Left, move |_, cx| {
-                                cx.dispatch_action(ActivateItem(ix));
+                                cx.dispatch_action(ActivateTab(ix));
                             })
                             .on_click(MouseButton::Middle, {
                                 let item = item.clone();
@@ -1516,7 +1516,7 @@ impl View for Pane {
                                             .boxed()
                                     })
                                     .on_down(MouseButton::Left, move |_, cx| {
-                                        cx.dispatch_action(ActivateItem(active_item_index));
+                                        cx.dispatch_action(ActivateTab(active_item_index));
                                     })
                                     .boxed(),
                                 );
@@ -2168,7 +2168,7 @@ mod tests {
         add_labled_item(&workspace, &pane, "D", cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
+        pane.update(cx, |pane, cx| pane.activate_tab(1, false, false, cx));
         add_labled_item(&workspace, &pane, "1", cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
@@ -2178,7 +2178,7 @@ mod tests {
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
 
-        pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
+        pane.update(cx, |pane, cx| pane.activate_tab(3, false, false, cx));
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         workspace.update(cx, |workspace, cx| {
@@ -2258,7 +2258,7 @@ mod tests {
             });
 
             pane.update(cx, |pane, cx| {
-                pane.activate_item(active_item_index, false, false, cx)
+                pane.activate_tab(active_item_index, false, false, cx)
             });
 
             items

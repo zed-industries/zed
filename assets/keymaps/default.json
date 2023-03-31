@@ -267,39 +267,39 @@
         "context": "Pane",
         "bindings": {
             "ctrl-1": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 0
             ],
             "ctrl-2": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 1
             ],
             "ctrl-3": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 2
             ],
             "ctrl-4": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 3
             ],
             "ctrl-5": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 4
             ],
             "ctrl-6": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 5
             ],
             "ctrl-7": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 6
             ],
             "ctrl-8": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 7
             ],
             "ctrl-9": [
-                "pane::ActivateItem",
+                "pane::ActivateTab",
                 8
             ],
             "ctrl-0": "pane::ActivateLastItem",

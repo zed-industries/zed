@@ -185,7 +185,7 @@ impl ProjectDiagnosticsEditor {
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_tab(&existing, cx);
         } else {
             let workspace_handle = cx.weak_handle();
             let diagnostics = cx.add_view(|cx| {

@@ -8,7 +8,7 @@ use settings::Settings;
 use std::rc::Rc;
 
 pub trait SidebarItem: View {
-    fn should_activate_item_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+    fn should_activate_tab_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
         false
     }
     fn should_show_badge(&self, _: &AppContext) -> bool {
@@ -135,13 +135,13 @@ impl Sidebar {
         let subscriptions = [
             cx.observe(&view, |_, _, cx| cx.notify()),
             cx.subscribe(&view, |this, view, event, cx| {
-                if view.read(cx).should_activate_item_on_event(event, cx) {
+                if view.read(cx).should_activate_tab_on_event(event, cx) {
                     if let Some(ix) = this
                         .items
                         .iter()
                         .position(|item| item.view.id() == view.id())
                     {
-                        this.activate_item(ix, cx);
+                        this.activate_tab(ix, cx);
                     }
                 }
             }),
@@ -156,7 +156,7 @@ impl Sidebar {
         cx.notify()
     }
 
-    pub fn activate_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
+    pub fn activate_tab(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
         self.active_item_ix = item_ix;
         cx.notify();
     }

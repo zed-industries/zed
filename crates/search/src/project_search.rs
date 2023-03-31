@@ -486,7 +486,7 @@ impl ProjectSearchView {
         });
 
         let search = if let Some(existing) = existing {
-            workspace.activate_item(&existing, cx);
+            workspace.activate_tab(&existing, cx);
             existing
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));

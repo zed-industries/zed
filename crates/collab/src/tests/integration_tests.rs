@@ -6062,9 +6062,7 @@ async fn test_basic_following(
     );
 
     // When client A activates a different editor, client B does so as well.
-    workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a1, cx)
-    });
+    workspace_a.update(cx_a, |workspace, cx| workspace.activate_tab(&editor_a1, cx));
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
@@ -6177,9 +6175,7 @@ async fn test_basic_following(
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.unfollow(&workspace.active_pane().clone(), cx)
     });
-    workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a2, cx)
-    });
+    workspace_a.update(cx_a, |workspace, cx| workspace.activate_tab(&editor_a2, cx));
     deterministic.run_until_parked();
     assert_eq!(
         workspace_b.read_with(cx_b, |workspace, cx| workspace
@@ -6246,7 +6242,7 @@ async fn test_basic_following(
 
     // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.activate_item(&multibuffer_editor_b, cx)
+        workspace.activate_tab(&multibuffer_editor_b, cx)
     });
     deterministic.run_until_parked();
     workspace_a.read_with(cx_a, |workspace, cx| {
