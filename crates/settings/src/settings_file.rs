@@ -93,7 +93,7 @@ mod tests {
         // From the Atom keymap
         actions!(workspace, [ActivatePreviousPane]);
         // From the JetBrains keymap
-        actions!(pane, [ActivatePrevItem]);
+        actions!(pane, [ActivatePreviousTab]);
 
         fs.save(
             "/settings.json".as_ref(),
@@ -136,7 +136,7 @@ mod tests {
             cx.add_global_action(|_: &A, _cx| {});
             cx.add_global_action(|_: &B, _cx| {});
             cx.add_global_action(|_: &ActivatePreviousPane, _cx| {});
-            cx.add_global_action(|_: &ActivatePrevItem, _cx| {});
+            cx.add_global_action(|_: &ActivatePreviousTab, _cx| {});
             watch_files(
                 default_settings,
                 settings_file,
@@ -204,7 +204,7 @@ mod tests {
         cx.update(|cx| {
             assert_key_bindings_for(
                 cx,
-                vec![("backspace", &B), ("[", &ActivatePrevItem)],
+                vec![("backspace", &B), ("[", &ActivatePreviousTab)],
                 line!(),
             );
         });

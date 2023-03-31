@@ -1,12 +1,12 @@
 [
     {
         "bindings": {
-            "cmd-shift-[": "pane::ActivatePrevItem",
+            "cmd-shift-[": "pane::ActivatePreviousTab",
             "cmd-shift-]": "pane::ActivateNextItem",
-            "ctrl-pagedown": "pane::ActivatePrevItem",
+            "ctrl-pagedown": "pane::ActivatePreviousTab",
             "ctrl-pageup": "pane::ActivateNextItem",
             "ctrl-shift-tab": "pane::ActivateNextItem",
-            "ctrl-tab": "pane::ActivatePrevItem",
+            "ctrl-tab": "pane::ActivatePreviousTab",
             "cmd-+": "zed::IncreaseBufferFontSize"
         }
     },

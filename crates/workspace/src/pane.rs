@@ -40,7 +40,7 @@ pub struct ActivateItem(pub usize);
 actions!(
     pane,
     [
-        ActivatePrevItem,
+        ActivatePreviousTab,
         ActivateNextItem,
         ActivateLastItem,
         CloseActiveItem,
@@ -113,7 +113,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
         pane.activate_item(pane.items.len() - 1, true, true, cx);
     });
-    cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
+    cx.add_action(|pane: &mut Pane, _: &ActivatePreviousTab, cx| {
         pane.activate_prev_item(true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {

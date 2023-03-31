@@ -1,7 +1,7 @@
 [
     {
         "bindings": {
-            "cmd-shift-[": "pane::ActivatePrevItem",
+            "cmd-shift-[": "pane::ActivatePreviousTab",
             "cmd-shift-]": "pane::ActivateNextItem"
         }
     },
