@@ -186,7 +186,7 @@ actions!(
         Newline,
         NewlineBelow,
         GoToDiagnostic,
-        GoToPrevDiagnostic,
+        GoToPreviousDiagnostic,
         GoToHunk,
         GoToPrevHunk,
         Indent,
@@ -5275,7 +5275,7 @@ impl Editor {
         self.go_to_diagnostic_impl(Direction::Next, cx)
     }
 
-    fn go_to_prev_diagnostic(&mut self, _: &GoToPrevDiagnostic, cx: &mut ViewContext<Self>) {
+    fn go_to_prev_diagnostic(&mut self, _: &GoToPreviousDiagnostic, cx: &mut ViewContext<Self>) {
         self.go_to_diagnostic_impl(Direction::Prev, cx)
     }
 

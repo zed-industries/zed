@@ -243,7 +243,7 @@
             "cmd-u": "editor::UndoSelection",
             "cmd-shift-u": "editor::RedoSelection",
             "f8": "editor::GoToDiagnostic",
-            "shift-f8": "editor::GoToPrevDiagnostic",
+            "shift-f8": "editor::GoToPreviousDiagnostic",
             "f2": "editor::Rename",
             "f12": "editor::GoToDefinition",
             "cmd-f12": "editor::GoToTypeDefinition",

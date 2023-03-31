@@ -121,7 +121,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Go to Line/Column", go_to_line::Toggle),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::GoToDiagnostic),
-                MenuItem::action("Previous Problem", editor::GoToPrevDiagnostic),
+                MenuItem::action("Previous Problem", editor::GoToPreviousDiagnostic),
             ],
         },
         Menu {
