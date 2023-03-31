@@ -60,7 +60,6 @@ impl SuggestionPoint {
 pub struct Suggestion<T> {
     pub position: T,
     pub text: Rope,
-    pub highlight_style: HighlightStyle,
 }
 
 pub struct SuggestionMap(Mutex<SuggestionSnapshot>);
@@ -93,7 +92,6 @@ impl SuggestionMap {
             Suggestion {
                 position: fold_offset,
                 text: new_suggestion.text,
-                highlight_style: new_suggestion.highlight_style,
             }
         });
 
@@ -395,7 +393,7 @@ impl SuggestionSnapshot {
 
     pub fn chars_at(&self, start: SuggestionPoint) -> impl '_ + Iterator<Item = char> {
         let start = self.to_offset(start);
-        self.chunks(start..self.len(), false, None)
+        self.chunks(start..self.len(), false, None, None)
             .flat_map(|chunk| chunk.text.chars())
     }
 
@@ -404,6 +402,7 @@ impl SuggestionSnapshot {
         range: Range<SuggestionOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        suggestion_highlight: Option<HighlightStyle>,
     ) -> SuggestionChunks<'a> {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_range =
@@ -447,7 +446,7 @@ impl SuggestionSnapshot {
                 prefix_chunks,
                 suggestion_chunks,
                 suffix_chunks,
-                highlight_style: suggestion.highlight_style,
+                highlight_style: suggestion_highlight,
             }
         } else {
             SuggestionChunks {
@@ -458,7 +457,7 @@ impl SuggestionSnapshot {
                 )),
                 suggestion_chunks: None,
                 suffix_chunks: None,
-                highlight_style: Default::default(),
+                highlight_style: None,
             }
         }
     }
@@ -493,7 +492,7 @@ impl SuggestionSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(Default::default()..self.len(), false, None)
+        self.chunks(Default::default()..self.len(), false, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -503,7 +502,7 @@ pub struct SuggestionChunks<'a> {
     prefix_chunks: Option<FoldChunks<'a>>,
     suggestion_chunks: Option<text::Chunks<'a>>,
     suffix_chunks: Option<FoldChunks<'a>>,
-    highlight_style: HighlightStyle,
+    highlight_style: Option<HighlightStyle>,
 }
 
 impl<'a> Iterator for SuggestionChunks<'a> {
@@ -523,7 +522,7 @@ impl<'a> Iterator for SuggestionChunks<'a> {
                 return Some(Chunk {
                     text: chunk,
                     syntax_highlight_id: None,
-                    highlight_style: Some(self.highlight_style),
+                    highlight_style: self.highlight_style,
                     diagnostic_severity: None,
                     is_unnecessary: false,
                 });
@@ -589,7 +588,6 @@ mod tests {
             Some(Suggestion {
                 position: 3,
                 text: "123\n456".into(),
-                highlight_style: Default::default(),
             }),
             fold_snapshot,
             Default::default(),
@@ -718,7 +716,12 @@ mod tests {
                 start = expected_text.clip_offset(start, Bias::Right);
 
                 let actual_text = suggestion_snapshot
-                    .chunks(SuggestionOffset(start)..SuggestionOffset(end), false, None)
+                    .chunks(
+                        SuggestionOffset(start)..SuggestionOffset(end),
+                        false,
+                        None,
+                        None,
+                    )
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(
@@ -842,7 +845,6 @@ mod tests {
                         .collect::<String>()
                         .as_str()
                         .into(),
-                    highlight_style: Default::default(),
                 })
             };
 

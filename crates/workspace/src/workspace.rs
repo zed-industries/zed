@@ -41,10 +41,10 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MouseButton, MutableAppContext, PathPromptOptions, Platform, PromptLevel, RenderContext,
-    SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowBounds,
+    Action, AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext,
+    ModelHandle, MouseButton, MutableAppContext, PathPromptOptions, Platform, PromptLevel,
+    RenderContext, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowBounds,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -165,6 +165,67 @@ pub struct OpenProjectEntryInPane {
     project_entry: ProjectEntryId,
 }
 
+pub struct Toast {
+    id: usize,
+    msg: Cow<'static, str>,
+    click: Option<(Cow<'static, str>, Box<dyn Action>)>,
+}
+
+impl Toast {
+    pub fn new<I: Into<Cow<'static, str>>>(id: usize, msg: I) -> Self {
+        Toast {
+            id,
+            msg: msg.into(),
+            click: None,
+        }
+    }
+
+    pub fn new_action<I1: Into<Cow<'static, str>>, I2: Into<Cow<'static, str>>>(
+        id: usize,
+        msg: I1,
+        click_msg: I2,
+        action: impl Action,
+    ) -> Self {
+        Toast {
+            id,
+            msg: msg.into(),
+            click: Some((click_msg.into(), Box::new(action))),
+        }
+    }
+}
+
+impl PartialEq for Toast {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.msg == other.msg
+            && self.click.is_some() == other.click.is_some()
+    }
+}
+
+impl Clone for Toast {
+    fn clone(&self) -> Self {
+        Toast {
+            id: self.id,
+            msg: self.msg.to_owned(),
+            click: self
+                .click
+                .as_ref()
+                .map(|(msg, click)| (msg.to_owned(), click.boxed_clone())),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct DismissToast {
+    id: usize,
+}
+
+impl DismissToast {
+    pub fn new(id: usize) -> Self {
+        DismissToast { id }
+    }
+}
+
 pub type WorkspaceId = i64;
 
 impl_internal_actions!(
@@ -178,6 +239,8 @@ impl_internal_actions!(
         SplitWithItem,
         SplitWithProjectEntry,
         OpenProjectEntryInPane,
+        Toast,
+        DismissToast
     ]
 );
 impl_actions!(workspace, [ActivatePane]);
@@ -353,6 +416,24 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         .detach();
     });
 
+    cx.add_action(|workspace: &mut Workspace, alert: &Toast, cx| {
+        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
+        workspace.show_notification(alert.id, cx, |cx| {
+            cx.add_view(|_cx| match &alert.click {
+                Some((click_msg, action)) => MessageNotification::new_boxed_action(
+                    alert.msg.clone(),
+                    action.boxed_clone(),
+                    click_msg.clone(),
+                ),
+                None => MessageNotification::new_message(alert.msg.clone()),
+            })
+        })
+    });
+
+    cx.add_action(|workspace: &mut Workspace, alert: &DismissToast, cx| {
+        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
+    });
+
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);
@@ -449,7 +530,7 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
-        let http_client = client::test::FakeHttpClient::with_404_response();
+        let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
@@ -2690,7 +2771,7 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                         indoc::indoc! {"
                             Failed to load any database file :(
                         "},
-                        OsOpen("https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
+                        OsOpen::new("https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
                         "Click to let us know about this error"
                     )
                 })
@@ -2712,7 +2793,7 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                                 "},
                                 backup_path
                             ),
-                            OsOpen(backup_path.to_string()),
+                            OsOpen::new(backup_path.to_string()),
                             "Click to show old database in finder",
                         )
                     })

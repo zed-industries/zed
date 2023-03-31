@@ -12,7 +12,7 @@ mod visual;
 
 use std::sync::Arc;
 
-use command_palette::CommandPaletteFilter;
+use collections::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
     actions, impl_actions, MutableAppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,

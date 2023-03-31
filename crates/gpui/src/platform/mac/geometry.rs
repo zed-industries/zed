@@ -1,7 +1,6 @@
 use cocoa::{
-    appkit::NSWindow,
     base::id,
-    foundation::{NSPoint, NSRect, NSSize},
+    foundation::{NSPoint, NSRect},
 };
 use objc::{msg_send, sel, sel_impl};
 use pathfinder_geometry::{
@@ -25,61 +24,15 @@ impl Vector2FExt for Vector2F {
     }
 }
 
-pub trait RectFExt {
-    /// Converts self to an NSRect with y axis pointing up.
-    /// The resulting NSRect will have an origin at the bottom left of the rectangle.
-    /// Also takes care of converting from window scaled coordinates to screen coordinates
-    fn to_screen_ns_rect(&self, native_window: id) -> NSRect;
-
-    /// Converts self to an NSRect with y axis point up.
-    /// The resulting NSRect will have an origin at the bottom left of the rectangle.
-    /// Unlike to_screen_ns_rect, coordinates are not converted and are assumed to already be in screen scale
-    fn to_ns_rect(&self) -> NSRect;
-}
-impl RectFExt for RectF {
-    fn to_screen_ns_rect(&self, native_window: id) -> NSRect {
-        unsafe { native_window.convertRectToScreen_(self.to_ns_rect()) }
-    }
-
-    fn to_ns_rect(&self) -> NSRect {
-        NSRect::new(
-            NSPoint::new(
-                self.origin_x() as f64,
-                -(self.origin_y() + self.height()) as f64,
-            ),
-            NSSize::new(self.width() as f64, self.height() as f64),
-        )
-    }
-}
-
 pub trait NSRectExt {
-    /// Converts self to a RectF with y axis pointing down.
-    /// The resulting RectF will have an origin at the top left of the rectangle.
-    /// Also takes care of converting from screen scale coordinates to window coordinates
-    fn to_window_rectf(&self, native_window: id) -> RectF;
-
-    /// Converts self to a RectF with y axis pointing down.
-    /// The resulting RectF will have an origin at the top left of the rectangle.
-    /// Unlike to_screen_ns_rect, coordinates are not converted and are assumed to already be in screen scale
     fn to_rectf(&self) -> RectF;
-
     fn intersects(&self, other: Self) -> bool;
 }
-impl NSRectExt for NSRect {
-    fn to_window_rectf(&self, native_window: id) -> RectF {
-        unsafe {
-            self.origin.x;
-            let rect: NSRect = native_window.convertRectFromScreen_(*self);
-            rect.to_rectf()
-        }
-    }
 
+impl NSRectExt for NSRect {
     fn to_rectf(&self) -> RectF {
         RectF::new(
-            vec2f(
-                self.origin.x as f32,
-                -(self.origin.y + self.size.height) as f32,
-            ),
+            vec2f(self.origin.x as f32, self.origin.y as f32),
             vec2f(self.size.width as f32, self.size.height as f32),
         )
     }

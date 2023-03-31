@@ -19,8 +19,8 @@ jwt = "0.16"
 prost = "0.8"
 prost-types = "0.8"
 reqwest = "0.11"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
 sha2 = "0.10"
 
 [build-dependencies]

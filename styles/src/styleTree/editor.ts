@@ -43,6 +43,10 @@ export default function editor(colorScheme: ColorScheme) {
         background: background(layer),
         activeLineBackground: withOpacity(background(layer, "on"), 0.75),
         highlightedLineBackground: background(layer, "on"),
+        // Inline autocomplete suggestions, Co-pilot suggestions, etc.
+        suggestion: {
+            color: syntax.predictive.color,
+        },
         codeActions: {
             indicator: {
                 color: foreground(layer, "variant"),

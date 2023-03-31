@@ -1,14 +1,15 @@
-use super::github::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::{io::BufReader, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use util::fs::remove_matching;
+use util::github::{latest_github_release, GitHubLspBinaryVersion};
+use util::http::HttpClient;
 use util::ResultExt;
 
 pub struct RustLspAdapter;
@@ -60,16 +61,7 @@ impl LspAdapter for RustLspAdapter {
             )
             .await?;
 
-            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if entry_path.as_path() != destination_path {
-                            fs::remove_file(&entry_path).await.log_err();
-                        }
-                    }
-                }
-            }
+            remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
 
         Ok(LanguageServerBinary {

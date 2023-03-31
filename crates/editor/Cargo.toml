@@ -22,10 +22,10 @@ test-support = [
 ]
 
 [dependencies]
-drag_and_drop = { path = "../drag_and_drop" }
-text = { path = "../text" }
 clock = { path = "../clock" }
+copilot = { path = "../copilot" }
 db = { path = "../db" }
+drag_and_drop = { path = "../drag_and_drop" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 fuzzy = { path = "../fuzzy" }
@@ -38,10 +38,12 @@ rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
+text = { path = "../text" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
 workspace = { path = "../workspace" }
+
 aho-corasick = "0.7"
 anyhow = "1.0"
 futures = "0.3"
@@ -54,7 +56,7 @@ parking_lot = "0.11"
 postage = { workspace = true }
 rand = { version = "0.8.3", optional = true }
 serde = { workspace = true }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
+serde_derive = { workspace = true }
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 tree-sitter-rust = { version = "*", optional = true }

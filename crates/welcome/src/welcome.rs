@@ -1,12 +1,11 @@
 mod base_keymap_picker;
 
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    elements::{Flex, Label, MouseEventHandler, ParentElement},
-    Action, Element, ElementBox, Entity, MouseButton, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext,
+    elements::{Flex, Label, ParentElement},
+    Element, ElementBox, Entity, MutableAppContext, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
 
@@ -77,7 +76,7 @@ impl View for WelcomePage {
                 .with_children([
                     Flex::column()
                         .with_children([
-                            theme::ui::icon(&theme.welcome.logo)
+                            theme::ui::svg(&theme.welcome.logo)
                                 .aligned()
                                 .contained()
                                 .aligned()
@@ -98,22 +97,25 @@ impl View for WelcomePage {
                         .boxed(),
                     Flex::column()
                         .with_children([
-                            self.render_cta_button(
+                            theme::ui::cta_button(
                                 "Choose a theme",
                                 theme_selector::Toggle,
                                 width,
+                                &theme.welcome.button,
                                 cx,
                             ),
-                            self.render_cta_button(
+                            theme::ui::cta_button(
                                 "Choose a keymap",
                                 ToggleBaseKeymapSelector,
                                 width,
+                                &theme.welcome.button,
                                 cx,
                             ),
-                            self.render_cta_button(
+                            theme::ui::cta_button(
                                 "Install the CLI",
                                 install_cli::Install,
                                 width,
+                                &theme.welcome.button,
                                 cx,
                             ),
                         ])
@@ -201,89 +203,6 @@ impl WelcomePage {
             _settings_subscription: settings_subscription,
         }
     }
-
-    fn render_cta_button<L, A>(
-        &self,
-        label: L,
-        action: A,
-        width: f32,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox
-    where
-        L: Into<Cow<'static, str>>,
-        A: 'static + Action + Clone,
-    {
-        let theme = cx.global::<Settings>().theme.clone();
-        MouseEventHandler::<A>::new(0, cx, |state, _| {
-            let style = theme.welcome.button.style_for(state, false);
-            Label::new(label, style.text.clone())
-                .aligned()
-                .contained()
-                .with_style(style.container)
-                .constrained()
-                .with_max_width(width)
-                .boxed()
-        })
-        .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_action(action.clone())
-        })
-        .with_cursor_style(gpui::CursorStyle::PointingHand)
-        .boxed()
-    }
-
-    // fn render_settings_checkbox<T: 'static>(
-    //     &self,
-    //     label: &'static str,
-    //     style: &CheckboxStyle,
-    //     checked: bool,
-    //     cx: &mut RenderContext<Self>,
-    //     set_value: fn(&mut SettingsFileContent, checked: bool) -> (),
-    // ) -> ElementBox {
-    //     MouseEventHandler::<T>::new(0, cx, |state, _| {
-    //         let indicator = if checked {
-    //             Svg::new(style.check_icon.clone())
-    //                 .with_color(style.check_icon_color)
-    //                 .constrained()
-    //         } else {
-    //             Empty::new().constrained()
-    //         };
-
-    //         Flex::row()
-    //             .with_children([
-    //                 indicator
-    //                     .with_width(style.width)
-    //                     .with_height(style.height)
-    //                     .contained()
-    //                     .with_style(if checked {
-    //                         if state.hovered() {
-    //                             style.hovered_and_checked
-    //                         } else {
-    //                             style.checked
-    //                         }
-    //                     } else {
-    //                         if state.hovered() {
-    //                             style.hovered
-    //                         } else {
-    //                             style.default
-    //                         }
-    //                     })
-    //                     .boxed(),
-    //                 Label::new(label, style.label.text.clone())
-    //                     .contained()
-    //                     .with_style(style.label.container)
-    //                     .boxed(),
-    //             ])
-    //             .align_children_center()
-    //             .boxed()
-    //     })
-    //     .on_click(gpui::MouseButton::Left, move |_, cx| {
-    //         SettingsFile::update(cx, move |content| set_value(content, !checked))
-    //     })
-    //     .with_cursor_style(gpui::CursorStyle::PointingHand)
-    //     .contained()
-    //     .with_style(style.container)
-    //     .boxed()
-    // }
 }
 
 impl Item for WelcomePage {

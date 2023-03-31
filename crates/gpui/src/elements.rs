@@ -389,6 +389,12 @@ impl ElementBox {
     }
 }
 
+impl Clone for ElementBox {
+    fn clone(&self) -> Self {
+        ElementBox(self.0.clone())
+    }
+}
+
 impl From<ElementBox> for ElementRc {
     fn from(val: ElementBox) -> Self {
         val.0

@@ -10,7 +10,6 @@ mod buffer_tests;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use collections::HashMap;
 use futures::{
     channel::oneshot,
@@ -46,6 +45,7 @@ use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
+use util::http::HttpClient;
 use util::{merge_json_value_into, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]

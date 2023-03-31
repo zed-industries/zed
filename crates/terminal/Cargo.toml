@@ -29,8 +29,8 @@ libc = "0.2"
 anyhow = "1"
 thiserror = "1.0"
 lazy_static = "1.4.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
 
 [dev-dependencies]
 rand = "0.8.5"

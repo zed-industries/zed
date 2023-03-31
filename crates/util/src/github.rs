@@ -1,7 +1,7 @@
+use crate::http::HttpClient;
 use anyhow::{Context, Result};
-use client::http::HttpClient;
+use futures::AsyncReadExt;
 use serde::Deserialize;
-use smol::io::AsyncReadExt;
 use std::sync::Arc;
 
 pub struct GitHubLspBinaryVersion {
@@ -10,18 +10,18 @@ pub struct GitHubLspBinaryVersion {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GithubRelease {
+pub struct GithubRelease {
     pub name: String,
     pub assets: Vec<GithubReleaseAsset>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GithubReleaseAsset {
+pub struct GithubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
 }
 
-pub(crate) async fn latest_github_release(
+pub async fn latest_github_release(
     repo_name_with_owner: &str,
     http: Arc<dyn HttpClient>,
 ) -> Result<GithubRelease, anyhow::Error> {
@@ -39,6 +39,7 @@ pub(crate) async fn latest_github_release(
         .read_to_end(&mut body)
         .await
         .context("error reading latest release")?;
+
     let release: GithubRelease =
         serde_json::from_slice(body.as_slice()).context("error deserializing latest release")?;
     Ok(release)

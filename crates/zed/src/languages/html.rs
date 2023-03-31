@@ -1,17 +1,15 @@
-use super::node_runtime::NodeRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::StreamExt;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use node_runtime::NodeRuntime;
 use serde_json::json;
 use smol::fs;
-use std::{
-    any::Any,
-    ffi::OsString,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::ffi::OsString;
+use std::path::Path;
+use std::{any::Any, path::PathBuf, sync::Arc};
+use util::fs::remove_matching;
+use util::http::HttpClient;
 use util::ResultExt;
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -69,16 +67,7 @@ impl LspAdapter for HtmlLspAdapter {
                 )
                 .await?;
 
-            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if entry_path.as_path() != version_dir {
-                            fs::remove_dir_all(&entry_path).await.log_err();
-                        }
-                    }
-                }
-            }
+            remove_matching(container_dir.as_path(), |entry| entry != version_dir).await;
         }
 
         Ok(LanguageServerBinary {

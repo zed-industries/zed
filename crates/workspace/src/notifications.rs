@@ -97,7 +97,7 @@ impl Workspace {
             let notification = build_notification(cx);
             cx.subscribe(&notification, move |this, handle, event, cx| {
                 if handle.read(cx).should_dismiss_notification_on_event(event) {
-                    this.dismiss_notification(type_id, id, cx);
+                    this.dismiss_notification_internal(type_id, id, cx);
                 }
             })
             .detach();
@@ -107,7 +107,18 @@ impl Workspace {
         }
     }
 
-    fn dismiss_notification(&mut self, type_id: TypeId, id: usize, cx: &mut ViewContext<Self>) {
+    pub fn dismiss_notification<V: Notification>(&mut self, id: usize, cx: &mut ViewContext<Self>) {
+        let type_id = TypeId::of::<V>();
+
+        self.dismiss_notification_internal(type_id, id, cx)
+    }
+
+    fn dismiss_notification_internal(
+        &mut self,
+        type_id: TypeId,
+        id: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.notifications
             .retain(|(existing_type_id, existing_id, _)| {
                 if (*existing_type_id, *existing_id) == (type_id, id) {
@@ -141,7 +152,13 @@ pub mod simple_message_notification {
     actions!(message_notifications, [CancelMessageNotification]);
 
     #[derive(Clone, Default, Deserialize, PartialEq)]
-    pub struct OsOpen(pub String);
+    pub struct OsOpen(pub Cow<'static, str>);
+
+    impl OsOpen {
+        pub fn new<I: Into<Cow<'static, str>>>(url: I) -> Self {
+            OsOpen(url.into())
+        }
+    }
 
     impl_actions!(message_notifications, [OsOpen]);
 
@@ -149,7 +166,7 @@ pub mod simple_message_notification {
         cx.add_action(MessageNotification::dismiss);
         cx.add_action(
             |_workspace: &mut Workspace, open_action: &OsOpen, cx: &mut ViewContext<Workspace>| {
-                cx.platform().open_url(open_action.0.as_str());
+                cx.platform().open_url(open_action.0.as_ref());
             },
         )
     }
@@ -174,6 +191,18 @@ pub mod simple_message_notification {
                 message: message.into(),
                 click_action: None,
                 click_message: None,
+            }
+        }
+
+        pub fn new_boxed_action<S1: Into<Cow<'static, str>>, S2: Into<Cow<'static, str>>>(
+            message: S1,
+            click_action: Box<dyn Action>,
+            click_message: S2,
+        ) -> Self {
+            Self {
+                message: message.into(),
+                click_action: Some(click_action),
+                click_message: Some(click_message.into()),
             }
         }
 
@@ -264,9 +293,13 @@ pub mod simple_message_notification {
                         let style = theme.action_message.style_for(state, false);
                         if let Some(click_message) = click_message {
                             Some(
-                                Text::new(click_message, style.text.clone())
-                                    .contained()
-                                    .with_style(style.container)
+                                Flex::row()
+                                    .with_child(
+                                        Text::new(click_message, style.text.clone())
+                                            .contained()
+                                            .with_style(style.container)
+                                            .boxed(),
+                                    )
                                     .boxed(),
                             )
                         } else {
@@ -282,7 +315,8 @@ pub mod simple_message_notification {
             .on_up(MouseButton::Left, |_, _| {})
             .on_click(MouseButton::Left, move |_, cx| {
                 if let Some(click_action) = click_action.as_ref() {
-                    cx.dispatch_any_action(click_action.boxed_clone())
+                    cx.dispatch_any_action(click_action.boxed_clone());
+                    cx.dispatch_action(CancelMessageNotification)
                 }
             })
             .with_cursor_style(if has_click_action {

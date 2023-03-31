@@ -568,7 +568,7 @@ impl Project {
 
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background());
-        let http_client = client::test::FakeHttpClient::with_404_response();
+        let http_client = util::http::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project =

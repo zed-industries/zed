@@ -1,7 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::http::HttpClient;
 use futures::{future::Shared, FutureExt};
 use gpui::{executor::Background, Task};
 use parking_lot::Mutex;
@@ -12,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use util::http::HttpClient;
 
 const VERSION: &str = "v18.15.0";
 

@@ -7,8 +7,7 @@ use crate::{
 use anyhow::anyhow;
 use call::ActiveCall;
 use client::{
-    self, proto::PeerId, test::FakeHttpClient, Client, Connection, Credentials,
-    EstablishConnectionError, UserStore,
+    self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
@@ -28,6 +27,7 @@ use std::{
     },
 };
 use theme::ThemeRegistry;
+use util::http::FakeHttpClient;
 use workspace::Workspace;
 
 mod integration_tests;

@@ -1,4 +1,7 @@
 pub mod channel;
+pub mod fs;
+pub mod github;
+pub mod http;
 pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -298,6 +301,7 @@ pub trait RangeExt<T> {
     fn sorted(&self) -> Self;
     fn to_inclusive(&self) -> RangeInclusive<T>;
     fn overlaps(&self, other: &Range<T>) -> bool;
+    fn contains_inclusive(&self, other: &Range<T>) -> bool;
 }
 
 impl<T: Ord + Clone> RangeExt<T> for Range<T> {
@@ -312,6 +316,10 @@ impl<T: Ord + Clone> RangeExt<T> for Range<T> {
     fn overlaps(&self, other: &Range<T>) -> bool {
         self.start < other.end && other.start < self.end
     }
+
+    fn contains_inclusive(&self, other: &Range<T>) -> bool {
+        self.start <= other.start && other.end <= self.end
+    }
 }
 
 impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
@@ -325,6 +333,10 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
 
     fn overlaps(&self, other: &Range<T>) -> bool {
         self.start() < &other.end && &other.start <= self.end()
+    }
+
+    fn contains_inclusive(&self, other: &Range<T>) -> bool {
+        self.start() <= &other.start && &other.end <= self.end()
     }
 }
 

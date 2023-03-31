@@ -28,6 +28,8 @@ command_palette = { path = "../command_palette" }
 context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
+copilot = { path = "../copilot" }
+copilot_button = { path = "../copilot_button" }
 diagnostics = { path = "../diagnostics" }
 db = { path = "../db" }
 editor = { path = "../editor" }
@@ -44,6 +46,7 @@ journal = { path = "../journal" }
 language = { path = "../language" }
 language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
+node_runtime = { path = "../node_runtime" }
 outline = { path = "../outline" }
 plugin_runtime = { path = "../plugin_runtime" }
 project = { path = "../project" }
@@ -87,9 +90,9 @@ rand = "0.8.3"
 regex = "1.5"
 rsa = "0.4"
 rust-embed = { version = "6.3", features = ["include-exclude"] }
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
 serde_path_to_error = "0.1.4"
 simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }
@@ -137,7 +140,7 @@ util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 
 env_logger = "0.9"
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde_json = { workspace = true }
 unindent = "0.1.7"
 
 [package.metadata.bundle-dev]

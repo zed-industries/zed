@@ -41,9 +41,9 @@ scrypt = "0.7"
 # Remove fork dependency when a version with https://github.com/SeaQL/sea-orm/pull/1283 is released.
 sea-orm = { git = "https://github.com/zed-industries/sea-orm", rev = "18f4c691085712ad014a51792af75a9044bacee6", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls"] }
 sea-query = "0.27"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
 sha-1 = "0.9"
 sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
@@ -79,7 +79,7 @@ env_logger = "0.9"
 util = { path = "../util" }
 lazy_static = "1.4"
 sea-orm = { git = "https://github.com/zed-industries/sea-orm", rev = "18f4c691085712ad014a51792af75a9044bacee6", features = ["sqlx-sqlite"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde_json = { workspace = true }
 sqlx = { version = "0.6", features = ["sqlite"] }
 unindent = "0.1"
 

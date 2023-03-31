@@ -1318,45 +1318,47 @@ impl EditorElement {
                 .collect()
         } else {
             let style = &self.style;
-            let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
-                let mut highlight_style = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(&style.syntax));
+            let chunks = snapshot
+                .chunks(rows.clone(), true, Some(style.theme.suggestion))
+                .map(|chunk| {
+                    let mut highlight_style = chunk
+                        .syntax_highlight_id
+                        .and_then(|id| id.style(&style.syntax));
 
-                if let Some(chunk_highlight) = chunk.highlight_style {
+                    if let Some(chunk_highlight) = chunk.highlight_style {
+                        if let Some(highlight_style) = highlight_style.as_mut() {
+                            highlight_style.highlight(chunk_highlight);
+                        } else {
+                            highlight_style = Some(chunk_highlight);
+                        }
+                    }
+
+                    let mut diagnostic_highlight = HighlightStyle::default();
+
+                    if chunk.is_unnecessary {
+                        diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
+                    }
+
+                    if let Some(severity) = chunk.diagnostic_severity {
+                        // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+                        if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+                            let diagnostic_style = super::diagnostic_style(severity, true, style);
+                            diagnostic_highlight.underline = Some(Underline {
+                                color: Some(diagnostic_style.message.text.color),
+                                thickness: 1.0.into(),
+                                squiggly: true,
+                            });
+                        }
+                    }
+
                     if let Some(highlight_style) = highlight_style.as_mut() {
-                        highlight_style.highlight(chunk_highlight);
+                        highlight_style.highlight(diagnostic_highlight);
                     } else {
-                        highlight_style = Some(chunk_highlight);
+                        highlight_style = Some(diagnostic_highlight);
                     }
-                }
 
-                let mut diagnostic_highlight = HighlightStyle::default();
-
-                if chunk.is_unnecessary {
-                    diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
-                }
-
-                if let Some(severity) = chunk.diagnostic_severity {
-                    // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                    if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                        let diagnostic_style = super::diagnostic_style(severity, true, style);
-                        diagnostic_highlight.underline = Some(Underline {
-                            color: Some(diagnostic_style.message.text.color),
-                            thickness: 1.0.into(),
-                            squiggly: true,
-                        });
-                    }
-                }
-
-                if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(diagnostic_highlight);
-                } else {
-                    highlight_style = Some(diagnostic_highlight);
-                }
-
-                (chunk.text, highlight_style)
-            });
+                    (chunk.text, highlight_style)
+                });
             layout_highlighted_chunks(
                 chunks,
                 &style.text,

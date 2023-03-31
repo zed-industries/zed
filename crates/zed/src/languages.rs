@@ -1,6 +1,4 @@
 use anyhow::Context;
-use client::http::HttpClient;
-use gpui::executor::Background;
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
@@ -9,13 +7,11 @@ use theme::ThemeRegistry;
 
 mod c;
 mod elixir;
-mod github;
 mod go;
 mod html;
 mod json;
 mod language_plugin;
 mod lua;
-mod node_runtime;
 mod python;
 mod ruby;
 mod rust;
@@ -37,13 +33,10 @@ mod yaml;
 struct LanguageDir;
 
 pub fn init(
-    http: Arc<dyn HttpClient>,
-    background: Arc<Background>,
     languages: Arc<LanguageRegistry>,
     themes: Arc<ThemeRegistry>,
+    node_runtime: Arc<NodeRuntime>,
 ) {
-    let node_runtime = NodeRuntime::new(http, background);
-
     for (name, grammar, lsp_adapter) in [
         (
             "c",
