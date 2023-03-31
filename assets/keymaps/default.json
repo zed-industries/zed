@@ -21,7 +21,7 @@
             "alt-cmd-right": "pane::ActivateNextTab",
             "cmd-w": "pane::CloseActiveTab",
             "alt-cmd-t": "pane::CloseInactiveTabs",
-            "cmd-k u": "pane::CloseCleanItems",
+            "cmd-k u": "pane::CloseSavedTabs",
             "cmd-k cmd-w": "pane::CloseAllTabs",
             "cmd-shift-w": "workspace::CloseWindow",
             "cmd-s": "workspace::Save",
@@ -305,7 +305,7 @@
             "ctrl-0": "pane::ActivateLastItem",
             "ctrl--": "pane::GoBack",
             "ctrl-_": "pane::GoForward",
-            "cmd-shift-t": "pane::ReopenClosedTab",
+            "cmd-shift-t": "pane::ReopenClosedItem",
             "cmd-shift-f": "project_search::ToggleFocus"
         }
     },
