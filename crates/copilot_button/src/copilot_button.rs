@@ -77,7 +77,6 @@ pub struct CopilotButton {
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
     language: Option<Arc<str>>,
-    // _settings_subscription: Subscription,
 }
 
 impl Entity for CopilotButton {
@@ -229,17 +228,19 @@ impl CopilotButton {
 
         Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()).detach());
 
-        // TODO: Determine why this leaked.
-        // let this_handle = cx.handle();
-        // let sub =
-        //     cx.observe_global::<Settings, _>(move |cx| this_handle.update(cx, |_, cx| cx.notify()));
+        let this_handle = cx.handle().downgrade();
+        cx.observe_global::<Settings, _>(move |cx| {
+            if let Some(handle) = this_handle.upgrade(cx) {
+                handle.update(cx, |_, cx| cx.notify())
+            }
+        })
+        .detach();
 
         Self {
             popup_menu: menu,
             editor_subscription: None,
             editor_enabled: None,
             language: None,
-            // _settings_subscription: sub,
         }
     }
 
@@ -323,12 +324,6 @@ impl CopilotButton {
     pub fn update_enabled(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
 
-        if let Some(enabled) = editor.copilot_state.user_enabled {
-            self.editor_enabled = Some(enabled);
-            cx.notify();
-            return;
-        }
-
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let settings = cx.global::<Settings>();
         let suggestion_anchor = editor.selections.newest_anchor().start;
@@ -338,7 +333,13 @@ impl CopilotButton {
             .map(|language| language.name());
 
         self.language = language_name.clone();
-        self.editor_enabled = Some(settings.copilot_on(language_name.as_deref()));
+
+        if let Some(enabled) = editor.copilot_state.user_enabled {
+            self.editor_enabled = Some(enabled);
+        } else {
+            self.editor_enabled = Some(settings.copilot_on(language_name.as_deref()));
+        }
+
         cx.notify()
     }
 }
