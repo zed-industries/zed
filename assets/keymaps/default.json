@@ -20,7 +20,7 @@
             "alt-cmd-left": "pane::ActivatePreviousTab",
             "alt-cmd-right": "pane::ActivateNextTab",
             "cmd-w": "pane::CloseActiveTab",
-            "alt-cmd-t": "pane::CloseInactiveItems",
+            "alt-cmd-t": "pane::CloseInactiveTabs",
             "cmd-k u": "pane::CloseCleanItems",
             "cmd-k cmd-w": "pane::CloseAllItems",
             "cmd-shift-w": "workspace::CloseWindow",

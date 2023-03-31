@@ -44,7 +44,7 @@ actions!(
         ActivateNextTab,
         ActivateLastItem,
         CloseActiveTab,
-        CloseInactiveItems,
+        CloseInactiveTabs,
         CloseCleanItems,
         CloseAllItems,
         ReopenClosedItem,
@@ -120,7 +120,7 @@ pub fn init(cx: &mut MutableAppContext) {
         pane.activate_next_item(true, cx);
     });
     cx.add_async_action(Pane::close_active_tab);
-    cx.add_async_action(Pane::close_inactive_items);
+    cx.add_async_action(Pane::close_inactive_tabs);
     cx.add_async_action(Pane::close_clean_items);
     cx.add_async_action(Pane::close_all_items);
     cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
@@ -744,9 +744,9 @@ impl Pane {
         Self::close_main(workspace, ItemType::Active, cx)
     }
 
-    pub fn close_inactive_items(
+    pub fn close_inactive_tabs(
         workspace: &mut Workspace,
-        _: &CloseInactiveItems,
+        _: &CloseInactiveTabs,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
         Self::close_main(workspace, ItemType::Inactive, cx)
