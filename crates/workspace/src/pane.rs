@@ -42,7 +42,7 @@ actions!(
     [
         ActivatePreviousTab,
         ActivateNextTab,
-        ActivateLastItem,
+        ActivateLastTab,
         CloseActiveTab,
         CloseInactiveTabs,
         CloseSavedTabs,
@@ -110,7 +110,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateTab, cx| {
         pane.activate_tab(action.0, true, true, cx);
     });
-    cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
+    cx.add_action(|pane: &mut Pane, _: &ActivateLastTab, cx| {
         pane.activate_tab(pane.items.len() - 1, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePreviousTab, cx| {
