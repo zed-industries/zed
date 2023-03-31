@@ -47,7 +47,7 @@ actions!(
         CloseInactiveTabs,
         CloseCleanItems,
         CloseAllTabs,
-        ReopenClosedItem,
+        ReopenClosedTab,
         SplitLeft,
         SplitUp,
         SplitRight,
@@ -164,8 +164,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Pane::deploy_split_menu);
     cx.add_action(Pane::deploy_dock_menu);
     cx.add_action(Pane::deploy_new_menu);
-    cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
-        Pane::reopen_closed_item(workspace, cx).detach();
+    cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedTab, cx| {
+        Pane::reopen_closed_tab(workspace, cx).detach();
     });
     cx.add_action(|workspace: &mut Workspace, action: &GoBack, cx| {
         Pane::go_back(
@@ -375,7 +375,7 @@ impl Pane {
         )
     }
 
-    pub fn reopen_closed_item(
+    pub fn reopen_closed_tab(
         workspace: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<()> {

@@ -305,7 +305,7 @@
             "ctrl-0": "pane::ActivateLastItem",
             "ctrl--": "pane::GoBack",
             "ctrl-_": "pane::GoForward",
-            "cmd-shift-t": "pane::ReopenClosedItem",
+            "cmd-shift-t": "pane::ReopenClosedTab",
             "cmd-shift-f": "project_search::ToggleFocus"
         }
     },

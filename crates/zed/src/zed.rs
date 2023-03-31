@@ -1750,20 +1750,20 @@ mod tests {
 
         // Reopen all the closed items, ensuring they are reopened in the same order
         // in which they were closed.
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace.update(cx, Pane::reopen_closed_tab).await;
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace.update(cx, Pane::reopen_closed_tab).await;
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace.update(cx, Pane::reopen_closed_tab).await;
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace.update(cx, Pane::reopen_closed_tab).await;
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening past the last closed item is a no-op.
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace.update(cx, Pane::reopen_closed_tab).await;
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening closed items doesn't interfere with navigation history.
