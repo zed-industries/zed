@@ -238,7 +238,7 @@ actions!(
         AddSelectionAbove,
         AddSelectionBelow,
         Tab,
-        TabPrev,
+        Backtab,
         ShowCharacterPalette,
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
@@ -303,7 +303,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::tab);
-    cx.add_action(Editor::tab_prev);
+    cx.add_action(Editor::backtab);
     cx.add_action(Editor::indent);
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
@@ -3303,7 +3303,7 @@ impl Editor {
         });
     }
 
-    pub fn tab_prev(&mut self, _: &TabPrev, cx: &mut ViewContext<Self>) {
+    pub fn backtab(&mut self, _: &Backtab, cx: &mut ViewContext<Self>) {
         if self.move_to_prev_snippet_tabstop(cx) {
             return;
         }

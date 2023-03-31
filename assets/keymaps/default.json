@@ -52,7 +52,7 @@
             "delete": "editor::Delete",
             "ctrl-d": "editor::Delete",
             "tab": "editor::Tab",
-            "shift-tab": "editor::TabPrev",
+            "shift-tab": "editor::Backtab",
             "ctrl-k": "editor::CutToEndOfLine",
             "ctrl-t": "editor::Transpose",
             "cmd-backspace": "editor::DeleteToBeginningOfLine",

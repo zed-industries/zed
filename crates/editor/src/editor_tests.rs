@@ -1685,7 +1685,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
          four
     "});
 
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         «oneˇ» «twoˇ»
         three
@@ -1705,7 +1705,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
         ˇ» four
     "});
 
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         one two
         t«hree
@@ -1730,7 +1730,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
         ˇ    three
             four
     "});
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -1765,13 +1765,13 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
         three
         four
     "});
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         \t«oneˇ» «twoˇ»
         three
         four
     "});
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         «oneˇ» «twoˇ»
         three
@@ -1796,13 +1796,13 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
         \t\tt«hree
         ˇ»four
     "});
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         one two
         \tt«hree
         ˇ»four
     "});
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         one two
         t«hree
@@ -1815,7 +1815,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
         ˇthree
         four
     "});
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -1827,7 +1827,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
         \tˇthree
         four
     "});
-    cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+    cx.update_editor(|e, cx| e.backtab(&Backtab, cx));
     cx.assert_editor_state(indoc! {"
         one two
         ˇthree
@@ -1930,7 +1930,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut gpui::MutableAppContext) {
             "},
             cx,
         );
-        editor.tab_prev(&TabPrev, cx);
+        editor.backtab(&Backtab, cx);
         assert_text_with_selections(
             &mut editor,
             indoc! {"
