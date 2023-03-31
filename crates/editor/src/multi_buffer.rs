@@ -2933,6 +2933,10 @@ impl MultiBufferSnapshot {
         Some(self.excerpt(excerpt_id)?.buffer_id)
     }
 
+    pub fn buffer_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<&BufferSnapshot> {
+        Some(&self.excerpt(excerpt_id)?.buffer)
+    }
+
     fn excerpt<'a>(&'a self, excerpt_id: ExcerptId) -> Option<&'a Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
         let locator = self.excerpt_locator_for_id(excerpt_id);
