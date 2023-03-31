@@ -11,7 +11,7 @@ use gpui::{
     Task,
 };
 use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, ToPointUtf16};
-use log::{debug, error, info, warn};
+use log::{debug, error};
 use lsp::LanguageServer;
 use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
