@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
@@ -12,7 +12,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::fs::remove_matching;
 use util::http::HttpClient;
 use util::ResultExt;
 
@@ -69,14 +68,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         container_dir: PathBuf,
     ) -> Result<LanguageServerBinary> {
         let versions = versions.downcast::<Versions>().unwrap();
-        let version_dir = container_dir.join(&format!(
-            "typescript-{}:server-{}",
-            versions.typescript_version, versions.server_version
-        ));
-        fs::create_dir_all(&version_dir)
-            .await
-            .context("failed to create version directory")?;
-        let server_path = version_dir.join(Self::NEW_SERVER_PATH);
+        let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
@@ -88,11 +80,9 @@ impl LspAdapter for TypeScriptLspAdapter {
                             versions.server_version.as_str(),
                         ),
                     ],
-                    &version_dir,
+                    &container_dir,
                 )
                 .await?;
-
-            remove_matching(&container_dir, |entry| entry != version_dir).await;
         }
 
         Ok(LanguageServerBinary {
