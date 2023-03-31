@@ -1028,42 +1028,56 @@ impl Default for CopilotState {
     }
 }
 
+fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
+    a.zip(b)
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum()
+}
+
 impl CopilotState {
     fn text_for_active_completion(
         &self,
         cursor: Anchor,
         buffer: &MultiBufferSnapshot,
     ) -> Option<&str> {
-        let cursor_offset = cursor.to_offset(buffer);
         let completion = self.completions.get(self.active_completion_index)?;
-        if self.excerpt_id == Some(cursor.excerpt_id) {
-            let completion_offset: usize = buffer.summary_for_anchor(&Anchor {
-                excerpt_id: cursor.excerpt_id,
-                buffer_id: cursor.buffer_id,
-                text_anchor: completion.position,
-            });
-            let prefix_len = cursor_offset.saturating_sub(completion_offset);
-            if completion_offset <= cursor_offset && prefix_len <= completion.text.len() {
-                let (prefix, suffix) = completion.text.split_at(prefix_len);
-                if buffer.contains_str_at(completion_offset, prefix) && !suffix.is_empty() {
-                    return Some(suffix);
-                }
-            }
+        let excerpt_id = self.excerpt_id?;
+        let completion_buffer_id = buffer.buffer_id_for_excerpt(excerpt_id);
+        let completion_start = Anchor {
+            excerpt_id,
+            buffer_id: completion_buffer_id,
+            text_anchor: completion.range.start,
+        };
+        let completion_end = Anchor {
+            excerpt_id,
+            buffer_id: completion_buffer_id,
+            text_anchor: completion.range.end,
+        };
+        let prefix_len = common_prefix(buffer.chars_at(completion_start), completion.text.chars());
+        let suffix_len = common_prefix(
+            buffer.reversed_chars_at(completion_end),
+            completion.text.chars().rev(),
+        );
+
+        let prefix_end_offset = completion_start.to_offset(&buffer) + prefix_len;
+        let suffix_start_offset = completion_end.to_offset(&buffer) - suffix_len;
+        if prefix_end_offset == suffix_start_offset
+            && prefix_end_offset == cursor.to_offset(&buffer)
+        {
+            Some(&completion.text[prefix_len..completion.text.len() - suffix_len])
+        } else {
+            None
         }
-        None
     }
 
-    fn push_completion(
-        &mut self,
-        new_completion: copilot::Completion,
-    ) -> Option<&copilot::Completion> {
+    fn push_completion(&mut self, new_completion: copilot::Completion) {
         for completion in &self.completions {
             if *completion == new_completion {
-                return None;
+                return;
             }
         }
         self.completions.push(new_completion);
-        self.completions.last()
     }
 }
 
@@ -2806,7 +2820,8 @@ impl Editor {
             self.copilot_state.active_completion_index = 0;
             cx.notify();
         } else {
-            self.clear_copilot_suggestions(cx);
+            self.display_map
+                .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
         }
 
         if !copilot.read(cx).status().is_authorized() {
@@ -2828,26 +2843,31 @@ impl Editor {
             completions.extend(completion.log_err().flatten());
             completions.extend(completions_cycling.log_err().into_iter().flatten());
             this.upgrade(&cx)?.update(&mut cx, |this, cx| {
-                this.copilot_state.completions.clear();
-                this.copilot_state.active_completion_index = 0;
-                this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
-                for completion in completions {
-                    let was_empty = this.copilot_state.completions.is_empty();
-                    if let Some(completion) = this.copilot_state.push_completion(completion) {
-                        if was_empty {
-                            this.display_map.update(cx, |map, cx| {
-                                map.replace_suggestion(
-                                    Some(Suggestion {
-                                        position: cursor,
-                                        text: completion.text.as_str().into(),
-                                    }),
-                                    cx,
-                                )
-                            });
-                        }
+                if !completions.is_empty() {
+                    this.copilot_state.completions.clear();
+                    this.copilot_state.active_completion_index = 0;
+                    this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
+                    for completion in completions {
+                        this.copilot_state.push_completion(completion);
                     }
+
+                    let buffer = this.buffer.read(cx).snapshot(cx);
+                    if let Some(text) = this
+                        .copilot_state
+                        .text_for_active_completion(cursor, &buffer)
+                    {
+                        this.display_map.update(cx, |map, cx| {
+                            map.replace_suggestion(
+                                Some(Suggestion {
+                                    position: cursor,
+                                    text: text.into(),
+                                }),
+                                cx,
+                            )
+                        });
+                    }
+                    cx.notify();
                 }
-                cx.notify();
             });
 
             Some(())

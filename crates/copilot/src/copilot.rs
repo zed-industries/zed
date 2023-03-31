@@ -17,6 +17,7 @@ use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     ffi::OsString,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -130,7 +131,7 @@ impl Status {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Completion {
-    pub position: Anchor,
+    pub range: Range<Anchor>,
     pub text: String,
 }
 
@@ -548,10 +549,11 @@ where
 }
 
 fn completion_from_lsp(completion: request::Completion, buffer: &BufferSnapshot) -> Completion {
-    let position = buffer.clip_point_utf16(point_from_lsp(completion.position), Bias::Left);
+    let start = buffer.clip_point_utf16(point_from_lsp(completion.range.start), Bias::Left);
+    let end = buffer.clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
     Completion {
-        position: buffer.anchor_before(position),
-        text: completion.display_text,
+        range: buffer.anchor_before(start)..buffer.anchor_after(end),
+        text: completion.text,
     }
 }
 
