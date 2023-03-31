@@ -22,7 +22,7 @@
             "alt-cmd-down": "editor::GoToDefinition",
             "alt-shift-cmd-down": "editor::FindAllReferences",
             "ctrl-.": "editor::GoToHunk",
-            "ctrl-,": "editor::GoToPrevHunk",
+            "ctrl-,": "editor::GoToPreviousHunk",
             "ctrl-backspace": "editor::DeleteToPreviousWordStart",
             "ctrl-delete": "editor::DeleteToNextWordEnd"
         }

@@ -188,7 +188,7 @@ actions!(
         GoToDiagnostic,
         GoToPreviousDiagnostic,
         GoToHunk,
-        GoToPrevHunk,
+        GoToPreviousHunk,
         Indent,
         Outdent,
         DeleteLine,
@@ -5368,7 +5368,7 @@ impl Editor {
         self.go_to_hunk_impl(Direction::Next, cx)
     }
 
-    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
+    fn go_to_prev_hunk(&mut self, _: &GoToPreviousHunk, cx: &mut ViewContext<Self>) {
         self.go_to_hunk_impl(Direction::Prev, cx)
     }
 

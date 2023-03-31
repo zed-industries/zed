@@ -5850,7 +5850,7 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     cx.update_editor(|editor, cx| {
         //Wrap around the top of the buffer
         for _ in 0..2 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+            editor.go_to_prev_hunk(&GoToPreviousHunk, cx);
         }
     });
 

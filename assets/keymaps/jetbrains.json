@@ -43,7 +43,7 @@
             "f2": "editor::GoToDiagnostic",
             "cmd-f2": "editor::GoToPreviousDiagnostic",
             "ctrl-alt-shift-down": "editor::GoToHunk",
-            "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+            "ctrl-alt-shift-up": "editor::GoToPreviousHunk",
             "cmd-home": "editor::MoveToBeginning",
             "cmd-end": "editor::MoveToEnd",
             "cmd-shift-home": "editor::SelectToBeginning",
