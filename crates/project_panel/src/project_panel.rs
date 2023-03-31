@@ -16,7 +16,7 @@ use gpui::{
     AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
 };
-use menu::{Confirm, SelectNext, SelectPrev};
+use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
 use std::{
@@ -403,7 +403,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.selection {
             let (mut worktree_ix, mut entry_ix, _) =
                 self.index_for_selection(selection).unwrap_or_default();

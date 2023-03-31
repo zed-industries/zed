@@ -6,7 +6,7 @@ gpui::actions!(
     [
         Cancel,
         Confirm,
-        SelectPrev,
+        SelectPrevious,
         SelectNext,
         SelectFirst,
         SelectLast

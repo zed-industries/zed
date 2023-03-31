@@ -7,7 +7,7 @@ use gpui::{
     AnyViewHandle, AppContext, Axis, Entity, MouseButton, MouseState, MutableAppContext,
     RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrevious};
 use parking_lot::Mutex;
 use std::{cmp, sync::Arc};
 
@@ -309,7 +309,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    pub fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             delegate.update(cx, |delegate, cx| {
                 let mut selected_index = delegate.selected_index();

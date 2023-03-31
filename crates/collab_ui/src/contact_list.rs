@@ -13,7 +13,7 @@ use gpui::{
     AppContext, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, PromptLevel,
     RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
-use menu::{Confirm, SelectNext, SelectPrev};
+use menu::{Confirm, SelectNext, SelectPrevious};
 use project::Project;
 use serde::Deserialize;
 use settings::Settings;
@@ -380,7 +380,7 @@ impl ContactList {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selection {
             if ix > 0 {
                 self.selection = Some(ix - 1);

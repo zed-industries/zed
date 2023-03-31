@@ -281,7 +281,7 @@ impl ContextMenu {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
             for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
                 if item.is_action() {

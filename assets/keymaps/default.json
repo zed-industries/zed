@@ -2,10 +2,10 @@
     // Standard macOS bindings
     {
         "bindings": {
-            "up": "menu::SelectPrev",
+            "up": "menu::SelectPrevious",
             "pageup": "menu::SelectFirst",
             "shift-pageup": "menu::SelectFirst",
-            "ctrl-p": "menu::SelectPrev",
+            "ctrl-p": "menu::SelectPrevious",
             "down": "menu::SelectNext",
             "pagedown": "menu::SelectLast",
             "shift-pagedown": "menu::SelectFirst",
