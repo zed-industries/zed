@@ -77,6 +77,7 @@ pub struct CopilotButton {
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
     language: Option<Arc<str>>,
+    // _settings_subscription: Subscription,
 }
 
 impl Entity for CopilotButton {
@@ -97,7 +98,10 @@ impl View for CopilotButton {
 
         let theme = settings.theme.clone();
         let active = self.popup_menu.read(cx).visible();
-        let status = Copilot::global(cx).unwrap().read(cx).status();
+        let Some(copilot) = Copilot::global(cx) else {
+            return Empty::new().boxed();
+        };
+        let status = copilot.read(cx).status();
 
         let enabled = self.editor_enabled.unwrap_or(settings.copilot_on(None));
 
@@ -159,23 +163,25 @@ impl View for CopilotButton {
                             cx.spawn(|mut cx| async move {
                                 task.await;
                                 cx.update(|cx| {
-                                    let status = Copilot::global(cx).unwrap().read(cx).status();
-                                    match status {
-                                        Status::Authorized => cx.dispatch_action_at(
-                                            window_id,
-                                            view_id,
-                                            workspace::Toast::new(
-                                                COPILOT_STARTING_TOAST_ID,
-                                                "Copilot has started!",
-                                            ),
-                                        ),
-                                        _ => {
-                                            cx.dispatch_action_at(
+                                    if let Some(copilot) = Copilot::global(cx) {
+                                        let status = copilot.read(cx).status();
+                                        match status {
+                                            Status::Authorized => cx.dispatch_action_at(
                                                 window_id,
                                                 view_id,
-                                                DismissToast::new(COPILOT_STARTING_TOAST_ID),
-                                            );
-                                            cx.dispatch_global_action(SignIn)
+                                                workspace::Toast::new(
+                                                    COPILOT_STARTING_TOAST_ID,
+                                                    "Copilot has started!",
+                                                ),
+                                            ),
+                                            _ => {
+                                                cx.dispatch_action_at(
+                                                    window_id,
+                                                    view_id,
+                                                    DismissToast::new(COPILOT_STARTING_TOAST_ID),
+                                                );
+                                                cx.dispatch_global_action(SignIn)
+                                            }
                                         }
                                     }
                                 })
@@ -220,17 +226,20 @@ impl CopilotButton {
         });
 
         cx.observe(&menu, |_, _, cx| cx.notify()).detach();
-        cx.observe(&Copilot::global(cx).unwrap(), |_, _, cx| cx.notify())
-            .detach();
-        let this_handle = cx.handle();
-        cx.observe_global::<Settings, _>(move |cx| this_handle.update(cx, |_, cx| cx.notify()))
-            .detach();
+
+        Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()).detach());
+
+        // TODO: Determine why this leaked.
+        // let this_handle = cx.handle();
+        // let sub =
+        //     cx.observe_global::<Settings, _>(move |cx| this_handle.update(cx, |_, cx| cx.notify()));
 
         Self {
             popup_menu: menu,
             editor_subscription: None,
             editor_enabled: None,
             language: None,
+            // _settings_subscription: sub,
         }
     }
 
