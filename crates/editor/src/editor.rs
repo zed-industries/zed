@@ -1041,29 +1041,26 @@ impl CopilotState {
         cursor: Anchor,
         buffer: &MultiBufferSnapshot,
     ) -> Option<&str> {
+        use language::ToOffset as _;
+
         let completion = self.completions.get(self.active_completion_index)?;
         let excerpt_id = self.excerpt_id?;
-        let completion_buffer_id = buffer.buffer_id_for_excerpt(excerpt_id);
-        let completion_start = Anchor {
-            excerpt_id,
-            buffer_id: completion_buffer_id,
-            text_anchor: completion.range.start,
-        };
-        let completion_end = Anchor {
-            excerpt_id,
-            buffer_id: completion_buffer_id,
-            text_anchor: completion.range.end,
-        };
-        let prefix_len = common_prefix(buffer.chars_at(completion_start), completion.text.chars());
-        let suffix_len = common_prefix(
-            buffer.reversed_chars_at(completion_end),
-            completion.text.chars().rev(),
-        );
+        let completion_buffer = buffer.buffer_for_excerpt(excerpt_id)?;
 
-        let prefix_end_offset = completion_start.to_offset(&buffer) + prefix_len;
-        let suffix_start_offset = completion_end.to_offset(&buffer) - suffix_len;
-        if prefix_end_offset == suffix_start_offset
-            && prefix_end_offset == cursor.to_offset(&buffer)
+        let mut completion_range = completion.range.to_offset(&completion_buffer);
+        let prefix_len = common_prefix(
+            completion_buffer.chars_for_range(completion_range.clone()),
+            completion.text.chars(),
+        );
+        completion_range.start += prefix_len;
+        let suffix_len = common_prefix(
+            completion_buffer.reversed_chars_for_range(completion_range.clone()),
+            completion.text[prefix_len..].chars().rev(),
+        );
+        completion_range.end = completion_range.end.saturating_sub(suffix_len);
+
+        if completion_range.is_empty()
+            && completion_range.start == cursor.text_anchor.to_offset(&completion_buffer)
         {
             Some(&completion.text[prefix_len..completion.text.len() - suffix_len])
         } else {
@@ -6492,6 +6489,7 @@ impl Editor {
             multi_buffer::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
+                self.refresh_copilot_suggestions(cx);
                 cx.emit(Event::BufferEdited);
             }
             multi_buffer::Event::ExcerptsAdded {
