@@ -19,7 +19,7 @@
             "cmd-}": "pane::ActivateNextTab",
             "alt-cmd-left": "pane::ActivatePreviousTab",
             "alt-cmd-right": "pane::ActivateNextTab",
-            "cmd-w": "pane::CloseActiveItem",
+            "cmd-w": "pane::CloseActiveTab",
             "alt-cmd-t": "pane::CloseInactiveItems",
             "cmd-k u": "pane::CloseCleanItems",
             "cmd-k cmd-w": "pane::CloseAllItems",

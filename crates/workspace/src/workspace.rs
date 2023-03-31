@@ -3238,7 +3238,7 @@ mod tests {
         // Close the active item
         workspace
             .update(cx, |workspace, cx| {
-                Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
+                Pane::close_active_tab(workspace, &Default::default(), cx).unwrap()
             })
             .await
             .unwrap();

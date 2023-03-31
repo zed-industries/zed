@@ -134,7 +134,7 @@ impl FeedbackEditor {
                     Ok(_) => {
                         cx.update(|cx| {
                             this.update(cx, |_, cx| {
-                                cx.dispatch_action(workspace::CloseActiveItem);
+                                cx.dispatch_action(workspace::CloseActiveTab);
                             })
                         });
                     }

@@ -43,7 +43,7 @@ actions!(
         ActivatePreviousTab,
         ActivateNextTab,
         ActivateLastItem,
-        CloseActiveItem,
+        CloseActiveTab,
         CloseInactiveItems,
         CloseCleanItems,
         CloseAllItems,
@@ -119,7 +119,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &ActivateNextTab, cx| {
         pane.activate_next_item(true, cx);
     });
-    cx.add_async_action(Pane::close_active_item);
+    cx.add_async_action(Pane::close_active_tab);
     cx.add_async_action(Pane::close_inactive_items);
     cx.add_async_action(Pane::close_clean_items);
     cx.add_async_action(Pane::close_all_items);
@@ -736,9 +736,9 @@ impl Pane {
         self.activate_item(index, activate_pane, activate_pane, cx);
     }
 
-    pub fn close_active_item(
+    pub fn close_active_tab(
         workspace: &mut Workspace,
-        _: &CloseActiveItem,
+        _: &CloseActiveTab,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
         Self::close_main(workspace, ItemType::Active, cx)
@@ -2173,7 +2173,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+            Pane::close_active_tab(workspace, &CloseActiveTab, cx);
         });
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
@@ -2182,19 +2182,19 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+            Pane::close_active_tab(workspace, &CloseActiveTab, cx);
         });
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+            Pane::close_active_tab(workspace, &CloseActiveTab, cx);
         });
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A", "C*"], cx);
 
         workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
+            Pane::close_active_tab(workspace, &CloseActiveTab, cx);
         });
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A*"], cx);

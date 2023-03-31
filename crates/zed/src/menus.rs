@@ -40,7 +40,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Save", workspace::Save),
                 MenuItem::action("Save As…", workspace::SaveAs),
                 MenuItem::action("Save All", workspace::SaveAll),
-                MenuItem::action("Close Editor", workspace::CloseActiveItem),
+                MenuItem::action("Close Editor", workspace::CloseActiveTab),
                 MenuItem::action("Close Window", workspace::CloseWindow),
             ],
         },

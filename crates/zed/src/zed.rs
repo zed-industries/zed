@@ -800,7 +800,7 @@ mod tests {
         // Closing the item restores the window's edited state.
         let close = workspace.update(cx, |workspace, cx| {
             drop(editor);
-            Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
+            Pane::close_active_tab(workspace, &Default::default(), cx).unwrap()
         });
         executor.run_until_parked();
         cx.simulate_prompt_answer(workspace.window_id(), 1);
@@ -1378,7 +1378,7 @@ mod tests {
 
             pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
-        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.dispatch_action(window_id, workspace::CloseActiveTab);
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
@@ -1386,7 +1386,7 @@ mod tests {
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
-        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.dispatch_action(window_id, workspace::CloseActiveTab);
         cx.foreground().run_until_parked();
         cx.simulate_prompt_answer(window_id, 1);
         cx.foreground().run_until_parked();
