@@ -293,7 +293,7 @@ impl<T: Entity> PendingEntitySubscription<T> {
 
         state
             .entities_by_type_and_remote_id
-            .insert(id, WeakSubscriber::Model(model.downgrade().into()));
+            .insert(id, WeakSubscriber::Model(model.downgrade().into_any()));
         drop(state);
         for message in messages {
             self.client.handle_message(message, cx);
@@ -457,10 +457,10 @@ impl Client {
         cx: &mut ViewContext<T>,
     ) -> Subscription {
         let id = (TypeId::of::<T>(), remote_id);
-        self.state
-            .write()
-            .entities_by_type_and_remote_id
-            .insert(id, WeakSubscriber::View(cx.weak_handle().into()));
+        self.state.write().entities_by_type_and_remote_id.insert(
+            id,
+            WeakSubscriber::View((&cx.weak_handle() as &AnyWeakViewHandle).clone()),
+        );
         Subscription::Entity {
             client: Arc::downgrade(self),
             id,
@@ -504,7 +504,7 @@ impl Client {
         let mut state = self.state.write();
         state
             .models_by_message_type
-            .insert(message_type_id, model.downgrade().into());
+            .insert(message_type_id, model.downgrade().into_any());
 
         let prev_handler = state.message_handlers.insert(
             message_type_id,

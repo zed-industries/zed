@@ -2823,8 +2823,7 @@ impl AppContext {
         }
     }
 
-    pub fn is_child_focused(&self, view: impl Into<AnyViewHandle>) -> bool {
-        let view = view.into();
+    pub fn is_child_focused(&self, view: &AnyViewHandle) -> bool {
         if let Some(focused_view_id) = self.focused_view_id(view.window_id) {
             self.ancestors(view.window_id, focused_view_id)
                 .skip(1) // Skip self id
@@ -4455,32 +4454,23 @@ pub enum EntityLocation {
 }
 
 pub struct ModelHandle<T: Entity> {
-    model_id: usize,
+    any_handle: AnyModelHandle,
     model_type: PhantomData<T>,
-    ref_counts: Arc<Mutex<RefCounts>>,
+}
 
-    #[cfg(any(test, feature = "test-support"))]
-    handle_id: usize,
+impl<T: Entity> Deref for ModelHandle<T> {
+    type Target = AnyModelHandle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.any_handle
+    }
 }
 
 impl<T: Entity> ModelHandle<T> {
     fn new(model_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_model(model_id);
-
-        #[cfg(any(test, feature = "test-support"))]
-        let handle_id = ref_counts
-            .lock()
-            .leak_detector
-            .lock()
-            .handle_created(Some(type_name::<T>()), model_id);
-
         Self {
-            model_id,
+            any_handle: AnyModelHandle::new(model_id, TypeId::of::<T>(), ref_counts.clone()),
             model_type: PhantomData,
-            ref_counts: ref_counts.clone(),
-
-            #[cfg(any(test, feature = "test-support"))]
-            handle_id,
         }
     }
 
@@ -4564,19 +4554,6 @@ impl<T: Entity> Debug for ModelHandle<T> {
 unsafe impl<T: Entity> Send for ModelHandle<T> {}
 unsafe impl<T: Entity> Sync for ModelHandle<T> {}
 
-impl<T: Entity> Drop for ModelHandle<T> {
-    fn drop(&mut self) {
-        let mut ref_counts = self.ref_counts.lock();
-        ref_counts.dec_model(self.model_id);
-
-        #[cfg(any(test, feature = "test-support"))]
-        ref_counts
-            .leak_detector
-            .lock()
-            .handle_dropped(self.model_id, self.handle_id);
-    }
-}
-
 impl<T: Entity> Handle<T> for ModelHandle<T> {
     type Weak = WeakModelHandle<T>;
 
@@ -4601,8 +4578,22 @@ impl<T: Entity> Handle<T> for ModelHandle<T> {
 }
 
 pub struct WeakModelHandle<T> {
-    model_id: usize,
+    any_handle: AnyWeakModelHandle,
     model_type: PhantomData<T>,
+}
+
+impl<T> WeakModelHandle<T> {
+    pub fn into_any(self) -> AnyWeakModelHandle {
+        self.any_handle
+    }
+}
+
+impl<T> Deref for WeakModelHandle<T> {
+    type Target = AnyWeakModelHandle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.any_handle
+    }
 }
 
 impl<T> WeakHandle for WeakModelHandle<T> {
@@ -4617,7 +4608,10 @@ unsafe impl<T> Sync for WeakModelHandle<T> {}
 impl<T: Entity> WeakModelHandle<T> {
     fn new(model_id: usize) -> Self {
         Self {
-            model_id,
+            any_handle: AnyWeakModelHandle {
+                model_id,
+                model_type: TypeId::of::<T>(),
+            },
             model_type: PhantomData,
         }
     }
@@ -4658,7 +4652,7 @@ impl<T: Entity> PartialEq<ModelHandle<T>> for WeakModelHandle<T> {
 impl<T> Clone for WeakModelHandle<T> {
     fn clone(&self) -> Self {
         Self {
-            model_id: self.model_id,
+            any_handle: self.any_handle.clone(),
             model_type: PhantomData,
         }
     }
@@ -4681,23 +4675,13 @@ impl<T> Deref for ViewHandle<T> {
 
 impl<T: View> ViewHandle<T> {
     fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_view(window_id, view_id);
-        #[cfg(any(test, feature = "test-support"))]
-        let handle_id = ref_counts
-            .lock()
-            .leak_detector
-            .lock()
-            .handle_created(Some(type_name::<T>()), view_id);
-
         Self {
-            any_handle: AnyViewHandle {
+            any_handle: AnyViewHandle::new(
                 window_id,
                 view_id,
-                view_type: TypeId::of::<T>(),
-                ref_counts: ref_counts.clone(),
-                #[cfg(any(test, feature = "test-support"))]
-                handle_id,
-            },
+                TypeId::of::<T>(),
+                ref_counts.clone(),
+            ),
             view_type: PhantomData,
         }
     }
@@ -4918,12 +4902,6 @@ impl Clone for AnyViewHandle {
     }
 }
 
-impl From<&AnyViewHandle> for AnyViewHandle {
-    fn from(handle: &AnyViewHandle) -> Self {
-        handle.clone()
-    }
-}
-
 impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
     fn from(handle: ViewHandle<T>) -> Self {
         handle.any_handle
@@ -4982,19 +4960,10 @@ impl AnyModelHandle {
 
     pub fn downcast<T: Entity>(self) -> Option<ModelHandle<T>> {
         if self.is::<T>() {
-            let result = Some(ModelHandle {
-                model_id: self.model_id,
+            Some(ModelHandle {
+                any_handle: self,
                 model_type: PhantomData,
-                ref_counts: self.ref_counts.clone(),
-
-                #[cfg(any(test, feature = "test-support"))]
-                handle_id: self.handle_id,
-            });
-            unsafe {
-                Arc::decrement_strong_count(Arc::as_ptr(&self.ref_counts));
-            }
-            std::mem::forget(self);
-            result
+            })
         } else {
             None
         }
@@ -5013,16 +4982,6 @@ impl AnyModelHandle {
 
     pub fn model_type(&self) -> TypeId {
         self.model_type
-    }
-}
-
-impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
-    fn from(handle: ModelHandle<T>) -> Self {
-        Self::new(
-            handle.model_id,
-            TypeId::of::<T>(),
-            handle.ref_counts.clone(),
-        )
     }
 }
 
@@ -5045,7 +5004,7 @@ impl Drop for AnyModelHandle {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Debug)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub struct AnyWeakModelHandle {
     model_id: usize,
     model_type: TypeId,
@@ -5063,10 +5022,10 @@ impl AnyWeakModelHandle {
         TypeId::of::<T>() == self.model_type
     }
 
-    pub fn downcast<T: Entity>(&self) -> Option<WeakModelHandle<T>> {
+    pub fn downcast<T: Entity>(self) -> Option<WeakModelHandle<T>> {
         if self.is::<T>() {
             let result = Some(WeakModelHandle {
-                model_id: self.model_id,
+                any_handle: self,
                 model_type: PhantomData,
             });
 
@@ -5077,19 +5036,9 @@ impl AnyWeakModelHandle {
     }
 }
 
-impl<T: Entity> From<WeakModelHandle<T>> for AnyWeakModelHandle {
-    fn from(handle: WeakModelHandle<T>) -> Self {
-        AnyWeakModelHandle {
-            model_id: handle.model_id,
-            model_type: TypeId::of::<T>(),
-        }
-    }
-}
-
 #[derive(Debug, Copy)]
 pub struct WeakViewHandle<T> {
-    window_id: usize,
-    view_id: usize,
+    any_handle: AnyWeakViewHandle,
     view_type: PhantomData<T>,
 }
 
@@ -5102,8 +5051,11 @@ impl<T> WeakHandle for WeakViewHandle<T> {
 impl<T: View> WeakViewHandle<T> {
     fn new(window_id: usize, view_id: usize) -> Self {
         Self {
-            window_id,
-            view_id,
+            any_handle: AnyWeakViewHandle {
+                window_id,
+                view_id,
+                view_type: TypeId::of::<T>(),
+            },
             view_type: PhantomData,
         }
     }
@@ -5116,16 +5068,27 @@ impl<T: View> WeakViewHandle<T> {
         self.window_id
     }
 
+    pub fn into_any(self) -> AnyWeakViewHandle {
+        self.any_handle
+    }
+
     pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<ViewHandle<T>> {
         cx.upgrade_view_handle(self)
+    }
+}
+
+impl<T> Deref for WeakViewHandle<T> {
+    type Target = AnyWeakViewHandle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.any_handle
     }
 }
 
 impl<T> Clone for WeakViewHandle<T> {
     fn clone(&self) -> Self {
         Self {
-            window_id: self.window_id,
-            view_id: self.view_id,
+            any_handle: self.any_handle.clone(),
             view_type: PhantomData,
         }
     }
@@ -5141,11 +5104,11 @@ impl<T> Eq for WeakViewHandle<T> {}
 
 impl<T> Hash for WeakViewHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.window_id.hash(state);
-        self.view_id.hash(state);
+        self.any_handle.hash(state);
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct AnyWeakViewHandle {
     window_id: usize,
     view_id: usize,
@@ -5162,13 +5125,11 @@ impl AnyWeakViewHandle {
     }
 }
 
-impl<T: View> From<WeakViewHandle<T>> for AnyWeakViewHandle {
-    fn from(handle: WeakViewHandle<T>) -> Self {
-        AnyWeakViewHandle {
-            window_id: handle.window_id,
-            view_id: handle.view_id,
-            view_type: TypeId::of::<T>(),
-        }
+impl Hash for AnyWeakViewHandle {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.window_id.hash(state);
+        self.view_id.hash(state);
+        self.view_type.hash(state);
     }
 }
 
@@ -6340,8 +6301,8 @@ mod tests {
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
-        assert!(cx.is_child_focused(view_1.clone()));
-        assert!(!cx.is_child_focused(view_2.clone()));
+        assert!(cx.is_child_focused(&view_1));
+        assert!(!cx.is_child_focused(&view_2));
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             [
@@ -6366,8 +6327,8 @@ mod tests {
         );
 
         view_1.update(cx, |_, cx| cx.focus(&view_1));
-        assert!(!cx.is_child_focused(view_1.clone()));
-        assert!(!cx.is_child_focused(view_2.clone()));
+        assert!(!cx.is_child_focused(&view_1));
+        assert!(!cx.is_child_focused(&view_2));
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             ["view 2 blurred", "view 1 focused"],
