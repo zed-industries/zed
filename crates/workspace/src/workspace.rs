@@ -1036,12 +1036,8 @@ impl Workspace {
         &self.client
     }
 
-    pub fn set_titlebar_item(
-        &mut self,
-        item: impl Into<AnyViewHandle>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.titlebar_item = Some(item.into());
+    pub fn set_titlebar_item(&mut self, item: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.titlebar_item = Some(item);
         cx.notify();
     }
 
@@ -1355,7 +1351,7 @@ impl Workspace {
         } else {
             let modal = add_view(self, cx);
             cx.focus(&modal);
-            self.modal = Some(modal.into());
+            self.modal = Some(modal.into_any());
             None
         }
     }

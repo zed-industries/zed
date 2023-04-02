@@ -1633,14 +1633,14 @@ impl MutableAppContext {
             this.cx.windows.insert(
                 window_id,
                 Window {
-                    root_view: root_view.clone().into(),
+                    root_view: root_view.clone().into_any(),
                     focused_view_id: Some(root_view.id()),
                     is_active: false,
                     invalidation: None,
                     is_fullscreen: false,
                 },
             );
-            root_view.update(this, |view, cx| view.focus_in(cx.handle().into(), cx));
+            root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
 
             let window =
                 this.cx
@@ -1662,17 +1662,18 @@ impl MutableAppContext {
             let root_view = this
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
+            let focused_view_id = root_view.id();
             this.cx.windows.insert(
                 window_id,
                 Window {
-                    root_view: root_view.clone().into(),
-                    focused_view_id: Some(root_view.id()),
+                    root_view: root_view.clone().into_any(),
+                    focused_view_id: Some(focused_view_id),
                     is_active: false,
                     invalidation: None,
                     is_fullscreen: false,
                 },
             );
-            root_view.update(this, |view, cx| view.focus_in(cx.handle().into(), cx));
+            root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
 
             let status_item = this.cx.platform.add_status_item();
             this.register_platform_window(window_id, status_item);
@@ -1783,7 +1784,7 @@ impl MutableAppContext {
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
             let window = this.cx.windows.get_mut(&window_id).unwrap();
-            window.root_view = root_view.clone().into();
+            window.root_view = root_view.clone().into_any();
             window.focused_view_id = Some(root_view.id());
             root_view
         })
@@ -3362,7 +3363,7 @@ where
     ) {
         let mut cx = ViewContext::new(cx, window_id, view_id);
         let focused_view_handle: AnyViewHandle = if view_id == focused_id {
-            cx.handle().into()
+            cx.handle().into_any()
         } else {
             let focused_type = cx
                 .views
@@ -3384,7 +3385,7 @@ where
     ) {
         let mut cx = ViewContext::new(cx, window_id, view_id);
         let blurred_view_handle: AnyViewHandle = if view_id == blurred_id {
-            cx.handle().into()
+            cx.handle().into_any()
         } else {
             let blurred_type = cx
                 .views
@@ -3905,7 +3906,7 @@ impl<'a, T: View> ViewContext<'a, T> {
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
             let window = this.cx.windows.get_mut(&window_id).unwrap();
-            window.root_view = root_view.clone().into();
+            window.root_view = root_view.clone().into_any();
             window.focused_view_id = Some(root_view.id());
             root_view
         })
@@ -4690,6 +4691,10 @@ impl<T: View> ViewHandle<T> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
+    pub fn into_any(self) -> AnyViewHandle {
+        self.any_handle
+    }
+
     pub fn window_id(&self) -> usize {
         self.window_id
     }
@@ -4899,12 +4904,6 @@ impl Clone for AnyViewHandle {
             self.view_type,
             self.ref_counts.clone(),
         )
-    }
-}
-
-impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
-    fn from(handle: ViewHandle<T>) -> Self {
-        handle.any_handle
     }
 }
 
