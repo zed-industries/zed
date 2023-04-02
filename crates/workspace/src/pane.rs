@@ -2279,8 +2279,7 @@ mod tests {
                 .map(|(ix, item)| {
                     let mut state = item
                         .as_any()
-                        .clone()
-                        .downcast::<TestItem>()
+                        .downcast_ref::<TestItem>()
                         .unwrap()
                         .read(cx)
                         .label

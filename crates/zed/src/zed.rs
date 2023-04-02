@@ -1021,8 +1021,7 @@ mod tests {
                     .active_item()
                     .unwrap()
                     .as_any()
-                    .clone()
-                    .downcast::<Editor>()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),
@@ -1058,8 +1057,7 @@ mod tests {
                     .active_item()
                     .unwrap()
                     .as_any()
-                    .clone()
-                    .downcast::<Editor>()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),
@@ -1095,8 +1093,7 @@ mod tests {
                     .active_item()
                     .unwrap()
                     .as_any()
-                    .clone()
-                    .downcast::<Editor>()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),
@@ -1146,8 +1143,7 @@ mod tests {
                     .active_item()
                     .unwrap()
                     .as_any()
-                    .clone()
-                    .downcast::<Editor>()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),

@@ -353,8 +353,7 @@ mod tests {
             assert_eq!(
                 active_item
                     .as_any()
-                    .clone()
-                    .downcast::<Editor>()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),

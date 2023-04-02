@@ -4661,6 +4661,7 @@ impl<T> Clone for WeakModelHandle<T> {
 
 impl<T> Copy for WeakModelHandle<T> {}
 
+#[repr(transparent)]
 pub struct ViewHandle<T> {
     any_handle: AnyViewHandle,
     view_type: PhantomData<T>,
@@ -4872,6 +4873,14 @@ impl AnyViewHandle {
                 any_handle: self,
                 view_type: PhantomData,
             })
+        } else {
+            None
+        }
+    }
+
+    pub fn downcast_ref<T: View>(&self) -> Option<&ViewHandle<T>> {
+        if self.is::<T>() {
+            Some(unsafe { mem::transmute(self) })
         } else {
             None
         }
