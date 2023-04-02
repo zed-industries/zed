@@ -457,10 +457,10 @@ impl Client {
         cx: &mut ViewContext<T>,
     ) -> Subscription {
         let id = (TypeId::of::<T>(), remote_id);
-        self.state.write().entities_by_type_and_remote_id.insert(
-            id,
-            WeakSubscriber::View((&cx.weak_handle() as &AnyWeakViewHandle).clone()),
-        );
+        self.state
+            .write()
+            .entities_by_type_and_remote_id
+            .insert(id, WeakSubscriber::View(cx.weak_handle().into_any()));
         Subscription::Entity {
             client: Arc::downgrade(self),
             id,
