@@ -32,7 +32,7 @@ pub fn show_welcome_experience(app_state: &Arc<AppState>, cx: &mut MutableAppCon
         workspace.toggle_sidebar(SidebarSide::Left, cx);
         let welcome_page = cx.add_view(|cx| WelcomePage::new(cx));
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
-        cx.focus(welcome_page);
+        cx.focus(&welcome_page);
         cx.notify();
     })
     .detach();

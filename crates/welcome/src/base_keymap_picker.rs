@@ -75,7 +75,7 @@ impl View for BaseKeymapSelector {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        ChildView::new(self.picker.clone(), cx).boxed()
+        ChildView::new(&self.picker, cx).boxed()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

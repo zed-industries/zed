@@ -213,13 +213,13 @@ fn downcast_matches<T: Any + Clone>(matches: &Vec<Box<dyn Any + Send>>) -> Vec<T
 
 impl From<Box<dyn SearchableItemHandle>> for AnyViewHandle {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.as_any().clone()
     }
 }
 
 impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.as_any().clone()
     }
 }
 

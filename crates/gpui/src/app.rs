@@ -1812,16 +1812,11 @@ impl MutableAppContext {
         )
     }
 
-    pub fn add_view<T, F>(
-        &mut self,
-        parent_handle: impl Into<AnyViewHandle>,
-        build_view: F,
-    ) -> ViewHandle<T>
+    pub fn add_view<T, F>(&mut self, parent_handle: &AnyViewHandle, build_view: F) -> ViewHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        let parent_handle = parent_handle.into();
         self.build_and_insert_view(
             parent_handle.window_id,
             ParentId::View(parent_handle.view_id),
@@ -3794,11 +3789,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.debug_elements(self.window_id).unwrap()
     }
 
-    pub fn focus<S>(&mut self, handle: S)
-    where
-        S: Into<AnyViewHandle>,
-    {
-        let handle = handle.into();
+    pub fn focus(&mut self, handle: &AnyViewHandle) {
         self.app.focus(handle.window_id, Some(handle.view_id));
     }
 
@@ -3890,8 +3881,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.cx.parent(self.window_id, self.view_id)
     }
 
-    pub fn reparent(&mut self, view_handle: impl Into<AnyViewHandle>) {
-        let view_handle = view_handle.into();
+    pub fn reparent(&mut self, view_handle: &AnyViewHandle) {
         if self.window_id != view_handle.window_id {
             panic!("Can't reparent view to a view from a different window");
         }
@@ -4677,12 +4667,16 @@ impl<T> Clone for WeakModelHandle<T> {
 impl<T> Copy for WeakModelHandle<T> {}
 
 pub struct ViewHandle<T> {
-    window_id: usize,
-    view_id: usize,
+    any_handle: AnyViewHandle,
     view_type: PhantomData<T>,
-    ref_counts: Arc<Mutex<RefCounts>>,
-    #[cfg(any(test, feature = "test-support"))]
-    handle_id: usize,
+}
+
+impl<T> Deref for ViewHandle<T> {
+    type Target = AnyViewHandle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.any_handle
+    }
 }
 
 impl<T: View> ViewHandle<T> {
@@ -4696,13 +4690,15 @@ impl<T: View> ViewHandle<T> {
             .handle_created(Some(type_name::<T>()), view_id);
 
         Self {
-            window_id,
-            view_id,
+            any_handle: AnyViewHandle {
+                window_id,
+                view_id,
+                view_type: TypeId::of::<T>(),
+                ref_counts: ref_counts.clone(),
+                #[cfg(any(test, feature = "test-support"))]
+                handle_id,
+            },
             view_type: PhantomData,
-            ref_counts: ref_counts.clone(),
-
-            #[cfg(any(test, feature = "test-support"))]
-            handle_id,
         }
     }
 
@@ -4805,20 +4801,6 @@ impl<T> Debug for ViewHandle<T> {
     }
 }
 
-impl<T> Drop for ViewHandle<T> {
-    fn drop(&mut self) {
-        self.ref_counts
-            .lock()
-            .dec_view(self.window_id, self.view_id);
-        #[cfg(any(test, feature = "test-support"))]
-        self.ref_counts
-            .lock()
-            .leak_detector
-            .lock()
-            .handle_dropped(self.view_id, self.handle_id);
-    }
-}
-
 impl<T: View> Handle<T> for ViewHandle<T> {
     type Weak = WeakViewHandle<T>;
 
@@ -4897,19 +4879,10 @@ impl AnyViewHandle {
 
     pub fn downcast<T: View>(self) -> Option<ViewHandle<T>> {
         if self.is::<T>() {
-            let result = Some(ViewHandle {
-                window_id: self.window_id,
-                view_id: self.view_id,
-                ref_counts: self.ref_counts.clone(),
+            Some(ViewHandle {
+                any_handle: self,
                 view_type: PhantomData,
-                #[cfg(any(test, feature = "test-support"))]
-                handle_id: self.handle_id,
-            });
-            unsafe {
-                Arc::decrement_strong_count(Arc::as_ptr(&self.ref_counts));
-            }
-            std::mem::forget(self);
-            result
+            })
         } else {
             None
         }
@@ -4951,33 +4924,9 @@ impl From<&AnyViewHandle> for AnyViewHandle {
     }
 }
 
-impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
-    fn from(handle: &ViewHandle<T>) -> Self {
-        Self::new(
-            handle.window_id,
-            handle.view_id,
-            TypeId::of::<T>(),
-            handle.ref_counts.clone(),
-        )
-    }
-}
-
 impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
     fn from(handle: ViewHandle<T>) -> Self {
-        let any_handle = AnyViewHandle {
-            window_id: handle.window_id,
-            view_id: handle.view_id,
-            view_type: TypeId::of::<T>(),
-            ref_counts: handle.ref_counts.clone(),
-            #[cfg(any(test, feature = "test-support"))]
-            handle_id: handle.handle_id,
-        };
-
-        unsafe {
-            Arc::decrement_strong_count(Arc::as_ptr(&handle.ref_counts));
-        }
-        std::mem::forget(handle);
-        any_handle
+        handle.any_handle
     }
 }
 
@@ -6142,7 +6091,7 @@ mod tests {
         }
 
         let (_, root_view) = cx.add_window(Default::default(), |_| TestView::default());
-        let observing_view = cx.add_view(root_view, |_| TestView::default());
+        let observing_view = cx.add_view(&root_view, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 

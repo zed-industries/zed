@@ -273,7 +273,7 @@ impl BufferSearchBar {
             }
         }
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
-            cx.focus(active_editor);
+            cx.focus(active_editor.as_any());
         }
         cx.emit(Event::UpdateLocation);
         cx.notify();
@@ -458,7 +458,7 @@ impl BufferSearchBar {
 
     fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
-            cx.focus(active_editor);
+            cx.focus(active_editor.as_any());
         }
     }
 

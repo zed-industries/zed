@@ -5753,7 +5753,7 @@ impl Editor {
                             render: Arc::new({
                                 let editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
-                                    ChildView::new(editor.clone(), cx)
+                                    ChildView::new(&editor, cx)
                                         .contained()
                                         .with_padding_left(cx.anchor_x)
                                         .boxed()

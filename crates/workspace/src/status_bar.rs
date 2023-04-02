@@ -14,7 +14,7 @@ pub trait StatusItemView: View {
 }
 
 trait StatusItemViewHandle {
-    fn to_any(&self) -> AnyViewHandle;
+    fn as_any(&self) -> &AnyViewHandle;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -42,14 +42,14 @@ impl View for StatusBar {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
         Flex::row()
             .with_children(self.left_items.iter().map(|i| {
-                ChildView::new(i.as_ref(), cx)
+                ChildView::new(i.as_any(), cx)
                     .aligned()
                     .contained()
                     .with_margin_right(theme.item_spacing)
                     .boxed()
             }))
             .with_children(self.right_items.iter().rev().map(|i| {
-                ChildView::new(i.as_ref(), cx)
+                ChildView::new(i.as_any(), cx)
                     .aligned()
                     .contained()
                     .with_margin_left(theme.item_spacing)
@@ -81,7 +81,7 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
-        cx.reparent(&item);
+        cx.reparent(item.as_any());
         self.left_items.push(Box::new(item));
         cx.notify();
     }
@@ -90,7 +90,7 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
-        cx.reparent(&item);
+        cx.reparent(item.as_any());
         self.right_items.push(Box::new(item));
         cx.notify();
     }
@@ -111,8 +111,8 @@ impl StatusBar {
 }
 
 impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
+    fn as_any(&self) -> &AnyViewHandle {
+        self
     }
 
     fn set_active_pane_item(
@@ -128,6 +128,6 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
 
 impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
     fn from(val: &dyn StatusItemViewHandle) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }

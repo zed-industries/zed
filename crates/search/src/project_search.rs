@@ -222,16 +222,16 @@ impl View for ProjectSearchView {
 }
 
 impl Item for ProjectSearchView {
-    fn act_as_type(
-        &self,
+    fn act_as_type<'a>(
+        &'a self,
         type_id: TypeId,
-        self_handle: &ViewHandle<Self>,
-        _: &gpui::AppContext,
-    ) -> Option<gpui::AnyViewHandle> {
+        self_handle: &'a ViewHandle<Self>,
+        _: &'a AppContext,
+    ) -> Option<&'a AnyViewHandle> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.into())
+            Some(self_handle)
         } else if type_id == TypeId::of::<Editor>() {
-            Some((&self.results_editor).into())
+            Some(&self.results_editor)
         } else {
             None
         }
@@ -246,7 +246,7 @@ impl Item for ProjectSearchView {
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
-        cx: &gpui::AppContext,
+        cx: &AppContext,
     ) -> ElementBox {
         Flex::row()
             .with_child(
@@ -277,7 +277,7 @@ impl Item for ProjectSearchView {
         false
     }
 
-    fn can_save(&self, _: &gpui::AppContext) -> bool {
+    fn can_save(&self, _: &AppContext) -> bool {
         true
     }
 
@@ -930,7 +930,7 @@ impl ToolbarItemView for ProjectSearchBar {
         self.active_project_search = None;
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
             let query_editor = search.read(cx).query_editor.clone();
-            cx.reparent(query_editor);
+            cx.reparent(&query_editor);
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {

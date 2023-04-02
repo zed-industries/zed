@@ -1109,7 +1109,7 @@ impl ProjectPanel {
                 .boxed(),
             )
             .with_child(if show_editor && editor.is_some() {
-                ChildView::new(editor.unwrap().clone(), cx)
+                ChildView::new(editor.as_ref().unwrap(), cx)
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()

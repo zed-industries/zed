@@ -137,11 +137,7 @@ impl TestAppContext {
         (window_id, view)
     }
 
-    pub fn add_view<T, F>(
-        &mut self,
-        parent_handle: impl Into<AnyViewHandle>,
-        build_view: F,
-    ) -> ViewHandle<T>
+    pub fn add_view<T, F>(&mut self, parent_handle: &AnyViewHandle, build_view: F) -> ViewHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,

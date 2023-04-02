@@ -464,7 +464,7 @@ type FollowableItemBuilders = HashMap<
     TypeId,
     (
         FollowableItemBuilder,
-        fn(AnyViewHandle) -> Box<dyn FollowableItemHandle>,
+        fn(&AnyViewHandle) -> Box<dyn FollowableItemHandle>,
     ),
 >;
 pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
@@ -478,7 +478,7 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
                 },
-                |this| Box::new(this.downcast::<I>().unwrap()),
+                |this| Box::new(this.clone().downcast::<I>().unwrap()),
             ),
         );
     });
@@ -1491,7 +1491,7 @@ impl Workspace {
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
-                cx.focus(active_item.to_any());
+                cx.focus(active_item.as_any());
             }
         } else {
             cx.focus_self();
@@ -1523,7 +1523,7 @@ impl Workspace {
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
-                cx.focus(active_item.to_any());
+                cx.focus(active_item.as_any());
             }
         }
 
@@ -1546,7 +1546,7 @@ impl Workspace {
         })
         .detach();
         self.panes.push(pane.clone());
-        cx.focus(pane.clone());
+        cx.focus(&pane);
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
     }
@@ -1688,7 +1688,7 @@ impl Workspace {
     fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
         let panes = self.center.panes();
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-            cx.focus(pane);
+            cx.focus(&pane);
         } else {
             self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
         }
@@ -1699,7 +1699,7 @@ impl Workspace {
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let next_ix = (ix + 1) % panes.len();
             let next_pane = panes[next_ix].clone();
-            cx.focus(next_pane);
+            cx.focus(&next_pane);
         }
     }
 
@@ -1708,7 +1708,7 @@ impl Workspace {
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
             let prev_pane = panes[prev_ix].clone();
-            cx.focus(prev_pane);
+            cx.focus(&prev_pane);
         }
     }
 
@@ -1871,7 +1871,7 @@ impl Workspace {
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
-            cx.focus(self.panes.last().unwrap().clone());
+            cx.focus(self.panes.last().unwrap());
             self.unfollow(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             for removed_item in pane.read(cx).items() {
@@ -2191,7 +2191,7 @@ impl Workspace {
             Some(
                 Flex::column()
                     .with_children(self.notifications.iter().map(|(_, _, notification)| {
-                        ChildView::new(notification.as_ref(), cx)
+                        ChildView::new(notification.as_any(), cx)
                             .contained()
                             .with_style(theme.notification)
                             .boxed()
@@ -2488,7 +2488,7 @@ impl Workspace {
             let active_item_was_focused = pane
                 .read(cx)
                 .active_item()
-                .map(|active_item| cx.is_child_focused(active_item.to_any()))
+                .map(|active_item| cx.is_child_focused(active_item.as_any()))
                 .unwrap_or_default();
 
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
@@ -2715,14 +2715,14 @@ impl Workspace {
                         cx.focus_self();
 
                         if let Some(active_pane) = active_pane {
-                            cx.focus(active_pane);
+                            cx.focus(&active_pane);
                         } else {
-                            cx.focus(workspace.panes.last().unwrap().clone());
+                            cx.focus(workspace.panes.last().unwrap());
                         }
                     } else {
                         let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
                         if let Some(old_center_handle) = old_center_handle {
-                            cx.focus(old_center_handle)
+                            cx.focus(&old_center_handle)
                         } else {
                             cx.focus_self()
                         }
@@ -3503,7 +3503,7 @@ mod tests {
         //Need to cause an effect flush in order to respect new focus
         workspace.update(cx, |workspace, cx| {
             workspace.add_item(Box::new(item_3_4.clone()), cx);
-            cx.focus(left_pane.clone());
+            cx.focus(&left_pane);
         });
 
         // When closing all of the items in the left pane, we should be prompted twice:
