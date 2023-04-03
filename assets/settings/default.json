@@ -205,9 +205,7 @@
     // Different settings for specific languages.
     "languages": {
         "Plain Text": {
-            "soft_wrap": "preferred_line_length",
-            // Copilot can be a little strange on non-code files
-            "copilot": "off"
+            "soft_wrap": "preferred_line_length"
         },
         "Elixir": {
             "tab_size": 2
@@ -217,9 +215,7 @@
             "hard_tabs": true
         },
         "Markdown": {
-            "soft_wrap": "preferred_line_length",
-            // Copilot can be a little strange on non-code files
-            "copilot": "off"
+            "soft_wrap": "preferred_line_length"
         },
         "JavaScript": {
             "tab_size": 2
@@ -232,9 +228,6 @@
         },
         "YAML": {
             "tab_size": 2
-        },
-        "JSON": {
-            "copilot": "off"
         }
     },
     // LSP Specific settings.
