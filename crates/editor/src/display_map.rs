@@ -230,6 +230,10 @@ impl DisplayMap {
         self.text_highlights.remove(&Some(type_id))
     }
 
+    pub fn has_suggestion(&self) -> bool {
+        self.suggestion_map.has_suggestion()
+    }
+
     pub fn replace_suggestion<T>(
         &self,
         new_suggestion: Option<Suggestion<T>>,
