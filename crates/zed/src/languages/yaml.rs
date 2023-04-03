@@ -106,6 +106,9 @@ impl LspAdapter for YamlLspAdapter {
         let settings = cx.global::<Settings>();
         Some(
             future::ready(serde_json::json!({
+                "yaml": {
+                    "keyOrdering": false
+                },
                 "[yaml]": {
                     "editor.tabSize": settings.tab_size(Some("YAML"))
                 }
