@@ -177,9 +177,9 @@
                     "focus": false
                 }
             ],
+            "alt-\\": "copilot::NextSuggestion",
             "alt-]": "copilot::NextSuggestion",
-            "alt-[": "copilot::PreviousSuggestion",
-            "alt-\\": "copilot::Toggle"
+            "alt-[": "copilot::PreviousSuggestion"
         }
     },
     {
