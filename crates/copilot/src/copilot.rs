@@ -32,10 +32,7 @@ const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
 
 const COPILOT_NAMESPACE: &'static str = "copilot";
-actions!(
-    copilot,
-    [NextSuggestion, PreviousSuggestion, Toggle, Reinstall]
-);
+actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
 
 pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
     let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), node_runtime, cx));
