@@ -368,7 +368,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(Workspace::activate_pane_at_index);
 
     cx.add_action(Workspace::split_pane_with_item);
-    cx.add_action(Workspace::split_pane_with_project_entry);
+    cx.add_async_action(Workspace::split_pane_with_project_entry);
 
     cx.add_async_action(
         |workspace: &mut Workspace,
