@@ -2843,14 +2843,14 @@ impl Editor {
         self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
             let (completion, completions_cycling) = copilot.update(&mut cx, |copilot, cx| {
                 (
-                    copilot.completion(&buffer, buffer_position, cx),
+                    copilot.completions(&buffer, buffer_position, cx),
                     copilot.completions_cycling(&buffer, buffer_position, cx),
                 )
             });
 
             let (completion, completions_cycling) = futures::join!(completion, completions_cycling);
             let mut completions = Vec::new();
-            completions.extend(completion.log_err().flatten());
+            completions.extend(completion.log_err().into_iter().flatten());
             completions.extend(completions_cycling.log_err().into_iter().flatten());
             this.upgrade(&cx)?.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
