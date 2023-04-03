@@ -2796,6 +2796,8 @@ impl Editor {
             return None;
         }
 
+        self.refresh_active_copilot_suggestion(cx);
+
         if !copilot.read(cx).status().is_authorized() {
             return None;
         }
